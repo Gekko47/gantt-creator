@@ -1,0 +1,24 @@
+<Project>
+
+  <!--
+    Loaded by every project under tests/. Applies only to the test
+    directory; production projects are unaffected. Centralises the
+    xUnit `using` so individual test csproj files do not have to repeat
+    it and so the OfficeIntegration xunit trait is easy to find.
+  -->
+
+  <PropertyGroup>
+    <!--
+      The OfficeIntegration xUnit trait category is a string literal
+      ("OfficeIntegration") applied to tests that require a real Microsoft
+      365 install (per docs/adr/0001). Tests are tagged
+      [Trait("Category","OfficeIntegration")] and excluded by
+      scripts/verify-quick.ps1 and scripts/verify.ps1 by default.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

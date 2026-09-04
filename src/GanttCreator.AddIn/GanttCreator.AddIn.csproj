@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>GanttCreator.AddIn</RootNamespace>
+    <AssemblyName>GanttCreator.AddIn</AssemblyName>
+    <ExcelDnaPackageVersion>1.9.0</ExcelDnaPackageVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ExcelDna.AddIn" />
+    <PackageReference Include="ExcelDna.Interop" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
+    <ProjectReference Include="..\GanttCreator.Office\GanttCreator.Office.csproj" />
+    <ProjectReference Include="..\GanttCreator.Raster\GanttCreator.Raster.csproj" />
+  </ItemGroup>
+</Project>
