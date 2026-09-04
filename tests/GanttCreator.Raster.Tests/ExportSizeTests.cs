@@ -32,6 +32,18 @@ public class ExportSizeTests
         Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
     }
 
+    [Theory]
+    [InlineData("NaNcm")]
+    [InlineData("Infinitycm")]
+    [InlineData("-Infinitycm")]
+    [InlineData("1e999cm")]
+    [InlineData("NaNpx")]
+    [InlineData("Infinityin")]
+    public void ParseWidth_rejects_non_finite_values(string input)
+    {
+        Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
+    }
+
     [Fact]
     public void ParseWidth_null_throws()
     {

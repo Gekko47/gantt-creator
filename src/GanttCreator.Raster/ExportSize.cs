@@ -137,11 +137,12 @@ public static class ExportSize
         // Tuple switch: validates emptiness, parseability, and sign in
         // one expression. Avoids the if/throw chain the analyzer flags.
         return (text.Length, double.TryParse(text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out var value), value < 0) switch
+                CultureInfo.InvariantCulture, out var value), value < 0, double.IsFinite(value)) switch
         {
-            (0, _, _) => throw new FormatException("Width value is empty."),
-            (_, false, _) => throw new FormatException($"'{text}' is not a valid width value."),
-            (_, true, true) => throw new FormatException("Width value must be non-negative."),
+            (0, _, _, _) => throw new FormatException("Width value is empty."),
+            (_, false, _, _) => throw new FormatException($"'{text}' is not a valid width value."),
+            (_, true, true, _) => throw new FormatException("Width value must be non-negative."),
+            (_, true, _, false) => throw new FormatException($"'{text}' is not a finite number."),
             _ => value
         };
     }

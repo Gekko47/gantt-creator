@@ -67,4 +67,21 @@ public class PointDTests
         Assert.Contains("1.50", s, StringComparison.Ordinal);
         Assert.Contains("2.50", s, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ToString_is_culture_invariant()
+    {
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture =
+                System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+            var p = new PointD(1.5, 2.5);
+            Assert.Equal("(1.50, 2.50)", p.ToString());
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+    }
 }
