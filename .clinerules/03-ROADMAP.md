@@ -34,6 +34,14 @@ Goal: a clean solution that fails fast on warnings, formatting, dependency drift
 | R0.7 | Add Windows CI for restore, format, build, unit tests, and artifacts | Branch workflow passes and a deliberate failure produces a useful annotation | None |
 | R0.8 | Add versioning and local rolling-log abstractions with privacy-safe defaults | Unit tests for version string, rotation, and redaction | None |
 
+> **R0.8 note (do not skip):** while adding the rolling-log abstractions,
+> also close the two tooling gaps deferred as **L6** and **L7** in
+> `docs/KNOWN-LIMITATIONS.md` — lint the GitHub Actions workflow
+> (actionlint or equivalent, pinned) and add unit tests for the PowerShell
+> scripts in `scripts/` (Pester or equivalent, wired into
+> `verify-quick.ps1`). Phase 0 does not exit until L6 and L7 are closed or
+> re-dated by an approved decision.
+
 Exit demonstration: a new developer clones the repository, runs one documented command, and gets a clean Release build and test report without opening Office.
 
 ## Phase 1 — Excel-DNA host and Ribbon shell

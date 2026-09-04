@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 #
 # Deliberate two-run locked-restore test (R0.3 acceptance).
 #
@@ -20,14 +20,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$scriptRoot = Split-Path -Parent $PSCommandPath
 
-function Remove-ObjDirectories {
+function Remove-ObjDirectory {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
     Get-ChildItem -Path $PSScriptRoot\..\.. -Recurse -Directory -Filter 'obj' -ErrorAction SilentlyContinue |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+        ForEach-Object {
+            if ($PSCmdlet.ShouldProcess($_.FullName, 'Delete obj directory')) {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
 }
 
-function Run-LockRestore {
+function Invoke-LockRestore {
     param([string]$Label)
     Write-Host "=== $Label ==="
     dotnet restore $Solution --locked-mode --no-cache 2>&1
@@ -42,12 +48,12 @@ Write-Host "R0.3 locked-restore test: two consecutive runs from a clean state"
 Write-Host ""
 
 # --- Run 1: generate the lock files ---
-Remove-ObjDirectories
-Run-LockRestore -Label 'Run 1 — generate lock files (no cache)'
+Remove-ObjDirectory
+Invoke-LockRestore -Label 'Run 1 — generate lock files (no cache)'
 
 # --- Run 2: prove the lock files are honoured ---
-Remove-ObjDirectories
-Run-LockRestore -Label 'Run 2 — honour lock files, no network'
+Remove-ObjDirectory
+Invoke-LockRestore -Label 'Run 2 — honour lock files, no network'
 
 Write-Host ""
 Write-Host "R0.3 locked-restore test: PASS (two consecutive runs from a clean state)"

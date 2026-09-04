@@ -31,8 +31,24 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout (full history — check-status resolves referenced commit hashes)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Repository doc gates (md links, STATUS accuracy, skill-tree sync)
+        run: |
+          pwsh -NoProfile -File scripts/check-md-links.ps1
+          pwsh -NoProfile -File scripts/check-status.ps1
+          pwsh -NoProfile -File scripts/check-cline-skills.ps1
+
+      - name: Script analyzer (PSScriptAnalyzer)
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
+            -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
 
       - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v4

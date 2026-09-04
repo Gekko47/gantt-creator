@@ -27,7 +27,7 @@ Goal: a clean solution that fails fast on warnings, formatting, dependency drift
 | R0.6 | Add quick/full verification scripts and coverage settings | Both scripts pass from a clean clone and enforce configured thresholds | None |
 | R0.7 | Add Windows CI for restore, format, build, unit tests, and artifacts | Branch workflow passes and a deliberate failure produces a useful annotation | None |
 | R0.8 | Add versioning and local rolling-log abstractions with privacy-safe defaults | Unit tests for version string, rotation, and redaction | None |
-Exit demonstration: a new developer clones the repository, runs one documented command, and gets a clean Release build and test report without opening Office.
+> **R0.8 note (do not skip):** while adding the rolling-log abstractions,
 
 ---
 

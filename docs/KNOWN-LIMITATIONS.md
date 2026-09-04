@@ -9,3 +9,5 @@
 | L3 | No Office-integration test fixture committed yet (R0.x scope) | _unassigned_ | 2026-09-04 | R0.5 exit | R0.5 sample test for the Office contract layer |
 | L4 | Golden PNG baseline directory does not exist yet | _unassigned_ | 2026-09-04 | R3.12 exit | R3.12 reference scene with at least one approved PNG |
 | L5 | The `_GanttCreatorConfig` safe-repair policy is not yet specified | _unassigned_ | 2026-09-04 | R2.10 start | R2.10 ADR defining auto-repair vs confirmation boundary |
+| L6 | `ci.yml` has no dedicated workflow lint (actionlint / yamllint); workflow structure is only exercised when CI itself runs | _unassigned_ | 2026-09-04 | R0.8 | A committed workflow-lint step (e.g. `actionlint` pinned binary or equivalent) passing on `ci.yml` in CI |
+| L7 | PowerShell scripts in `scripts/` have no unit tests (Pester); they are exercised only by execution inside the verify gates | _unassigned_ | 2026-09-04 | R0.8 | Pester (or equivalent) unit tests for `scripts/*.ps1` wired into `verify-quick.ps1` |
