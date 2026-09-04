@@ -28,7 +28,6 @@
       require XML documentation per AGENTS.md.
     -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <!--
       Warnings as errors. This is the loudest possible gate. Any new analyzer
