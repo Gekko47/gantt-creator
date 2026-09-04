@@ -1,0 +1,68 @@
+# Git attributes for the Gantt Creator repository.
+#
+# Line-ending policy: LF for all source and documentation. Windows
+# developers editing with Notepad or older editors may produce CRLF;
+# this file ensures those are normalised to LF on commit.
+#
+# Binary file policy: there are currently no binary assets tracked
+# in the repository. The .xll and .dll rules below document the
+# expected policy for when the Excel-DNA packaging lands in R10.2.
+# When binary assets are added, consider configuring Git LFS in a
+# follow-up commit.
+
+# --- Source code: LF ---
+*.cs              text eol=lf
+*.csproj          text eol=lf
+*.props           text eol=lf
+*.targets         text eol=lf
+*.sln             text eol=lf
+*.slnx            text eol=lf
+*.editorconfig    text eol=lf
+*.gitattributes   text eol=lf
+*.gitignore       text eol=lf
+
+# --- Scripting and config: LF ---
+*.ps1             text eol=lf
+*.psm1            text eol=lf
+*.psd1            text eol=lf
+*.json            text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.xml             text eol=lf
+*.config          text eol=lf
+*.lock.json       text eol=lf
+*.ruleset         text eol=lf
+
+# --- Documentation: LF, preserve trailing whitespace ---
+*.md              text eol=lf whitespace=-trailing-space
+
+# --- Solution-level lock files: keep both versions on conflict ---
+# Packages.lock.json files are deterministic pins. A conflict means
+# a deliberate change on both branches; resolution must be manual.
+packages.lock.json        merge=union
+**/packages.lock.json     merge=union
+
+# --- Generated files (placeholders for future generated content) ---
+# *.Designer.cs            text eol=lf
+# *.Generated.cs           text eol=lf
+# **/*.g.cs                 text eol=lf
+
+# --- Binary file policy (documented for R10.2 packaging) ---
+# *.xll                    binary
+# *.dll                    binary
+# *.pdb                    binary
+# *.exe                    binary
+# *.png                    binary
+# *.jpg                    binary
+# *.pdf                    binary
+# *.zip                    binary
+
+# --- Linguistic overrides ---
+# Treat *.cs as C# for GitHub's language statistics (default; documented
+# here so future custom mappings have an anchor).
+*.cs linguist-language=C#
+*.ps1 linguist-language=PowerShell
+
+# --- Diff and merge drivers ---
+# Markdown: use the default diff. A custom Markdown merge driver is
+# out of scope until the documentation grows past single-file edits.

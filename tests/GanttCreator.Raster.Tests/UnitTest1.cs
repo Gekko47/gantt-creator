@@ -1,4 +1,4 @@
-﻿namespace GanttCreator.Raster.Tests;
+namespace GanttCreator.Raster.Tests;
 
 public class UnitTest1
 {
