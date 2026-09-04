@@ -83,8 +83,8 @@
                 architecture tests deliberately use snake_case method
                 names so they read as English sentences. This is the
                 standard xUnit convention for behaviour-driven test
-                names. The rule is suppressed globally; non-test
-                code still uses PascalCase.
+                names. CA1707 is suppressed in tests/Directory.Build.props
+                only; production code still enforces the rule.
 
       The following rules were removed in R0.5 because the xUnit
       template UnitTest1.cs placeholders they targeted have been

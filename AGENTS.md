@@ -62,6 +62,7 @@ After editing:
 3. Review `git diff --check`, `git status --short`, and the complete diff.
 4. Update task evidence and `docs/STATUS.md`.
 5. Report exactly: changed behaviour, important files, commands run and results, residual risks, and the next roadmap item. Do not claim a command ran unless its output was observed.
+6. Self-certify against the applicable sections of docs/08-TEST-CHECKLIST.md. In the commit message, list the sections you certified (e.g., 'Checklist: A, B, C, G, I'). Do not claim certification for sections that do not apply.
 
 ## Stop conditions
 
