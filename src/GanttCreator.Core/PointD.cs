@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -43,6 +45,13 @@ public readonly struct PointD : IEquatable<PointD>
     /// <summary>Inequality operator.</summary>
     public static bool operator !=(PointD left, PointD right) => !left.Equals(right);
 
-    /// <inheritdoc />
-    public override string ToString() => $"({X:F2}, {Y:F2})";
+    /// <summary>
+    /// Returns a coordinate string in the form "(X, Y)" with both
+    /// components formatted to two decimal places. Formatting is
+    /// culture-invariant so coordinate output is deterministic
+    /// across locales; see ExportSize for the same discipline
+    /// applied to width parsing.
+    /// </summary>
+    public override string ToString() =>
+        string.Create(CultureInfo.InvariantCulture, $"({X:F2}, {Y:F2})");
 }
