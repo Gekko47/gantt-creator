@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "ExcelDna.AddIn": {
+        "type": "Direct",
+        "requested": "[1.9.0, )",
+        "resolved": "1.9.0",
+        "contentHash": "+jxXXswl6ds2ZGTwsuKWwO8crfzqvBFqd/t3PmEtg2YR6EN9F2pA97hiXblckhWZ6AKBlSGEC/ONTrCON2O33A==",
+        "dependencies": {
+          "ExcelDna.Integration": "[1.9.0]"
+        }
+      },
+      "ExcelDna.Interop": {
+        "type": "Direct",
+        "requested": "[16.0.0, )",
+        "resolved": "16.0.0",
+        "contentHash": "xJoz0zmnEfJd5hKkC0rzmtpQeyjC0mMEQQdpICrGnIB/zYN8e270S5yLxdtbPpTYeEGk7RUQNfjA4FjG9xlRNA=="
+      },
+      "ganttcreator.core": {
+        "type": "Project"
+      },
+      "ganttcreator.office": {
+        "type": "Project",
+        "dependencies": {
+          "ExcelDna.Interop": "[16.0.0, )",
+          "GanttCreator.Core": "[1.0.0, )"
+        }
+      },
+      "ganttcreator.raster": {
+        "type": "Project",
+        "dependencies": {
+          "ExcelDna.Interop": "[16.0.0, )",
+          "GanttCreator.Core": "[1.0.0, )"
+        }
+      },
+      "ExcelDna.Integration": {
+        "type": "CentralTransitive",
+        "requested": "[1.9.0, )",
+        "resolved": "1.9.0",
+        "contentHash": "A1nbeRWa+rg3RoO9NV9iqNwQxWb9eVNG+Ki3uCfo8D3U8CT11/fzTIvVT3y2LoCTzqRIPwTysqp9sj42MKYw5Q=="
+      }
+    }
+  }
+}

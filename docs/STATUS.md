@@ -11,7 +11,7 @@
 - **Started**: 2026-09-04
 - **Outcome**: done. The kit now has `docs/0N-*.md` as the canonical source, `.clinerules/0N-*.md` as the always-on view, and `.cline/skills/0N-name/{SKILL.md,references.md}` as the on-demand view. `scripts/sync-cline-skills.ps1` regenerates the second and third from the first; `scripts/check-cline-skills.ps1` is the drift gate and is wired into `verify-quick.ps1` and `verify.ps1`. The actual host is recorded as Windows 11 25H2 (build 26200) per ADR-0005.
 - **Evidence**: commits `aa0815b` (R0.1), `900f78c` (R0.2 + verify scripts), `f232e57` (status), `1645c1e` (Windows 11 25H2 + ADR-0005), `8650717` (skill tree + sync + drift gate), `d543e60` (gate fix: working-tree check, not post-sync). `pwsh ./scripts/verify-quick.ps1` → PASS in ~14 s.
-- **Next safe action**: R0.3 — produce `packages.lock.json`, add a deliberate two-run restore test, and write the work item file `docs/work-items/R0.3-central-packages-and-lockfile.md`.
+- **Next safe action**: R0.4 — land `.editorconfig` + `.gitattributes` (text=auto, LF for code, explicit for markdown); tighten `NoWarn` list as `UnitTest1.cs` placeholders are replaced.
 
 ## Recently completed
 
@@ -20,6 +20,7 @@
 - **ADR-0005** — Document the actual host as Windows 11 25H2 (build 26200). The `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion` `ProductName` string may report "Windows 10 Pro" on some configurations; the build number is the source of truth. Commit `1645c1e`.
 - **Three-view rule discipline** — `scripts/sync-cline-skills.ps1` regenerates `.clinerules/0N-*.md` and `.cline/skills/0N-name/{SKILL.md,references.md}` from `docs/0N-*.md`; `scripts/check-cline-skills.ps1` is the drift gate; both `verify-quick.ps1` and `verify.ps1` run the gate. `docs/clinerules/SYNC.md` documents the discipline. Commit `8650717`.
 - **Drift gate fix** — `check-cline-skills.ps1` was checking post-sync state, which silently overwrote any hand-edited rule. It now checks the working tree directly and fails if any of the three views has uncommitted changes. Commit `d543e60`.
+- **R0.3 — Central packages and lock file** — `RestorePackagesWithLockFile=true` enabled in `Directory.Build.props`. Per-project `packages.lock.json` files generated for all projects with dependencies. `verify-quick.ps1` switches to `--locked-mode` when lock files exist. `scripts/test-locked-restore.ps1` performs a deliberate two-run-from-clean-state test: both runs PASS, proving the lock file is honoured without network access. Commits `229e93c` (property + work item), `559212f` (verify + test scripts), `f9c27cf` (lock files). `pwsh ./scripts/verify-quick.ps1` → PASS in ~17 s; `pwsh ./scripts/test-locked-restore.ps1` → PASS.
 
 ## Environment (recorded once, then referenced)
 
