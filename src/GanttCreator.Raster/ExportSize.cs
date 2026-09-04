@@ -76,18 +76,31 @@ public static class ExportSize
     /// pixel dimensions. The height preserves the scene aspect ratio;
     /// it is calculated, never entered independently.
     /// </summary>
-    /// <param name="request">The parsed width request.</param>
-    /// <param name="sceneWidthPt">The scene width in points. Must be greater than zero.</param>
-    /// <param name="sceneHeightPt">The scene height in points.</param>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="sceneWidthPt"/> is zero or negative.
+    /// <param name="request">The parsed width request. Value must be finite and non-negative.</param>
+    /// <param name="sceneWidthPt">The scene width in points. Must be finite and greater than zero.</param>
+    /// <param name="sceneHeightPt">The scene height in points. Must be finite and non-negative.</param>
+    /// <exception cref="ArgumentOutOfRangeException">A dimension value is
+    /// not finite, or sceneWidthPt is not greater than zero, or the
+    /// computed pixel dimensions exceed int.MaxValue.
     /// </exception>
     public static PixelDimensions ToPixels(WidthRequest request, double sceneWidthPt, double sceneHeightPt)
     {
-        if (sceneWidthPt <= 0)
+        if (!double.IsFinite(request.Value) || request.Value < 0)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(sceneWidthPt), sceneWidthPt, "Scene width must be greater than zero.");
+                nameof(request), request.Value, "Width request Value must be finite and non-negative.");
+        }
+
+        if (!double.IsFinite(sceneWidthPt) || sceneWidthPt <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sceneWidthPt), sceneWidthPt, "Scene width must be finite and greater than zero.");
+        }
+
+        if (!double.IsFinite(sceneHeightPt) || sceneHeightPt < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and non-negative.");
         }
 
         double pixelWidth = request.Unit switch
@@ -98,8 +111,22 @@ public static class ExportSize
             _ => throw new ArgumentOutOfRangeException(nameof(request))
         };
 
+        double pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
+
+        if (!double.IsFinite(pixelWidth) || pixelWidth > int.MaxValue || pixelWidth < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request), pixelWidth, "Computed pixel width exceeds the representable range.");
+        }
+
+        if (!double.IsFinite(pixelHeight) || pixelHeight > int.MaxValue || pixelHeight < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(sceneHeightPt), pixelHeight, "Computed pixel height exceeds the representable range.");
+        }
+
         int pxWidth = (int)Math.Round(pixelWidth);
-        int pxHeight = (int)Math.Round(pixelWidth * sceneHeightPt / sceneWidthPt);
+        int pxHeight = (int)Math.Round(pixelHeight);
         return new PixelDimensions(pxWidth, pxHeight);
     }
 

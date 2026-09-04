@@ -101,4 +101,53 @@ public class ExportSizeTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => ExportSize.ToPixels(req, sceneWidthPt: 0.0, sceneHeightPt: 360.0));
     }
+
+    [Fact]
+    public void ToPixels_negative_request_value_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, -5.0);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_nan_request_value_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, double.NaN);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_infinity_request_value_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, double.PositiveInfinity);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_oversized_pixel_width_throws()
+    {
+        // (int.MaxValue + 1) pixels exceeds the int range for PixelDimensions.
+        var req = new WidthRequest(ExportUnit.Pixels, (double)int.MaxValue + 1.0);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_nan_scene_height_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Inches, 4.0);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: double.NaN));
+    }
+
+    [Fact]
+    public void ToPixels_nan_scene_width_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Inches, 4.0);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: double.NaN, sceneHeightPt: 360.0));
+    }
 }
