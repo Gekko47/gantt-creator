@@ -73,6 +73,10 @@ Run-Step 'markdown link sanity' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-md-links.ps1')
 }
 
+Run-Step 'clinerules skill tree in sync' {
+    pwsh -NoProfile -File (Join-Path $scriptRoot 'check-cline-skills.ps1')
+}
+
 Run-Step 'restore' {
     if (Test-Path 'packages.lock.json') {
         dotnet restore --locked-mode

@@ -16,8 +16,10 @@
 .gantgen/*
 .gantpp/*
 
-# Cline
+# Cline agent scratch area. Skills are tracked; everything else under .cline/ is local-only.
 .cline/*
+!.cline/skills/
+!.cline/skills/**
 
 # qodo
 .qodo/*
