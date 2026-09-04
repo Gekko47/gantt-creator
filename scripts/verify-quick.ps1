@@ -70,13 +70,15 @@ Run-Step 'clinerules skill tree in sync' {
 }
 
 Run-Step 'restore (locked mode if lock exists)' {
-    if (Test-Path 'packages.lock.json') {
+    # The .NET SDK with RestorePackagesWithLockFile produces
+    # packages.lock.json files next to each project that has
+    # dependencies. Detect any of them to decide whether --locked-mode
+    # is available.
+    $lockFiles = Get-ChildItem -Path $PSScriptRoot\..\src -Recurse -Filter 'packages.lock.json' -ErrorAction SilentlyContinue
+    if ($lockFiles) {
         dotnet restore --locked-mode
     } else {
-        # Central package management does not produce packages.lock.json by
-        # default. Until the lock file is added in R0.3, fall back to a
-        # plain restore and warn.
-        Write-Host 'NOTE: packages.lock.json not present; using dotnet restore (R0.3 will add the lock file).'
+        Write-Host 'NOTE: no packages.lock.json found; using plain dotnet restore (R0.3 will add the lock file).'
         dotnet restore $Solution
     }
 }
