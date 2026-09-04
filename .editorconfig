@@ -1,0 +1,132 @@
+# EditorConfig is awesome: https://EditorConfig.org
+#
+# This file configures code style and analyzer severity for the
+# Gantt Creator solution. It applies to Visual Studio, VS Code
+# (with the C# extension), Rider, and `dotnet format`.
+#
+# The .NET analyzers (CA* rules) are configured here so the same
+# rules run in every editor and in CI. The `NoWarn` list in
+# Directory.Build.props suppresses rules that the xUnit
+# `UnitTest1.cs` placeholders trigger. R0.5 replaces those
+# placeholders; R0.5+ removes the corresponding rules from
+# `NoWarn` once they no longer fire.
+
+root = true
+
+# --- All files: trim trailing whitespace, ensure final newline ---
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# --- Markdown: preserve trailing whitespace (two-space line breaks) ---
+[*.md]
+trim_trailing_whitespace = false
+
+# --- PowerShell: 4-space indent (PSScriptAnalyzer convention) ---
+[*.ps1]
+indent_size = 4
+
+# --- JSON: 2-space indent ---
+[*.json]
+indent_size = 2
+
+# --- YAML: 2-space indent ---
+[*.{yml,yaml}]
+indent_size = 2
+
+# --- C# ---
+[*.cs]
+indent_size = 4
+indent_style = space
+tab_width = 4
+max_line_length = 140
+
+# Language conventions
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# File-scoped namespaces (matches existing codebase)
+csharp_style_namespace_declarations = file_scoped:warning
+
+# var preferences
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Pattern matching
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+
+# Using directives
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Naming
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel_case
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+
+# this. and Me. preferences
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# Expression-bodied members
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_indexers = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_expression_bodied_lambdas = true:suggestion
+csharp_style_expression_bodied_local_functions = false:suggestion
+
+# null preferences
+dotnet_style_null_checking = is_pattern:warning
+dotnet_style_coalesce_expression = true:suggestion
+csharp_style_throw_expression = true:suggestion
+
+# Analyzers
+dotnet_analyzer_diagnostic.category-Style.severity = warning
+dotnet_analyzer_diagnostic.category-Naming.severity = warning
+dotnet_analyzer_diagnostic.category-Performance.severity = warning
+dotnet_analyzer_diagnostic.category-Reliability.severity = warning
+dotnet_analyzer_diagnostic.category-Security.severity = warning
+dotnet_analyzer_diagnostic.category-Usage.severity = warning
+dotnet_analyzer_diagnostic.category-Design.severity = warning
+
+# Suppress specific CA rules in generated code
+[*.Generated.cs]
+generated_code = true
+
+# Suppress in test assemblies the rules the xUnit template triggers.
+# R0.5 replaces UnitTest1.cs with real tests; after that, these
+# severities can be tightened in a follow-up commit.
+[**/tests/**/*.cs]
+dotnet_analyzer_diagnostic.CA1515.severity = none
+dotnet_analyzer_diagnostic.CA1812.severity = none
+dotnet_analyzer_diagnostic.CA1052.severity = none
+dotnet_analyzer_diagnostic.CA1063.severity = none
+dotnet_analyzer_diagnostic.CA1305.severity = none
+dotnet_analyzer_diagnostic.CA1840.severity = none
+dotnet_analyzer_diagnostic.CA2254.severity = none
