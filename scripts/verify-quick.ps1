@@ -70,6 +70,13 @@ Run-Step 'clinerules skill tree in sync' {
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-cline-skills.ps1')
 }
 
+Run-Step 'status accuracy' {
+    # Accuracy gate for docs/STATUS.md: every commit hash referenced must
+    # resolve, every backticked repo path claimed must exist, and every
+    # roadmap ID mentioned must be defined in docs/03-ROADMAP.md.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-status.ps1')
+}
+
 Run-Step 'restore (locked mode if lock exists)' {
     # The .NET SDK with RestorePackagesWithLockFile produces
     # packages.lock.json files next to each project that has
