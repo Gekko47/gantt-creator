@@ -7,6 +7,16 @@ description: Use this skill when the conversation is about the product boundary,
 > Created 2 September 2026 under a new filename. This revision defines the scope, schema, lifecycle, migration and non-security status of the approved `_GanttCreatorConfig` VeryHidden worksheet. When installed, use the path `docs/02-ARCHITECTURE.md`.
 ## Product boundary
 The add-in creates fast, presentation-quality construction-delay visuals from one visible worksheet. It is a drawing tool backed by tabular schedule events, not a critical-path scheduling engine. It must not imply that it calculates contractual entitlement, CPM logic, or delay causation.
+## Build pipeline artifact contract
+The build pipeline produces artifacts in a deterministic order. Tests may
+only consume artifacts that a verify-script step guarantees:
+- `verify-quick.ps1` and `verify.ps1` are the authoritative producers of
+  `bin/`, `coverage/`, and `publish/` artifacts.
+- A test that reads from `bin/` or `publish/` must be traceable to a
+  specific step in those scripts. The traceability lives in the work item.
+- A test must not assume prior build state. It either creates its own
+  inputs, or depends on a verify-script step whose existence is asserted
+  by the work item.
 ## User worksheet contract
 The first supported schema is an Excel Table named `tblGanttData` on the active worksheet. The table is visible and adjacent to the Gantt plot.
 Required columns:
@@ -18,16 +28,6 @@ Required columns:
 | `Type` | catalogue text | In-cell dropdown from the single `EntityTypeCatalog` defined by the entity guide |
 | `Description` | text | User-facing label |
 | `Start` | Excel date or blank | Inclusive start for span events; the single date for a milestone/delineator |
-| `Finish` | Excel date or blank | Inclusive finish for span events; not read for milestones/delineators |
-| `ParentId` | text or blank | Owning activity for critical/child entities |
-| `StyleKey` | catalogue text or blank | Blank uses Type default; otherwise an approved named style |
-| `LabelPosition` | catalogue text or blank | Explicit supported position; blank resolves to the Type default/Auto |
-| `FillColour` | `#RRGGBB` or blank | Per-row rectangle/diamond/splitter fill override |
-| `StrokeColour` | `#RRGGBB` or blank | Per-row outline, hatch, critical, or delineator colour override |
-| `Visible` | Boolean or blank | Blank/true renders; false retains the row without rendering |
-Optional columns can be added only by an approved schema ADR, initially `SortOrder` and user notes. Core data columns remain visible; property columns may be shown/hidden using the Ribbon but remain on the same worksheet. Do not introduce one column per critical interval. A critical interval is another event record tied to a lane or parent.
-Workbook-level configuration uses one worksheet named `_GanttCreatorConfig` with `Visible = xlSheetVeryHidden`, plus workbook-defined names prefixed `GanttCreator.` that point to its validation ranges. Shape ownership uses a deterministic shape name plus tags/alternative text.
-## VeryHidden configuration worksheet contract
 
 ---
 

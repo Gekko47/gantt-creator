@@ -63,6 +63,40 @@ Coverage is a floor, not proof. Review changed lines, branches, fault paths, and
 
 Use generated/property tests for invariants such as: valid dates map monotonically; clipping never expands bounds; render order is stable; all emitted geometry remains inside allowed scene bounds except intentional label overflow.
 
+## Numeric, configuration, and suppression tests
+
+These apply across all layers and are required in addition to the
+domain-specific catalogue above. See also `docs/08-TEST-CHECKLIST.md`.
+
+### Numeric code
+
+- Culture-roundtrip: any public method that parses, formats, or converts
+  numeric values must set `CurrentCulture` to a comma-decimal culture (e.g.
+  `de-DE`) and assert the exact output / parsed value in the same commit.
+- Non-finite inputs: `double.TryParse` consumers must test `NaN`,
+  `+Infinity`, `-Infinity`, and overflowed exponents (`"1e999"`).
+- Every `double`/`float` to `int` cast must be guarded by `IsFinite` and a
+  range check; tests cover each violation.
+
+### Configuration and schema files
+
+- Machine-readable config (JSON, YAML, RibbonX) must have an architecture
+  test validating structure on every commit. For `.vscode/tasks.json`:
+  assert the VS Code `{ version, tasks }` object form, that every `dependsOn`
+  label resolves to a task, and that dependency ordering is correct.
+
+### Build pipeline traceability
+
+- Every test that reads from `bin/` or `publish/` must be traceable to a
+  step in `verify-quick.ps1` / `verify.ps1` that produces that artifact. The
+  guarantee is documented in the work item, not assumed by the test.
+
+### NoWarn scope
+
+- Test-only suppressions (CA1707, IDE0011) must live in
+  `tests/Directory.Build.props`, never in the root `Directory.Build.props`.
+  An architecture test asserts this on every commit.
+
 ## Excel shape contract tests
 
 The renderer talks to narrow fake adapters in most tests. Assert the observable Office operation sequence and values:

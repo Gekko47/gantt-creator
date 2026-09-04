@@ -6,6 +6,19 @@
 
 The add-in creates fast, presentation-quality construction-delay visuals from one visible worksheet. It is a drawing tool backed by tabular schedule events, not a critical-path scheduling engine. It must not imply that it calculates contractual entitlement, CPM logic, or delay causation.
 
+## Build pipeline artifact contract
+
+The build pipeline produces artifacts in a deterministic order. Tests may
+only consume artifacts that a verify-script step guarantees:
+
+- `verify-quick.ps1` and `verify.ps1` are the authoritative producers of
+  `bin/`, `coverage/`, and `publish/` artifacts.
+- A test that reads from `bin/` or `publish/` must be traceable to a
+  specific step in those scripts. The traceability lives in the work item.
+- A test must not assume prior build state. It either creates its own
+  inputs, or depends on a verify-script step whose existence is asserted
+  by the work item.
+
 ## User worksheet contract
 
 The first supported schema is an Excel Table named `tblGanttData` on the active worksheet. The table is visible and adjacent to the Gantt plot.

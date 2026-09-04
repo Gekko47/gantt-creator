@@ -164,6 +164,9 @@ Never solve an XLL load failure by copying random DLLs into the Office directory
 | PowerPoint paste fails | clipboard formats and requested data type | source group copied, PowerPoint visible/ready, `ppPasteShape` supported |
 | PNG text differs by machine | font name/version and scale | pinned installed font, invariant culture, renderer/native asset version |
 | Test hangs | process list and last observable step | no modal Office dialog, no arbitrary sleep, cleanup deadline |
+| Test passes locally but fails on clean CI | missing artifact under `bin/` or `publish/` | does the verify-script step produce the artifact the test reads? |
+| Culture-dependent test failure | passes on `en-US`, fails on `de-DE` | is the production code using `InvariantCulture` and was the test run under a comma-decimal culture? |
+| CA1707 fires on production code | analyzer diagnostic | is the suppression in `tests/Directory.Build.props` only, not the root? |
 
 Apply the bounded retry rule in `AGENTS.md`. Preserve the first useful exception and HRESULT; later wrapper messages often discard the cause.
 
