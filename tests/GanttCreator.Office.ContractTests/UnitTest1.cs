@@ -1,4 +1,4 @@
-﻿namespace GanttCreator.Office.ContractTests;
+namespace GanttCreator.Office.ContractTests;
 
 public class UnitTest1
 {

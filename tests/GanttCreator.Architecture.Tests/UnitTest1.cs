@@ -1,4 +1,4 @@
-﻿namespace GanttCreator.Architecture.Tests;
+namespace GanttCreator.Architecture.Tests;
 
 public class UnitTest1
 {

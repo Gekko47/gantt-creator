@@ -1,4 +1,4 @@
-﻿namespace GanttCreator.Office.IntegrationTests;
+namespace GanttCreator.Office.IntegrationTests;
 
 public class UnitTest1
 {
