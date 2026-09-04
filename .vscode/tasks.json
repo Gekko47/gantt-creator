@@ -11,7 +11,7 @@
   },
   {
     "label": "verify-full",
-    "detail": "Runs format/analyzer check, Release build, all tests with coverage, and hygiene checks (~60 s).",
+    "detail": "Runs format/analyzer check, Release build, non-Office tests with coverage, and hygiene checks (~60 s). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
     "type": "process",
     "command": "pwsh",
     "args": ["-NoProfile", "-File", "${workspaceFolder}/scripts/verify.ps1"],
