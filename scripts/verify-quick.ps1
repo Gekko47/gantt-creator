@@ -13,6 +13,7 @@
       1. dotnet --version sanity check
       2. dotnet restore --locked-mode (after a lock file is produced)
       3. dotnet build -c Release -warnaserror
+      3a. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
       4. dotnet test on Core, Raster, Office contract, AddIn, Architecture
          (OfficeIntegration trait excluded)
 #>
@@ -85,6 +86,10 @@ Run-Step 'restore (locked mode if lock exists)' {
 
 Run-Step 'build Release -warnaserror' {
     dotnet build $Solution -c $Configuration --no-restore -warnaserror
+}
+
+Run-Step 'publish AddIn (packed XLL)' {
+    dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c $Configuration --no-build
 }
 
 Run-Step 'test (OfficeIntegration excluded)' {

@@ -8,11 +8,12 @@
       1. markdown link sanity (scripts/check-md-links.ps1)
       2. dotnet restore
       3. dotnet build -c Release -warnaserror
-      4. dotnet test on every non-OfficeIntegration project
-      5. coverage report and per-project threshold check
-      6. dotnet list package --vulnerable --include-transitive
-      7. repository hygiene (git status --short, dirty working tree)
-      8. SBOM (CycloneDX) generation
+      4. dotnet publish the AddIn in Release configuration
+      5. dotnet test on every non-OfficeIntegration project
+      6. coverage report and per-project threshold check
+      7. dotnet list package --vulnerable --include-transitive
+      8. repository hygiene (git status --short, dirty working tree)
+      9. SBOM (CycloneDX) generation
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -87,6 +88,10 @@ Run-Step 'restore' {
 
 Run-Step 'build Release -warnaserror' {
     dotnet build $Solution -c $Configuration --no-restore -warnaserror
+}
+
+Run-Step 'publish AddIn (packed XLL)' {
+    dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c $Configuration --no-build
 }
 
 Run-Step 'test (OfficeIntegration excluded)' {

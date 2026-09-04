@@ -28,6 +28,23 @@
   -->
   <PropertyGroup>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+
+    <!--
+      Suppress CA1707 (identifiers should have correct suffix) for test
+      projects. xUnit test method names use snake_case by convention
+      (e.g., ToString_contains_both_coordinates). Production code still
+      enforces CA1707 via the root Directory.Build.props.
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+
+    <!--
+      Test projects do not emit XML documentation files. The root
+      props set GenerateDocumentationFile=true so that public API in
+      src/ is documented (CS1591 enforced); test classes and methods
+      are not API and requiring XML docs on every [Fact] would hurt
+      readability. CS1591 does not fire for test projects.
+    -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <PropertyGroup>

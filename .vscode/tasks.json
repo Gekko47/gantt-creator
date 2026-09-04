@@ -1,0 +1,131 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "verify-quick",
+      "detail": "Runs format check, Release build and AddIn publish, and non-Office unit tests (~10 s).",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/verify-quick.ps1"
+      ],
+      "options": {},
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "close": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "verify-full",
+      "detail": "Runs format/analyzer check, Release build and AddIn publish, non-Office tests with coverage, and hygiene checks (~60 s). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/verify.ps1"
+      ],
+      "options": {},
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "close": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "test",
+      "detail": "Runs all non-Office tests (dotnet test, OfficeIntegration excluded).",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "--filter",
+        "Category!=OfficeIntegration"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "test-all",
+      "detail": "Runs all tests including OfficeIntegration (requires Microsoft 365 on Windows).",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "test"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "dependsOn": "publish-addin"
+    },
+    {
+      "label": "publish-addin",
+      "detail": "Publishes the AddIn in Release configuration and produces the packed XLL.",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "${workspaceFolder}/src/GanttCreator.AddIn/GanttCreator.AddIn.csproj",
+        "--configuration",
+        "Release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "dependsOn": [
+        "build"
+      ]
+    },
+    {
+      "label": "build",
+      "detail": "Release build with warnings as errors.",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "--configuration",
+        "Release",
+        "-warnaserror"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "clean",
+      "detail": "Cleans the Release configuration.",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "clean",
+        "--configuration",
+        "Release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "dependsOn": "build"
+    }
+  ]
+}
