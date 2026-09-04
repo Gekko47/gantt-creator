@@ -3,7 +3,7 @@
   "tasks": [
     {
       "label": "verify-quick",
-      "detail": "Runs format check, Release build, and non-Office unit tests (~10 s).",
+      "detail": "Runs format check, Release build and AddIn publish, and non-Office unit tests (~10 s).",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -21,7 +21,7 @@
     },
     {
       "label": "verify-full",
-      "detail": "Runs format/analyzer check, Release build, non-Office tests with coverage, and hygiene checks (~60 s). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
+      "detail": "Runs format/analyzer check, Release build and AddIn publish, non-Office tests with coverage, and hygiene checks (~60 s). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -52,7 +52,8 @@
       },
       "problemMatcher": [
         "$msCompile"
-      ]
+      ],
+      "dependsOn": "publish-addin"
     },
     {
       "label": "test-all",
@@ -61,6 +62,25 @@
       "command": "dotnet",
       "args": [
         "test"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "dependsOn": "publish-addin"
+    },
+    {
+      "label": "publish-addin",
+      "detail": "Publishes the AddIn in Release configuration and produces the packed XLL.",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "${workspaceFolder}/src/GanttCreator.AddIn/GanttCreator.AddIn.csproj",
+        "--configuration",
+        "Release"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -88,8 +108,8 @@
       ]
     },
     {
-      "label": "build-clean",
-      "detail": "Cleans and rebuilds the Release configuration.",
+      "label": "clean",
+      "detail": "Cleans the Release configuration.",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -102,8 +122,17 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ]
+    },
+    {
+      "label": "build-clean",
+      "detail": "Cleans and rebuilds the Release configuration.",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "clean",
+        "build"
       ],
-      "dependsOn": "build"
+      "problemMatcher": []
     }
   ]
 }
