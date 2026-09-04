@@ -438,3 +438,15 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Local artifacts produced by the verify scripts
+scripts/_artifacts/
+scripts/_artifacts/*.txt
+
+# dotnet test results
+TestResults/
+coverage/
+
+# Build outputs (defence in depth; .NET SDK already excludes via the standard VS gitignore above)
+[Bb]in/
+[Oo]bj/

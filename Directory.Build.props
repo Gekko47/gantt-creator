@@ -1,0 +1,67 @@
+<Project>
+
+  <!--
+    Repository-wide MSBuild properties.
+
+    Loaded by every project under src/ and tests/. Per-project files override
+    individual properties as needed. See docs/03-ROADMAP.md R0.4 and the
+    C# architecture rules in AGENTS.md.
+  -->
+
+  <PropertyGroup>
+
+    <!--
+      Language version. .NET 10 SDK supports C# 14 by default; pin explicitly
+      so a future SDK change cannot silently shift the language version.
+    -->
+    <LangVersion>14</LangVersion>
+
+    <!-- Nullable reference types and implicit usings are mandatory. -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Warnings as errors. This is the loudest possible gate. Any new analyzer
+      rule that fires will fail the build. See AGENTS.md: never suppress a
+      warning without a written reason.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!--
+      Analyzers. The .NET SDK ships Microsoft.CodeAnalysis.NetAnalyzers by
+      default; this property makes the intent explicit and enables the
+      "latest" rule set.
+    -->
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>All</AnalysisMode>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!--
+      Deterministic builds. Required for R10.2's "compare two clean Release
+      builds and explain every binary variance" gate.
+    -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!--
+      Central package management is enabled by the presence of
+      Directory.Packages.props. Disable package references in individual
+      csproj files unless an ADR documents an exception.
+    -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+
+    <!-- Source-link for symbol packages; harmless when no SourceLink is configured. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+
+    <!--
+      Test projects get the OfficeIntegration xUnit category filtered out by
+      default (see scripts/verify-quick.ps1). The trait is added to tests in
+      GanttCreator.Office.IntegrationTests by hand.
+    -->
+    <NoWarn>$(NoWarn);CA1515;CA1812;CA1052;CA1063;CA1305;CA1840;CA2254</NoWarn>
+
+  </PropertyGroup>
+
+</Project>

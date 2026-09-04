@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>GanttCreator.Office</RootNamespace>
+    <AssemblyName>GanttCreator.Office</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ExcelDna.Interop" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
+  </ItemGroup>
+</Project>

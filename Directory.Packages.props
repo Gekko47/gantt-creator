@@ -1,0 +1,41 @@
+<Project>
+
+  <!--
+    Central package management. Versions are pinned here; individual csproj
+    files use <PackageReference Include="..." /> with no Version attribute.
+    Bumping a version here is a single, reviewable change.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+
+    <!--
+      Excel-DNA 1.9.0. The AddIn project uses ExcelDna.AddIn. The Integration
+      and Interop libraries are listed here for explicit pinning and so that
+      the Office / Raster projects can take a direct reference without a
+      transitive surprise on a future NuGet resolution.
+
+      - ExcelDna.AddIn       1.9.0  (latest stable; produces the .xll)
+      - ExcelDna.Integration 1.9.0  (transitive of AddIn; pinned here)
+      - ExcelDna.Interop    16.0.0 (latest stable; ships the Office PIAs
+                                     as net6.0-windows7.0, compatible with
+                                     net10.0-windows per nuget.org metadata)
+
+      See docs/adr/0004-exceldna-package-versions.md.
+    -->
+    <PackageVersion Include="ExcelDna.AddIn"       Version="1.9.0" />
+    <PackageVersion Include="ExcelDna.Integration" Version="1.9.0" />
+    <PackageVersion Include="ExcelDna.Interop"    Version="16.0.0" />
+
+    <!-- xUnit. The unit / contract / addin test projects use these. -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="17.14.1" />
+    <PackageVersion Include="xunit"                            Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio"        Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector"               Version="6.0.4" />
+
+  </ItemGroup>
+
+</Project>

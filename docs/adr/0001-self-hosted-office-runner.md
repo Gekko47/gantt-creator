@@ -1,0 +1,8 @@
+# ADR-0001 — Self-hosted Windows runner as the Office-integration host
+
+- **Status**: Accepted
+- **Date**: 2026-09-04
+- **Context**: Office integration tests require a licensed Microsoft 365 x64 install. The four candidate hosts are: (1) a self-hosted Windows runner dedicated to this repo, (2) GitHub-hosted `windows-latest` with an Office install-on-the-fly action, (3) per-developer Windows VMs, (4) defer the decision to R1.6. The test strategy in `docs/04-TEST-STRATEGY.md` lists "dedicated Windows machine with supported Office" as the home for these tests.
+- **Decision**: Option 1 — a real licensed Microsoft 365 x64 install (the `O365HomePremRetail` SKU on this machine, version 16.0.20326) acts as the self-hosted runner. The Office-integration suite is tagged `[Trait("Category","OfficeIntegration")]` and excluded from `scripts/verify.ps1` by default. A separate `scripts/verify-office.ps1` runs the suite at phase exit and release on the same machine.
+- **Consequences**: Real Office build is always available, the Cline loop is fast on this machine, and Office-integration evidence is reproducible. The cost is that this machine is the bottleneck for the integration suite and a future Windows 11 reference machine may be required for the R10.5 evidence manifest (tracked as L1 in `docs/KNOWN-LIMITATIONS.md`).
+- **Alternatives considered**: GitHub-hosted `windows-latest` (rejected — slow, flaky across Microsoft 365 updates, blocks Cline loops). Per-developer VM (rejected — non-deterministic across machines, expensive to operate). Defer to R1.6 (rejected — the gate is needed for Phase 1 R1.1's F5 evidence).
