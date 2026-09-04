@@ -70,32 +70,19 @@
     <!--
       NoWarn list. Each rule here has a documented reason:
 
-      CA1515 — Type should be internal. Test classes in the architecture
-                tests are public for the assert API; the rule does not
-                apply to the Core boundary tests in
-                GanttCreator.Architecture.Tests.
-      CA1812 — Uninstantiated internal class. The xUnit template's
-                UnitTest1.cs triggers this; R0.5 replaces the
-                placeholders.
-      CA1052 — Static holder types should be Static or NotInheritable.
-                Same as CA1812; the xUnit template triggers it.
-      CA1063 — Implement IDisposable correctly. Same as above; the
-                xUnit template's Dispose pattern is incomplete.
-      CA1305 — Specify IFormatProvider. The xUnit template uses
-                string interpolation that the rule flags; R0.5 fixes
-                or replaces the placeholders.
-      CA1840 — Use Environment.CurrentManagedThreadId. Same as above.
-      CA2254 — Template should be a static expression. The xUnit
-                template's Assert.True/False with string interpolation
-                triggers this; R0.5 fixes.
       CA1707 — Identifiers should not contain underscores. The
                 architecture tests deliberately use snake_case method
                 names so they read as English sentences. This is the
                 standard xUnit convention for behaviour-driven test
-                names. The rule is suppressed globally for test
-                assemblies; non-test code still uses PascalCase.
+                names. The rule is suppressed globally; non-test
+                code still uses PascalCase.
+
+      The following rules were removed in R0.5 because the xUnit
+      template UnitTest1.cs placeholders they targeted have been
+      replaced with real sample tests: CA1515, CA1812, CA1052,
+      CA1063, CA1305, CA1840, CA2254.
     -->
-    <NoWarn>$(NoWarn);CA1515;CA1812;CA1052;CA1063;CA1305;CA1840;CA2254;CA1707</NoWarn>
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
 
   </PropertyGroup>
 
