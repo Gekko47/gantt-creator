@@ -1,0 +1,122 @@
+#requires -Version 7
+<#
+.SYNOPSIS
+    Regenerate the .clinerules/ and .cline/skills/ trees from the
+    canonical docs/ mirror.
+
+.DESCRIPTION
+    The kit has three views of the same content:
+
+      docs/0N-*.md           canonical in-repo source of truth
+      .clinerules/0N-*.md    always-on rules (loaded every Cline turn)
+      .cline/skills/0N-*/    on-demand skills (loaded when a Cline
+                             session decides the description matches)
+
+    This script regenerates the second and third views from the first.
+    It is idempotent; running it twice in a row produces the same output.
+    docs/clinerules/SYNC.md explains the discipline; verify-quick.ps1
+    and verify.ps1 run scripts/check-cline-skills.ps1 as a drift gate.
+#>
+
+[CmdletBinding()]
+param(
+    [string]$DocsRoot     = 'docs',
+    [string]$RulesRoot    = '.clinerules',
+    [string]$SkillsRoot   = '.cline/skills',
+    [int]   $SummaryLines = 25
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Source-of-truth file to skill-name + description map. A new
+# docs/0N-*.md requires an explicit entry here.
+$map = @{
+    '01-ENVIRONMENT.md'        = @{ Name = '01-environment';  Description = 'Use this skill when the conversation is about the development baseline, the .NET / Office / Visual Studio / Excel-DNA / VS Code versions on this machine, the first-run installation checklist, common Office-host failures, or the offline acceptance check.' }
+    '02-ARCHITECTURE.md'       = @{ Name = '02-architecture'; Description = 'Use this skill when the conversation is about the product boundary, the one-visible-sheet + one-VeryHidden-helper-sheet rule, the user worksheet contract (tblGanttData), the VeryHidden config worksheet contract, the scene-first rendering model, the three-renderer equivalence rule, the Ribbon command groups, COM ownership, error handling, or the performance budgets.' }
+    '03-ROADMAP.md'            = @{ Name = '03-roadmap';      Description = 'Use this skill when the conversation is about which phase, which work item (R0.x .. R10.8), which automated gate, or which Office gate applies. Also use it for the cross-phase compatibility matrix, the scope-change protocol, and when the user asks for the next safe action.' }
+    '04-TEST-STRATEGY.md'      = @{ Name = '04-test-strategy';Description = 'Use this skill when the conversation is about test layers, the per-project coverage thresholds, the Core test catalogue, the Excel shape contract tests, the raster tests and golden images, the Office integration harness, the feature-to-test traceability map, fault injection, the flaky-test policy, or the pull-request test-evidence block.' }
+    '05-GIT-QUALITY.md'        = @{ Name = '05-git-quality';  Description = 'Use this skill when the conversation is about branch and review policy, commit design and Conventional Commit format, the local gates (verify-quick.ps1 / verify.ps1), CI jobs, the pull-request template, the review checklist, the comment policy, the dependency policy, or the release gate.' }
+    '06-LLM-PROTOCOL.md'       = @{ Name = '06-llm-protocol'; Description = 'Use this skill when the conversation is about the LLM operating protocol: the required session opening, the evidence ledger, anti-drift controls, anti-hallucination controls, the two-attempt no-loop protocol, context discipline, coding behaviour, the prompt pattern, the human review rhythm, or the agent handoff format.' }
+    '07-GANTT-ENTITY-GUIDE.md' = @{ Name = '07-entity-guide'; Description = 'Use this skill when the conversation is about entity geometry, style tokens, label positions, z-order, the minimum visual reference fixture, the entity-to-renderer equivalence table, or any visual / layout / style / export question. This is the largest skill; load references.md when the summary is not enough.' }
+}
+
+foreach ($root in @($DocsRoot, $RulesRoot, $SkillsRoot)) {
+    if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
+}
+
+# Validate that every mapped canonical source exists.
+foreach ($file in $map.Keys) {
+    $full = Join-Path $DocsRoot $file
+    if (-not (Test-Path $full)) { throw "Canonical source missing: $full" }
+}
+
+# Regenerate each rule and skill.
+foreach ($file in $map.Keys) {
+    $src        = Join-Path $DocsRoot $file
+    $entry      = $map[$file]
+    $skillDir   = Join-Path $SkillsRoot $entry.Name
+    $skillMd    = Join-Path $skillDir 'SKILL.md'
+    $refsMd     = Join-Path $skillDir 'references.md'
+    $rulePath   = Join-Path $RulesRoot $file
+    $body       = Get-Content -LiteralPath $src -Raw
+
+    if (-not (Test-Path $skillDir)) { New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }
+
+    # Always-on rule: stable copy of the canonical body with a one-line
+    # header noting it is regenerated. The header is the only thing the
+    # rule-view adds.
+    $ruleHeaderLines = @(
+        "# $($file.Replace('.md',''))"
+        ''
+        "> Always-on rule. Regenerated by ``scripts/sync-cline-skills.ps1`` from ``docs/$file``. Do not edit it by hand; edit the canonical source and re-run the sync."
+        ''
+    )
+    $ruleHeader = $ruleHeaderLines -join "`n"
+    Set-Content -LiteralPath $rulePath -Value ($ruleHeader + "`n" + $body) -NoNewline -Encoding utf8
+
+    # SKILL.md: front-matter + first N non-empty lines + footer.
+    $nonEmpty = $body -split "`r?`n" | Where-Object { $_.Trim() -ne '' }
+    $summary  = ($nonEmpty | Select-Object -First $SummaryLines) -join "`n"
+    $fmName        = $file.Replace('.md','')
+    $fmDescription = $entry.Description
+    $skillLines = @(
+        '---'
+        "name: $fmName"
+        "description: $fmDescription"
+        '---'
+        ''
+        $summary
+        ''
+        '---'
+        ''
+        '## Where to read more'
+        ''
+        "- Canonical source: ``docs/$file``"
+        "- Always-on rule: ``.clinerules/$file``"
+        "- Full reference: ``./references.md`` in this directory"
+        ''
+    )
+    Set-Content -LiteralPath $skillMd -Value ($skillLines -join "`n") -NoNewline -Encoding utf8
+
+    # references.md: full body of the canonical source plus a header.
+    $refHeaderLines = @(
+        "# Full reference for $file"
+        ''
+        "> Regenerated by ``scripts/sync-cline-skills.ps1`` from ``docs/$file``. Do not edit it by hand; edit the canonical source and re-run the sync."
+        ''
+    )
+    $refHeader = $refHeaderLines -join "`n"
+    Set-Content -LiteralPath $refsMd -Value ($refHeader + "`n" + $body) -NoNewline -Encoding utf8
+}
+
+# Sanity check.
+Get-ChildItem -Path $SkillsRoot -Directory | ForEach-Object {
+    foreach ($f in @('SKILL.md','references.md')) {
+        $p = Join-Path $_.FullName $f
+        if (-not (Test-Path $p)) { throw "Missing $p" }
+    }
+}
+
+$count = (Get-ChildItem -Path $SkillsRoot -Directory).Count
+Write-Host "sync-cline-skills: regenerated $count skills under $SkillsRoot"
+exit 0

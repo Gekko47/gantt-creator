@@ -62,6 +62,13 @@ function Run-Step {
 
 Run-Step 'dotnet --version' { dotnet --version }
 
+Run-Step 'clinerules skill tree in sync' {
+    # Drift gate: re-run the sync and fail if any of the three views
+    # (.clinerules/, .cline/skills/, docs/) is out of date. Wired in so
+    # a stale rule or skill is caught at every commit.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-cline-skills.ps1')
+}
+
 Run-Step 'restore (locked mode if lock exists)' {
     if (Test-Path 'packages.lock.json') {
         dotnet restore --locked-mode
