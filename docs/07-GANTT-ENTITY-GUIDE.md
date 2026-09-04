@@ -1,0 +1,715 @@
+# Gantt visual entity guide — revision 3
+
+> Created 2 September 2026 under a new filename. This revision uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
+
+## Purpose and authority
+
+This is the implementation contract for every visible Gantt entity. It prevents each renderer—or an LLM—from making independent decisions about geometry, colour, labels, z-order, clipping, or export behaviour.
+
+The named tokens and rules are authoritative for implementation. The numeric and colour values in the initial token tables are **initial design defaults, not visually approved facts**. An agent must not change them. The product owner reviews them through the Phase 3/5 reference render; an approved change updates this file, tests, and golden images together.
+
+If a requested behaviour is not defined here, classify it as `unknown` and stop for a decision. Do not infer it from a screenshot alone.
+
+## Shared entity contract
+
+Every entity has:
+
+- a stable `EntityId` unrelated to worksheet row number;
+- an `EntityType` from the supported catalogue;
+- an optional `LaneId`, `ParentId`, and `StackIndex` where applicable;
+- point-based geometry in the shared immutable scene;
+- a named `StyleKey`, resolved before rendering;
+- an explicit z-layer and deterministic order within that layer;
+- clipping and label behaviour defined below;
+- ownership metadata beginning `GanttCreator.` in Excel shapes;
+- equivalent Excel, editable-export, PowerPoint, and PNG representations unless explicitly excluded.
+
+Renderers consume resolved scene primitives. They may translate primitives to host objects but must not independently move labels, recalculate dates, substitute colours, change line widths, or reorder entities.
+
+## Required worksheet fields
+
+| Field | Applies to | Rule |
+| --- | --- | --- |
+| `Id` | all data entities | Stable unique text ID; generated once |
+| `Type` | all rows | Supported entity type only |
+| `Description` | visible entities | User-facing text; blank permitted only where stated |
+| `Start` | span/point events | Required by type |
+| `Finish` | span events | Required; must not precede Start |
+| `LaneId` | lane-bound entities | Events sharing a visual line use the same value |
+| `StackIndex` | lane-bound entities | Non-negative vertical-band order; equal values deliberately share the same line |
+| `ParentId` | critical/child events | Stable ID of the owning activity when required |
+| `LabelPosition` | labelled entities | Supported position or `Auto` |
+| `StyleKey` | styleable entities | Blank uses type default; otherwise an approved named style |
+| `FillColour` | filled rectangles/diamonds/splitters | Blank uses resolved style; override is `#RRGGBB` |
+| `StrokeColour` | lines/outlines | Blank uses resolved style; override is `#RRGGBB` |
+| `Visible` | optional | Blank/true shows; false suppresses entity and its label |
+| `SortOrder` | optional | Stable explicit order before ID tie-break |
+
+The first release does not add raw X, Y, width, or height columns. Workbook style controls set shared tokens; named `StyleKey` values provide controlled exceptions. `FillColour`, `StrokeColour`, and `LabelPosition` are row-level overrides because the product explicitly requires individual entity editing.
+
+Property columns may be shown or hidden through the Ribbon's **Show Properties** control, but they remain columns on the visible user worksheet. They are never moved to `_GanttCreatorConfig`.
+
+## Type catalogue and worksheet dropdown
+
+The `Type` column uses an Excel in-cell dropdown backed by the workbook name `GanttCreator.TypeOptions`, which refers to the materialised built-in catalogue on `_GanttCreatorConfig`. The code-owned `EntityTypeCatalog` remains authoritative. Initialisation and migration write it deterministically to `tblGanttTypes`; the domain parser, worksheet validation, Ribbon controls, entity guide, and tests use the same definitions. No renderer maintains its own type list.
+
+Initial catalogue:
+
+| Dropdown value | Meaning | Dates read | Default style | Fill/colour capability | Allowed label positions |
+| --- | --- | --- | --- | --- | --- |
+| `Splitter` | Section header | none | Splitter | Fill | DataPanelLeft, PlotCentre, Both, None |
+| `Spacer` | Blank vertical space | none | Spacer | none | None |
+| `As-Built Activity` | As-built activity | Start + Finish | AsBuiltActivity | Fill + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `As-Planned Activity` | As-planned activity | Start + Finish | AsPlannedActivity | Fill + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `Baseline Activity` | Baseline activity | Start + Finish | BaselineActivity | Fill + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `Critical Interval` | Critical child interval | Start + Finish | CriticalInterval | Stroke | None |
+| `Delay Event` | Explicit delay span | Start + Finish | DelayEvent | Fill + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `As-Built Procurement` | As-built procurement | Start + Finish | AsBuiltProcurement | Hatch + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `As-Planned Procurement` | As-planned procurement | Start + Finish | AsPlannedProcurement | Hatch + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `Baseline Procurement` | Baseline procurement | Start + Finish | BaselineProcurement | Hatch + outline | Auto, Left, Right, Inside, Above, Below, None |
+| `Custom Activity` | Named custom span | Start + Finish | required `StyleKey` | style-defined | style-defined subset |
+| `As-Built Milestone` | As-built milestone | Start only | AsBuiltMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
+| `As-Planned Milestone` | As-planned milestone | Start only | AsPlannedMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
+| `Baseline Milestone` | Baseline milestone | Start only | BaselineMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
+| `Critical Milestone` | Critical milestone | Start only | CriticalMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
+| `Delineator` | Full-height vertical date line | Start only | DefaultDelineator | Stroke | Auto, TopLeft, TopRight, BottomLeft, BottomRight, None |
+
+Full display names are used because the VeryHidden range removes the direct-list length limitation. These exact values form part of the workbook schema; localisation or renaming requires a schema migration.
+
+Dropdown implementation requirements:
+
+- Apply validation to every current and newly added table body cell in the `Type` column.
+- Set validation formula to the workbook-defined name `=GanttCreator.TypeOptions`; do not construct an inline comma-separated list.
+- Keep the named range limited to active display-name cells in `tblGanttTypes`, with no blank tail cells.
+- Maintain the single approved `_GanttCreatorConfig` sheet; do not create additional list sheets or duplicate catalogues.
+- Validate the catalogue hash and named range before applying validation or parsing Type values.
+- Unknown pasted text is a blocking validation error; do not guess the closest type.
+- Changing Type does not delete dates or overrides. On Refresh, incompatible fields are reported and ignored only where the entity contract explicitly says so.
+
+`Start Label` and `Finish Label` are label roles owned by a span event, not initial Type dropdown entries. Dependency arrows, progress bars, and current-date lines are also excluded until approved.
+
+### VeryHidden catalogue and style rules
+
+`_GanttCreatorConfig` materialises the built-in catalogue and stores workbook style/metric presets so data validation and user customisation remain portable and offline.
+
+- `tblGanttTypes` is regenerated only from the code-owned catalogue and is not user-editable through ordinary UI.
+- `tblGanttStyles` and `tblGanttMetrics` are changed through approved Ribbon dialogs; the add-in writes and validates the underlying rows.
+- Built-in style keys cannot be deleted. A user may create a named custom style with a unique key through the style dialog.
+- Per-row `FillColour`, `StrokeColour`, and `LabelPosition` remain on the visible event row and override the resolved helper-sheet style.
+- The helper sheet contains no schedule/event data and is never used as an export or rendering surface.
+- Sheet protection and `xlSheetVeryHidden` reduce accidental edits but provide no confidentiality or tamper-security guarantee.
+- A catalogue/style schema version and hash are checked on initialise and Refresh. Unsafe repair requires user confirmation.
+
+## Selected-row property editing
+
+Per-entity Ribbon properties operate only when selection resolves to one expanded, visible entity row in `tblGanttData`.
+
+A valid `SingleEntitySelection` requires:
+
+1. exactly one table body row selected;
+2. the row is visible and not a collapsed roll-up/summary representation;
+3. the row has a valid stable `Id` and recognised `Type`;
+4. the entity capability supports the requested property.
+
+When selection is a collapsed parent/roll-up, splitter without the requested capability, spacer, header, total row, multiple rows, or a cell outside the table, per-entity controls are disabled. The add-in does not guess which child entity the user intended.
+
+For a valid selected rectangle or diamond:
+
+- **Shape Fill** opens an offline colour picker. Choosing a colour writes uppercase `#RRGGBB` to that row's `FillColour` cell.
+- **Use Type Default** clears `FillColour`; effective fill again comes from `StyleKey` or the Type default.
+- **Label Position** shows only positions allowed by the selected Type and writes the selected value to that row's `LabelPosition` cell.
+- The Ribbon displays the effective colour and label position, while clearly indicating whether each is inherited or overridden.
+
+For line-only entities such as `CP Interval` and `Delineator`, Shape Fill is disabled and **Line Colour** writes `StrokeColour`. Procurement exposes hatch-family colour through `StrokeColour`; background fill remains style-defined unless the approved procurement style supports a fill override.
+
+Changing a property edits the table only. It does not directly format the existing generated shape. The new appearance becomes visible after Refresh.
+
+Tests cover selection inside each table column, full-row selection, multiple rows, collapsed parents, expanded leaf rows, every capability combination, inherited/overridden state, colour parsing, allowed label positions, and preservation through sort/save/reopen.
+
+## Refresh-only rendering contract
+
+The add-in never renders in response to normal worksheet editing. Do not connect `Worksheet.Change`, selection change, table events, colour-picker completion, or Type dropdown changes to Refresh.
+
+Editing behaviour:
+
+1. The user edits Type, description, dates, fill/line override, or label position.
+2. Excel stores the changed table values immediately.
+3. Existing Gantt shapes remain exactly as last rendered.
+4. The user clicks **Refresh** on the Gantt Creator Ribbon.
+5. Refresh reads the complete current table, validates it, builds a new scene, and updates owned shapes only if there are no blocking errors.
+6. On a blocking error, the previous valid chart remains unchanged and the user receives actionable row/field errors.
+
+The implementation may mark the workbook/chart as `Changes pending` without rendering, but this indicator is optional in the first release. It must not alter the chart or save the workbook automatically.
+
+Automated tests prove that editing commands and worksheet-change callbacks never call the render service. Real Excel tests edit several fields, verify shape properties remain unchanged, click Refresh once, and then verify all changes appear together.
+
+## Shared metric tokens
+
+All dimensions are points. Store them once in a versioned workbook style configuration. Validate before building the scene.
+
+| Token | Initial default | Valid initial range | Meaning |
+| --- | ---: | ---: | --- |
+| `ChartOuterPaddingPt` | 6 | 0–36 | Padding inside the exported chart frame |
+| `TitleBandHeightPt` | 24 | 12–72 | Title row height |
+| `YearBandHeightPt` | 18 | 10–48 | Year header height |
+| `PeriodBandHeightPt` | 16 | 10–48 | Month/period header height |
+| `MinimumHeaderLabelWidthPt` | 18 | 6–72 | Minimum visible width before suppressing a period/year label |
+| `LaneHeightPt` | 18 | 10–72 | Minimum visual lane height |
+| `SplitterHeightPt` | 18 | 10–72 | Section-header lane height |
+| `SpacerHeightPt` | 9 | 0–72 | Blank separator height |
+| `LanePaddingTopPt` | 3 | 0–18 | Space above the first stack band |
+| `LanePaddingBottomPt` | 3 | 0–18 | Space below the last stack band |
+| `ActivityHeightPt` | 8 | 2–36 | Standard rectangle height |
+| `StackGapPt` | 2 | 0–12 | Vertical gap between stacked events |
+| `MilestoneSizePt` | 8 | 3–36 | Diamond tip-to-tip width and height |
+| `LabelGapPt` | 3 | 0–18 | Gap between a shape bound and external label |
+| `LabelHeightPt` | 10 | 6–36 | Default one-line label box height |
+| `MaximumExternalLabelWidthPt` | 144 | 36–360 | Maximum width before approved wrap/ellipsis policy |
+| `StandardOutlinePt` | 0.75 | 0–6 | Activity/milestone outline width |
+| `CriticalLinePt` | 2.25 | 0.5–12 | Critical overlay thickness |
+| `GridLinePt` | 0.5 | 0.25–3 | Minor grid line width |
+| `MajorBoundaryPt` | 1 | 0.25–6 | Year/plot/frame boundary width |
+| `DelineatorLinePt` | 0.75 | 0.25–6 | Vertical delineator width |
+| `HatchPitchPt` | 4 | 2–18 | Procurement hatch spacing |
+| `HatchLinePt` | 0.5 | 0.25–3 | Procurement hatch stroke width |
+
+Validation rejects NaN, infinity, negative dimensions, and combinations that cannot form a lane. It reports the specific token; it does not silently clamp invalid settings.
+
+## Shared colour and typography tokens
+
+Hex values are initial defaults. Colours include an explicit alpha of `FF` unless transparency is named.
+
+| Token | Initial value | Use |
+| --- | --- | --- |
+| `ActualFill` | `#00B0F0` | As-built activity/milestone |
+| `ActualOutline` | `#0070C0` | As-built outline/hatch |
+| `PlannedFill` | `#92D050` | As-planned activity/milestone |
+| `PlannedOutline` | `#548235` | As-planned outline/hatch |
+| `BaselineFill` | `#00B050` | Baseline activity/milestone |
+| `BaselineOutline` | `#006100` | Baseline outline/hatch |
+| `CriticalStroke` | `#FF0000` | Critical interval/milestone |
+| `CriticalOutline` | `#C00000` | Critical milestone/delay outline |
+| `DelayFill` | `#FF0000` | Delay event |
+| `DelayText` | `#FFFFFF` | Label inside delay event |
+| `DefaultText` | `#000000` | General labels/table/header text |
+| `ChartBackground` | `#FFFFFF` | Chart/table background |
+| `DataPanelFill` | `#FFFFFF` | Exported data cells |
+| `HeaderFill` | `#FFFFFF` | Data/period header cells |
+| `YearHeaderFill` | `#D9D9D9` | Year band |
+| `SplitterFill` | `#FFE699` | Section/splitter band |
+| `AlternateBandFill` | `#F2F2F2` | Alternating period band |
+| `MinorGridStroke` | `#D9D9D9` | Minor grid/lane separator |
+| `MajorGridStroke` | `#000000` | Year/plot/frame boundary |
+| `DelineatorStroke` | `#404040` | Default delineator |
+| `WarningFill` | `#FFF2CC` | Non-exported validation indication |
+
+Typography tokens:
+
+- `FontFamily`: `Aptos` initial default; the reference machine records the exact installed version.
+- `BodyFontSizePt`: `8`.
+- `HeaderFontSizePt`: `8`.
+- `YearFontSizePt`: `9`, bold.
+- `TitleFontSizePt`: `11`, bold.
+- `DelineatorFontSizePt`: `8`, bold.
+
+The style dialog must show a contrast warning when text/fill combinations are difficult to read. It may not silently replace an entered colour. Golden images use the pinned reference font; missing fonts produce a clear error or approved fallback, never an unreported substitution.
+
+## Shared coordinate rules
+
+- `ChartBounds` encloses the selected data panel, headers, and plot—not temporary staging space.
+- `PlotBounds` begins below the period header and excludes the data panel.
+- X coordinates derive only from `TimeScale`; Y coordinates derive only from lane/stack layout.
+- `TimeScale.DateToX(date)` maps the start of that calendar day. The selected plot finish is inclusive, so the plot's exclusive right boundary is `DateToX(PlotFinish + 1 day)`.
+- Span dates are inclusive: `left = DateToX(Start)` and `right = DateToX(Finish + 1 day)`. A one-day span therefore has exactly one day of width.
+- Milestones and delineators are point events: `centreX = DateToX(EventDate)`. Do not add half a day or inherit the span finish rule.
+- Dates before/after the time range are clipped at `PlotBounds.Left/Right`.
+- An event wholly outside the time range emits no bar/marker but may produce a warning according to validation policy.
+- Use one edge-rounding pass when translating points to Excel `Single` geometry or raster pixels.
+- Labels use visible/clipped shape bounds unless a specific entity says otherwise.
+- Equal z-layer entities order by lane, stack, sort order, then stable ID.
+
+## Z-order contract
+
+| Layer | Entities |
+| ---: | --- |
+| 0 | chart/data-panel background |
+| 10 | alternate time bands |
+| 20 | minor and major grid lines, lane separators |
+| 25 | delineator lines |
+| 30 | splitter/section backgrounds |
+| 40 | baseline, planned, actual, procurement, delay, and custom activity bodies |
+| 50 | critical interval overlays |
+| 60 | milestone diamonds |
+| 70 | activity/milestone/date labels |
+| 75 | delineator labels |
+| 80 | plot frame, table borders, period/year headers |
+| 90 | chart title and optional legend |
+
+Within activity-body layer 40, use this additional order from back to front: baseline, planned, actual, baseline/planned/actual procurement immediately above its corresponding base family, custom, then delay. After subtype priority, order by lane, stack, `SortOrder`, and stable ID. This makes same-stack overlaps reproducible without pretending they do not exist.
+
+An agent must not call `BringToFront` opportunistically. The renderer applies this complete ordering deterministically.
+
+## 1. Gantt document and chart frame
+
+**Purpose:** root entity defining the complete exportable visual.
+
+**Source:** workbook title/settings, visible data panel bounds, selected time range, lanes, and export inclusion settings.
+
+**Geometry:** `ChartBounds` is the union of the title, data panel, time headers, and plot plus `ChartOuterPaddingPt`. The outer frame follows the final bounds. Empty whitespace outside these bounds is not exported.
+
+**Style:** `ChartBackground`, `MajorGridStroke`, and `MajorBoundaryPt`.
+
+**Labels:** none; the title is a separate entity.
+
+**Validation:** positive width/height, valid time range, at least one visible lane for a chart render. An empty data table may show setup guidance but is not a valid export.
+
+**Tests:** exact union/crop bounds, zero/invalid dimensions, chart-only versus data-plus-chart export, no surrounding PNG whitespace, grouped export bounds.
+
+## 2. Chart title
+
+**Purpose:** identify the visual, for example “As-Built with Critical Path”.
+
+**Source:** workbook setting `ChartTitle`; blank suppresses the title band only when `ShowTitle=false` or the product rule explicitly permits it.
+
+**Geometry:** spans the configured export width above both data panel and plot. Height is `TitleBandHeightPt`. Text is horizontally centred and vertically middle-aligned.
+
+**Style:** `HeaderFill`, major bottom border, `TitleFontSizePt`, bold, `DefaultText`.
+
+**Labels:** the entity is text; no secondary label.
+
+**Validation:** enforce a documented maximum length; overflow uses ellipsis in the live view and a warning, not an automatic font-size reduction.
+
+**Tests:** blank/show policy, centring, long text, Unicode, export equivalence.
+
+## 3. Visible data panel
+
+**Purpose:** display and edit the source fields alongside the Gantt.
+
+**Source:** `tblGanttData`, visible approved columns, current Excel column widths, and row heights.
+
+**Geometry:** live view uses cells. Export composition reproduces each included cell as a background rectangle plus text and shared borders using the exact measured cell bounds in points. The panel right edge touches the plot left edge without overlap or gap.
+
+**Style:** workbook cell styles in the live sheet; export uses `DataPanelFill`, `DefaultText`, and the resolved border/font tokens. User-defined arbitrary cell formatting is not automatically interpreted as Gantt semantics.
+
+**Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format.
+
+**Validation:** required columns exist once; no merged body cells; supported date/value types; positive visible column widths.
+
+**Tests:** adjacent bounds, row alignment with lanes, date formatting, long descriptions, hidden/optional column inclusion, editable shape replication, one-sheet invariant.
+
+## 4. Data-panel header
+
+**Purpose:** label fields such as Type, Description, Start, Finish, and Duration.
+
+**Source:** schema display names and localisation resources.
+
+**Geometry:** follows live header-cell bounds. Export uses rectangles/text with shared borders. Header height aligns exactly with the period-header bottom.
+
+**Style:** `HeaderFill`, `HeaderFontSizePt`, bold, centred unless the schema defines left alignment for Description.
+
+**Labels:** header text only. Sort/filter icons from the Excel Table are not reproduced in export.
+
+**Validation/tests:** unique names, no clipped required heading at supported minimum widths, exact alignment with the plot header and first lane.
+
+## 5. Year header band
+
+**Purpose:** group periods by calendar year.
+
+**Source:** selected plot start/finish and `TimeScale`.
+
+**Geometry:** one clipped rectangle per year intersecting the plot. Left/right edges use exact date mapping. Text centres in the visible portion. Height is `YearBandHeightPt`.
+
+**Style:** `YearHeaderFill`, major border, `YearFontSizePt`, bold.
+
+**Labels:** four-digit year. A partial year remains labelled if its visible width is at least `MinimumHeaderLabelWidthPt`; otherwise it suppresses text but keeps boundaries.
+
+**Validation/tests:** cross-year ranges, partial years, leap years, very narrow ranges, exact shared boundary with period headers.
+
+## 6. Period header band
+
+**Purpose:** show the selected time subdivision, initially month, quarter, or year.
+
+**Source:** time-scale setting and plot range.
+
+**Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`; period boundaries continue into the plot as grid lines.
+
+**Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
+
+**Labels:** approved unambiguous format (`MM`, `MMM`, quarter label, or year). The format is a setting, not inferred from locale. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+
+**Validation/tests:** every supported scale/format, partial periods, boundary alignment, narrow widths, locale independence.
+
+## 7. Plot background and alternating time bands
+
+**Purpose:** provide readable temporal columns behind all events.
+
+**Source:** period sequence and banding setting.
+
+**Geometry:** each band spans `PlotBounds.Top` through `PlotBounds.Bottom`; it never extends through the title or data panel.
+
+**Style:** alternating `ChartBackground` and `AlternateBandFill`; no independent outline.
+
+**Labels:** none.
+
+**Validation/tests:** exact coverage without gaps/overlaps, correct parity after clipped first period, correct crop and z-layer.
+
+## 8. Time grid and major boundaries
+
+**Purpose:** align event dates and distinguish important time boundaries.
+
+**Source:** period/year boundaries and show/hide settings.
+
+**Geometry:** vertical lines use exact `TimeScale` X positions. Minor lines use `GridLinePt`; year/plot edges use `MajorBoundaryPt`. Horizontal lane separators span the data panel and plot only when configured.
+
+**Style:** `MinorGridStroke` or `MajorGridStroke`; solid unless an approved style specifies a dash pattern.
+
+**Labels:** none.
+
+**Validation/tests:** no duplicate coincident minor/major lines, year line wins at shared X, plot frame closes cleanly, common zoom/DPI point tolerance.
+
+## 9. Lane
+
+**Purpose:** stable visual line shared by one or more events.
+
+**Source:** `LaneId`, lane description/parent information, ordered visible events, and stack indices.
+
+**Geometry:** sort the distinct `StackIndex` values and map them to consecutive visual slots. Sparse values preserve order but do not create empty height. Multiple events with the same value use the same vertical centre, allowing sequential or overlapping events on one line.
+
+For each visual slot, `slotHeight` is the maximum resolved rectangle height or milestone size assigned to that slot. Minimum lane height and required content height are:
+
+```text
+contentHeight = topPadding
+              + sum(slotHeight)
+              + max(0, stackCount - 1) * StackGapPt
+              + bottomPadding
+laneHeight = max(LaneHeightPt, contentHeight)
+```
+
+The centre of a slot is the lane top plus top padding, all preceding slot heights/gaps, and half the current slot height. The lane grows; events are never silently compressed.
+
+**Style:** transparent entity with optional horizontal separator.
+
+**Labels:** lane description may be represented by the first/parent row in the data panel; it is not automatically duplicated in the plot.
+
+**Validation:** stable lane ID and non-negative stack indices. Duplicate indices are valid. Same-stack overlap is rendered using deterministic subtype/sort/ID z-order and may produce a non-blocking ambiguity warning; it is never silently moved.
+
+**Tests:** single/multiple slots, several events sharing one slot, mixed bars/diamonds, sparse indices, reordered rows, same-stack overlap, automatic growth, and row/data-panel alignment.
+
+## 10. Splitter or section header
+
+**Purpose:** visually separate and name groups such as work packages.
+
+**Source:** `Type=Splitter`, `Description`, ordering, optional parent relationship.
+
+**Geometry:** occupies a complete lane across the included data panel and plot. It has no date geometry. Height is `SplitterHeightPt`.
+
+**Style:** `SplitterFill` with major top/bottom border; no activity fill.
+
+**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs.
+
+**Validation/tests:** no required dates, deterministic group placement, export span, expand/collapse interaction where supported.
+
+## 11. Spacer
+
+**Purpose:** add deliberate vertical separation without a visible event.
+
+**Source:** `Type=Spacer` and optional named spacer size.
+
+**Geometry:** blank lane of `SpacerHeightPt`. No plot shapes other than background/bands continuing through it.
+
+**Style/labels:** no foreground fill, border, or label unless a later approved design says otherwise.
+
+**Validation/tests:** dates ignored with warning, height range, plot band continuity, no exportable foreground shape.
+
+## 12. General span activity
+
+**Purpose:** shared geometry contract for planned, actual, baseline, procurement, delay, and custom spans.
+
+**Source:** `Start`, `Finish`, `LaneId`, `StackIndex`, `Description`, `StyleKey`, and `LabelPosition`.
+
+**Geometry:** use the shared inclusive span rule, clip to the plot, and create a rectangle centred on the stack band. Height is the resolved activity-height token. A one-day activity has exactly one day of width and must not collapse to zero.
+
+**Style:** resolved by subtype. Fill and outline are explicit; no renderer defaults.
+
+**Label positions:** `Auto`, `Left`, `Right`, `Inside`, `Above`, `Below`, `None`. Manual value wins. `Auto` tries Right → Inside → Left. Above/Below are only used automatically by a named style, not as an unbounded collision cascade.
+
+**Clipping:** use visible rectangle bounds for label candidates. An arrow or continuation glyph is not shown unless later approved.
+
+**Validation/tests:** missing/reversed dates, one day, off-range/clipped range, minimum visible width, label candidate order, stack alignment, all renderer representations.
+
+## 13. As-planned activity
+
+**Purpose:** represent the planned programme span.
+
+**Base:** general span activity.
+
+**Default style:** `PlannedFill`, `PlannedOutline`, standard outline, standard activity height. Label uses `DefaultText` and `Auto` unless explicitly set.
+
+**Overlap rule:** may occupy the same lane and dates as actual/baseline events. Different `StackIndex` values separate them vertically; equal values deliberately share the same line. It is not shortened, moved, or hidden because another subtype overlaps.
+
+**Tests:** style-token mapping, planned/actual same-lane overlap, label side, Excel/PNG colour equivalence.
+
+## 14. As-built activity
+
+**Purpose:** represent the actual execution span.
+
+**Base:** general span activity.
+
+**Default style:** `ActualFill`, `ActualOutline`, standard outline and activity height.
+
+**Critical relationship:** critical child intervals reference this or another parent by `ParentId`; critical geometry is not encoded as ad-hoc red formatting on the activity.
+
+**Tests:** style-token mapping, multiple critical children, clipped actual, stable parent/child IDs.
+
+## 15. Baseline activity
+
+**Purpose:** represent an approved baseline distinct from current planned/actual data.
+
+**Base:** general span activity.
+
+**Default style:** `BaselineFill`, `BaselineOutline`, standard outline and activity height.
+
+**Overlap rule:** same as planned/actual. The user selects its stack band; the renderer does not infer which bar belongs above another. Equal stack values intentionally share the same line.
+
+**Tests:** baseline style, three-way lane stack, unchanged ordering after sort/refresh.
+
+## 16. Critical interval
+
+**Purpose:** identify one or more critical portions of a parent activity.
+
+**Source:** `Type=Critical`, `Start`, `Finish`, `ParentId`, optional `LaneId`; the parent supplies lane/stack when omitted.
+
+**Geometry:** apply the inclusive span rule and clip the interval to both the plot and visible parent span. Initial placement is a `CriticalStroke` line along the parent's top edge with centreline `parent.Top + CriticalLinePt / 2`, keeping the stroke inside the body. Thickness is `CriticalLinePt`. A standalone critical span is invalid unless an approved style explicitly supports it.
+
+**Style:** solid `CriticalStroke`, square line caps unless approved otherwise. It must remain visually above the body and below labels/milestones.
+
+**Labels:** none by default. A critical milestone is a milestone subtype, not a zero-length interval.
+
+**Validation:** parent exists and is a span; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
+
+**Tests:** multiple disjoint/adjacent/overlapping children, parent clipping, top-edge position, thickness, z-order, missing parent.
+
+## 17. Delay event
+
+**Purpose:** highlight a delay period as an explicit event rather than inferred schedule logic.
+
+**Base:** general span activity.
+
+**Default style:** `DelayFill`, critical/red outline, `DelayText`, standard activity height. Initial label position is `Inside`; if text does not fit, `Auto` tries Right then Left and changes to `DefaultText` outside the red body.
+
+**Semantics:** dates and description are supplied by the user. The add-in does not calculate responsibility, causation, or entitlement.
+
+**Tests:** inside/outside text-colour switch, narrow delay bar, overlap with actual/critical events, explicit manual label position.
+
+## 18. Procurement activity
+
+**Purpose:** distinguish procurement/manufacture periods from solid construction activities.
+
+**Base:** general span activity.
+
+**Default style:** transparent/white background with diagonal hatch and outline using the selected planned/actual/baseline colour family. Hatch angle is 45 degrees, pitch is `HatchPitchPt`, and stroke width is `HatchLinePt`.
+
+**Renderer rule:** the scene defines hatch angle, pitch, line width, clip rectangle, and colour. Excel/export may use a native pattern only if the compatibility test proves equivalent bounds and adequate appearance; otherwise emit editable clipped hatch lines as group children. PNG uses the same scene parameters.
+
+**Labels:** subtype style may place description Inside when contrast is sufficient; otherwise general `Auto`.
+
+**Tests:** each colour family, hatch clipping/spacing, narrow spans, group editability, Excel/PowerPoint/PNG visual comparison.
+
+## 19. Custom activity
+
+**Purpose:** support an approved named style without changing geometry code.
+
+**Base:** general span activity.
+
+**Style:** `StyleKey` is required and must resolve to a stored named style. An unknown key is a validation error; the renderer must not invent or fall back silently.
+
+**Shape extensions:** optional tail/head markers are permitted only when the named style schema explicitly defines them. Their geometry becomes separate scene primitives and tests.
+
+**Labels/tests:** use general span rules; test unknown style, resolved colours/markers, export group order, and no arbitrary custom code execution.
+
+## 20. General milestone diamond
+
+**Purpose:** represent an event occurring on one date.
+
+**Source:** event date in `Start` or the approved milestone-date field, plus lane, stack, description, style, and label position.
+
+**Geometry:** build a four-point polygon—not a rotated square—centred at the date X and stack-band centre Y:
+
+```text
+top    = (centreX, centreY - size/2)
+right  = (centreX + size/2, centreY)
+bottom = (centreX, centreY + size/2)
+left   = (centreX - size/2, centreY)
+```
+
+`size = MilestoneSizePt`. This makes the tip-to-tip bounds exact and consistent across Excel, PowerPoint, and PNG.
+
+**Label positions:** `Auto`, `Left`, `Right`, `Above`, `Below`, `None`. `Inside` is invalid at the initial minimum size. `Auto` tries Right → Left → Above → Below, testing the full diamond and label bounds.
+
+**Clipping:** a centre outside the plot suppresses the diamond with a warning. A centre exactly on an edge is permitted; the marker is clipped to the plot/export policy defined in the work item.
+
+**Tests:** exact tips/bounds, each position, right-edge flip, same-date stacked milestones, plot-edge policy, editable polygon output.
+
+## 21. Planned, actual, baseline, and critical milestones
+
+All use the general milestone geometry.
+
+| Subtype | Fill | Outline | Default label |
+| --- | --- | --- | --- |
+| Planned milestone | `PlannedFill` | `PlannedOutline` | Auto |
+| Actual milestone | `ActualFill` | `ActualOutline` | Auto |
+| Baseline milestone | `BaselineFill` | `BaselineOutline` | Auto |
+| Critical milestone | `CriticalStroke` | `CriticalOutline` | Auto |
+
+A milestone does not inherit critical styling merely because it shares a date with a critical interval. Its `Type`/`StyleKey` controls styling.
+
+**Tests:** complete subtype style matrix, equal date/different stacks, label collisions, stable z-order above bars and critical lines.
+
+## 22. Activity or milestone description label
+
+**Purpose:** display the entity description without changing the underlying shape.
+
+**Source:** `Description` or an approved label template. The first release supports explicit safe fields only; it does not execute formulas or arbitrary template code.
+
+**Position precedence:** explicit row value → named style default → `Auto` candidates → deterministic fallback plus warning.
+
+**Candidate geometry:**
+
+- Right: label left = shape right + `LabelGapPt`; vertically centred.
+- Left: label right = shape left − `LabelGapPt`; vertically centred.
+- Inside: centred in the visible rectangle; allowed only when measured text fits the inner bounds.
+- Above: horizontally centred; label bottom = shape top − `LabelGapPt`.
+- Below: horizontally centred; label top = shape bottom + `LabelGapPt`.
+
+Candidate acceptance requires containment within allowed chart bounds and no intersection with registered foreground shapes or higher-priority labels, except an `Inside` label may occupy its own parent rectangle. Maximum external width is `MaximumExternalLabelWidthPt`.
+
+Placement priority is: explicit manual positions first; then critical milestones, other milestones, delay labels, actual labels, planned labels, baseline labels, procurement/custom labels, date labels, and delineator labels. Within a priority use lane, stack, sort order, then stable ID. If no candidate is clear, use the entity's defined fallback and emit one warning; do not move labels differently on each refresh.
+
+**Text measurement:** use one injected deterministic text-metrics service during scene construction. The service implementation/version/font is pinned for tests. Excel and raster renderers consume the resulting label bounds and do not reselect the side.
+
+**Overflow:** no automatic font shrinking. Apply the approved wrap, ellipsis, or warning policy for that style. External labels may use an approved maximum width.
+
+**Tests:** every position, manual precedence, candidate boundary flip, deterministic collisions, Unicode, long/blank text, renderer bounds equivalence.
+
+## 23. Start-date and finish-date labels
+
+**Purpose:** optionally show dates independently of the description.
+
+**Source:** event Start/Finish and approved invariant display format.
+
+**Geometry:** start label anchors Left of the visible bar by default; finish label anchors Right. Explicit positions may use the same external choices as a span label. They are separate scene text entities with IDs derived from the parent event ID and label role.
+
+**Style:** body font and default text unless a named style says otherwise.
+
+**Validation:** no start/finish date label for a field the event type does not use. A clipped event may either display the true date or suppress the off-plot date according to one approved chart setting; never infer per renderer.
+
+**Tests:** display formats, clipping policy, same date, independent visibility, collision with description label, stable IDs.
+
+## 24. Vertical delineator line and label
+
+**Purpose:** mark a significant date across the complete Gantt plot height.
+
+**Source:** `Type=Delineator`, the single event date in `Start`, description, style, stroke override, and label position. `Finish`, `LaneId`, and `StackIndex` are not read for geometry.
+
+**Creation workflow:** the user may select `Delineator` directly from the Type dropdown or click **Add Vertical Line** on the Ribbon. The Ribbon command opens an offline dialog for Date, Label, Label Position, Line Style, Colour, Thickness, and Visible; on confirmation it adds one visible table row with a generated stable ID. It edits table data only and does not draw until Refresh.
+
+**Editing/removal:** change the row's `Start`, `Description`, `LabelPosition`, `StrokeColour`, `StyleKey`, or `Visible` value, then click Refresh. **Remove Selection** deletes a selected valid delineator row after the standard confirmation/undo policy. Direct click-to-draw interaction on the chart is excluded from the first release.
+
+**Geometry:** X is the exact date position. The line runs from `PlotBounds.Top` to `PlotBounds.Bottom`, excluding title/data/time-header bands. Width is `DelineatorLinePt`.
+
+**Style:** `DelineatorStroke`, solid by default; approved named styles may define dash pattern and colour. Line stays below activity bodies but remains visible in uncovered plot areas.
+
+**Label positions:** `Auto`, `TopLeft`, `TopRight`, `BottomLeft`, `BottomRight`, `None`. `Auto` tries TopRight → TopLeft → BottomRight → BottomLeft. The label box is offset by `LabelGapPt` from the line and contained within chart bounds. Orientation is horizontal initially; rotated text requires a later approved style token and tests.
+
+**Multiple delineators:** same-date lines are drawn once per resolved line style when identical; distinct labels are stacked deterministically with `StackGapPt`. Near-date labels use normal collision checks and may flip side.
+
+**Validation:** `Start` is required and must be within or on the plot range; blank description is allowed only when label is `None`. A populated `Finish`, `LaneId`, or `StackIndex` is retained but produces a non-blocking “not used by Delineator” warning so data is never silently deleted.
+
+**Tests:** Type dropdown creation, Ribbon-dialog creation, Start-only date semantics, ignored-field warnings, no render before Refresh, edit/remove/visibility workflow, full plot height, exact X, every label corner, left/right plot edge, same-date stacking, z-order behind bars, and export equivalence.
+
+## 25. Optional legend
+
+**Purpose:** explain the styles used in the current visual.
+
+**Status:** optional first-release entity; hidden by default unless the product owner approves it.
+
+**Source:** only style categories actually visible in the scene, in fixed category order. It must not reproduce the legacy configuration sheet. Supported `LegendPosition` values are `Right` and `Bottom`; blank uses `Right`.
+
+**Geometry:** a bounded group outside the plot but inside `ChartBounds`, placed according to `LegendPosition`. It reuses miniature body/marker primitives and text labels.
+
+**Style:** derived from the exact resolved tokens used by entities.
+
+**Validation/tests:** no duplicate entries, stable order, correct representative symbol, bounds included in export ratio, editable child shapes.
+
+## 26. Validation and warning indicators
+
+**Purpose:** explain bad data without corrupting the chart.
+
+**Live-only rule:** validation indicators may highlight cells or appear in a Ribbon/dialog warning list. They are not included in editable or PNG exports unless an explicit diagnostic-export feature is approved.
+
+**Behaviour:** blocking errors prevent scene replacement and leave the last valid chart unchanged. Warnings permit rendering and are sorted by severity, row, field, then code.
+
+**Style:** `WarningFill` or accessible equivalent; original cell formatting must be restorable.
+
+**Tests:** blocking/no-mutation, warning/render, deterministic order, restoration after correction, export exclusion.
+
+## Ownership, editability, and refresh
+
+- Live shapes are generated artifacts. Direct manual formatting of them is not a persistent input and may be overwritten on Refresh.
+- User changes persist through table fields, Ribbon style settings, or approved named styles.
+- Editable export and PowerPoint shapes are unlocked normal Office shapes; every rectangle, diamond, line, and label can be selected after ungrouping.
+- Refresh touches only shapes carrying valid Gantt Creator ownership metadata.
+- Unknown or malformed ownership tags are reported; unowned shapes are never deleted.
+
+## Entity-to-renderer equivalence
+
+| Entity | Live worksheet | Editable composition / PowerPoint | PNG |
+| --- | --- | --- | --- |
+| Data panel/header | Excel cells | rectangle/text/line shapes | raster primitives |
+| Title/time headers | cells or owned shapes per approved renderer | grouped native shapes | raster primitives |
+| Bands/grid/frame | owned shapes or cell formatting under one policy | native shapes | raster primitives |
+| Activity/delay | rectangle shapes | rectangle shapes | raster rectangles |
+| Procurement | pattern or editable hatch group after compatibility proof | editable hatch group | clipped raster hatch |
+| Critical interval | line shape | line shape | raster line |
+| Milestone | four-point freeform polygon | freeform polygon | raster polygon |
+| Labels | text box shapes | text box shapes | raster text at scene bounds |
+| Delineator | line plus text box | line plus text box | raster line/text |
+| Validation indicator | live cells/dialog only | excluded | excluded |
+
+If a renderer cannot represent a primitive faithfully, implementation stops for an ADR. It must not silently substitute a flattened image in the editable composition.
+
+## Minimum visual reference fixture
+
+The golden/reference fixture must contain:
+
+- planned, actual, and baseline spans on one lane;
+- two disjoint critical intervals on an actual span;
+- a narrow delay event with an external fallback label;
+- each procurement hatch colour family;
+- planned, actual, baseline, and critical milestones, including two on one date;
+- three stacked events on one lane;
+- left/right-clipped activities;
+- each manual label position and at least two `Auto` flips;
+- two same-date delineator labels and one near the right boundary;
+- a splitter, spacer, title, partial first/last period, and cross-year header;
+- long text, Unicode text, and one non-blocking warning;
+- an unrelated manual Excel shape proving ownership isolation.
+
+This one fixture does not replace focused unit tests. It is the common visual comparison across Excel, editable paste, PowerPoint, and PNG.
+
+## Explicitly unsupported until approved
+
+Do not implement or infer:
+
+- dependency arrows or logic links;
+- percent-complete/progress fills;
+- current-date/status line separate from a user delineator;
+- weekends/holiday calendars;
+- automatic CPM or delay-liability calculations;
+- free dragging of live shapes as a data-edit mechanism;
+- arbitrary formulas/scripts in labels;
+- automatic font shrinking;
+- 3D effects, shadows, gradients, animation, or theme-dependent colours;
+- renderer-specific label placement or geometry corrections.
+
+Adding one requires a work item, entity-contract amendment, tests for every renderer, and product-owner approval.

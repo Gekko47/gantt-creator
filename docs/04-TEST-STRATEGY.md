@@ -1,0 +1,203 @@
+# Test strategy
+
+## Test objective
+
+Testing must prove the domain and rendering logic without Office, then prove the thin Office adapters on a controlled Windows machine. “Cover the whole codebase” means every production component has an appropriate automated or explicitly recorded host test; it does not mean pursuing a misleading 100% line-coverage number.
+
+## Test layers
+
+| Layer | Runs where | Purpose | Release expectation |
+| --- | --- | --- | --- |
+| Core unit/property | any `.NET 10` runner | validation, date math, lanes, scene geometry, ordering | every commit |
+| Raster unit/golden | pinned Windows runner | exact pixels, fonts, crop, PNG metadata | every PR |
+| Office contract | Windows, no live Office where possible | calls and state transitions through fakes/adapters | every commit/PR |
+| Architecture | build runner | dependency direction, naming/tagging constraints | every commit |
+| Office integration | dedicated Windows machine with supported Office | real Excel-DNA, Excel shapes, clipboard, PowerPoint | phase exit and release; nightly if available |
+| Manual visual/accessibility | controlled reference machine | human judgement and Office UI behaviour | relevant phase exit/release |
+| Performance/reliability | reference machine | budgets, repeated transfers, leaks/hangs | phase exit/release |
+
+## Coverage policy
+
+Initial thresholds are deliberately strict in deterministic code and realistic at external boundaries:
+
+| Project | Line | Branch | Additional gate |
+| --- | ---: | ---: | --- |
+| `GanttCreator.Core` | 95% | 90% | mutation score at least 80% on changed Core code |
+| `GanttCreator.Raster` | 90% | 85% | approved representative golden images |
+| `GanttCreator.Office` | 80% | 70% | Office contract matrix plus live-host tests |
+| `GanttCreator.AddIn` | 75% | 65% | Ribbon XML/callback and command-boundary tests |
+
+Exclude only generated interop/build files and trivial assembly metadata. Never exclude a file because it is difficult to test. A threshold change requires an ADR or explicit pull-request approval with evidence.
+
+Coverage is a floor, not proof. Review changed lines, branches, fault paths, and assertions. Run mutation testing on Core weekly or before release; do not burden every small local commit with a full mutation run.
+
+## Core test catalogue
+
+### Validation and schema
+
+- required/missing/duplicate columns;
+- blank, duplicate, and stable IDs;
+- supported/unknown event type;
+- span with blank date, reverse dates, and one-day range;
+- point event with one or conflicting dates;
+- whitespace and Unicode text;
+- duplicate stack positions and missing lane;
+- events entirely/partly outside plot range;
+- all errors returned in stable row/field order;
+- workbook 1900 date system; 1904 either supported and tested or rejected explicitly;
+- date values around Excel's invalid/edge serial values.
+
+### Time and geometry
+
+- first/last day and inclusive-finish policy;
+- leap day, month/year boundary, very long programme;
+- identical start/finish, zero plot width, invalid values;
+- date-to-point and point-to-date boundary behaviour;
+- lane order independent of input enumeration order;
+- `StackIndex` layout for one, two, and many events;
+- clipping at left/right/top/bottom;
+- labels at each placement, overflow, and collision policy;
+- stable primitive IDs and z-order;
+- no NaN, Infinity, or negative-size primitive;
+- deterministic scene serialization from shuffled input and repeated runs.
+
+Use generated/property tests for invariants such as: valid dates map monotonically; clipping never expands bounds; render order is stable; all emitted geometry remains inside allowed scene bounds except intentional label overflow.
+
+## Excel shape contract tests
+
+The renderer talks to narrow fake adapters in most tests. Assert the observable Office operation sequence and values:
+
+- exact shape type, name, ownership tag, and stable scene ID;
+- point geometry within the documented COM tolerance;
+- fill/stroke/font/alignment/pattern properties;
+- group membership and child order;
+- z-order application;
+- create/update/delete reconciliation;
+- unowned shape and cell preservation;
+- state-scope restoration after each injected exception;
+- temporary export cleanup after each creation/copy/grouping failure point;
+- no extra worksheet creation;
+- no mutation when validation has blocking errors.
+
+Contract fakes must be small and behaviourally faithful. Do not build a complete fake Excel object model.
+
+## Raster tests
+
+### Exact metadata and dimensions
+
+For every export-unit case assert:
+
+- requested width parsing;
+- calculated height and rounding;
+- exact IHDR pixel width/height;
+- `pHYs` values of 11811 pixels/metre on both axes with metre unit;
+- valid PNG chunk lengths and CRC;
+- exact crop bounds and selected background;
+- safety rejection before allocation for excessive dimensions.
+
+### Golden images
+
+Maintain a small baseline set:
+
+1. primitive shapes/lines/z-order;
+2. text alignment and clipping;
+3. hatches and critical overlays;
+4. representative construction-delay Gantt;
+5. multiple same-lane events, same-date milestones, and delineators;
+6. narrow and wide aspect ratios.
+
+Each baseline has:
+
+- a textual/JSON scene fixture;
+- pinned renderer, OS, culture, DPI, font family, font version, and antialias settings;
+- an exact-pixel region test for hard geometry;
+- a documented small perceptual tolerance only for text antialiasing if exact text pixels are unstable;
+- a human-approved reference image.
+
+Never regenerate baselines automatically in CI. A baseline update is a separate commit whose message states why every changed image is correct.
+
+## Office integration harness
+
+GitHub-hosted runners do not provide desktop Office. Use a controlled self-hosted Windows test machine or VM with a licensed, supported Microsoft 365 installation.
+
+Harness rules:
+
+- run tests in a non-interactive batch only when Office automation is supported by the test environment; otherwise run an attended test command;
+- serialize all tests in one collection;
+- start from copied synthetic fixtures in a unique temporary directory;
+- record Excel/PowerPoint version, bitness, locale, display scale, and test run ID;
+- attach to or start Office only as specified by each test;
+- detect and fail on modal dialogs rather than hanging;
+- poll observable state with deadlines;
+- close only test-owned workbooks/presentations/processes;
+- collect logs and screenshots on failure;
+- delete temporary files in `finally`, retaining failed evidence when configured.
+
+Required live tests:
+
+1. XLL loads, Ribbon XML is accepted, callbacks resolve, and shutdown completes.
+2. Blank workbook initialises with one sheet and correct visible table/plot anchors.
+3. Representative fixture renders expected owned shape types/counts/bounds/z-order.
+4. Second refresh is idempotent and preserves an unowned sentinel shape/cell.
+5. Save/reopen retains data/settings with one sheet.
+6. Editable composition copies; pasted result is a group with editable children.
+7. Temporary shapes are removed after success and injected failure.
+8. `PasteSpecial(ppPasteShape)` returns a non-empty `ShapeRange` on the active slide.
+9. PowerPoint transfer does not save, close, or kill user-owned content/application.
+10. PNG export has exact size, aspect, crop, and density metadata.
+11. Protected sheet, missing PowerPoint, busy clipboard, and unwritable path fail safely.
+12. Twenty-five repeated refresh/copy/transfer cycles do not leave orphaned Office processes or steadily growing owned shapes.
+
+## Feature-to-test traceability
+
+Every work item links acceptance criterion IDs to test names. Maintain this high-level map:
+
+| Product requirement | Primary automated proof | Host/manual proof |
+| --- | --- | --- |
+| One user sheet | worksheet contract tests | save/reopen sheet-count test |
+| Adjacent data and Gantt | anchor/layout tests | visual workflow |
+| Planned/actual overlap | scene snapshots | Excel visual check |
+| Critical child intervals | Core geometry tests | reference render |
+| Multiple events per lane | ordering/stack tests | authoring workflow |
+| Milestones | point-event tests | same-date visual check |
+| Labelled delineators | line/label/bounds tests | full-height visual check |
+| Editable clipboard group | composition/group contract | manual edit/ungroup |
+| PowerPoint `ppPasteShape` | adapter outcome tests | live PasteSpecial test |
+| 300-DPI PNG | dimension/chunk/golden tests | independent image inspection |
+| Offline operation | dependency/network audit | disconnected acceptance run |
+
+## Failure injection
+
+Add controllable failure points around:
+
+- worksheet read and validation;
+- each application-state change;
+- shape create/style/group/copy/delete;
+- clipboard acquisition/format check;
+- PowerPoint start/attach/paste/position;
+- file dialog, temporary file, encode, metadata, move, and validation.
+
+For every injected failure assert cleanup, preserved user content, restored application state, one user-facing error, and a useful technical record.
+
+## Flaky-test policy
+
+- A flaky test is a defect, not a test-suite characteristic.
+- Do not add automatic multi-retry to unit, golden, or contract tests.
+- A single bounded rerun may be used only to classify an Office-hosted failure, and both attempts remain in the evidence.
+- Quarantine requires an issue, owner, expiry date, and replacement release gate. Quarantined tests do not count as passing.
+- Fix synchronization by observing state, not increasing sleep durations.
+
+## Pull-request test evidence
+
+Include a short block:
+
+```text
+Targeted: <command> — PASS/FAIL
+Full verify: <command> — PASS/FAIL
+Office integration: <command or Not run: reason>
+Visual/golden: <baseline IDs or Not applicable>
+Coverage: Core __/__ ; Raster __/__ ; Office __/__ ; AddIn __/__
+Residual risk: <one sentence or None known>
+```
+
+Only observed output is reported.
