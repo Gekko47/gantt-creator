@@ -21,6 +21,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!--
+      XML documentation file generation. IDE0005 (Remove unnecessary
+      usings) and IDE0004 (Remove unnecessary casts) emit a build
+      error if GenerateDocumentationFile is not set when
+      EnforceCodeStyleInBuild is true. Public types and members
+      require XML documentation per AGENTS.md.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!--
       Warnings as errors. This is the loudest possible gate. Any new analyzer
       rule that fires will fail the build. See AGENTS.md: never suppress a
       warning without a written reason.

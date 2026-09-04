@@ -64,7 +64,7 @@ public class PointDTests
     {
         var p = new PointD(1.5, 2.5);
         var s = p.ToString();
-        Assert.Contains("1.50", s);
-        Assert.Contains("2.50", s);
+        Assert.Contains("1.50", s, StringComparison.Ordinal);
+        Assert.Contains("2.50", s, StringComparison.Ordinal);
     }
 }
