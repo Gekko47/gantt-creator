@@ -122,7 +122,12 @@ generated_code = true
 # Suppress in test assemblies the rules the xUnit template triggers.
 # R0.5 replaces UnitTest1.cs with real tests; after that, these
 # severities can be tightened in a follow-up commit.
-[**/tests/**/*.cs]
+# The glob matches any .cs file under any directory named 'tests',
+# at any depth, including the top-level 'tests/' folder itself.
+# Note: CA1707 is suppressed globally in Directory.Build.props
+# (see the NoWarn comment for the rationale), so it does not
+# need to be listed here.
+[tests/**/*.cs]
 dotnet_analyzer_diagnostic.CA1515.severity = none
 dotnet_analyzer_diagnostic.CA1812.severity = none
 dotnet_analyzer_diagnostic.CA1052.severity = none
