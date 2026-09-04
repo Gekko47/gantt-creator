@@ -52,6 +52,9 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ],
+      "dependsOn": [
+        "build"
       ]
     },
     {
@@ -67,6 +70,9 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ],
+      "dependsOn": [
+        "build"
       ]
     },
     {
@@ -88,8 +94,8 @@
       ]
     },
     {
-      "label": "build-clean",
-      "detail": "Cleans and rebuilds the Release configuration.",
+      "label": "clean",
+      "detail": "Cleans the Release configuration.",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -102,8 +108,20 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ]
+    },
+    {
+      "label": "build-clean",
+      "detail": "Cleans then rebuilds the Release configuration (clean, then build).",
+      "type": "process",
+      "problemMatcher": [
+        "$msCompile"
       ],
-      "dependsOn": "build"
+      "dependsOn": [
+        "clean",
+        "build"
+      ],
+      "dependsOrder": "sequence"
     }
   ]
 }

@@ -89,6 +89,10 @@ Run-Step 'build Release -warnaserror' {
     dotnet build $Solution -c $Configuration --no-restore -warnaserror
 }
 
+Run-Step 'publish AddIn (packed XLL)' {
+    dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c $Configuration --no-build
+}
+
 Run-Step 'test (OfficeIntegration excluded)' {
     dotnet test $Solution -c $Configuration --no-build --no-restore `
         --filter 'Category!=OfficeIntegration' `

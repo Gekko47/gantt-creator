@@ -91,7 +91,6 @@
       replaced with real sample tests: CA1515, CA1812, CA1052,
       CA1063, CA1305, CA1840, CA2254.
     -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
 
   </PropertyGroup>
 
