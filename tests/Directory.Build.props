@@ -5,7 +5,30 @@
     directory; production projects are unaffected. Centralises the
     xUnit `using` so individual test csproj files do not have to repeat
     it and so the OfficeIntegration xunit trait is easy to find.
+
+    The first thing this file does is import the root
+    Directory.Build.props, so the repository-wide settings
+    (warnings-as-errors, analyzers, nullable, central package
+    management, lock file) apply to test projects as well.
   -->
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Test projects intentionally do not enforce code style in build.
+    The xUnit convention uses snake_case method names (CA1707),
+    braceless if statements (IDE0011), and other patterns that the
+    production-style analyzers flag as violations. The discipline is
+    that test code is reviewed for correctness, not for production
+    style conformance.
+
+    The .editorconfig [tests/**/*.cs] section provides a softer
+    hint: the analyzers still report diagnostics in the IDE, but
+    they do not fail the build.
+  -->
+  <PropertyGroup>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
 
   <PropertyGroup>
     <!--

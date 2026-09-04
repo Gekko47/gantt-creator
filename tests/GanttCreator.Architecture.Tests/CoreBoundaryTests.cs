@@ -77,8 +77,8 @@ public sealed class CoreBoundaryTests
         // build output. A path under net10.0-windows would mean Core
         // drifted to a Windows target. The build will not produce both
         // TFMs for Core by design.
-        Assert.Contains("net10.0", coreDll.Replace('\\', '/'));
-        Assert.DoesNotContain("net10.0-windows", coreDll.Replace('\\', '/'));
+        Assert.Contains("net10.0", coreDll.Replace('\\', '/'), StringComparison.Ordinal);
+        Assert.DoesNotContain("net10.0-windows", coreDll.Replace('\\', '/'), StringComparison.Ordinal);
     }
 
     private static string LocateCoreAssembly()
