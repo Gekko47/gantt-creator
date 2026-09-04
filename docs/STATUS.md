@@ -20,7 +20,7 @@
 
 ## Environment (recorded once, then referenced)
 
-- **Host OS**: Windows 10 Pro 2009, x64
+- **Host OS**: Windows 11 25H2 (build 26200), x64, Professional. The registry `ProductName` may report "Windows 10 Pro" — trust the build number, not the string. See `docs/adr/0005-windows-host-build-number.md`.
 - **.NET SDK**: 10.0.400
 - **.NET runtimes**: 10.0.11, 8.0.30 (Microsoft.NETCore.App, Microsoft.AspNetCore.App, Microsoft.WindowsDesktop.App)
 - **Visual Studio**: 18 (Community), installed at `C:\Program Files\Microsoft Visual Studio\18\Community`
@@ -31,7 +31,6 @@
 
 ## Known limitations
 
-- **L1** — Windows 10 (not Windows 11) is the actual host. Excel-DNA 1.9 and Office 16.0.x are supported; recorded in the environment table above.
 - **L2** — `.vs/` (Visual Studio user options) is present locally and is already covered by `.gitignore`.
 - **L3** — The optional `03-ROADMAP.md` skill originally referenced a `03` gap; the renumbered `.clinerules/03-ROADMAP.md` now closes that gap and the `docs/03-ROADMAP.md` mirror is committed.
 
