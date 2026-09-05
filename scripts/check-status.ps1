@@ -60,6 +60,12 @@ foreach ($h in $hashTokens)
 # --- 2. Repo paths ---
 foreach ($t in $tokens)
 {
+    # Reject wildcard metacharacters that could be used for glob traversal
+    if ($t -match '[?\[\]]') {
+        $violations.Add("STATUS references path '$t' contains wildcard metacharacters (?[\]); rejected.")
+        continue
+    }
+
     $isPath = $t -match '[/\\]' `
         -and $t -notmatch '[\s*(){}]' `
         -and $t -notmatch '^-' `
@@ -81,7 +87,10 @@ foreach ($t in $tokens)
         continue
     }
 
-    if (-not (Test-Path $candidate))
+    # Use -LiteralPath so the candidate is treated as a literal path,
+    # not a glob pattern (wildcards already rejected above, but -LiteralPath
+    # is the correct API for exact filesystem checks).
+    if (-not (Test-Path -LiteralPath $candidate))
     {
         $violations.Add("STATUS references path '$t' which does not exist.")
     }

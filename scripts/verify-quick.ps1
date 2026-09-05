@@ -15,11 +15,13 @@
       3. SKILL.md canonical-phrase presence gate
       4. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
       5. PSScriptAnalyzer over scripts/
-      6. dotnet restore --locked-mode (after a lock file is produced)
-      7. dotnet format --verify-no-changes --exclude tests
-      8. dotnet build -c Release -warnaserror
-      9. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
-     10. dotnet test on Core, Raster, Office contract, AddIn, Architecture
+      6. Workflow lint (actionlint) over .github/workflows/ci.yml
+      7. Script lint (Pester) over scripts/*.ps1
+      8. dotnet restore --locked-mode (after a lock file is produced)
+      9. dotnet format --verify-no-changes --exclude tests
+     10. dotnet build -c Release -warnaserror
+     11. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
+     12. dotnet test on Core, Raster, Office contract, AddIn, Architecture
          (OfficeIntegration trait excluded)
 #>
 
@@ -104,6 +106,18 @@ Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
         -Exclude '_artifacts' `
         -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
         -EnableExit
+}
+
+Invoke-Step 'workflow lint (actionlint)' {
+    # Lint .github/workflows/ci.yml with pinned actionlint binary (L6).
+    # Downloads the binary once per machine to TEMP.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'lint-ci.ps1')
+}
+
+Invoke-Step 'script lint (Pester)' {
+    # Run Pester unit tests for scripts/*.ps1 (L7).
+    # Discovers *.Tests.ps1 files and runs them with -PassThru.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-scripts.ps1')
 }
 
 Invoke-Step 'restore (locked mode if lock exists)' {

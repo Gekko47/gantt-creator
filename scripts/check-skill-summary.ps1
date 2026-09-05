@@ -50,7 +50,7 @@ foreach ($kv in $assertions.GetEnumerator()) {
     }
     $text = Get-Content -LiteralPath $path -Raw
     foreach ($phrase in $kv.Value) {
-        if ($text -notmatch [regex]::Escape($phrase)) {
+        if ($text -cnotmatch [regex]::Escape($phrase)) {
             $violations.Add("$($kv.Key) missing canonical phrase: '$phrase'")
         }
     }

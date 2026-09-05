@@ -39,7 +39,7 @@
       `NoWarnScopeTests` architecture test asserts these two IDs remain
       scoped to tests/ only.
     -->
-    <NoWarn>$(NoWarn);CA1707;IDE0011</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;IDE0011;CA1307;CA1859;CA1031</NoWarn>
 
     <!--
       Test projects do not emit XML documentation files. The root

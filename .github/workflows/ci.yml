@@ -37,22 +37,56 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Repository doc gates (md links, STATUS accuracy, skill-tree sync)
+      - name: Repository doc gate — markdown links
         run: |
           pwsh -NoProfile -File scripts/check-md-links.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-md-links.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Repository doc gate — STATUS accuracy
+        run: |
           pwsh -NoProfile -File scripts/check-status.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-status.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Repository doc gate — skill-tree sync
+        run: |
           pwsh -NoProfile -File scripts/check-cline-skills.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-cline-skills.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Workflow lint (actionlint)
+        run: |
+          if (-not (Get-Command actionlint -ErrorAction SilentlyContinue)) {
+            $version = '1.7.7'
+            $zip = "actionlint_${version}_windows_amd64.zip"
+            $url = "https://github.com/rhysd/actionlint/releases/download/v${version}/${zip}"
+            $tmp = Join-Path $env:TEMP 'actionlint'
+            if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
+            Invoke-WebRequest -Uri $url -OutFile (Join-Path $tmp $zip) -UseBasicParsing
+            Expand-Archive -Path (Join-Path $tmp $zip) -DestinationPath $tmp -Force
+            $exe = Join-Path $tmp 'actionlint.exe'
+            $dest = Join-Path $env:USERPROFILE 'bin'
+            if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+            Copy-Item $exe -Destination (Join-Path $dest 'actionlint.exe') -Force
+            Write-Host "$dest added to PATH for this job"
+            $env:PATH = "$dest;$env:PATH"
+          }
+          actionlint -color .github/workflows/ci.yml
 
       - name: Script analyzer (PSScriptAnalyzer)
         run: |
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+            Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
           }
           Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
             -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
+
+      - name: Script lint (Pester)
+        run: |
+          if (-not (Get-Module -ListAvailable Pester -MinimumVersion 5.0 -ErrorAction SilentlyContinue)) {
+            Install-Module -Name Pester -MinimumVersion 5.0 -MaximumVersion 6 -Scope CurrentUser -Force
+          }
+          Import-Module Pester -MinimumVersion 5.0
+          $result = Invoke-Pester -Script @(Get-ChildItem scripts/*.Tests.ps1 -ErrorAction SilentlyContinue; Get-ChildItem scripts/*Tests.ps1 -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '\.Tests\.ps1$' }) -PassThru -Output Detailed
+          if ($result.FailedCount -gt 0) { exit 1 }
 
       - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v4
