@@ -5,7 +5,7 @@
 #>
 
 BeforeAll {
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $repoRoot = Split-Path -Parent $PSScriptRoot
     $scriptPath = Join-Path $repoRoot 'scripts\test-locked-restore.ps1'
 }
 
@@ -15,7 +15,7 @@ Describe 'test-locked-restore.ps1' {
     }
 
     It 'searches from repo root ($PSScriptRoot\..) not parent of repo' {
-        (Get-Content -LiteralPath $scriptPath -Raw) | Should -Match '\$PSScriptRoot\\\\\\.\\. '
+        (Get-Content -LiteralPath $scriptPath -Raw) | Should -Match '\$PSScriptRoot\\..'
     }
 
     It 'runs two locked-mode restores with --no-cache' {

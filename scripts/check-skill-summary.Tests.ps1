@@ -5,7 +5,7 @@
 #>
 
 BeforeAll {
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $repoRoot = Split-Path -Parent $PSScriptRoot
     $scriptPath = Join-Path $repoRoot 'scripts\check-skill-summary.ps1'
 }
 

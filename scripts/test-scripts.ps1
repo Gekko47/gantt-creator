@@ -75,7 +75,8 @@ $failedTests = 0
 
 foreach ($testFile in $testFiles) {
     Write-Host "Running $($testFile.Name)..."
-    $result = Invoke-Pester -Script @($testFile.FullName) -PassThru -Output Detailed
+    # Pester 6 uses positional path argument or -Path parameter
+    $result = Invoke-Pester -Path $testFile.FullName -PassThru -Output Detailed
     $totalTests += $result.TestResult.Count
     $passedTests += $result.TestResult.PassedCount
     $failedTests += $result.TestResult.FailedCount

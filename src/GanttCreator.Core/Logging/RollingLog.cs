@@ -59,10 +59,7 @@ public sealed class RollingLog : IRollingLog
     /// Writes a message to the log. The message is automatically redacted.
     /// </summary>
     /// <param name="message">The log message.</param>
-    public void Write(string message)
-    {
-        WriteCore(message);
-    }
+    public void Write(string message) => WriteCore(message);
 
     /// <summary>
     /// Writes a formatted message to the log.
@@ -120,7 +117,7 @@ public sealed class RollingLog : IRollingLog
 
             if (files.Length >= _maxFileCount)
             {
-                for (int i = _maxFileCount - 1; i < files.Length; i++)
+                for (var i = _maxFileCount - 1; i < files.Length; i++)
                 {
                     try
                     {
@@ -137,7 +134,7 @@ public sealed class RollingLog : IRollingLog
                 }
             }
 
-            for (int i = files.Length - 1; i >= 0; i--)
+            for (var i = files.Length - 1; i >= 0; i--)
             {
                 var newName = $"{_baseName}.{files.Length - i}.log";
                 var newPath = Path.Combine(_logDirectory, newName);
