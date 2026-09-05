@@ -28,6 +28,61 @@ Allowed statuses are `fact`, `inference`, `proposal`, and `unknown`. An inferenc
 - One active work item; one acceptance boundary.
 - Fixed decisions live in architecture/ADRs, not chat memory.
 - The agent reads only relevant files, then names them in its plan.
+- Any new requirement is placed in a later work item unless necessary for the current acceptance test.
+- Any public schema, dependency, supported-platform, or export-contract change stops for human approval.
+- Refactoring is allowed only when the current slice needs it; preparatory refactors are separate green commits.
+- At the end, compare the diff against the initial file/scope list and explain every deviation.
+## Anti-hallucination controls
+For every unfamiliar API or version-sensitive claim:
+1. Search installed source/metadata or use Visual Studio Object Browser.
+2. Check official Excel-DNA, Microsoft, .NET, SkiaSharp, Cline, or GitHub documentation.
+3. Compile a minimal usage.
+4. If host behaviour remains uncertain, write a disposable spike with one measurable assertion.
+5. Keep the statement `unknown` until evidence exists.
+The agent must not fabricate command output. If it cannot run a test, it says `Not run` and provides the exact command the human should run.
+## No-loop protocol
+Classify the failure first: compile, deterministic test, Office host, environment, permission, file lock, dependency, or requirement ambiguity.
+Attempt 1:
+- preserve exact error/HRESULT/stack trace;
+- form one falsifiable hypothesis;
+- run one discriminating check;
+- make the smallest corresponding fix;
+- rerun the narrow failed command.
+Attempt 2:
+- re-read the relevant boundary and primary documentation;
+- form a materially different hypothesis;
+- inspect environment/process/loaded-module evidence where relevant;
+- make one different fix and rerun.
+If the same failure occurs again, stop. Report:
+- exact command and environment;
+- shortest useful error excerpt;
+- two hypotheses, tests, and outcomes;
+- current uncommitted diff;
+- likely layer and remaining unknown;
+- one question or manual observation needed.
+Prohibited “fixes” include repeated unchanged commands, larger sleeps, broad exception catches, test deletion, threshold reduction, warning suppression, package churn, random API substitution, and restarting everything without recording what the restart tests.
+## Context discipline
+- Start a fresh agent session for each roadmap item or after a large context shift.
+- Keep `docs/STATUS.md` as the handoff; do not paste whole chat transcripts into the repository.
+- Ask the agent to summarise current facts before context compaction.
+- Do not feed customer workbooks or proprietary schedule descriptions to a hosted model.
+- Use synthetic/minimised reproductions; redact file paths, names, dates, and labels from logs/prompts where needed.
+## Coding behaviour
+The agent should:
+- inspect before editing;
+- use existing patterns when tested and consistent with current architecture;
+- prefer types and small functions to comments;
+- add tests before or with the behaviour;
+- run the narrow test after each meaningful edit;
+- run full verification once the slice is coherent;
+- leave the repository cleaner only within the touched scope.
+The agent should not:
+- design the whole system again in each task;
+- create abstraction layers without two concrete consumers or a clear port boundary;
+- generate speculative compatibility fallbacks;
+- rewrite working code for style alone;
+- introduce “temporary” hidden worksheets;
+- claim pixel perfection for live Excel screen display;
 
 ---
 

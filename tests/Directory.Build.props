@@ -30,12 +30,16 @@
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
 
     <!--
-      Suppress CA1707 (identifiers should have correct suffix) for test
-      projects. xUnit test method names use snake_case by convention
-      (e.g., ToString_contains_both_coordinates). Production code still
-      enforces CA1707 via the root Directory.Build.props.
+      Suppress CA1707 (identifiers should have correct suffix) and
+      IDE0011 (add braces) for test projects. xUnit test method names
+      use snake_case by convention
+      (e.g., ToString_contains_both_coordinates) and braceless single-
+      statement if blocks are common. Production code still enforces
+      both rules via the root Directory.Build.props. The
+      `NoWarnScopeTests` architecture test asserts these two IDs remain
+      scoped to tests/ only.
     -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;IDE0011</NoWarn>
 
     <!--
       Test projects do not emit XML documentation files. The root

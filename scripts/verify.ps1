@@ -42,7 +42,7 @@ $report = Join-Path $artifacts 'verify.txt'
 $start  = Get-Date
 "" | Set-Content -LiteralPath $report
 
-function Run-Step {
+function Invoke-Step {
     param([string]$Name, [scriptblock]$Block)
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $Name
     Write-Host $line
@@ -70,15 +70,15 @@ function Run-Step {
     }
 }
 
-Run-Step 'markdown link sanity' {
+Invoke-Step 'markdown link sanity' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-md-links.ps1')
 }
 
-Run-Step 'clinerules skill tree in sync' {
+Invoke-Step 'clinerules skill tree in sync' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-cline-skills.ps1')
 }
 
-Run-Step 'restore' {
+Invoke-Step 'restore' {
     if (Test-Path 'packages.lock.json') {
         dotnet restore --locked-mode
     } else {
@@ -86,15 +86,15 @@ Run-Step 'restore' {
     }
 }
 
-Run-Step 'build Release -warnaserror' {
+Invoke-Step 'build Release -warnaserror' {
     dotnet build $Solution -c $Configuration --no-restore -warnaserror
 }
 
-Run-Step 'publish AddIn (packed XLL)' {
+Invoke-Step 'publish AddIn (packed XLL)' {
     dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c $Configuration --no-build
 }
 
-Run-Step 'test (OfficeIntegration excluded)' {
+Invoke-Step 'test (OfficeIntegration excluded)' {
     dotnet test $Solution -c $Configuration --no-build --no-restore `
         --filter 'Category!=OfficeIntegration' `
         --collect:'XPlat Code Coverage' --results-directory (Join-Path $artifacts 'coverage')
@@ -106,7 +106,7 @@ Run-Step 'test (OfficeIntegration excluded)' {
 # production targets; the actual assertion is enabled in R3.x when Core
 # has real tests. For now we record the measured coverage and warn if a
 # production project falls below the threshold.
-Run-Step 'coverage threshold check' {
+Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
     if (-not (Test-Path $coverageRoot)) {
         Write-Host 'coverage root not present; skipping threshold check.'
@@ -126,14 +126,14 @@ Run-Step 'coverage threshold check' {
     }
 }
 
-Run-Step 'package vulnerability scan' {
+Invoke-Step 'package vulnerability scan' {
     dotnet list $Solution package --vulnerable --include-transitive
     # dotnet list does not set a non-zero exit on found vulnerabilities, so
     # we cannot make this step a hard fail until the team approves an
     # explicit vulnerability gate. For now this is informational.
 }
 
-Run-Step 'working tree hygiene' {
+Invoke-Step 'working tree hygiene' {
     $dirty = git status --short
     if ($dirty) {
         Add-Content -LiteralPath $report -Value "Dirty working tree:"

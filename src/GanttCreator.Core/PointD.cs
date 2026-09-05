@@ -18,7 +18,10 @@ public readonly struct PointD : IEquatable<PointD>
     /// <summary>Initialises a point from x/y coordinates.</summary>
     /// <param name="x">The horizontal coordinate in points.</param>
     /// <param name="y">The vertical coordinate in points.</param>
-    public PointD(double x, double y) => (X, Y) = (x, y);
+    public PointD(double x, double y)
+    {
+        (X, Y) = (x, y);
+    }
 
     /// <summary>The origin (0, 0).</summary>
     public static PointD Zero => new(0, 0);

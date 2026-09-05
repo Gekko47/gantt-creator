@@ -28,8 +28,6 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$scriptRoot = Split-Path -Parent $PSCommandPath
-$syncScript = Join-Path $scriptRoot 'sync-cline-skills.ps1'
 
 # Phase 1: working tree must be clean under the three views.
 $dirty = git diff --name-only -- docs/ .clinerules/ .cline/skills/

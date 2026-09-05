@@ -111,7 +111,7 @@
     },
     {
       "label": "clean",
-      "detail": "Cleans the Release configuration.",
+      "detail": "Cleans the Release configuration (no dependencies).",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -124,8 +124,7 @@
       },
       "problemMatcher": [
         "$msCompile"
-      ],
-      "dependsOn": "build"
+      ]
     }
   ]
 }

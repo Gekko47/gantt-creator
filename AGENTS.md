@@ -50,6 +50,7 @@ While editing:
 - Make the smallest coherent change that proves one behaviour.
 - Keep one work item in progress; do not opportunistically refactor neighbours.
 - Add or change tests in the same commit as behaviour.
+- **Every new `if (bad) { error }` validator ships with a positive test in the same commit** — a `[Fact]` that constructs a bad input and asserts the error path fires, in the same harness that will run it. Validators without positive tests are how this codebase has repeatedly shipped silently-broken failure paths. The pattern: write the validator, write the test that constructs the bad input, both in the same diff. For PowerShell scripts, the equivalent is a self-contained harness in `scripts/` invoked from `verify-quick.ps1`; for C#, a sibling `[Fact]` in the same test project.
 - Use the ports/adapters boundaries. Never call Excel or PowerPoint from Core.
 - Use deterministic identifiers, ordering, culture, time, and rounding.
 - Preserve unrelated user changes and existing public behaviour.
@@ -62,6 +63,7 @@ After editing:
 3. Review `git diff --check`, `git status --short`, and the complete diff.
 4. Update task evidence and `docs/STATUS.md`.
 5. Report exactly: changed behaviour, important files, commands run and results, residual risks, and the next roadmap item. Do not claim a command ran unless its output was observed.
+6. Self-certify against the applicable sections of docs/08-TEST-CHECKLIST.md. In the commit message, list the sections you certified (e.g., 'Checklist: A, B, C, G, I'). Do not claim certification for sections that do not apply.
 
 ## Stop conditions
 

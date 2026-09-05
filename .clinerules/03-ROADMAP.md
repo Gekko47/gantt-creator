@@ -11,6 +11,7 @@
 - Complete items in order unless an approved ADR records why order changed.
 - One row is normally one commit. Split a row if the diff becomes difficult to review; do not combine rows merely because they are related.
 - Create a work-item file before implementation. Record the exact acceptance tests and evidence.
+- Every work-item acceptance criterion that names a test count, a command, or an artifact must link to a specific test or script step. Drift between the doc and the code is a defect (see `docs/08-TEST-CHECKLIST.md` section I).
 - Every visual/layout/style/export work item names the affected sections of `docs/07-GANTT-ENTITY-GUIDE.md` and tests the defined cross-renderer contract.
 - Every code commit must pass `scripts/verify-quick.ps1`; every phase exit and pull request must pass `scripts/verify.ps1`.
 - A phase exits only after its stated demonstration. A screenshot is supporting evidence, not a substitute for automated assertions.
@@ -32,6 +33,14 @@ Goal: a clean solution that fails fast on warnings, formatting, dependency drift
 | R0.6 | Add quick/full verification scripts and coverage settings | Both scripts pass from a clean clone and enforce configured thresholds | None |
 | R0.7 | Add Windows CI for restore, format, build, unit tests, and artifacts | Branch workflow passes and a deliberate failure produces a useful annotation | None |
 | R0.8 | Add versioning and local rolling-log abstractions with privacy-safe defaults | Unit tests for version string, rotation, and redaction | None |
+
+> **R0.8 note (do not skip):** while adding the rolling-log abstractions,
+> also close the two tooling gaps deferred as **L6** and **L7** in
+> `docs/KNOWN-LIMITATIONS.md` — lint the GitHub Actions workflow
+> (actionlint or equivalent, pinned) and add unit tests for the PowerShell
+> scripts in `scripts/` (Pester or equivalent, wired into
+> `verify-quick.ps1`). Phase 0 does not exit until L6 and L7 are closed or
+> re-dated by an approved decision.
 
 Exit demonstration: a new developer clones the repository, runs one documented command, and gets a clean Release build and test report without opening Office.
 

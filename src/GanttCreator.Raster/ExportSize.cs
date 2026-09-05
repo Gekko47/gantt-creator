@@ -103,7 +103,7 @@ public static class ExportSize
                 nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and non-negative.");
         }
 
-        double pixelWidth = request.Unit switch
+        var pixelWidth = request.Unit switch
         {
             ExportUnit.Centimetres => request.Value / CmPerInch * Dpi,
             ExportUnit.Inches => request.Value * Dpi,
@@ -111,7 +111,7 @@ public static class ExportSize
             _ => throw new ArgumentOutOfRangeException(nameof(request))
         };
 
-        double pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
+        var pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
 
         if (!double.IsFinite(pixelWidth) || pixelWidth > int.MaxValue || pixelWidth < 0)
         {
@@ -125,8 +125,8 @@ public static class ExportSize
                 nameof(sceneHeightPt), pixelHeight, "Computed pixel height exceeds the representable range.");
         }
 
-        int pxWidth = (int)Math.Round(pixelWidth);
-        int pxHeight = (int)Math.Round(pixelHeight);
+        var pxWidth = (int)Math.Round(pixelWidth);
+        var pxHeight = (int)Math.Round(pixelHeight);
         return new PixelDimensions(pxWidth, pxHeight);
     }
 

@@ -1,0 +1,100 @@
+name: ci
+
+# R0.7 — Windows CI for restore, format, build, unit tests, and artifacts.
+# Every step mirrors a command from scripts/verify-quick.ps1 so that a
+# local PASS predicts a CI PASS. Office-integration tests are excluded by
+# policy per docs/adr/0001-self-hosted-office-runner.md.
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deliberate_failure:
+        description: "Deliberately fail one step to prove the annotation gate (R0.7)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: restore, format, build, test (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (full history — check-status resolves referenced commit hashes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Repository doc gates (md links, STATUS accuracy, skill-tree sync)
+        run: |
+          pwsh -NoProfile -File scripts/check-md-links.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-md-links.ps1 failed with exit $LASTEXITCODE" }
+          pwsh -NoProfile -File scripts/check-status.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-status.ps1 failed with exit $LASTEXITCODE" }
+          pwsh -NoProfile -File scripts/check-cline-skills.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-cline-skills.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Script analyzer (PSScriptAnalyzer)
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
+            -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
+
+      - name: Setup .NET SDK 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages (keyed on lock files)
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore (locked mode)
+        run: dotnet restore --locked-mode
+
+      - name: Format check (production only; tests/ tolerated per tests/Directory.Build.props)
+        run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests
+
+      - name: Build Release (warnings as errors)
+        run: dotnet build GanttCreator.slnx -c Release --no-restore -warnaserror
+
+      - name: Publish AddIn (packed XLL artifact)
+        run: dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c Release --no-build
+
+      - name: Test (OfficeIntegration excluded)
+        run: dotnet test GanttCreator.slnx -c Release --no-build --filter "Category!=OfficeIntegration"
+
+      - name: Upload packed XLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ganttcreator-addin-packed-xll
+          path: src/GanttCreator.AddIn/bin/Release/net10.0-windows/publish/
+          if-no-files-found: error
+
+      # R0.7 gate: "a deliberate failure produces a useful annotation".
+      # Dispatch the workflow with deliberate_failure: true to exercise
+      # this step on demand; it emits a visible error annotation and
+      # fails the job.
+      - name: Deliberate failure (annotation test)
+        if: ${{ inputs.deliberate_failure == true }}
+        run: |
+          Write-Host "::error title=R0.7 annotation test::Deliberate failure requested via workflow_dispatch — if you can read this annotation, the gate works."
+          exit 1
