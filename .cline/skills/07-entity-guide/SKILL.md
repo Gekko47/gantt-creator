@@ -32,7 +32,7 @@ Renderers consume resolved scene primitives. They may translate primitives to ho
 | `LaneId` | lane-bound entities | Events sharing a visual line use the same value |
 | `StackIndex` | lane-bound entities | Non-negative vertical-band order; equal values deliberately share the same line |
 | `ParentId` | critical/child events | Stable ID of the owning activity when required |
-| `LabelPosition` | labelled entities | Supported position or `Auto` |
+| `LabelPosition` | labelled entities | Supported position; blank resolves to the Type default or `Auto` |
 | `StyleKey` | styleable entities | Blank uses type default; otherwise an approved named style |
 | `FillColour` | filled rectangles/diamonds/splitters | Blank uses resolved style; override is `#RRGGBB` |
 | `StrokeColour` | lines/outlines | Blank uses resolved style; override is `#RRGGBB` |

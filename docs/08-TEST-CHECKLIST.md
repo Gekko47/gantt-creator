@@ -14,8 +14,8 @@ Applies to: any public method that parses, formats, or converts numeric values.
 - [ ] Culture-roundtrip test: code sets `CurrentCulture` to a comma-decimal
       culture (e.g. `de-DE`) and asserts the exact output / parsed value.
 - [ ] Non-finite input tests: `NaN`, `+Infinity`, `-Infinity`, overflowed
-      exponents (`"1e999"`) throw the documented exception, not silent
-      propagation.
+      exponents (`"1e999"`). Each consumer's documented rejection is asserted per its contract: `ExportSize.ParseValue` raises `FormatException`; `ExportSize.ToPixels` raises `ArgumentOutOfRangeException`; numeric casts guarded by `IsFinite` raise the documented guard exception. No silent
+      propagation of non-finite or out-of-range values.
 - [ ] Every `double`/`float`→`int` cast is guarded by `IsFinite` + range
       check; tests cover each violation.
 - [ ] Rounding happens at exactly one documented boundary; no repeated
