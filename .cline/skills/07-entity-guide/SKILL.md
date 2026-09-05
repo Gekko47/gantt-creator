@@ -89,5 +89,4 @@ A valid `SingleEntitySelection` requires:
 ## Where to read more
 
 - Canonical source: `docs/07-GANTT-ENTITY-GUIDE.md`
-- Always-on rule: `.clinerules/07-GANTT-ENTITY-GUIDE.md`
 - Full reference: `./references.md` in this directory

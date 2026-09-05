@@ -1,6 +1,6 @@
 # Copilot custom instructions
 
-These instructions apply to GitHub Copilot in Visual Studio when Agent Mode is enabled. They mirror the always-on rules in `.clinerules/00..07-*.md` and `AGENTS.md`. When they conflict, the kit wins; the human reviews the diff.
+These instructions apply to GitHub Copilot in Visual Studio when Agent Mode is enabled. They mirror `AGENTS.md` (the always-on contract) and the `.cline/skills/` reference material. When they conflict, the kit wins; the human reviews the diff.
 
 ## Read these first
 

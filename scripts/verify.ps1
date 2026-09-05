@@ -6,7 +6,7 @@
 .DESCRIPTION
     Slower than verify-quick.ps1. Includes all quick gates plus:
       1. markdown link sanity (scripts/check-md-links.ps1)
-      2. clinerules skill-tree drift gate (scripts/check-cline-skills.ps1)
+      2. skill-tree drift gate (scripts/check-cline-skills.ps1)
       3. SKILL.md canonical-phrase presence (scripts/check-skill-summary.ps1)
       4. STATUS.md accuracy (scripts/check-status.ps1)
       5. PSScriptAnalyzer over scripts/
@@ -81,7 +81,7 @@ Invoke-Step 'markdown link sanity' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-md-links.ps1')
 }
 
-Invoke-Step 'clinerules skill tree in sync' {
+Invoke-Step 'skill tree in sync' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-cline-skills.ps1')
 }
 

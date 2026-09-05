@@ -4,7 +4,7 @@
 # Exits 0 if all links resolve; exits 1 with a list of broken links otherwise.
 [CmdletBinding()]
 param(
-    [string[]]$Roots = @('docs', '.clinerules', '.github'),
+    [string[]]$Roots = @('docs', '.github'),
     [string]$Entry  = 'AGENTS.md'
 )
 

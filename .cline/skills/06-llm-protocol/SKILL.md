@@ -89,5 +89,4 @@ The agent should not:
 ## Where to read more
 
 - Canonical source: `docs/06-LLM-PROTOCOL.md`
-- Always-on rule: `.clinerules/06-LLM-PROTOCOL.md`
 - Full reference: `./references.md` in this directory

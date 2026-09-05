@@ -46,7 +46,7 @@ The `Office/SharePoint development` workload is not required by Excel-DNA itself
 
 1. Install VS Code, C# Dev Kit, and Cline from their official publishers.
 2. Open the repository root.
-3. In Cline's rules view, enable `AGENTS.md` and all `.clinerules` files.
+3. In Cline's rules view, enable `AGENTS.md`.
 4. Confirm project skills appear from `.cline/skills/`.
 5. Do not enable blanket auto-approval. Safe read-only commands and targeted test commands may be approved per workspace after review.
 

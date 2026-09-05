@@ -89,5 +89,4 @@ flowchart TD
 ## Where to read more
 
 - Canonical source: `docs/02-ARCHITECTURE.md`
-- Always-on rule: `.clinerules/02-ARCHITECTURE.md`
 - Full reference: `./references.md` in this directory

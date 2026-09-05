@@ -89,5 +89,4 @@ The renderer talks to narrow fake adapters in most tests. Assert the observable 
 ## Where to read more
 
 - Canonical source: `docs/04-TEST-STRATEGY.md`
-- Always-on rule: `.clinerules/04-TEST-STRATEGY.md`
 - Full reference: `./references.md` in this directory

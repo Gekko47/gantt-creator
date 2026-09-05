@@ -16,13 +16,13 @@ Describe 'check-cline-skills.ps1' {
 
     It 'implements Phase 2: re-runs sync into a temp dir and byte-compares' {
         # The Phase 2 implementation must (a) re-run sync-cline-skills.ps1
-        # with -RulesRoot and -SkillsRoot overrides, then (b) compare
-        # generated content against the committed views using git diff
-        # --no-index --quiet (exit 0 = same, exit 1 = different).
+        # with a -SkillsRoot override, then (b) compare generated content
+        # against the committed view using git diff --no-index --quiet
+        # (exit 0 = same, exit 1 = different).
         $content = Get-Content -LiteralPath $scriptPath -Raw
         $content | Should -Match 'sync-cline-skills\.ps1'
-        $content | Should -Match 'RulesRoot'
         $content | Should -Match 'SkillsRoot'
+        $content | Should -Not -Match 'RulesRoot'
         $content | Should -Match 'git.*diff.*--no-index --quiet'
     }
 

@@ -89,5 +89,4 @@ Goal: render and refresh an owned set of Excel shapes beside the source data.
 ## Where to read more
 
 - Canonical source: `docs/03-ROADMAP.md`
-- Always-on rule: `.clinerules/03-ROADMAP.md`
 - Full reference: `./references.md` in this directory

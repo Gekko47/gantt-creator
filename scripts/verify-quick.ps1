@@ -11,7 +11,7 @@
 
     Steps:
       1. dotnet --version sanity check
-      2. clinerules skill-tree drift gate
+      2. skill-tree drift gate
       3. SKILL.md canonical-phrase presence gate
       4. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
       5. PSScriptAnalyzer over scripts/
@@ -70,10 +70,10 @@ function Invoke-Step {
 
 Invoke-Step 'dotnet --version' { dotnet --version }
 
-Invoke-Step 'clinerules skill tree in sync' {
-    # Drift gate: re-run the sync and fail if any of the three views
-    # (.clinerules/, .cline/skills/, docs/) is out of date. Wired in so
-    # a stale rule or skill is caught at every commit.
+Invoke-Step 'skill tree in sync' {
+    # Drift gate: re-run the sync and fail if either view
+    # (.cline/skills/ or docs/) is out of date. Wired in so
+    # a stale skill is caught at every commit.
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-cline-skills.ps1')
 }
 

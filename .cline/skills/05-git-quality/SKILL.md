@@ -43,7 +43,7 @@ Pre-commit safety net (optional, recommended):
 pwsh ./scripts/install-pre-commit.ps1
 ```
 Once installed, every `git commit` runs the fast deterministic gates
-(clinerules drift, SKILL.md canonical phrases, STATUS.md accuracy,
+(skill-tree drift, SKILL.md canonical phrases, STATUS.md accuracy,
 markdown-link sanity) before the commit is created. A failure aborts
 the commit. The hook deliberately does **not** run `verify-quick.ps1`
 (~60s build + test) so a commit is not slowed down; the developer still
@@ -89,5 +89,4 @@ Keep it brief and evidence-led:
 ## Where to read more
 
 - Canonical source: `docs/05-GIT-QUALITY.md`
-- Always-on rule: `.clinerules/05-GIT-QUALITY.md`
 - Full reference: `./references.md` in this directory

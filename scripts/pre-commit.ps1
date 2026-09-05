@@ -12,8 +12,8 @@
     verification stays a developer-initiated step before commit/PR per
     docs/05-GIT-QUALITY.md. The hook catches:
 
-      1. clinerules skill-tree drift (check-cline-skills.ps1 Phase 1 only:
-         working tree must be clean under docs/, .clinerules/, .cline/skills/)
+      1. skill-tree drift (check-cline-skills.ps1: working tree must
+         be clean under docs/ and .cline/skills/)
       2. SKILL.md canonical-phrase presence (check-skill-summary.ps1)
       3. STATUS.md accuracy (check-status.ps1)
       4. Markdown link sanity (check-md-links.ps1) — staged docs only
