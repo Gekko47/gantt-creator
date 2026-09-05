@@ -38,6 +38,17 @@ git status --short
 git diff --stat
 git diff
 ```
+Pre-commit safety net (optional, recommended):
+```powershell
+pwsh ./scripts/install-pre-commit.ps1
+```
+Once installed, every `git commit` runs the fast deterministic gates
+(clinerules drift, SKILL.md canonical phrases, STATUS.md accuracy,
+markdown-link sanity) before the commit is created. A failure aborts
+the commit. The hook deliberately does **not** run `verify-quick.ps1`
+(~60s build + test) so a commit is not slowed down; the developer still
+runs `verify-quick.ps1` during editing and `verify.ps1` before a PR.
+See `AGENTS.md` and `scripts/pre-commit.ps1` for the full contract.
 Quick verification runs format check, Release build, and non-Office tests without coverage packaging. Full verification runs locked restore, format/analyzers, Release build, all non-Office tests with configured coverage thresholds, and repository hygiene checks.
 Do not commit when a gate is red. Do not bypass the script by running only the test that passes.
 ## CI jobs
@@ -72,17 +83,6 @@ Keep it brief and evidence-led:
 ## Review checklist
 ### Behaviour
 - Work item acceptance criteria are met and no extra product behaviour appeared.
-- Error/empty/boundary cases are visible in tests.
-- Existing one-sheet and offline constraints remain true.
-### Architecture
-- Core has no infrastructure reference.
-- Scene layout is not duplicated in an Office or raster renderer.
-- New COM calls are isolated and have clear ownership/state restoration.
-- New configuration has versioning and a migration/default policy.
-### Quality
-- Assertions would fail for a plausible defect.
-- No suppressed warning, reduced threshold, hidden retry, arbitrary sleep, or catch-and-ignore.
-- No unnecessary dependency or public API.
 
 ---
 
