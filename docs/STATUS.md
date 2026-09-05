@@ -47,6 +47,7 @@
 
 - **L2** — `.vs/` (Visual Studio user options) is present locally and is already covered by `.gitignore`.
 - **L3** — The optional `03-ROADMAP.md` skill originally referenced a `03` gap; the renumbered `.clinerules/03-ROADMAP.md` now closes that gap and the `docs/03-ROADMAP.md` mirror is committed.
+- **L8** — External diff-scoped docstring coverage is reported at 23.08% against an 80% threshold. This is **not** a project gate: the repo's own policy is `GenerateDocumentationFile=true` + `CS1591` build error per undocumented public member, enforced for the public API surface in `src/`. Decision (2026-09-04, human): do not force-doc non-public or obvious symbols to chase a volume metric; rely on the existing CS1591 policy plus reviewer judgement, which matches `AGENTS.md` ("XML documentation when the contract is not obvious"). Triggers to revisit: a non-obvious public symbol lands without a summary, or a reviewer's "what does this do?" indicates real missing docs.
 
 ## Open questions for human
 
