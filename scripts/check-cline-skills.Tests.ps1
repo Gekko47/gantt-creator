@@ -23,7 +23,7 @@ Describe 'check-cline-skills.ps1' {
         $content | Should -Match 'sync-cline-skills\.ps1'
         $content | Should -Match 'RulesRoot'
         $content | Should -Match 'SkillsRoot'
-        $content | Should -Match 'git diff --no-index --quiet'
+        $content | Should -Match 'git.*diff.*--no-index --quiet'
     }
 
     It 'documents the temp-dir cleanup on failure' {

@@ -4,16 +4,23 @@
     Full verification gate. Run on every PR and before release.
 
 .DESCRIPTION
-    Slower than verify-quick.ps1. Includes:
+    Slower than verify-quick.ps1. Includes all quick gates plus:
       1. markdown link sanity (scripts/check-md-links.ps1)
-      2. dotnet restore
-      3. dotnet build -c Release -warnaserror
-      4. dotnet publish the AddIn in Release configuration
-      5. dotnet test on every non-OfficeIntegration project
-      6. coverage report and per-project threshold check
-      7. dotnet list package --vulnerable --include-transitive
-      8. repository hygiene (git status --short, dirty working tree)
-      9. SBOM (CycloneDX) generation
+      2. clinerules skill-tree drift gate (scripts/check-cline-skills.ps1)
+      3. SKILL.md canonical-phrase presence (scripts/check-skill-summary.ps1)
+      4. STATUS.md accuracy (scripts/check-status.ps1)
+      5. PSScriptAnalyzer over scripts/
+      6. workflow lint (actionlint) over .github/workflows/ci.yml
+      7. script lint (Pester) over scripts/*.ps1
+      8. dotnet restore --locked-mode
+      9. dotnet format --verify-no-changes --exclude tests
+     10. dotnet build -c Release -warnaserror
+     11. dotnet publish the AddIn in Release configuration
+     12. dotnet test on every non-OfficeIntegration project
+     13. coverage report and per-project threshold check
+     14. dotnet list package --vulnerable --include-transitive
+     15. repository hygiene (git status --short, dirty working tree)
+     16. SBOM (CycloneDX) generation
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -78,12 +85,47 @@ Invoke-Step 'clinerules skill tree in sync' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-cline-skills.ps1')
 }
 
+Invoke-Step 'skill summary phrases' {
+    pwsh -NoProfile -File (Join-Path $scriptRoot 'check-skill-summary.ps1')
+}
+
+Invoke-Step 'status accuracy' {
+    pwsh -NoProfile -File (Join-Path $scriptRoot 'check-status.ps1')
+}
+
+Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
+    if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+        Write-Error ('PSScriptAnalyzer is not installed. Run: ' +
+            'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
+        exit 1
+    }
+    Invoke-ScriptAnalyzer -Path (Join-Path $PSScriptRoot '.') -Recurse `
+        -Exclude '_artifacts' `
+        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
+        -EnableExit
+}
+
+Invoke-Step 'workflow lint (actionlint)' {
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'lint-ci.ps1')
+}
+
+Invoke-Step 'script lint (Pester)' {
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-scripts.ps1')
+}
+
 Invoke-Step 'restore' {
     if (Test-Path -LiteralPath 'packages.lock.json') {
         dotnet restore --locked-mode
     } else {
         dotnet restore $Solution
     }
+}
+
+Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {
+    # Same command as the CI format gate (.github/workflows/ci.yml) and
+    # verify-quick.ps1 so a local PASS predicts a CI PASS. Excludes tests/
+    # where the xUnit style conventions are deliberately tolerated.
+    dotnet format $Solution --verify-no-changes --exclude tests
 }
 
 Invoke-Step 'build Release -warnaserror' {

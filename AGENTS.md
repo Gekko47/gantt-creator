@@ -127,6 +127,7 @@ Never repeat an unchanged command expecting a different result, except once for 
 - Do not commit Office temporary files, build output, test results, exported customer images, or local logs.
 - Update comments only when they add current, non-obvious value. Remove stale comments in the touched area.
 - Keep the work item and status concise; they are control records, not diaries.
+- **Pre-commit gate (safety net):** The repository ships `scripts/pre-commit.ps1` and `scripts/install-pre-commit.ps1`. Once installed (via `pwsh ./scripts/install-pre-commit.ps1`, which configures `core.hooksPath`), every `git commit` runs the fast deterministic checks — clinerules drift, SKILL.md canonical phrases, STATUS.md accuracy, and markdown-link sanity — before the commit is created. A failure aborts the commit. The hook is deliberately NOT `verify-quick.ps1`: it does not build, test, or run PSScriptAnalyzer (each of which takes >10 s). The developer still runs `pwsh ./scripts/verify-quick.ps1` during editing and `pwsh ./scripts/verify.ps1` before a PR; the hook is a last-ditch safety net that guarantees the committed tree cannot be stale under the three view files.
 
 ## Completion language
 

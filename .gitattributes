@@ -36,7 +36,9 @@
 # --- Documentation: LF, preserve trailing whitespace ---
 *.md              text eol=lf whitespace=-trailing-space
 
-# --- Solution-level lock files: keep both versions on conflict ---
+# --- Git hooks: force LF (sh requires LF line endings) ---
+.githooks/pre-commit   text eol=lf
+.githooks/*            text eol=lf
 # Packages.lock.json files are deterministic pins. A conflict means
 # a deliberate change on both branches; resolution must be manual.
 packages.lock.json        merge=union

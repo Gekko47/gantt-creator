@@ -1,0 +1,4 @@
+#!/bin/sh
+# Delegates to the versioned pre-commit gate. Installed by
+# scripts/install-pre-commit.ps1; do not edit by hand.
+exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "C:/repos/gantt-creator/scripts/pre-commit.ps1"

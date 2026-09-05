@@ -69,8 +69,10 @@ try {
         @{ Generated = $tmpSkills; Committed = (Join-Path (Split-Path -Parent $PSScriptRoot) '.cline/skills') }
     )
     foreach ($pair in $comparePaths) {
-        # git diff --no-index: exit 0 = no diff, exit 1 = diff, exit 128 = error
-        $null = git diff --no-index --quiet -- "$($pair.Generated)" "$($pair.Committed)" 2>&1
+        # git diff --no-index: exit 0 = no diff, exit 1 = diff, exit 128 = error.
+        # -c core.autocrlf=false keeps the comparison byte-exact and avoids
+        # CRLF-normalisation noise in the violation report.
+        $null = git -c core.autocrlf=false diff --no-index --quiet -- "$($pair.Generated)" "$($pair.Committed)" 2>&1
         $code = $LASTEXITCODE
         if ($code -eq 0) {
             continue
@@ -80,7 +82,7 @@ try {
             exit $code
         }
         # Capture the diff for the violation report
-        $diffOut = git diff --no-index -- "$($pair.Generated)" "$($pair.Committed)" 2>&1 | Out-String
+        $diffOut = git -c core.autocrlf=false diff --no-index -- "$($pair.Generated)" "$($pair.Committed)" 2>&1 | Out-String
         $diffs.Add("--- drift in $($pair.Committed) ---")
         $diffs.Add($diffOut)
     }
