@@ -12,13 +12,14 @@
     Steps:
       1. dotnet --version sanity check
       2. clinerules skill-tree drift gate
-      3. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
-      4. PSScriptAnalyzer over scripts/
-      5. dotnet restore --locked-mode (after a lock file is produced)
-      6. dotnet format --verify-no-changes --exclude tests
-      7. dotnet build -c Release -warnaserror
-      8. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
-      9. dotnet test on Core, Raster, Office contract, AddIn, Architecture
+      3. SKILL.md canonical-phrase presence gate
+      4. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
+      5. PSScriptAnalyzer over scripts/
+      6. dotnet restore --locked-mode (after a lock file is produced)
+      7. dotnet format --verify-no-changes --exclude tests
+      8. dotnet build -c Release -warnaserror
+      9. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
+     10. dotnet test on Core, Raster, Office contract, AddIn, Architecture
          (OfficeIntegration trait excluded)
 #>
 
@@ -72,6 +73,14 @@ Invoke-Step 'clinerules skill tree in sync' {
     # (.clinerules/, .cline/skills/, docs/) is out of date. Wired in so
     # a stale rule or skill is caught at every commit.
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-cline-skills.ps1')
+}
+
+Invoke-Step 'skill summary phrases' {
+    # After sync, prove the regenerated SKILL.md files still contain the
+    # canonical phrases the source documents depend on (R0.8 note,
+    # artifact contract, culture-test policy). Catches summary-budget
+    # truncation and silent regeneration gaps.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-skill-summary.ps1')
 }
 
 Invoke-Step 'status accuracy' {
