@@ -1,4 +1,4 @@
-﻿#requires -Version 7
+#requires -Version 7
 #
 # Deliberate two-run locked-restore test (R0.3 acceptance).
 #
@@ -11,7 +11,7 @@
 #    succeed purely from the lock file with no network access.
 #
 # Both runs must exit 0. If the second run would need network
-# access, --locked-mode will refuse and fail — which is exactly
+# access, --locked-mode will refuse and fail -- which is exactly
 # the proof the lock file is honoured.
 
 [CmdletBinding()]
@@ -49,11 +49,11 @@ Write-Host ""
 
 # --- Run 1: generate the lock files ---
 Remove-ObjDirectory
-Invoke-LockRestore -Label 'Run 1 — generate lock files (no cache)'
+Invoke-LockRestore -Label 'Run 1 -- generate lock files (no cache)'
 
 # --- Run 2: prove the lock files are honoured ---
 Remove-ObjDirectory
-Invoke-LockRestore -Label 'Run 2 — honour lock files, no network'
+Invoke-LockRestore -Label 'Run 2 -- honour lock files, no network'
 
 Write-Host ""
 Write-Host "R0.3 locked-restore test: PASS (two consecutive runs from a clean state)"

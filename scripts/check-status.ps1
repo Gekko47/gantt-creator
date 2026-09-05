@@ -7,12 +7,12 @@
 .DESCRIPTION
     Three checks, all derived from the text of docs/STATUS.md itself:
 
-      1. Commit hashes  — every backticked token of 7-40 lowercase hex
+      1. Commit hashes  -- every backticked token of 7-40 lowercase hex
          characters must resolve to a commit (git rev-parse --verify).
-      2. Repo paths     — every backticked token that looks like a
+      2. Repo paths     -- every backticked token that looks like a
          repo-relative file path (contains a separator, ends in an
          extension-like suffix, no globs or URLs) must exist on disk.
-      3. Roadmap IDs    — every backticked R<major>.<minor> token must
+      3. Roadmap IDs    -- every backticked R<major>.<minor> token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define.
 
