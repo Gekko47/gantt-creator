@@ -11,7 +11,7 @@ param(
 $broken = New-Object System.Collections.Generic.List[string]
 $roots = $Roots + $Entry
 foreach ($root in $roots) {
-    if (-not (Test-Path $root)) { continue }
+    if (-not (Test-Path -LiteralPath $root)) { continue }
     Get-ChildItem -Path $root -Recurse -File -Filter '*.md' | ForEach-Object {
         $file = $_.FullName
         $content = Get-Content -Raw $file

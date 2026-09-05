@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $root = Join-Path $repoRoot $SkillsRoot
 
-if (-not (Test-Path $root)) { Write-Error "Missing $root"; exit 1 }
+if (-not (Test-Path -LiteralPath $root)) { Write-Error "Missing $root"; exit 1 }
 
 # Maps a skill-dir/SKILL.md relative path to required canonical phrases.
 # A phrase is matched as a literal substring (case-sensitive) so the
@@ -44,7 +44,7 @@ $violations = New-Object System.Collections.Generic.List[string]
 
 foreach ($kv in $assertions.GetEnumerator()) {
     $path = Join-Path $root $kv.Key
-    if (-not (Test-Path $path)) {
+    if (-not (Test-Path -LiteralPath $path)) {
         $violations.Add("Skill summary file not found: $path")
         continue
     }

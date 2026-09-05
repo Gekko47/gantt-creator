@@ -37,7 +37,7 @@ $coverageThresholds = @{
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $artifacts  = Join-Path $scriptRoot '_artifacts'
-if (-not (Test-Path $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
+if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
 $report = Join-Path $artifacts 'verify.txt'
 $start  = Get-Date
 "" | Set-Content -LiteralPath $report
@@ -79,7 +79,7 @@ Invoke-Step 'clinerules skill tree in sync' {
 }
 
 Invoke-Step 'restore' {
-    if (Test-Path 'packages.lock.json') {
+    if (Test-Path -LiteralPath 'packages.lock.json') {
         dotnet restore --locked-mode
     } else {
         dotnet restore $Solution
@@ -108,7 +108,7 @@ Invoke-Step 'test (OfficeIntegration excluded)' {
 # production project falls below the threshold.
 Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
-    if (-not (Test-Path $coverageRoot)) {
+    if (-not (Test-Path -LiteralPath $coverageRoot)) {
         Write-Host 'coverage root not present; skipping threshold check.'
         return
     }

@@ -11,7 +11,7 @@ BeforeAll {
 
 Describe 'check-skill-summary.ps1' {
     It 'exists and is readable' {
-        (Test-Path $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
     }
 
     It 'uses case-sensitive -cnotmatch for phrase validation' {

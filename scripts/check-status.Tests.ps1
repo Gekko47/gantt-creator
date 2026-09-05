@@ -11,7 +11,7 @@ BeforeAll {
 
 Describe 'check-status.ps1' {
     It 'exists and is readable' {
-        (Test-Path $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
     }
 
     It 'contains GetRelativePath for path containment' {

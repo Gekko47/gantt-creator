@@ -34,7 +34,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $artifacts  = Join-Path $scriptRoot '_artifacts'
-if (-not (Test-Path $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
+if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
 $report = Join-Path $artifacts 'verify-quick.txt'
 $start  = Get-Date
 "" | Set-Content -LiteralPath $report

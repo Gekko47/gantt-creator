@@ -27,8 +27,8 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $artifacts  = Join-Path $scriptRoot '_artifacts'
 $evidence   = Join-Path $artifacts 'office-evidence'
-if (-not (Test-Path $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
-if (-not (Test-Path $evidence))  { New-Item -ItemType Directory -Path $evidence  | Out-Null }
+if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
+if (-not (Test-Path -LiteralPath $evidence))  { New-Item -ItemType Directory -Path $evidence  | Out-Null }
 $report = Join-Path $artifacts 'verify-office.txt'
 "" | Set-Content -LiteralPath $report
 

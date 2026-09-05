@@ -33,8 +33,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $statusFile = Join-Path $repoRoot $StatusPath
 $roadmapFile = Join-Path $repoRoot $RoadmapPath
 
-if (-not (Test-Path $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
-if (-not (Test-Path $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
+if (-not (Test-Path -LiteralPath $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
+if (-not (Test-Path -LiteralPath $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
 
 $status  = Get-Content -LiteralPath $statusFile -Raw
 $roadmap = Get-Content -LiteralPath $roadmapFile -Raw

@@ -11,7 +11,7 @@ BeforeAll {
 
 Describe 'test-locked-restore.ps1' {
     It 'exists and is readable' {
-        (Test-Path $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
     }
 
     It 'searches from repo root ($PSScriptRoot\..) not parent of repo' {

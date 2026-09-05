@@ -25,7 +25,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $workflowDir = Join-Path $repoRoot '.github\workflows'
 $ciYml = Join-Path $workflowDir 'ci.yml'
 
-if (-not (Test-Path $ciYml)) {
+if (-not (Test-Path -LiteralPath $ciYml)) {
     Write-Error "Workflow file not found: $ciYml"
     exit 1
 }
@@ -40,10 +40,10 @@ $toolsDir = Join-Path $env:TEMP 'actionlint'
 $exePath = Join-Path $toolsDir $exeName
 
 # Download if not present
-if (-not (Test-Path $exePath)) {
+if (-not (Test-Path -LiteralPath $exePath)) {
     Write-Host "Downloading actionlint v$version..."
     try {
-        if (-not (Test-Path $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
+        if (-not (Test-Path -LiteralPath $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
         $zipPath = Join-Path $toolsDir $zipName
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
         Expand-Archive -Path $zipPath -DestinationPath $toolsDir -Force
@@ -55,7 +55,7 @@ if (-not (Test-Path $exePath)) {
     }
 }
 
-if (-not (Test-Path $exePath)) {
+if (-not (Test-Path -LiteralPath $exePath)) {
     Write-Error "actionlint executable not found after download: $exePath"
     exit 1
 }

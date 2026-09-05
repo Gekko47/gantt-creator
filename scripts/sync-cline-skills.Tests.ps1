@@ -11,7 +11,7 @@ BeforeAll {
 
 Describe 'sync-cline-skills.ps1' {
     It 'exists and is readable' {
-        (Test-Path $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
     }
 
     It 'defines all 7 canonical source files in $map' {

@@ -98,6 +98,13 @@ BenchmarkDotNet.Artifacts/
 # .NET Core
 project.lock.json
 project.fragment.lock.json
+# packages.lock.json is generated at $(MSBuildProjectDirectory)\..\packages.lock.json
+# (the solution root) and IS committed per ADR-0004 / R0.3. A future
+# contributor adding a per-project packages.lock.json would land here;
+# the rule below is defence-in-depth and does not affect the
+# root-level committed lock file. Force-add it if a future commit
+# reverts this line.
+packages.lock.json
 artifacts/
 .artifacts/
 

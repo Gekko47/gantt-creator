@@ -3,6 +3,14 @@
 # at Warning or Error severity fails the gate (see verify-quick.ps1
 # 'script analyzer' step and .github/workflows/ci.yml).
 @{
+    # Defence-in-depth: include the default ruleset so a future PSScriptAnalyzer
+    # version that promotes a rule's default severity from 'Information' to
+    # 'Warning' cannot silently introduce a new gate failure mode without an
+    # explicit settings change. This file is the single source of truth
+    # for what the gate accepts.
+    IncludeDefaultRules = $true
+    Severity            = @('Error', 'Warning')
+
     # Gates print human-readable step status to the console by design;
     # they emit no pipeline data, so Write-Host is the correct stream.
     ExcludeRules = @(

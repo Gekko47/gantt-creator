@@ -41,13 +41,13 @@ $map = @{
 }
 
 foreach ($root in @($DocsRoot, $RulesRoot, $SkillsRoot)) {
-    if (-not (Test-Path $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
 }
 
 # Validate that every mapped canonical source exists.
 foreach ($file in $map.Keys) {
     $full = Join-Path $DocsRoot $file
-    if (-not (Test-Path $full)) { throw "Canonical source missing: $full" }
+    if (-not (Test-Path -LiteralPath $full)) { throw "Canonical source missing: $full" }
 }
 
 # Regenerate each rule and skill.
@@ -60,7 +60,7 @@ foreach ($file in $map.Keys) {
     $rulePath   = Join-Path $RulesRoot $file
     $body       = Get-Content -LiteralPath $src -Raw
 
-    if (-not (Test-Path $skillDir)) { New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }
+    if (-not (Test-Path -LiteralPath $skillDir)) { New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }
 
     # Always-on rule: stable copy of the canonical body with a one-line
     # header noting it is regenerated. The header is the only thing the
@@ -113,7 +113,7 @@ foreach ($file in $map.Keys) {
 Get-ChildItem -Path $SkillsRoot -Directory | ForEach-Object {
     foreach ($f in @('SKILL.md','references.md')) {
         $p = Join-Path $_.FullName $f
-        if (-not (Test-Path $p)) { throw "Missing $p" }
+        if (-not (Test-Path -LiteralPath $p)) { throw "Missing $p" }
     }
 }
 

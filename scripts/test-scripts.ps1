@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $scriptsDir = Join-Path $repoRoot $ScriptsRoot
 
-if (-not (Test-Path $scriptsDir)) {
+if (-not (Test-Path -LiteralPath $scriptsDir)) {
     Write-Error "Scripts directory not found: $scriptsDir"
     exit 1
 }
@@ -35,7 +35,7 @@ if (-not (Test-Path $scriptsDir)) {
 if (-not (Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue)) {
     Write-Host "Installing Pester 5..."
     try {
-        Install-Module -Name Pester -MinimumVersion 5.0 -MaximumVersion 6 -Scope CurrentUser -Force -SkipPublisherCheck
+        Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
     }
     catch {
         Write-Error "Failed to install Pester: $_"

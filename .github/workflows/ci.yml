@@ -114,7 +114,7 @@ jobs:
         run: dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c Release --no-build
 
       - name: Test (OfficeIntegration excluded)
-        run: dotnet test GanttCreator.slnx -c Release --no-build --filter "Category!=OfficeIntegration"
+        run: dotnet test GanttCreator.slnx -c Release --no-build --filter 'Category!=OfficeIntegration'
 
       - name: Upload packed XLL artifact
         uses: actions/upload-artifact@v4
