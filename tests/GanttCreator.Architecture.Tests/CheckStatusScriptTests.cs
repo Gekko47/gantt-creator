@@ -48,4 +48,15 @@ public sealed class CheckStatusScriptTests
         Assert.Contains("GetFullPath", text, System.StringComparison.Ordinal);
         Assert.Contains("resolves outside the repository", text, System.StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CheckStatus_uses_GetRelativePath_not_StartsWith()
+    {
+        // The containment check must use GetRelativePath so that sibling
+        // directories such as C:\repos\gantt-creator-evil do not falsely
+        // pass a StartsWith check against C:\repos\gantt-creator.
+        var text = ReadCheckStatus();
+        Assert.Contains("GetRelativePath", text, System.StringComparison.Ordinal);
+        Assert.DoesNotContain(".StartsWith($repoRootFull", text, System.StringComparison.Ordinal);
+    }
 }

@@ -1,4 +1,4 @@
-﻿#requires -Version 7
+#requires -Version 7
 <#
 .SYNOPSIS
     Accuracy gate for docs/STATUS.md. Wired into verify-quick.ps1 so the
@@ -69,9 +69,14 @@ foreach ($t in $tokens)
 
     $candidate = Join-Path $repoRoot $t
     # Reject path traversal: the resolved path must stay inside $repoRoot.
+    # GetRelativePath gives the canonical lexical difference; ".." or a
+    # path that starts with "..\" means the candidate escapes the root
+    # (e.g. C:\repos\gantt-creator-evil would pass a StartsWith check
+    # against C:\repos\gantt-creator on Ordinal comparison).
     $resolved = [System.IO.Path]::GetFullPath($candidate)
     $repoRootFull = [System.IO.Path]::GetFullPath($repoRoot)
-    if (-not $resolved.StartsWith($repoRootFull, [StringComparison]::Ordinal)) {
+    $rel = [System.IO.Path]::GetRelativePath($repoRootFull, $resolved)
+    if ($rel -eq '..' -or $rel.StartsWith('..\')) {
         $violations.Add("STATUS references path '$t' which resolves outside the repository.")
         continue
     }

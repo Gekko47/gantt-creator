@@ -25,7 +25,7 @@ function Remove-ObjDirectory {
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
-    Get-ChildItem -Path $PSScriptRoot\..\.. -Recurse -Directory -Filter 'obj' -ErrorAction SilentlyContinue |
+    Get-ChildItem -Path $PSScriptRoot\.. -Recurse -Directory -Filter 'obj' -ErrorAction SilentlyContinue |
         ForEach-Object {
             if ($PSCmdlet.ShouldProcess($_.FullName, 'Delete obj directory')) {
                 Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
