@@ -35,12 +35,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Repository doc gates (md links, STATUS accuracy, skill-tree sync)
         run: |
           pwsh -NoProfile -File scripts/check-md-links.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-md-links.ps1 failed with exit $LASTEXITCODE" }
           pwsh -NoProfile -File scripts/check-status.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-status.ps1 failed with exit $LASTEXITCODE" }
           pwsh -NoProfile -File scripts/check-cline-skills.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check-cline-skills.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Script analyzer (PSScriptAnalyzer)
         run: |

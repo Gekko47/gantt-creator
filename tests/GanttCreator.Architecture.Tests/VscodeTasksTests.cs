@@ -76,6 +76,10 @@ public sealed class VscodeTasksTests
                         $"Task '{task.GetProperty("label").GetString()}' dependsOn '{targetStr}' which does not exist.");
                 }
             }
+            else
+            {
+                Assert.Fail($"Task '{task.GetProperty("label").GetString()}' dependsOn has unsupported JSON kind '{dependsOn.ValueKind}' (expected String or Array).");
+            }
         }
     }
 
@@ -156,5 +160,58 @@ public sealed class VscodeTasksTests
         else if (dependsOn.ValueKind == JsonValueKind.Array)
             labels.AddRange(dependsOn.EnumerateArray().Select(e => e.GetString()!));
         Assert.Contains("publish-addin", labels, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void DependsOn_object_kind_is_rejected()
+    {
+        // Synthesise a tasks.json fragment with a malformed dependsOn
+        // (an object instead of string or array) and prove the validator
+        // rejects it. This guards against future contributors silently
+        // shipping a `dependsOn: { task: "build" }` shape.
+        var json = """
+        {
+          "version": "2.0.0",
+          "tasks": [
+            { "label": "a", "type": "process", "command": "echo", "args": [] },
+            { "label": "b", "type": "process", "command": "echo", "args": [],
+              "dependsOn": { "task": "a" } }
+          ]
+        }
+        """;
+        using var doc = JsonDocument.Parse(json);
+        var tasks = doc.RootElement.GetProperty("tasks");
+        var labels = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var task in tasks.EnumerateArray())
+        {
+            if (task.TryGetProperty("label", out var label))
+                labels.Add(label.GetString()!);
+        }
+
+        var badTask = tasks[1];
+        var dependsOn = badTask.GetProperty("dependsOn");
+        var rejected = false;
+        try
+        {
+            if (dependsOn.ValueKind == JsonValueKind.String)
+            {
+                var t = dependsOn.GetString()!;
+                Assert.Contains(t, labels);
+            }
+            else if (dependsOn.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var t in dependsOn.EnumerateArray())
+                    Assert.Contains(t.GetString()!, labels);
+            }
+            else
+            {
+                Assert.Fail($"dependsOn has unsupported JSON kind '{dependsOn.ValueKind}' (expected String or Array).");
+            }
+        }
+        catch (Xunit.Sdk.XunitException)
+        {
+            rejected = true;
+        }
+        Assert.True(rejected, "Validator must reject dependsOn of object kind.");
     }
 }

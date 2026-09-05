@@ -16,7 +16,8 @@ The build pipeline produces artifacts in a deterministic order. Tests may
 only consume artifacts that a verify-script step guarantees:
 
 - `verify-quick.ps1` and `verify.ps1` are the authoritative producers of
-  `bin/`, `coverage/`, and `publish/` artifacts.
+  `bin/` and `publish/` artifacts; `verify.ps1` additionally produces
+  `coverage/`.
 - A test that reads from `bin/` or `publish/` must be traceable to a
   specific step in those scripts. The traceability lives in the work item.
 - A test must not assume prior build state. It either creates its own

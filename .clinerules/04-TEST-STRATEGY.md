@@ -74,9 +74,11 @@ domain-specific catalogue above. See also `docs/08-TEST-CHECKLIST.md`.
 
 ### Numeric code
 
-- Culture-roundtrip: any public method that parses, formats, or converts
-  numeric values must set `CurrentCulture` to a comma-decimal culture (e.g.
-  `de-DE`) and assert the exact output / parsed value in the same commit.
+- Culture-roundtrip: tests must set `CurrentCulture` to a comma-decimal
+  culture (e.g. `de-DE`) before invoking any public method that parses,
+  formats, or converts numeric values, and assert the exact output /
+  parsed value. Production methods must not be required to modify ambient
+  culture.
 - Non-finite inputs: `double.TryParse` consumers must test `NaN`,
   `+Infinity`, `-Infinity`, and overflowed exponents (`"1e999"`).
 - Every `double`/`float` to `int` cast must be guarded by `IsFinite` and a

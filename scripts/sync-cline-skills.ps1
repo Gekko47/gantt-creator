@@ -23,7 +23,7 @@ param(
     [string]$DocsRoot     = 'docs',
     [string]$RulesRoot    = '.clinerules',
     [string]$SkillsRoot   = '.cline/skills',
-    [int]   $SummaryLines = 25
+    [int]   $SummaryLines = 80
 )
 
 $ErrorActionPreference = 'Stop'

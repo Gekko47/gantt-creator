@@ -50,7 +50,7 @@ $hashPattern = '^[0-9a-f]{7,40}$'
 $hashTokens = $tokens | Where-Object { $_ -match $hashPattern }
 foreach ($h in $hashTokens)
 {
-    $null = git rev-parse --verify ("$h^{commit}") 2>$null
+    $null = git -C $repoRoot rev-parse --verify ("$h^{commit}") 2>$null
     if ($LASTEXITCODE -ne 0)
     {
         $violations.Add("STATUS references commit '$h' which does not resolve in git.")
@@ -67,7 +67,16 @@ foreach ($t in $tokens)
         -and $t -match '\.[A-Za-z0-9]+$'
     if (-not $isPath) { continue }
 
-    if (-not (Test-Path (Join-Path $repoRoot $t)))
+    $candidate = Join-Path $repoRoot $t
+    # Reject path traversal: the resolved path must stay inside $repoRoot.
+    $resolved = [System.IO.Path]::GetFullPath($candidate)
+    $repoRootFull = [System.IO.Path]::GetFullPath($repoRoot)
+    if (-not $resolved.StartsWith($repoRootFull, [StringComparison]::Ordinal)) {
+        $violations.Add("STATUS references path '$t' which resolves outside the repository.")
+        continue
+    }
+
+    if (-not (Test-Path $candidate))
     {
         $violations.Add("STATUS references path '$t' which does not exist.")
     }

@@ -55,7 +55,7 @@ Applies to: any code that creates, validates, or renders entity instances.
       pasted values are blocking errors. No renderer maintains its own type
       list.
 - [ ] Per-row overrides (`FillColour`, `StrokeColour`, `LabelPosition`) are
-      validated against the selected Type''s capabilities. A `Critical Interval`
+      validated against the selected Type's capabilities. A `Critical Interval`
       with a `FillColour` override is a blocking error.
 - [ ] Milestones and delineators read `Start` only; `Finish`, `LaneId`,
       `StackIndex` are not read for geometry. Populate them and verify a
