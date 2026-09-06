@@ -81,8 +81,8 @@ jobs:
 
       - name: Script lint (Pester)
         run: |
-          if (-not (Get-Module -ListAvailable Pester -MinimumVersion 5.0 -ErrorAction SilentlyContinue)) {
-            Install-Module -Name Pester -MinimumVersion 5.0 -MaximumVersion 6 -Scope CurrentUser -Force
+          if (-not (Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue)) {
+            Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
           }
           Import-Module Pester -MinimumVersion 5.0
           $result = Invoke-Pester -Script @(Get-ChildItem scripts/*.Tests.ps1 -ErrorAction SilentlyContinue; Get-ChildItem scripts/*Tests.ps1 -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '\.Tests\.ps1$' }) -PassThru -Output Detailed
