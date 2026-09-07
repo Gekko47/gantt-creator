@@ -11,12 +11,15 @@
 #>
 
 BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
+    # PSSA cannot flow-analyse a Pester BeforeAll across an It block, so
+    # the repo root is held in $script: scope and referenced via the
+    # same pattern as the other Pester test files (Phase A W14 lesson).
+    $script:repoRoot = Split-Path -Parent $PSScriptRoot
 }
 
 Describe 'W-7 review methodology runbook' {
     It 'the canonical methodology section exists in docs/06-LLM-PROTOCOL.md' {
-        $path = Join-Path $repoRoot 'docs\06-LLM-PROTOCOL.md'
+        $path = Join-Path $script:repoRoot 'docs\06-LLM-PROTOCOL.md'
         Test-Path -LiteralPath $path | Should -BeTrue
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match '## End-to-end code review methodology'
@@ -35,7 +38,7 @@ Describe 'W-7 review methodology runbook' {
         # if a future refactor renames them, the human reviewer will
         # see the test fail and decide whether the rename is real or
         # accidental.
-        $path = Join-Path $repoRoot 'docs\06-LLM-PROTOCOL.md'
+        $path = Join-Path $script:repoRoot 'docs\06-LLM-PROTOCOL.md'
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match 'Gate integrity'
         $text | Should -Match 'Build pipeline drift'
@@ -47,7 +50,7 @@ Describe 'W-7 review methodology runbook' {
         # The W-13 lesson lives in two places: the runbook (this test)
         # and the strategy skill. A future agent who removes the
         # strategy section without updating the runbook fails here.
-        $path = Join-Path $repoRoot 'docs\04-TEST-STRATEGY.md'
+        $path = Join-Path $script:repoRoot 'docs\04-TEST-STRATEGY.md'
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match '### Gate integrity \(W-13\)'
         $text | Should -Match 'capture, then judge'
@@ -65,7 +68,7 @@ Describe 'W-7 review methodology runbook' {
             'scripts\step-parity.Tests.ps1',
             'tests\GanttCreator.Architecture.Tests\ArtifactSourceMarkerTests.cs',
             'scripts\ci-parity.Tests.ps1')) {
-            $abs = Join-Path $repoRoot $rel
+            $abs = Join-Path $script:repoRoot $rel
             if (-not (Test-Path -LiteralPath $abs)) { $missing += $rel }
         }
         $missing.Count | Should -Be 0 -Because "missing gate runbook tests: $($missing -join ', ')"
@@ -75,12 +78,12 @@ Describe 'W-7 review methodology runbook' {
         # W-11: a tool pin declared in two places is the "local/CI view
         # divergence" defect class. The single source must exist, and
         # at least three consumers must read from it.
-        $psd1 = Join-Path $repoRoot 'scripts\tool-versions.psd1'
+        $psd1 = Join-Path $script:repoRoot 'scripts\tool-versions.psd1'
         Test-Path -LiteralPath $psd1 | Should -BeTrue
 
-        $ciPath    = Join-Path $repoRoot '.github\workflows\ci.yml'
-        $lintPath  = Join-Path $repoRoot 'scripts\lint-ci.ps1'
-        $testPath  = Join-Path $repoRoot 'scripts\test-scripts.ps1'
+        $ciPath    = Join-Path $script:repoRoot '.github\workflows\ci.yml'
+        $lintPath  = Join-Path $script:repoRoot 'scripts\lint-ci.ps1'
+        $testPath  = Join-Path $script:repoRoot 'scripts\test-scripts.ps1'
         foreach ($p in @($ciPath, $lintPath, $testPath)) {
             $text = Get-Content -LiteralPath $p -Raw
             $text | Should -Match 'tool-versions\.psd1' -Because "$p must consume scripts\tool-versions.psd1 (W-11)"
@@ -91,7 +94,7 @@ Describe 'W-7 review methodology runbook' {
         # W-12: phases may not exit on local-only evidence. A future
         # contributor who edits the git-quality file to weaken or
         # remove this rule fails this test, which forces a conversation.
-        $path = Join-Path $repoRoot 'docs\05-GIT-QUALITY.md'
+        $path = Join-Path $script:repoRoot 'docs\05-GIT-QUALITY.md'
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match 'phase may not exit on local-only evidence'
     }
