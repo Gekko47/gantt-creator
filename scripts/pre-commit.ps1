@@ -44,10 +44,28 @@ $checks = @(
 
 foreach ($check in $checks) {
     Write-Host "[pre-commit] $($check.Name)..."
-    & (Join-Path $scriptRoot $check.Script) 2>&1 | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -ne 0) {
+    # Run the checker inside try/catch so a terminating Write-Error from
+    # the child (e.g. check-cline-skills.ps1 on a dirty working tree) does
+    # not abort the parent before we can emit the blocking message. We
+    # also need to capture $LASTEXITCODE BEFORE any other native command
+    # runs: piping the call through ForEach-Object / Write-Host would
+    # otherwise reset $LASTEXITCODE to 0 (the last native command in the
+    # pipeline is the Write-Host, which always succeeds). The two bugs
+    # combine to silently mask checkers that fail via a terminating
+    # Write-Error, which is why the fix touches both lines.
+    $checkerOutput = @()
+    $checkerExit   = 0
+    try {
+        $checkerOutput = & (Join-Path $scriptRoot $check.Script) 2>&1
+        $checkerExit   = $LASTEXITCODE
+    } catch {
+        $checkerOutput = @($_.Exception.Message)
+        $checkerExit   = 1
+    }
+    foreach ($line in $checkerOutput) { Write-Host "  $line" }
+    if ($checkerExit -ne 0) {
         Write-Error "[pre-commit] $($check.Name) failed. Commit blocked. Run the full verification gate and fix before retrying."
-        exit $LASTEXITCODE
+        exit $checkerExit
     }
 }
 
