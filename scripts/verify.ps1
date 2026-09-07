@@ -102,10 +102,23 @@ Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
             'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
         exit 1
     }
-    Invoke-ScriptAnalyzer -Path (Join-Path $PSScriptRoot '.') -Recurse `
+    # See verify-quick.ps1 for the rationale: capture + judge rather than
+    # `-EnableExit` (the function-level `exit` does not survive the
+    # Tee/ForEach pipeline in Invoke-Step).
+    $pssaFindings = @(Invoke-ScriptAnalyzer `
+        -Path (Join-Path $PSScriptRoot '.') `
+        -Recurse `
         -Exclude '_artifacts' `
-        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
-        -EnableExit
+        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'))
+    if ($pssaFindings.Count -gt 0) {
+        foreach ($f in $pssaFindings) {
+            $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
+            Write-Host $msg
+            Add-Content -LiteralPath $report -Value $msg
+        }
+        Write-Error "PSScriptAnalyzer reported $($pssaFindings.Count) issue(s). See report above."
+        exit 1
+    }
 }
 
 Invoke-Step 'workflow lint (actionlint)' {

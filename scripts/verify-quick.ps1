@@ -101,15 +101,32 @@ Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
     # Exclusions are documented in that file. If the module is missing,
     # install it once per machine:
     #   Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+    #
+    # We capture findings and judge in this scope instead of using
+    # `-EnableExit`: `-EnableExit` calls `exit` from inside a function, which
+    # does not propagate to the parent process's $LASTEXITCODE when the
+    # cmdlet runs inside a Tee/ForEach pipeline. That would silently turn
+    # the analyzer step into a no-op fail, so we judge explicitly here.
+    # W13 fix: proven by the failing CI run on 2026-09-07.
     if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-        Write-Error ("PSScriptAnalyzer is not installed. Run: " +
-            "Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck")
+        Write-Error ('PSScriptAnalyzer is not installed. Run: ' +
+            'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
         exit 1
     }
-    Invoke-ScriptAnalyzer -Path (Join-Path $PSScriptRoot '.') -Recurse `
+    $pssaFindings = @(Invoke-ScriptAnalyzer `
+        -Path (Join-Path $PSScriptRoot '.') `
+        -Recurse `
         -Exclude '_artifacts' `
-        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
-        -EnableExit
+        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'))
+    if ($pssaFindings.Count -gt 0) {
+        foreach ($f in $pssaFindings) {
+            $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
+            Write-Host $msg
+            Add-Content -LiteralPath $report -Value $msg
+        }
+        Write-Error "PSScriptAnalyzer reported $($pssaFindings.Count) issue(s). See report above."
+        exit 1
+    }
 }
 
 Invoke-Step 'workflow lint (actionlint)' {
