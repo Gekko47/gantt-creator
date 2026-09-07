@@ -86,16 +86,14 @@ jobs:
             -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
 
       - name: Script lint (Pester)
+        # Delegates to the same entry point as verify-quick.ps1 step 7 so a
+        # local PASS predicts a CI PASS. Never inline Pester invocation logic
+        # here: the Pester 4→5 transition removed the `-Script` parameter,
+        # and workflow-inlined logic cannot be kept in sync with the pinned
+        # script gate. Enforced by scripts/ci-parity.Tests.ps1.
         run: |
-          $installedPester = Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue |
-            Sort-Object Version -Descending |
-            Select-Object -First 1
-          if (-not $installedPester -or $installedPester.Version -lt [Version]'5.0') {
-            Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
-          }
-          Import-Module Pester -MinimumVersion 5.0
-          $result = Invoke-Pester -Script @(Get-ChildItem scripts/*.Tests.ps1 -ErrorAction SilentlyContinue; Get-ChildItem scripts/*Tests.ps1 -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '\.Tests\.ps1$' }) -PassThru -Output Detailed
-          if ($result.FailedCount -gt 0) { exit 1 }
+          pwsh -NoProfile -File scripts/test-scripts.ps1
+          if ($LASTEXITCODE -ne 0) { throw "test-scripts.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Setup .NET SDK 10
         uses: actions/setup-dotnet@v4
