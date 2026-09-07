@@ -45,8 +45,12 @@ if a fresh sync produced any diff. Wire it into `verify-quick.ps1`
 and `verify.ps1` so that drift fails the build.
 
 ```powershell
-pwsh -NoProfile -File scripts/sync-cline-skills.ps1
-$drift = git diff --quiet --exit-code .cline/skills/ docs/
+# Run the non-destructive drift gate. This checker regenerates the
+# .cline/skills/ tree in a temp directory, compares it to the committed
+# tree, and exits non-zero if they differ. The on-disk .cline/skills/
+# files are not modified by the gate itself, so hand-edited local
+# changes are preserved if you abort before committing.
+pwsh -NoProfile -File scripts/check-cline-skills.ps1
 if ($LASTEXITCODE -ne 0) {
     Write-Error 'Skill tree is out of date. Run scripts/sync-cline-skills.ps1 and commit the result.'
     exit 1
