@@ -114,11 +114,7 @@ Invoke-Step 'script lint (Pester)' {
 }
 
 Invoke-Step 'restore' {
-    if (Test-Path -LiteralPath 'packages.lock.json') {
-        dotnet restore --locked-mode
-    } else {
-        dotnet restore $Solution
-    }
+    dotnet restore --locked-mode
 }
 
 Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {

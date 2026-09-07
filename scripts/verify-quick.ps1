@@ -120,18 +120,12 @@ Invoke-Step 'script lint (Pester)' {
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-scripts.ps1')
 }
 
-Invoke-Step 'restore (locked mode if lock exists)' {
-    # The .NET SDK with RestorePackagesWithLockFile produces
-    # packages.lock.json files next to each project that has
-    # dependencies. Detect any of them to decide whether --locked-mode
-    # is available.
-    $lockFiles = Get-ChildItem -Path $PSScriptRoot\..\src -Recurse -Filter 'packages.lock.json' -ErrorAction SilentlyContinue
-    if ($lockFiles) {
-        dotnet restore --locked-mode
-    } else {
-        Write-Host 'NOTE: no packages.lock.json found; using plain dotnet restore (R0.3 will add the lock file).'
-        dotnet restore $Solution
-    }
+Invoke-Step 'restore' {
+    # Per-project packages.lock.json files are committed for src/ and
+    # tests/ (RestorePackagesWithLockFile=true in Directory.Build.props),
+    # so --locked-mode is always available. This matches verify.ps1 and
+    # proves the lock files are honoured without network access.
+    dotnet restore --locked-mode
 }
 
 Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {

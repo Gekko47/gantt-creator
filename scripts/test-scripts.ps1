@@ -31,8 +31,13 @@ if (-not (Test-Path -LiteralPath $scriptsDir)) {
     exit 1
 }
 
-# Ensure Pester 5+ is available
-if (-not (Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue)) {
+# Ensure Pester 5+ is available. Get-Module does not support
+# -MinimumVersion; check the highest installed version and install
+# only if it is missing or below 5.0.
+$installedPester = Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+if (-not $installedPester -or $installedPester.Version -lt [Version]'5.0') {
     Write-Host "Installing Pester 5..."
     try {
         Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck

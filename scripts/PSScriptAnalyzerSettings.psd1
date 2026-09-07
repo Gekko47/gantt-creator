@@ -23,14 +23,8 @@
         # test-locked-restore.ps1.
         'PSReviewUnusedParameter'
 
-        # Known false positive: Pester BeforeAll/It/Describe/Fixture blocks
-        # declare variables at one scope level that are used in another.
-        # PSScriptAnalyzer cannot trace these cross-block references, so
-        # every *.Tests.ps1 file triggers PSUseDeclaredVarsMoreThanAssignments
-        # for legitimate patterns like:
-        #   BeforeAll { $scriptPath = ... }
-        #   It 'foo' { Test-Path $scriptPath }
-        # The suppression applies only to Pester test files.
-        'PSUseDeclaredVarsMoreThanAssignments'
+        # PSUseDeclaredVarsMoreThanAssignments removed from global ExcludeRules.
+        # Affected test files add [SuppressMessage("PSScriptAnalyzer",
+        #   "PSUseDeclaredVarsMoreThanAssignments")] before the param block.
     )
 }
