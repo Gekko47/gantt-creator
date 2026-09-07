@@ -96,6 +96,55 @@ domain-specific catalogue above. See also `docs/08-TEST-CHECKLIST.md`.
 - Every test that reads from `bin/` or `publish/` must be traceable to a
   step in `verify-quick.ps1` / `verify.ps1` that produces that artifact. The
   guarantee is documented in the work item, not assumed by the test.
+- Enforced automatically: every `tests/**/*.cs` that references `bin/` or
+  `publish/` must carry a `// artifact-source: <step-name>` marker
+  comment. `tests/GanttCreator.Architecture.Tests/ArtifactSourceMarkerTests`
+  asserts the rule on every commit. See "Artifact-source markers (W10)" in
+  `docs/05-GIT-QUALITY.md` for the rationale and the marker format.
+
+### Gate integrity (W-13)
+
+A gate that reports PASS while its target failure exists is the most
+expensive defect class: the CI badge turns green, the PR is approved,
+and the defect ships to production. The PSScriptAnalyzer step in
+`verify-quick.ps1` was blind for the entire R0.8 round because
+`Invoke-ScriptAnalyzer -EnableExit` calls `exit` from inside a function,
+and the parent process's `$LASTEXITCODE` is not updated when the cmdlet
+runs inside a Tee/ForEach pipeline in `Invoke-Step`. Every script gate
+that runs in a pipeline must obey three rules:
+
+- **Capture, then judge, in the same scope.** Call the gate cmdlet,
+  store its findings in a local variable, and decide in that same block
+  whether to `Write-Error; exit 1`. Do not rely on `-EnableExit`,
+  `throw`, or any function-level exit signal to propagate through a
+  pipeline.
+- **No-silent-pass on empty input.** If the gate can produce zero
+  findings on a non-trivial input, the empty-findings case must be a
+  failure with an actionable error message — not a silent PASS. Concrete
+  examples in the repo: `check-md-links.ps1` fails when its scan finds
+  zero markdown files; `test-scripts.ps1` fails when no test files are
+  discovered or a discovered file contains zero tests. Enforced by
+  `scripts/step-parity.Tests.ps1` (W9) and `scripts/ci-parity.Tests.ps1`
+  (W8).
+- **Positive-control test for every gate.** Every `Invoke-Step` that
+  reports PASS must have a Pester test that proves the step would
+  FAIL on a synthetic failure input. `scripts/pssa-gate.Tests.ps1` is
+  the worked example: it constructs a fixture with a known PSSA
+  warning, runs the analyzer through the same capture-then-judge path
+  the gate uses, and asserts the findings are returned. A future
+  regression that makes the step blind again fails this test.
+
+### Step-parity (W9)
+
+Every verify script's `.DESCRIPTION` block numbers the steps it runs.
+The numbers and the actual `Invoke-Step` calls must agree. A drift
+between the two is a docs/code defect that lies to the reader about
+what the gate does. The contract is enforced by
+`scripts/step-parity.Tests.ps1`:
+- The number of `Invoke-Step '...' { ... }` calls equals the count of
+  numbered lines in the `.DESCRIPTION` block.
+- The names are non-empty and unique.
+- Both verify-quick.ps1 and verify.ps1 carry this property.
 
 ### NoWarn scope
 

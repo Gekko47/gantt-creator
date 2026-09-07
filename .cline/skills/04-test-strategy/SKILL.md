@@ -74,15 +74,15 @@ domain-specific catalogue above. See also `docs/08-TEST-CHECKLIST.md`.
 - Every test that reads from `bin/` or `publish/` must be traceable to a
   step in `verify-quick.ps1` / `verify.ps1` that produces that artifact. The
   guarantee is documented in the work item, not assumed by the test.
-### NoWarn scope
-- Test-only suppressions (CA1707, IDE0011) must live in
-  `tests/Directory.Build.props`, never in the root `Directory.Build.props`.
-  An architecture test asserts this on every commit.
-## Excel shape contract tests
-The renderer talks to narrow fake adapters in most tests. Assert the observable Office operation sequence and values:
-- exact shape type, name, ownership tag, and stable scene ID;
-- point geometry within the documented COM tolerance;
-- fill/stroke/font/alignment/pattern properties;
+- Enforced automatically: every `tests/**/*.cs` that references `bin/` or
+  `publish/` must carry a `// artifact-source: <step-name>` marker
+  comment. `tests/GanttCreator.Architecture.Tests/ArtifactSourceMarkerTests`
+  asserts the rule on every commit. See "Artifact-source markers (W10)" in
+  `docs/05-GIT-QUALITY.md` for the rationale and the marker format.
+### Gate integrity (W-13)
+A gate that reports PASS while its target failure exists is the most
+expensive defect class: the CI badge turns green, the PR is approved,
+and the defect ships to production. The PSScriptAnalyzer step in
 
 ---
 
