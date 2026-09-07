@@ -94,6 +94,32 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
+    public void File_count_cap_of_one_deletes_active_log_on_rotation()
+    {
+        // With cap=1 there is no rotated slot. Rotation must delete the active
+        // .log instead of moving it to .1.log, otherwise the directory would
+        // hold .log plus .1.log, exceeding the cap.
+        using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 50, maxFileCount: 1);
+
+        // Force multiple rotations
+        for (var i = 0; i < 10; i++)
+        {
+            log.Write($"Message number {i} with enough content to rotate");
+        }
+
+        var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+
+        // Cap respected: at most one file (the active .log)
+        Assert.True(files.Length <= 1, $"Expected at most 1 log file (cap), got {files.Length}");
+
+        // The active log must always exist after rotation
+        Assert.Contains(files, f => Path.GetFileName(f) == $"{_baseName}.log");
+
+        // No rotated file may ever be created with cap=1
+        Assert.DoesNotContain(files, f => Path.GetFileName(f) == $"{_baseName}.1.log");
+    }
+
+    [Fact]
     public void Rotation_at_cap_never_deletes_active_log_and_preserves_rotated_files()
     {
         // With cap=3 the active .log plus two rotated files are retained. Rotation must

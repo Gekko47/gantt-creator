@@ -275,10 +275,17 @@ public sealed class RollingLog : IRollingLog
             }
 
             // Move active .log to .1.log only after shifting, so an existing .1.log (now .2) is never overwritten.
+            // With a cap of 1 there is no rotated slot, so the active log is deleted instead.
             if (File.Exists(activeLogPath))
             {
-                var newPath = Path.Combine(_logDirectory, $"{_baseName}.1.log");
-                File.Move(activeLogPath, newPath);
+                if (_maxFileCount == 1)
+                {
+                    DeleteFile(activeLogPath);
+                }
+                else
+                {
+                    File.Move(activeLogPath, Path.Combine(_logDirectory, $"{_baseName}.1.log"));
+                }
             }
 
             // Create new active log file
