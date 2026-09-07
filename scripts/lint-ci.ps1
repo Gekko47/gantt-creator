@@ -46,6 +46,14 @@ if (-not (Test-Path -LiteralPath $exePath)) {
         if (-not (Test-Path -LiteralPath $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
         $zipPath = Join-Path $toolsDir $zipName
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+        # Integrity check: the same SHA-256 pin the CI workflow enforces.
+        # Both pins must stay identical (asserted by lint-ci.Tests.ps1).
+        $expectedHash = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
+        $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $expectedHash) {
+            Write-Error "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"
+            exit 1
+        }
         Expand-Archive -Path $zipPath -DestinationPath $toolsDir -Force
         Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     }

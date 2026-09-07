@@ -1,6 +1,8 @@
 #requires -Version 7
 # Validates that all relative links in the kit markdown files resolve.
-# Walks docs/, .clinerules/, AGENTS.md, and .github/ recursively.
+# Roots are resolved against the repository root (the parent of this script's
+# directory), so the check behaves identically no matter the caller's CWD.
+# Walks docs/, .github/, and AGENTS.md by default.
 # Exits 0 if all links resolve; exits 1 with a list of broken links otherwise.
 [CmdletBinding()]
 param(
@@ -8,14 +10,22 @@ param(
     [string]$Entry  = 'AGENTS.md'
 )
 
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+
 $broken = New-Object System.Collections.Generic.List[string]
 $roots = $Roots + $Entry
-foreach ($root in $roots) {
-    if (-not (Test-Path -LiteralPath $root)) { continue }
-    Get-ChildItem -Path $root -Recurse -File -Filter '*.md' | ForEach-Object {
+foreach ($root in $roots)
+{
+    $rootPath = Join-Path $repoRoot $root
+    if (-not (Test-Path -LiteralPath $rootPath)) { continue }
+    Get-ChildItem -LiteralPath $rootPath -Recurse -File -Filter '*.md' | ForEach-Object {
         $file = $_.FullName
-        $content = Get-Content -Raw $file
-        $rx = [regex]'\]\((?!https?://|#|mailto:|\.)([^)]+)\)'
+        $content = Get-Content -LiteralPath $file -Raw
+        # Relative and root-relative targets only; absolute URLs, anchors,
+        # and mailto links are skipped. './relative.md' links ARE validated:
+        # a leading dot no longer exempts a link from the check.
+        $rx = [regex]'\]\((?!https?://|#|mailto:)([^)]+)\)'
         foreach ($m in $rx.Matches($content)) {
             $rel = $m.Groups[1].Value.Trim()
             # Strip anchors
