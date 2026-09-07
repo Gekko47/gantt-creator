@@ -11,7 +11,7 @@
     .git/hooks/pre-commit file is not an executable bit issue.
 
     The gate runs only the fast, deterministic checks (~10s):
-    clinerules drift, skill-summary phrases, status accuracy, and
+    skill-tree drift, skill-summary phrases, status accuracy, and
     markdown links. It deliberately does NOT run the full
     verify-quick.ps1 (~60s) so a commit is not slowed down by the
     Release build and test suite.
@@ -41,13 +41,15 @@ New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 # /bin/sh (msys), so the hook file must be a sh script, not a Windows
 # batch file. A shim is required because the hook file cannot itself be a
 # PowerShell script (git does not know how to exec a .ps1).
-$scriptPath = (Join-Path $scriptRoot 'pre-commit.ps1').Replace('\', '/')
-$shim = @"
+    $shim = @'
 #!/bin/sh
 # Delegates to the versioned pre-commit gate. Installed by
 # scripts/install-pre-commit.ps1; do not edit by hand.
-exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$scriptPath"
-"@
+# Resolve scripts/pre-commit.ps1 relative to the hooks directory so the
+# shim is portable across checkout paths and core.hooksPath configurations.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/../scripts/pre-commit.ps1"
+'@
 $hookFile = Join-Path $hooksDir 'pre-commit'
 # Write as UTF-8 without BOM, LF line endings (sh requires LF).
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -60,6 +62,6 @@ if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to set core.hooksPath'; exit 1 }
 Write-Host 'pre-commit hook installed.'
 Write-Host '  hooksPath.cfg : .githooks'
 Write-Host '  delegate      : scripts/pre-commit.ps1'
-Write-Host '  gates         : clinerules drift, skill-summary phrases, status accuracy, markdown links'
+Write-Host '  gates         : skill-tree drift, skill-summary phrases, status accuracy, markdown links'
 Write-Host '  full verify   : still run pwsh ./scripts/verify-quick.ps1 during editing and pwsh ./scripts/verify.ps1 before a PR'
 exit 0
