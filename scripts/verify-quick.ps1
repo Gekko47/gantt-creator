@@ -45,6 +45,10 @@ function Invoke-Step {
     Write-Host $line
     Add-Content -LiteralPath $report -Value $line
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    # Deterministic step result: clear the process-wide $LASTEXITCODE so a
+    # step that runs only cmdlets (or returns early) cannot inherit a stale
+    # exit code from the previous native command and report a false PASS.
+    $global:LASTEXITCODE = 0
     try {
         & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
         $sw.Stop()

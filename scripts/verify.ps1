@@ -20,7 +20,6 @@
      13. coverage report and per-project threshold check
      14. dotnet list package --vulnerable --include-transitive
      15. repository hygiene (git status --short, dirty working tree)
-     16. SBOM (CycloneDX) generation
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -55,6 +54,10 @@ function Invoke-Step {
     Write-Host $line
     Add-Content -LiteralPath $report -Value $line
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    # Deterministic step result: clear the process-wide $LASTEXITCODE so a
+    # step that runs only cmdlets (or returns early) cannot inherit a stale
+    # exit code from the previous native command and report a false PASS.
+    $global:LASTEXITCODE = 0
     try {
         & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
         $sw.Stop()
@@ -138,12 +141,11 @@ Invoke-Step 'test (OfficeIntegration excluded)' {
         --collect:'XPlat Code Coverage' --results-directory (Join-Path $artifacts 'coverage')
 }
 
-# The coverage-threshold check is intentionally permissive at R0.x: the
-# test projects have only placeholder tests, so the per-project line
-# coverage is 0. The thresholds in $coverageThresholds above are the
-# production targets; the actual assertion is enabled in R3.x when Core
-# has real tests. For now we record the measured coverage and warn if a
-# production project falls below the threshold.
+# The coverage-threshold check is intentionally permissive at R0.x. The
+# thresholds in $coverageThresholds above are the production targets, but
+# this step only records the targets next to the measured coverage; it does
+# not warn and it does not fail. Enforcement is enabled in R3.x when Core
+# has real tests (docs/04-TEST-STRATEGY.md).
 Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
     if (-not (Test-Path -LiteralPath $coverageRoot)) {

@@ -64,9 +64,12 @@ if ($testFiles.Count -eq 0) {
 }
 
 if ($testFiles.Count -eq 0) {
-    Write-Host "test-scripts: No test files found (looking for *.Tests.ps1 or *Tests.ps1 in $scriptsDir)"
-    Write-Host "test-scripts: PASS (nothing to test)"
-    exit 0
+    # No-silent-pass policy: a gate that finds nothing to check proves
+    # nothing about scripts/ health, so an empty discovery is a failure
+    # with an instruction, never a PASS.
+    Write-Error ("test-scripts: No *.Tests.ps1 files found in '$scriptsDir'. " +
+        'The script-lint gate requires at least one Pester test file.')
+    exit 1
 }
 
 Write-Host "Found $($testFiles.Count) script test file(s):"
@@ -80,17 +83,30 @@ $failedTests = 0
 
 foreach ($testFile in $testFiles) {
     Write-Host "Running $($testFile.Name)..."
-    # Pester 6 uses positional path argument or -Path parameter
+    # Pester 5 and 6 both expose PassedCount / FailedCount / TotalCount on
+    # the -PassThru result. The Pester 4-era `.TestResult` collection is NOT
+    # version-safe: under Pester 6 it no longer lists every test, which made
+    # this gate report "Total=0, Passed=0" while tests actually ran.
     $result = Invoke-Pester -Path $testFile.FullName -PassThru -Output Detailed
-    $totalTests += $result.TestResult.Count
-    $passedTests += $result.TestResult.PassedCount
-    $failedTests += $result.TestResult.FailedCount
+    if ($null -eq $result) {
+        Write-Error "test-scripts: Pester returned no result object for $($testFile.Name)."
+        exit 1
+    }
+    if ($result.TotalCount -eq 0) {
+        # No-silent-pass policy: a discovered test file that contains zero
+        # tests proves nothing and must fail the gate.
+        Write-Error "test-scripts: $($testFile.Name) contains no Pester tests."
+        exit 1
+    }
+    $totalTests  += $result.TotalCount
+    $passedTests += $result.PassedCount
+    $failedTests += $result.FailedCount
 
     if ($result.FailedCount -gt 0) {
         $allPassed = $false
-        Write-Host "  FAILED: $($result.FailedCount) of $($result.TestResult.Count) tests failed in $($testFile.Name)"
+        Write-Host "  FAILED: $($result.FailedCount) of $($result.TotalCount) tests failed in $($testFile.Name)"
     } else {
-        Write-Host "  PASSED: $($result.TestResult.Count) tests"
+        Write-Host "  PASSED: $($result.TotalCount) tests"
     }
 }
 
