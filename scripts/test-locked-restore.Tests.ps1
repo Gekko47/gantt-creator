@@ -11,14 +11,11 @@
     text-level regex matches against the script source.
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\test-locked-restore.ps1'
-}
-
 Describe 'test-locked-restore.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\test-locked-restore.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'controlled execution' {
@@ -29,7 +26,7 @@ Describe 'test-locked-restore.ps1' {
             # -- the real script's `scripts\` subdir has the same shape).
             # `dotnet` is shadowed by a shim on PATH that records each
             # invocation to $script:invocationLog and exits 0.
-            function New-LockedRestoreHarness {
+            function Write-LockedRestoreHarness {
                 $script:tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
                 $script:scriptsDir = Join-Path $script:tempRoot 'scripts'
                 $script:stubDir    = Join-Path $script:tempRoot 'dotnet-stub'
@@ -47,11 +44,11 @@ Describe 'test-locked-restore.ps1' {
                 # correct as the script grows. Defensive checks below turn
                 # each failure mode into a clear message instead of an
                 # opaque harness-wrapper error.
-                $sourceText = Get-Content -LiteralPath $scriptPath -Raw
+                $sourceText = Get-Content -LiteralPath $script:scriptPath -Raw
 
                 $requiresMatch = [regex]::Match($sourceText, '#requires\s+-Version\s+(\d+)')
                 if (-not $requiresMatch.Success) {
-                    throw "$scriptPath must declare '#requires -Version N'; this test relies on that contract."
+                    throw "$script:scriptPath must declare '#requires -Version N'; this test relies on that contract."
                 }
 
                 $parserType = [System.Management.Automation.Language.Parser]
@@ -59,7 +56,7 @@ Describe 'test-locked-restore.ps1' {
                 $parseErrors = $null
                 $ast = $parserType::ParseInput($sourceText, [ref]$tokens, [ref]$parseErrors)
                 if ($parseErrors.Count -gt 0) {
-                    throw "$scriptPath failed to parse: $($parseErrors -join '; ')"
+                    throw "$script:scriptPath failed to parse: $($parseErrors -join '; ')"
                 }
 
                 $helperFuncs = $ast.FindAll(
@@ -71,7 +68,7 @@ Describe 'test-locked-restore.ps1' {
                     $true)
 
                 if ($helperFuncs.Count -lt 2) {
-                    throw "Expected to extract Remove-ObjDirectory and Invoke-LockRestore from $scriptPath but found $($helperFuncs.Count) top-level functions: $($helperFuncs.Name -join ', ')"
+                    throw "Expected to extract Remove-ObjDirectory and Invoke-LockRestore from $script:scriptPath but found $($helperFuncs.Count) top-level functions: $($helperFuncs.Name -join ', ')"
                 }
 
                 foreach ($name in 'Remove-ObjDirectory', 'Invoke-LockRestore') {
@@ -89,7 +86,7 @@ Describe 'test-locked-restore.ps1' {
                     $paramBlockText = $ast.ParamBlock.Extent.Text
                 }
                 if (-not $paramBlockText -or $paramBlockText -notmatch [regex]::Escape('[string]$Solution')) {
-                    throw "$scriptPath must declare a [string] `$Solution parameter at script scope; the harness relies on it."
+                    throw "$script:scriptPath must declare a [string] `$Solution parameter at script scope; the harness relies on it."
                 }
 
                 $helpersCode = "#requires -Version $($requiresMatch.Groups[1].Value)`n`n" +
@@ -195,7 +192,7 @@ exit 0
         }
 
         BeforeEach {
-            New-LockedRestoreHarness
+            Write-LockedRestoreHarness
         }
 
         AfterEach {

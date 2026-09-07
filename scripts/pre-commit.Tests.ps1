@@ -4,19 +4,15 @@
     Pester tests for pre-commit.ps1 and install-pre-commit.ps1
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\pre-commit.ps1'
-    $installScriptPath = Join-Path $repoRoot 'scripts\install-pre-commit.ps1'
-}
-
 Describe 'pre-commit.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\pre-commit.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     It 'runs only the fast deterministic gates, not full verify-quick' {
-        $raw = Get-Content -LiteralPath $scriptPath -Raw
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         # Strip the XML doc comment block (<# ... #>) so mentions in
         # .SYNOPSIS/.DESCRIPTION do not trip the negative match.
         $codeOnly = $raw -replace '(?s)<#.*?#>', ''
@@ -33,7 +29,7 @@ Describe 'pre-commit.ps1' {
         # a non-zero exit code. The exact token used to do that is an
         # implementation detail (previously xit $LASTEXITCODE; now
         # xit $checkerExit after the $LASTEXITCODE-reset fix).
-        $content = Get-Content -LiteralPath $scriptPath -Raw
+        $content = Get-Content -LiteralPath $script:scriptPath -Raw
         $content | Should -Match 'Commit blocked'
         $content | Should -Match 'exit \$checkerExit'
     }
@@ -43,7 +39,7 @@ Describe 'pre-commit.ps1' {
             # Helper: write a checker stub that appends its name to the log
             # and optionally exits non-zero. Encoding is utf8NoBOM so the
             # #requires line and PowerShell parsing are happy on Windows.
-            function New-PreCommitStubChecker {
+            function Write-PreCommitStubChecker {
                 param(
                     [string] $Path,
                     [string] $Name,
@@ -64,7 +60,7 @@ exit $ExitCode
             # (see check-cline-skills.ps1). Locks in the fix for the
             # $LASTEXITCODE-reset bug where piping through ForEach-Object
             # used to mask this kind of failure.
-            function New-PreCommitTerminatingErrorStubChecker {
+            function Write-PreCommitTerminatingErrorStubChecker {
                 param(
                     [string] $Path,
                     [string] $Name,
@@ -92,7 +88,7 @@ exit $ExitCode
             # the same code that runs in production, with only the checker
             # scripts replaced by stubs.
             $script:copyScriptPath = Join-Path $script:scriptsDir 'pre-commit.ps1'
-            Copy-Item -LiteralPath $scriptPath -Destination $script:copyScriptPath -Force
+            Copy-Item -LiteralPath $script:scriptPath -Destination $script:copyScriptPath -Force
         }
 
         AfterEach {
@@ -102,10 +98,10 @@ exit $ExitCode
         }
 
         It 'invokes all four checkers in declared order and exits 0 when all pass' {
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
 
             # Invoke via Start-Process so all output streams (incl.
             # Write-Host, which Pester's test host otherwise intercepts)
@@ -129,10 +125,10 @@ exit $ExitCode
 
         It 'exits non-zero with the blocking message and short-circuits on first failure' {
             # First two pass; third fails; fourth is staged but must never run.
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 7
-            New-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 7
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
 
             $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
             $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
@@ -163,9 +159,9 @@ exit $ExitCode
             # passes; the second fails via a terminating Write-Error (the
             # pattern used by check-cline-skills.ps1 today); the third is
             # staged and must never run.
-            New-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
-            New-PreCommitTerminatingErrorStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1' -LogPath $script:invocationLog -ExitCode 1
-            New-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitTerminatingErrorStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1' -LogPath $script:invocationLog -ExitCode 1
+            Write-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
 
             $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
             $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
@@ -186,18 +182,20 @@ exit $ExitCode
 }
 
 Describe 'install-pre-commit.ps1' {
+    BeforeAll { $script:installScriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\install-pre-commit.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $installScriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:installScriptPath) | Should -BeTrue
     }
 
     It 'invokes PowerShell 7 (pwsh) for the hook shim' {
-        $content = Get-Content -LiteralPath $installScriptPath -Raw
+        $content = Get-Content -LiteralPath $script:installScriptPath -Raw
         $content | Should -Match 'exec pwsh\.exe'
         $content | Should -Match 'core\.hooksPath'
     }
 
     It 'writes the shim as LF with UTF-8 without BOM' {
-        $content = Get-Content -LiteralPath $installScriptPath -Raw
+        $content = Get-Content -LiteralPath $script:installScriptPath -Raw
         $content | Should -Match 'New-Object System\.Text\.UTF8Encoding'
         $content | Should -Match '\$contentLf'
         $content | Should -Match 'WriteAllText'

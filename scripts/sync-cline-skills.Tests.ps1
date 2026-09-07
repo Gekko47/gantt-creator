@@ -4,14 +4,11 @@
     Pester tests for sync-cline-skills.ps1
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\sync-cline-skills.ps1'
-}
-
 Describe 'sync-cline-skills.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\sync-cline-skills.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'isolated execution (replaces source-text assertions)' {
@@ -33,7 +30,7 @@ This is a test canonical source for sync-cline-skills.
 It has more than one line so we can also see the summary truncation.
 '@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8
 
-            $syncBody = Get-Content -LiteralPath $scriptPath -Raw
+            $syncBody = Get-Content -LiteralPath $script:scriptPath -Raw
             $fixtureMap = @'
 $map = @{
     '99-FIXTURE.md' = @{ Name = '99-fixture'; Description = 'Test skill.' }

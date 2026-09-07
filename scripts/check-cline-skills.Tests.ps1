@@ -4,14 +4,11 @@
     Pester tests for check-cline-skills.ps1
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\check-cline-skills.ps1'
-}
-
 Describe 'check-cline-skills.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-cline-skills.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'isolated execution (replaces source-text assertions)' {

@@ -4,14 +4,11 @@
     Pester tests for check-skill-summary.ps1
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\check-skill-summary.ps1'
-}
-
 Describe 'check-skill-summary.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-skill-summary.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'isolated execution (replaces source-text assertions)' {
@@ -30,7 +27,7 @@ Describe 'check-skill-summary.ps1' {
             # resolves to the harness dir, and `$repoRoot` (which the
             # script derives from $PSScriptRoot) lines up with our
             # fixture tree.  This avoids touching the real `.cline/skills/`.
-            Copy-Item -LiteralPath $scriptPath -Destination (Join-Path $script:harnessDir 'check-skill-summary.ps1')
+            Copy-Item -LiteralPath $script:scriptPath -Destination (Join-Path $script:harnessDir 'check-skill-summary.ps1')
 
             # The script's $assertions map is the one we need to satisfy
             # OR violate.  Build two parallel skills trees: the clean one

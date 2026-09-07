@@ -4,14 +4,11 @@
     Pester tests for check-status.ps1
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\check-status.ps1'
-}
-
 Describe 'check-status.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-status.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'isolated execution (replaces source-text assertions)' {
@@ -44,7 +41,7 @@ Describe 'check-status.ps1' {
 
             # Copy the script unchanged into the harness; its $PSScriptRoot
             # will be $script:harness and $repoRoot = $script:tempRoot.
-            Copy-Item $scriptPath $script:harness
+            Copy-Item $script:scriptPath $script:harness
 
             # Helper defined at script scope so Pester's `It` blocks can
             # call it directly without a `$script:` indirection.

@@ -5,14 +5,11 @@
     harness, same pattern as check-status.Tests.ps1).
 #>
 
-BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $scriptPath = Join-Path $repoRoot 'scripts\check-md-links.ps1'
-}
-
 Describe 'check-md-links.ps1' {
+    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-md-links.ps1' }
+
     It 'exists and is readable' {
-        (Test-Path -LiteralPath $scriptPath) | Should -BeTrue
+        (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
     }
 
     Context 'isolated execution' {
@@ -26,7 +23,7 @@ Describe 'check-md-links.ps1' {
             # is $script:harness, so its repo root is $script:tempRoot and it
             # scans $script:tempRoot\docs. The default .github and AGENTS.md
             # roots do not exist in the harness and are skipped.
-            Copy-Item $scriptPath $script:harness
+            Copy-Item $script:scriptPath $script:harness
 
             function Invoke-MdLinksHarness {
                 $outFile = Join-Path $script:tempRoot 'out.txt'
