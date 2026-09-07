@@ -18,11 +18,17 @@ public static class VersionInfo
     /// </summary>
     public static readonly string SemanticVersion = ExtractSemanticVersion(InformationalVersion);
 
-    private static string ComputeVersion() =>
-        // In a real build, this would be injected by MSBuild from git describe --tags --always --dirty.
-        // For R0.8 we implement the fallback logic and a deterministic default.
-        // The actual Git injection is done via Directory.Build.props.
-        "0.0.0-local";
+    private static string ComputeVersion()
+    {
+        // Read AssemblyInformationalVersionAttribute.InformationalVersion
+        // from this assembly. Directory.Build.props sets InformationalVersion
+        // at build time; if the attribute is absent (e.g., a partial-trust
+        // host or a stripped assembly), fall back to "0.0.0-local".
+        var attr = typeof(VersionInfo).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
+        return string.IsNullOrEmpty(attr?.InformationalVersion) ? "0.0.0-local" : attr.InformationalVersion;
+    }
 
     private static string ExtractSemanticVersion(string informational)
     {

@@ -45,14 +45,33 @@ public sealed class RollingLog : IRollingLog
             throw new ArgumentOutOfRangeException(nameof(maxFileCount), "Must be positive.");
         }
 
+        // Validate baseName BEFORE any file I/O so validation errors throw ArgumentException,
+        // not IOException from the OS when attempting to create files with invalid names.
+        _baseName = string.IsNullOrWhiteSpace(baseName) ? "gantt-creator" : ValidateBaseName(baseName);
         _logDirectory = logDirectory;
-        _baseName = string.IsNullOrWhiteSpace(baseName) ? "gantt-creator" : baseName;
         _maxFileSizeBytes = maxFileSizeBytes;
         _maxFileCount = maxFileCount;
         _redactor = redactor ?? new Redactor();
 
         _ = Directory.CreateDirectory(_logDirectory);
         RotateIfNeeded();
+    }
+
+    private static string ValidateBaseName(string name)
+    {
+        if (Path.IsPathRooted(name))
+        {
+            throw new ArgumentException(
+                "baseName must not contain path separators, rooted paths, or wildcard characters.",
+                nameof(name));
+        }
+        if (name.AsSpan().IndexOfAny(Path.GetInvalidFileNameChars()) is >= 0)
+        {
+            throw new ArgumentException(
+                "baseName must not contain path separators, rooted paths, or wildcard characters.",
+                nameof(name));
+        }
+        return name;
     }
 
     /// <summary>
@@ -85,13 +104,18 @@ public sealed class RollingLog : IRollingLog
             return;
         }
 
-        var redacted = _redactor.Redact(message);
-        var line = $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} {redacted}{Environment.NewLine}";
-        var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
-
         _gate.Enter();
         try
         {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var redacted = _redactor.Redact(message);
+            var line = $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} {redacted}{Environment.NewLine}";
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
+
             RotateIfNeeded(bytes);
             _currentWriter?.Write(line);
             _currentWriter?.Flush();
@@ -110,52 +134,101 @@ public sealed class RollingLog : IRollingLog
             _currentWriter?.Dispose();
             _currentWriter = null;
 
-            // Rotate existing files: delete oldest if at cap, shift others
-            var files = Directory.GetFiles(_logDirectory, $"{_baseName}*.log")
-                .OrderByDescending(f => f)
+            var activeLogPath = Path.Combine(_logDirectory, $"{_baseName}.log");
+
+            // If the active log already exists, open in append mode and only rotate if it exceeds the limit.
+            // This preserves existing log content when reopening a log with the same base name.
+            if (File.Exists(activeLogPath) && _currentFileSize == 0)
+            {
+                var fileInfo = new FileInfo(activeLogPath);
+                if (fileInfo.Length + incomingBytes <= _maxFileSizeBytes)
+                {
+                    // File exists and has room - open in append mode
+                    _currentFilePath = activeLogPath;
+                    var appendStream = new FileStream(_currentFilePath, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    _currentWriter = new StreamWriter(appendStream, System.Text.Encoding.UTF8);
+                    _currentFileSize = fileInfo.Length;
+                    return;
+                }
+            }
+
+            // Rotate existing files in the correct order:
+            //   1. Delete the largest numeric rotation(s) if at cap (never the active .log).
+            //   2. Shift existing numeric rotations in descending order (.N -> .N+1, ..., .1 -> .2).
+            //   3. Move the active .log to .1.log only after shifting, so an existing .1.log is never overwritten.
+            // Get only rotated files (exclude the active .log, which has int.MaxValue rotation index),
+            // sorted descending so the largest numeric rotation comes first.
+            var rotatedFiles = Directory.GetFiles(_logDirectory, $"{_baseName}*.log")
+                .Where(f => GetRotationIndex(f) != int.MaxValue)
+                .OrderByDescending(GetRotationIndex)
                 .ToArray();
 
-            if (files.Length >= _maxFileCount)
+            // After rotation we'll have (rotatedFiles.Length + 1) rotated files plus the active .log,
+            // so delete from the top when rotatedFiles.Length + 2 exceeds the cap.
+            var toDelete = rotatedFiles.Length + 2 - _maxFileCount;
+            for (var i = 0; i < toDelete && i < rotatedFiles.Length; i++)
             {
-                for (var i = _maxFileCount - 1; i < files.Length; i++)
-                {
-                    try
-                    {
-                        File.Delete(files[i]);
-                    }
-                    catch (IOException)
-                    {
-                        // best effort
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        // best effort
-                    }
-                }
+                DeleteFile(rotatedFiles[i]);
             }
 
-            for (var i = files.Length - 1; i >= 0; i--)
+            // Re-get remaining rotated files after deletion, still in descending order.
+            if (toDelete > 0)
             {
-                var newName = $"{_baseName}.{files.Length - i}.log";
-                var newPath = Path.Combine(_logDirectory, newName);
-                try
-                {
-                    File.Move(files[i], newPath, overwrite: true);
-                }
-                catch (IOException)
-                {
-                    // best effort
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    // best effort
-                }
+                // IDE0305: Collection initialization can be simplified - explicit LINQ chain for clarity
+#pragma warning disable IDE0305
+                rotatedFiles = Directory.GetFiles(_logDirectory, $"{_baseName}*.log")
+                    .Where(f => GetRotationIndex(f) != int.MaxValue)
+                    .OrderByDescending(GetRotationIndex)
+                    .ToArray();
+#pragma warning restore IDE0305
             }
 
+            // Shift existing numeric rotations in descending order (.N -> .N+1, ..., .1 -> .2).
+            // Descending order ensures we never overwrite a file that hasn't been moved yet.
+            foreach (var file in rotatedFiles)
+            {
+                var currentRotation = GetRotationIndex(file);
+                var newRotation = currentRotation + 1;
+                var newPath = Path.Combine(_logDirectory, $"{_baseName}.{newRotation}.log");
+                File.Move(file, newPath);
+            }
+
+            // Move active .log to .1.log only after shifting, so an existing .1.log (now .2) is never overwritten.
+            if (File.Exists(activeLogPath))
+            {
+                var newPath = Path.Combine(_logDirectory, $"{_baseName}.1.log");
+                File.Move(activeLogPath, newPath);
+            }
+
+            // Create new active log file
             _currentFilePath = Path.Combine(_logDirectory, $"{_baseName}.log");
             var fileStream = new FileStream(_currentFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
             _currentWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8);
             _currentFileSize = 0;
+        }
+    }
+
+    private static int GetRotationIndex(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        var lastDot = baseName.LastIndexOf('.');
+        return lastDot >= 0 && int.TryParse(baseName[(lastDot + 1)..], out var index) ? index : int.MaxValue;
+    }
+
+    private static void DeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw;
         }
     }
 
@@ -164,12 +237,20 @@ public sealed class RollingLog : IRollingLog
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        _gate.Enter();
+        try
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            _currentWriter?.Dispose();
+            _currentWriter = null;
         }
-        _disposed = true;
-        _currentWriter?.Dispose();
-        _currentWriter = null;
+        finally
+        {
+            _gate.Exit();
+        }
     }
 }

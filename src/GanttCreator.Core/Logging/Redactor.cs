@@ -17,7 +17,7 @@ public sealed partial class Redactor : IRedactor
     [GeneratedRegex(@"/(?:[^\s/\\]+/)*[A-Za-z0-9._-]+(?:\.[A-Za-z0-9]+)?", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex UnixPathPattern();
 
-    [GeneratedRegex(@"\b\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex IsoDatePattern();
 
     [GeneratedRegex(@"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
