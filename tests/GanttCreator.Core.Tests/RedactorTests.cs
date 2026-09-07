@@ -7,7 +7,7 @@ namespace GanttCreator.Core.Tests;
 /// </summary>
 public sealed class RedactorTests
 {
-    private readonly IRedactor _redactor = new Redactor();
+    private readonly Redactor _redactor = new();
 
     [Fact]
     public void Redact_email_is_masked()
@@ -109,15 +109,23 @@ public sealed class RedactorTests
     {
         var input = "User alice@example.com saved C:\\temp\\file.log at 2026-09-05T12:00:00Z with id 123e4567-e89b-12d3-a456-426614174000 and hash deadbeefcafebabe1234567890abcdef";
         var output = _redactor.Redact(input);
-        Assert.Contains("[email]", output);
-        Assert.Contains("[path]", output);
-        Assert.Contains("[datetime]", output);
-        Assert.Contains("[guid]", output);
-        Assert.Contains("[token]", output);
-        Assert.DoesNotContain("alice@example.com", output);
-        Assert.DoesNotContain("C:\\temp\\file.log", output);
-        Assert.DoesNotContain("2026-09-05T12:00:00Z", output);
-        Assert.DoesNotContain("123e4567-e89b-12d3-a456-426614174000", output);
-        Assert.DoesNotContain("deadbeefcafebabe1234567890abcdef", output);
+        Assert.Contains("[email]", output, StringComparison.Ordinal);
+        Assert.Contains("[path]", output, StringComparison.Ordinal);
+        Assert.Contains("[datetime]", output, StringComparison.Ordinal);
+        Assert.Contains("[guid]", output, StringComparison.Ordinal);
+        Assert.Contains("[token]", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("alice@example.com", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("C:\\temp\\file.log", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("2026-09-05T12:00:00Z", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("123e4567-e89b-12d3-a456-426614174000", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadbeefcafebabe1234567890abcdef", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Redact_iso_date_only_is_masked()
+    {
+        var input = "Event on 1990-05-10 for review.";
+        var output = _redactor.Redact(input);
+        Assert.Equal("Event on [datetime] for review.", output);
     }
 }

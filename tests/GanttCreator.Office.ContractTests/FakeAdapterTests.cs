@@ -19,7 +19,7 @@ public class FakeAdapterTests
     // A concrete fake that exercises the port.
     private sealed class FakeWorksheet : IWorksheet
     {
-        private readonly Dictionary<(int Row, int Col), object?> _cells = new();
+        private readonly Dictionary<(int Row, int Col), object?> _cells = [];
 
         public string Name { get; init; } = "Sheet1";
 

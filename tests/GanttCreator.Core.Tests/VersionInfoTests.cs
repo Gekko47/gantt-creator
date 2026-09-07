@@ -1,4 +1,4 @@
-using System;
+using System.Reflection;
 
 namespace GanttCreator.Core.Tests;
 
@@ -12,22 +12,27 @@ public sealed class VersionInfoTests
     {
         // The version string is computed at compile time via Directory.Build.props.
         // We test the extraction logic directly.
-        var coreType = typeof(VersionInfo);
-        var field = coreType.GetField("SemanticVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        Type coreType = typeof(VersionInfo);
+        FieldInfo? field = coreType.GetField("SemanticVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
         var semantic = (string?)field?.GetValue(null);
         Assert.NotNull(semantic);
         Assert.Matches(@"^\d+\.\d+\.\d+$", semantic);
     }
 
     [Fact]
-    public void InformationalVersion_is_non_empty_and_contains_semantic_prefix()
+    public void InformationalVersion_is_non_empty_and_semver_prefixed()
     {
-        var coreType = typeof(VersionInfo);
-        var field = coreType.GetField("InformationalVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        // VersionInfo reads AssemblyInformationalVersionAttribute.InformationalVersion
+        // from the assembly. Directory.Build.props sets InformationalVersion to
+        // "0.0.0+local" in the absence of a real version, so the test
+        // environment will see a valid semver value. We assert the prefix is a
+        // 3-part semver; we no longer require a hardcoded "0.0.0".
+        Type coreType = typeof(VersionInfo);
+        FieldInfo? field = coreType.GetField("InformationalVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
         var info = (string?)field?.GetValue(null);
         Assert.NotNull(info);
-        Assert.NotEmpty(info!);
-        Assert.StartsWith("0.0.0", info); // fallback in test environment
+        Assert.NotEmpty(info);
+        Assert.Matches(@"^\d+\.\d+\.\d+(?:[-+]|$)", info!);
     }
 
     [Theory]
@@ -37,9 +42,9 @@ public sealed class VersionInfoTests
     [InlineData("10.5.2", "10.5.2")]
     public void ExtractSemanticVersion_known_formats(string input, string expected)
     {
-        var coreType = typeof(VersionInfo);
-        var method = coreType.GetMethod("ExtractSemanticVersion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        var result = (string?)method?.Invoke(null, new object[] { input });
+        Type coreType = typeof(VersionInfo);
+        MethodInfo? method = coreType.GetMethod("ExtractSemanticVersion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var result = (string?)method?.Invoke(null, [input]);
         Assert.Equal(expected, result);
     }
 }

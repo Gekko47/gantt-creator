@@ -1,6 +1,4 @@
-using System.IO;
 using System.Text.Json;
-using Xunit;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -31,11 +29,11 @@ public sealed class VscodeTasksTests
         Assert.True(doc.RootElement.ValueKind == JsonValueKind.Object,
             "tasks.json must be an object { version, tasks }, not a bare array.");
 
-        Assert.True(doc.RootElement.TryGetProperty("version", out var version),
+        Assert.True(doc.RootElement.TryGetProperty("version", out JsonElement version),
             "tasks.json must have a 'version' property.");
         Assert.Equal("2.0.0", version.GetString());
 
-        Assert.True(doc.RootElement.TryGetProperty("tasks", out var tasks),
+        Assert.True(doc.RootElement.TryGetProperty("tasks", out JsonElement tasks),
             "tasks.json must have a 'tasks' array.");
         Assert.True(tasks.ValueKind == JsonValueKind.Array,
             "'tasks' must be an array.");
@@ -47,18 +45,18 @@ public sealed class VscodeTasksTests
         var path = LocateTasksJson();
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
 
-        var tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
         var labels = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (task.TryGetProperty("label", out var label))
-                labels.Add(label.GetString()!);
+            if (task.TryGetProperty("label", out JsonElement label))
+                _ = labels.Add(label.GetString()!);
         }
 
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (!task.TryGetProperty("dependsOn", out var dependsOn))
+            if (!task.TryGetProperty("dependsOn", out JsonElement dependsOn))
                 continue;
 
             if (dependsOn.ValueKind == JsonValueKind.String)
@@ -69,7 +67,7 @@ public sealed class VscodeTasksTests
             }
             else if (dependsOn.ValueKind == JsonValueKind.Array)
             {
-                foreach (var target in dependsOn.EnumerateArray())
+                foreach (JsonElement target in dependsOn.EnumerateArray())
                 {
                     var targetStr = target.GetString()!;
                     Assert.True(labels.Contains(targetStr),
@@ -89,12 +87,12 @@ public sealed class VscodeTasksTests
         var path = LocateTasksJson();
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
 
-        var tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
         JsonElement? clean = null;
 
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (task.TryGetProperty("label", out var label) && label.GetString() == "clean")
+            if (task.TryGetProperty("label", out JsonElement label) && label.GetString() == "clean")
             {
                 clean = task;
                 break;
@@ -112,12 +110,12 @@ public sealed class VscodeTasksTests
         var path = LocateTasksJson();
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
 
-        var tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
         JsonElement? publishAddin = null;
 
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (task.TryGetProperty("label", out var label) && label.GetString() == "publish-addin")
+            if (task.TryGetProperty("label", out JsonElement label) && label.GetString() == "publish-addin")
             {
                 publishAddin = task;
                 break;
@@ -125,7 +123,7 @@ public sealed class VscodeTasksTests
         }
 
         Assert.True(publishAddin.HasValue, "A 'publish-addin' task must exist.");
-        var dependsOn = publishAddin.Value.GetProperty("dependsOn");
+        JsonElement dependsOn = publishAddin.Value.GetProperty("dependsOn");
         var labels = new List<string>();
         if (dependsOn.ValueKind == JsonValueKind.String)
             labels.Add(dependsOn.GetString()!);
@@ -140,12 +138,12 @@ public sealed class VscodeTasksTests
         var path = LocateTasksJson();
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
 
-        var tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
         JsonElement? testAll = null;
 
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (task.TryGetProperty("label", out var label) && label.GetString() == "test-all")
+            if (task.TryGetProperty("label", out JsonElement label) && label.GetString() == "test-all")
             {
                 testAll = task;
                 break;
@@ -153,7 +151,7 @@ public sealed class VscodeTasksTests
         }
 
         Assert.True(testAll.HasValue, "A 'test-all' task must exist.");
-        var dependsOn = testAll.Value.GetProperty("dependsOn");
+        JsonElement dependsOn = testAll.Value.GetProperty("dependsOn");
         var labels = new List<string>();
         if (dependsOn.ValueKind == JsonValueKind.String)
             labels.Add(dependsOn.GetString()!);
@@ -180,16 +178,16 @@ public sealed class VscodeTasksTests
         }
         """;
         using var doc = JsonDocument.Parse(json);
-        var tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
         var labels = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var task in tasks.EnumerateArray())
+        foreach (JsonElement task in tasks.EnumerateArray())
         {
-            if (task.TryGetProperty("label", out var label))
-                labels.Add(label.GetString()!);
+            if (task.TryGetProperty("label", out JsonElement label))
+                _ = labels.Add(label.GetString()!);
         }
 
-        var badTask = tasks[1];
-        var dependsOn = badTask.GetProperty("dependsOn");
+        JsonElement badTask = tasks[1];
+        JsonElement dependsOn = badTask.GetProperty("dependsOn");
         var rejected = false;
         try
         {
@@ -200,7 +198,7 @@ public sealed class VscodeTasksTests
             }
             else if (dependsOn.ValueKind == JsonValueKind.Array)
             {
-                foreach (var t in dependsOn.EnumerateArray())
+                foreach (JsonElement t in dependsOn.EnumerateArray())
                     Assert.Contains(t.GetString()!, labels);
             }
             else

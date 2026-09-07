@@ -38,19 +38,17 @@ public class AddInAssemblyTests
     {
         var buildDir = LocateAddInBuildDirectory();
         var dll = Path.Combine(buildDir, "GanttCreator.AddIn.dll");
-        if (!File.Exists(dll))
-        {
-            throw new FileNotFoundException(
+        return !File.Exists(dll)
+            ? throw new FileNotFoundException(
                 "Could not locate GanttCreator.AddIn.dll in the build output.",
-                dll);
-        }
-        return Assembly.LoadFrom(dll);
+                dll)
+            : Assembly.LoadFrom(dll);
     }
 
     [Fact]
     public void AddIn_assembly_loads_successfully()
     {
-        var asm = LoadAddInAssembly();
+        Assembly asm = LoadAddInAssembly();
         Assert.NotNull(asm);
         Assert.Equal("GanttCreator.AddIn", asm.GetName().Name);
     }

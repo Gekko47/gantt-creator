@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GanttCreator.Core.Tests;
 
 public class PointDTests
@@ -5,7 +7,7 @@ public class PointDTests
     [Fact]
     public void Zero_returns_origin()
     {
-        var p = PointD.Zero;
+        PointD p = PointD.Zero;
         Assert.Equal(0.0, p.X);
         Assert.Equal(0.0, p.Y);
     }
@@ -22,7 +24,7 @@ public class PointDTests
     public void Offset_returns_new_point()
     {
         var p = new PointD(10.0, 20.0);
-        var q = p.Offset(1.5, -0.5);
+        PointD q = p.Offset(1.5, -0.5);
 
         // Original is unchanged (immutable)
         Assert.Equal(10.0, p.X);
@@ -71,7 +73,7 @@ public class PointDTests
     [Fact]
     public void ToString_is_culture_invariant()
     {
-        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        CultureInfo previous = System.Globalization.CultureInfo.CurrentCulture;
         try
         {
             System.Globalization.CultureInfo.CurrentCulture =

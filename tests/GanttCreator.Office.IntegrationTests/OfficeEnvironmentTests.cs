@@ -1,4 +1,3 @@
-using Xunit;
 using Xunit.Abstractions;
 
 namespace GanttCreator.Office.IntegrationTests;
@@ -12,11 +11,9 @@ namespace GanttCreator.Office.IntegrationTests;
 /// A failure here means the self-hosted runner setup is incomplete;
 /// it does not mean the product is broken.
 /// </summary>
-public class OfficeEnvironmentTests
+public class OfficeEnvironmentTests(ITestOutputHelper output)
 {
-    private readonly ITestOutputHelper _output;
-
-    public OfficeEnvironmentTests(ITestOutputHelper output) => _output = output;
+    private readonly ITestOutputHelper _output = output;
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]

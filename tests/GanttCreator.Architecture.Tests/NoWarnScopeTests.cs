@@ -1,7 +1,4 @@
-using System.IO;
-using System.Linq;
 using System.Xml.Linq;
-using Xunit;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -43,10 +40,8 @@ public sealed class NoWarnScopeTests
             {
                 var text = File.ReadAllText(candidate);
                 var doc = XDocument.Parse(text);
-                var ns = doc.Root?.GetDefaultNamespace() ?? XNamespace.None;
-                return doc.Descendants(ns + "NoWarn")
-                    .SelectMany(e => (e.Value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                    .ToArray();
+                XNamespace ns = doc.Root?.GetDefaultNamespace() ?? XNamespace.None;
+                return [.. doc.Descendants(ns + "NoWarn").SelectMany(e => (e.Value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))];
             }
             dir = dir.Parent;
         }
@@ -54,11 +49,11 @@ public sealed class NoWarnScopeTests
     }
 
     /// <summary>One parameter row per (ID) we expect to be scoped to test projects.</summary>
-    public static TheoryData<string> TestOnlySuppressionIds() => new()
-    {
+    public static TheoryData<string> TestOnlySuppressionIds() =>
+    [
         "CA1707",
         "IDE0011",
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(TestOnlySuppressionIds))]

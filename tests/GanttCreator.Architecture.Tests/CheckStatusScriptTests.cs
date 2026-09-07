@@ -1,6 +1,3 @@
-using System.IO;
-using Xunit;
-
 namespace GanttCreator.Architecture.Tests;
 
 /// <summary>
@@ -33,7 +30,7 @@ public sealed class CheckStatusScriptTests
         // drops the -C flag would break when run from any directory other
         // than the repo root.
         var text = ReadCheckStatus();
-        Assert.Contains("git -C $repoRoot rev-parse", text, System.StringComparison.Ordinal);
+        Assert.Contains("git -C $repoRoot rev-parse", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -45,8 +42,8 @@ public sealed class CheckStatusScriptTests
         // like '`../../etc/passwd.md`' to pass; this assertion would
         // catch that regression on commit.
         var text = ReadCheckStatus();
-        Assert.Contains("GetFullPath", text, System.StringComparison.Ordinal);
-        Assert.Contains("resolves outside the repository", text, System.StringComparison.Ordinal);
+        Assert.Contains("GetFullPath", text, StringComparison.Ordinal);
+        Assert.Contains("resolves outside the repository", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -56,7 +53,7 @@ public sealed class CheckStatusScriptTests
         // directories such as C:\repos\gantt-creator-evil do not falsely
         // pass a StartsWith check against C:\repos\gantt-creator.
         var text = ReadCheckStatus();
-        Assert.Contains("GetRelativePath", text, System.StringComparison.Ordinal);
-        Assert.DoesNotContain(".StartsWith($repoRootFull", text, System.StringComparison.Ordinal);
+        Assert.Contains("GetRelativePath", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(".StartsWith($repoRootFull", text, StringComparison.Ordinal);
     }
 }

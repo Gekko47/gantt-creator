@@ -1,7 +1,4 @@
-using System.IO;
-using System.Linq;
 using System.Reflection;
-using Xunit;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -20,7 +17,7 @@ public sealed class CoreBoundaryTests
     // intentionally explicit; an unknown offender fails the test rather
     // than slipping through.
     private static readonly string[] ForbiddenAssemblies =
-    {
+    [
         // Office / Excel-DNA / PowerPoint
         "Microsoft.Office",
         "Microsoft.Office.Interop",
@@ -45,7 +42,7 @@ public sealed class CoreBoundaryTests
         "PresentationFramework",
         "WindowsBase",
         "System.Xaml",
-    };
+    ];
 
     [Fact]
     public void Core_assembly_does_not_reference_forbidden_assemblies()
@@ -61,8 +58,8 @@ public sealed class CoreBoundaryTests
 
         foreach (var forbidden in ForbiddenAssemblies)
         {
-            Assert.DoesNotContain(assemblyNames, n => string.Equals(n, forbidden, System.StringComparison.OrdinalIgnoreCase)
-                || (n?.StartsWith(forbidden + ".", System.StringComparison.OrdinalIgnoreCase) ?? false));
+            Assert.DoesNotContain(assemblyNames, n => string.Equals(n, forbidden, StringComparison.OrdinalIgnoreCase)
+                || (n?.StartsWith(forbidden + ".", StringComparison.OrdinalIgnoreCase) ?? false));
         }
     }
 
@@ -71,8 +68,7 @@ public sealed class CoreBoundaryTests
     {
         var coreDll = LocateCoreAssembly();
         Assert.True(File.Exists(coreDll));
-
-        var assembly = Assembly.LoadFrom(coreDll);
+        _ = Assembly.LoadFrom(coreDll);
         // The simple test: the assembly's image location is the net10.0
         // build output. A path under net10.0-windows would mean Core
         // drifted to a Windows target. The build will not produce both
