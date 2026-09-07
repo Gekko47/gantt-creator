@@ -21,7 +21,7 @@ public enum ExportUnit
 /// A parsed, validated export-width request.
 /// </summary>
 /// <param name="Unit">The unit of <paramref name="Value"/>.</param>
-/// <param name="Value">The non-negative width in <paramref name="Unit"/>.</param>
+/// <param name="Value">The positive width in <paramref name="Unit"/>.</param>
 public readonly record struct WidthRequest(ExportUnit Unit, double Value);
 
 /// <summary>
@@ -45,6 +45,14 @@ public static class ExportSize
 
     /// <summary>Inches per centimetre.</summary>
     public const double CmPerInch = 2.54;
+
+    /// <summary>
+    /// Practical upper bound for any single exported pixel dimension. This
+    /// sits far below int.MaxValue but above every rasterizer's bitmap
+    /// limit, so absurd user input fails here with an actionable message
+    /// instead of surfacing as a GDI+/Skia allocation failure at encode time.
+    /// </summary>
+    public const double MaxPixelDimension = 65_535;
 
     /// <summary>
     /// Parses a width string such as "10cm", "4in", or "800px"
@@ -81,14 +89,15 @@ public static class ExportSize
     /// <param name="sceneHeightPt">The scene height in points. Must be finite and non-negative.</param>
     /// <exception cref="ArgumentOutOfRangeException">A dimension value is
     /// not finite, or sceneWidthPt is not greater than zero, or the
-    /// computed pixel dimensions exceed int.MaxValue.
+    /// computed pixel dimensions exceed the practical export limit of
+    /// 65,535 px.
     /// </exception>
     public static PixelDimensions ToPixels(WidthRequest request, double sceneWidthPt, double sceneHeightPt)
     {
-        if (!double.IsFinite(request.Value) || request.Value < 0)
+        if (!double.IsFinite(request.Value) || request.Value <= 0)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(request), request.Value, "Width request Value must be finite and non-negative.");
+                nameof(request), request.Value, "Width request Value must be finite and greater than zero.");
         }
 
         if (!double.IsFinite(sceneWidthPt) || sceneWidthPt <= 0)
@@ -113,16 +122,18 @@ public static class ExportSize
 
         var pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
 
-        if (!double.IsFinite(pixelWidth) || pixelWidth > int.MaxValue || pixelWidth < 0)
+        if (!double.IsFinite(pixelWidth) || pixelWidth > MaxPixelDimension)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(request), pixelWidth, "Computed pixel width exceeds the representable range.");
+                nameof(request), pixelWidth,
+                $"Computed pixel width exceeds the practical export limit of {MaxPixelDimension} px.");
         }
 
-        if (!double.IsFinite(pixelHeight) || pixelHeight > int.MaxValue || pixelHeight < 0)
+        if (!double.IsFinite(pixelHeight) || pixelHeight > MaxPixelDimension)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(sceneHeightPt), pixelHeight, "Computed pixel height exceeds the representable range.");
+                nameof(sceneHeightPt), pixelHeight,
+                $"Computed pixel height exceeds the practical export limit of {MaxPixelDimension} px.");
         }
 
         var pxWidth = (int)Math.Round(pixelWidth);
@@ -134,14 +145,16 @@ public static class ExportSize
     {
         text = text.Trim();
 
-        // Tuple switch: validates emptiness, parseability, and sign in
-        // one expression. Avoids the if/throw chain the analyzer flags.
+        // Tuple switch: validates emptiness, parseability, sign, and
+        // finiteness in one expression. Zero is rejected: a zero-width
+        // export is meaningless and would surface as a rasterizer failure
+        // far from the cause (decision recorded in the W4 work item).
         return (text.Length, double.TryParse(text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out var value), value < 0, double.IsFinite(value)) switch
+                CultureInfo.InvariantCulture, out var value), value <= 0, double.IsFinite(value)) switch
         {
             (0, _, _, _) => throw new FormatException("Width value is empty."),
             (_, false, _, _) => throw new FormatException($"'{text}' is not a valid width value."),
-            (_, true, true, _) => throw new FormatException("Width value must be non-negative."),
+            (_, true, true, _) => throw new FormatException("Width value must be greater than zero."),
             (_, true, _, false) => throw new FormatException($"'{text}' is not a finite number."),
             _ => value
         };

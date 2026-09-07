@@ -153,4 +153,47 @@ public class ExportSizeTests
         _ = Assert.Throws<ArgumentOutOfRangeException>(
             () => ExportSize.ToPixels(req, sceneWidthPt: double.NaN, sceneHeightPt: 360.0));
     }
+
+    [Theory]
+    [InlineData("0px")]
+    [InlineData("0cm")]
+    [InlineData("0.000in")]
+    [InlineData("-0.001cm")]
+    public void ParseWidth_rejects_non_positive_width(string input) =>
+        _ = Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
+
+    [Fact]
+    public void ToPixels_zero_request_value_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, 0.0);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_max_dimension_is_accepted()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension);
+        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
+        Assert.Equal(65_535, px.PixelWidth);
+        Assert.Equal(32_768, px.PixelHeight);
+    }
+
+    [Fact]
+    public void ToPixels_width_above_limit_throws()
+    {
+        var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension + 1);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
+    }
+
+    [Fact]
+    public void ToPixels_height_above_limit_throws()
+    {
+        // 1000 px wide on a 720 x 72,000 pt scene → height = 1000 * 72000 / 720
+        // = 100,000 px, above the practical export limit.
+        var req = new WidthRequest(ExportUnit.Pixels, 1000.0);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 72_000.0));
+    }
 }
