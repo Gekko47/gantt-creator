@@ -4,19 +4,21 @@
     Drift gate for the .cline/skills/ tree.
 
 .DESCRIPTION
-    Fails if either view (docs/ or .cline/skills/) has uncommitted
-    changes, OR if the skill content is out of date relative to the
-    canonical source.
+    Fails if either view (docs/ or .cline/skills/) has unstaged or
+    untracked changes, OR if the skill content is out of date relative
+    to the canonical source.
 
     Always-on rules live in AGENTS.md at the repository root and are
     hand-maintained; they are not checked by this gate.
 
     The check is two-phase:
-      1. If there are uncommitted changes anywhere in the two views,
-         the developer must run scripts/sync-cline-skills.ps1 and commit
-         the result. We do not auto-sync here because the sync would
-         silently overwrite a hand-edited skill, which the discipline
-         forbids.
+      1. If there are unstaged or untracked changes anywhere in the
+         two views, the developer must run scripts/sync-cline-skills.ps1
+         and commit the result. We do not auto-sync here because the
+         sync would silently overwrite a hand-edited skill, which the
+         discipline forbids. Staged changes (i.e. `git add` already
+         done) are allowed at this stage so the gate is usable from the
+         pre-commit hook, which runs after staging.
       2. After the working tree is clean, we re-run the sync into a
          temporary directory and byte-compare against the committed
          versions. If the regeneration produces a diff the canonical
@@ -32,7 +34,9 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-# Phase 1: working tree must be clean under the two views.
+# Phase 1: working tree must be free of unstaged and untracked
+# changes under the two views. Staged changes are allowed so the
+# gate is usable from the pre-commit hook (which runs after staging).
 $dirty = git diff --name-only -- docs/ .cline/skills/
 $untracked = git status --porcelain -- docs/ .cline/skills/ | Where-Object { $_.StartsWith('??') }
 if ($dirty -or $untracked) {

@@ -4,7 +4,7 @@
     Installs the lightweight pre-commit gate as the repository git hook.
 
 .DESCRIPTION
-    Configures core.hooksPath to scripts/.githooks/ and installs the
+    Configures core.hooksPath to .githooks/ (repository root) and installs the
     pre-commit wrapper that delegates to scripts/pre-commit.ps1. The
     hooksPath indirection keeps hooks versioned in-repo (they cannot
     drift from the codebase) and works on Windows where a bare
