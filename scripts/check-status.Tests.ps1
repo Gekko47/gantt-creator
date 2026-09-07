@@ -119,5 +119,29 @@ References roadmap item ``R9.9`` which is absent.
             $r.Exit   | Should -Not -Be 0
             $r.Output | Should -Match "STATUS references roadmap item 'R9.9'"
         }
+
+        It 'exits 1 when STATUS references a path that resolves outside the repository' {
+            # Behavioural replacement for the removed text-level tripwire in
+            # CheckStatusScriptTests: the containment check must reject '..'
+            # traversal with the documented message.
+            $body = @"
+# Status
+
+References the file ``..\outside.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'resolves outside the repository'
+        }
+
+        It 'exits 1 when STATUS references an absolute path outside the repository' {
+            $body = @"
+# Status
+
+References an absolute location ``C:\windows\evil.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit | Should -Not -Be 0
+        }
     }
 }
