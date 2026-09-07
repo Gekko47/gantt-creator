@@ -128,4 +128,24 @@ public sealed class RedactorTests
         var output = _redactor.Redact(input);
         Assert.Equal("Event on [datetime] for review.", output);
     }
+
+    [Fact]
+    public void Redact_prose_with_slashes_is_not_masked()
+    {
+        // The Unix path pattern must only fire on tokens that begin with the
+        // slash. Prose slashes, ratios, and slash-separated dates are content,
+        // not paths, and redacting them destroys log usefulness.
+        var input = "Compare and/or combine; due 12/31/2026; ratio 3/4 and x/y.";
+        Assert.Equal(input, _redactor.Redact(input));
+    }
+
+    [Theory]
+    [InlineData("Config /etc/app/config.yaml", "Config [path]")]
+    [InlineData("Read /usr/share/doc for details", "Read [path] for details")]
+    [InlineData("(see /var/log/messages)", "(see [path])")]
+    [InlineData("/etc/passwd was read", "[path] was read")]
+    public void Redact_unix_absolute_paths_still_masked(string input, string expected)
+    {
+        Assert.Equal(expected, _redactor.Redact(input));
+    }
 }

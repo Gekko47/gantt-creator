@@ -14,7 +14,12 @@ public sealed partial class Redactor : IRedactor
     [GeneratedRegex(@"(?:\\\\[^\s]+|[A-Za-z]:[\\/][^\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex WindowsPathPattern();
 
-    [GeneratedRegex(@"/(?:[^\s/\\]+/)*[A-Za-z0-9._-]+(?:\.[A-Za-z0-9]+)?", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    // The leading lookbehind requires the '/' to begin a token: it must not
+    // be preceded by a word character or another slash. Without it, prose
+    // like "and/or", ratios like "3/4", and dates like "12/31/2026" were
+    // redacted as [path], destroying log usefulness. Absolute Unix paths in
+    // real messages follow whitespace, punctuation, or the start of the text.
+    [GeneratedRegex(@"(?<![\w/])/(?:[^\s/\\]+/)*[A-Za-z0-9._-]+(?:\.[A-Za-z0-9]+)?", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex UnixPathPattern();
 
     [GeneratedRegex(@"\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
