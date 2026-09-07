@@ -16,14 +16,14 @@ BeforeAll {
 
 Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
     It 'verify-quick.ps1: numbered steps = Invoke-Step count' {
-        $desc  = Get-VerifyDescriptionStepNumbers -Path $script:verifyQuick
-        $steps = Get-VerifyStepNames           -Path $script:verifyQuick
+        $desc  = Read-VerifyDescriptionStepNumber -Path $script:verifyQuick
+        $steps = Read-VerifyStepName           -Path $script:verifyQuick
         $steps.Count | Should -Be $desc.Count
     }
 
     It 'verify-quick.ps1: first numbered step matches first Invoke-Step' {
-        $desc  = Get-VerifyDescriptionStepNumbers -Path $script:verifyQuick
-        $steps = Get-VerifyStepNames           -Path $script:verifyQuick
+        $desc  = Read-VerifyDescriptionStepNumber -Path $script:verifyQuick
+        $steps = Read-VerifyStepName           -Path $script:verifyQuick
         # The .DESCRIPTION numbering starts at 1; the Invoke-Step list
         # is the actual run order. They must align 1:1.
         for ($i = 0; $i -lt [Math]::Min($desc.Count, $steps.Count); $i++) {
@@ -32,19 +32,19 @@ Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
     }
 
     It 'verify-quick.ps1: every Invoke-Step name is non-empty and unique' {
-        $steps = Get-VerifyStepNames -Path $script:verifyQuick
+        $steps = Read-VerifyStepName -Path $script:verifyQuick
         $steps | Should -Not -BeNullOrEmpty
         ($steps | Sort-Object -Unique).Count | Should -Be $steps.Count
     }
 
     It 'verify.ps1: numbered steps = Invoke-Step count' {
-        $desc  = Get-VerifyDescriptionStepNumbers -Path $script:verifyFull
-        $steps = Get-VerifyStepNames           -Path $script:verifyFull
+        $desc  = Read-VerifyDescriptionStepNumber -Path $script:verifyFull
+        $steps = Read-VerifyStepName           -Path $script:verifyFull
         $steps.Count | Should -Be $desc.Count
     }
 
     It 'verify.ps1: every Invoke-Step name is non-empty and unique' {
-        $steps = Get-VerifyStepNames -Path $script:verifyFull
+        $steps = Read-VerifyStepName -Path $script:verifyFull
         $steps | Should -Not -BeNullOrEmpty
         ($steps | Sort-Object -Unique).Count | Should -Be $steps.Count
     }
@@ -57,7 +57,7 @@ Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
 Invoke-Step 'sole' { Write-Host 'x' }
 '@
             Set-Content -LiteralPath (Join-Path $td 'fixture.ps1') -Value $fixture -Encoding utf8
-            $names = Get-VerifyStepNames -Path (Join-Path $td 'fixture.ps1')
+            $names = Read-VerifyStepName -Path (Join-Path $td 'fixture.ps1')
             $names | Should -Be @('sole')
         }
         finally {
@@ -68,24 +68,22 @@ Invoke-Step 'sole' { Write-Host 'x' }
 
 Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
     It 'check-md-links.ps1: empty scan is a failure (positive test)' {
-        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('md-empty-' + [guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path $td -Force | Out-Null
-        try {
-            $emptyDocs = Join-Path $td 'docs'
-            New-Item -ItemType Directory -Path $emptyDocs -Force | Out-Null
-            # No .md files in $emptyDocs.
-            $scriptPath = Join-Path $repoRoot 'scripts\check-md-links.ps1'
-            $proc = Start-Process -FilePath pwsh -ArgumentList @(
-                '-NoProfile','-File',$scriptPath,'-Roots','docs','-Entry','AGENTS.md'
-            ) -NoNewWindow -Wait -PassThru `
-                -WorkingDirectory $td `
-                -RedirectStandardOutput (Join-Path $td 'out.txt') `
-                -RedirectStandardError (Join-Path $td 'err.txt')
-            $proc.ExitCode | Should -Not -Be 0
-        }
-        finally {
-            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
-        }
+        # check-md-links.ps1 anchors its roots to Split-Path -Parent $PSScriptRoot
+        # (the real scripts/ dir), not the caller's CWD. We pass
+        # -Roots 'nonexistent-only' and -Entry 'nonexistent-only' so the
+        # foreach over roots does continue for every entry (Test-Path
+        # returns false) and $scanned stays at 0 -- the documented
+        # no-silent-pass branch.
+        $scriptPath = Join-Path $repoRoot 'scripts\check-md-links.ps1'
+        $proc = Start-Process -FilePath pwsh -ArgumentList @(
+            '-NoProfile','-File',$scriptPath,'-Roots','nonexistent-only','-Entry','nonexistent-only'
+        ) -NoNewWindow -Wait -PassThru `
+            -WorkingDirectory $env:TEMP `
+            -RedirectStandardOutput (Join-Path $env:TEMP 'md-empty-out.txt') `
+            -RedirectStandardError (Join-Path $env:TEMP 'md-empty-err.txt')
+        $proc.ExitCode | Should -Not -Be 0
+        Remove-Item -LiteralPath (Join-Path $env:TEMP 'md-empty-out.txt') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $env:TEMP 'md-empty-err.txt') -Force -ErrorAction SilentlyContinue
     }
 
     It 'check-md-links.ps1: non-empty scan with valid links is a PASS (positive control)' {

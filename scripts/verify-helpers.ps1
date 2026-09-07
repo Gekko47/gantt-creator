@@ -19,7 +19,7 @@
     in their own Invoke-Step.
 #>
 
-function Get-VerifyStepNames {
+function Read-VerifyStepName {
     <#
     .SYNOPSIS
         Parses an Invoke-Step 'name' {...} block list from a verify script
@@ -65,7 +65,7 @@ function Get-VerifyStepNames {
     return $names.ToArray()
 }
 
-function Get-VerifyDescriptionStepNumbers {
+function Read-VerifyDescriptionStepNumber {
     <#
     .SYNOPSIS
         Parses the `  N. <description>` numbering in the .DESCRIPTION

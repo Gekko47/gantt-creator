@@ -115,14 +115,22 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
         $ciHash | Should -Be $localHash
     }
 
-    It 'actionlint SHA-256 in scripts/lint-ci.ps1 equals the value in tool-versions.psd1' {
-        $localHash = $script:versions.actionlint.Sha256
-        $ciHash = [regex]::Match($script:lintCiText, '[0-9a-f]{64}').Value
-        $ciHash | Should -Be $localHash
+    It 'actionlint SHA-256 in scripts/lint-ci.ps1 is sourced from tool-versions.psd1' {
+        # W11: lint-ci.ps1 reads the pin from the psd1 at runtime; the
+        # script source no longer carries the literal. The integrity
+        # assertion follows the same indirection: both consumers read the
+        # same property of the same psd1.
+        $script:lintCiText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lint-ci.ps1') -Raw
+        $script:lintCiText | Should -Match 'Import-PowerShellDataFile'
+        $script:lintCiText | Should -Match 'actionlint\.Sha256'
     }
 
-    It 'ci.yml installs PSScriptAnalyzer at the pinned version' {
-        $pinned = $script:versions.PSScriptAnalyzer.Version
-        $script:ciText | Should -Match "PSScriptAnalyzer -RequiredVersion $pinned"
+    It 'ci.yml reads PSScriptAnalyzer version from scripts/tool-versions.psd1' {
+        # W11: the version is consumed from the single source. The literal
+        # "-RequiredVersion 1.25.0" is no longer in the workflow; what must
+        # be true is that the workflow imports the psd1 and uses the
+        # version variable.
+        $script:ciText | Should -Match 'Import-PowerShellDataFile.*tool-versions\.psd1'
+        $script:ciText | Should -Match 'PSScriptAnalyzer -RequiredVersion \$pssaVersion'
     }
 }
