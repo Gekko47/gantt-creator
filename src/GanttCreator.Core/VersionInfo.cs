@@ -14,7 +14,9 @@ public static class VersionInfo
     public static readonly string InformationalVersion = ComputeVersion();
 
     /// <summary>
-    /// The short semantic version (major.minor.patch) without commit metadata.
+    /// The short version without build metadata: <c>major.minor.patch</c>,
+    /// retaining a prerelease suffix when present (e.g. <c>2.0.0-beta.1</c>).
+    /// Unparseable input degrades to <c>0.0.0</c>.
     /// </summary>
     public static readonly string SemanticVersion = ExtractSemanticVersion(InformationalVersion);
 
@@ -48,34 +50,47 @@ public static class VersionInfo
             return "0.0.0";
         }
 
-        // Parse semver: major.minor.patch[-prerelease]
-        // Split by '.' but only up to 3 parts to handle dot-separated prerelease
-        var parts = core.Split('.', 3);
-        if (!(parts.Length == 3 &&
-            int.TryParse(parts[0], out _) &&
-            int.TryParse(parts[1], out _)))
+        // Strict semver major.minor.patch[-prerelease]. The numeric parts are
+        // validated against ASCII digits only — never int.TryParse, whose
+        // default NumberStyles accept signs and whitespace and whose digit
+        // handling is culture-sensitive. Leading zeros are invalid semver
+        // numeric identifiers and are rejected.
+        var dash = core.IndexOf('-', StringComparison.Ordinal);
+        var numbers = dash >= 0 ? core[..dash] : core;
+        var prerelease = dash >= 0 ? core[(dash + 1)..] : null;
+
+        var parts = numbers.Split('.');
+        if (parts.Length != 3
+            || !IsStrictSemverNumber(parts[0])
+            || !IsStrictSemverNumber(parts[1])
+            || !IsStrictSemverNumber(parts[2])
+            || (prerelease is not null && prerelease.Length == 0))
         {
             return "0.0.0";
         }
 
-        // Parse the third part which is patch[-prerelease]
-        var patchPart = parts[2];
-        var dash = patchPart.IndexOf('-', StringComparison.Ordinal);
-        var patchAndPrerelease = dash >= 0 ? patchPart[..dash] : patchPart;
+        return prerelease is null ? numbers : $"{numbers}-{prerelease}";
+    }
 
-        // Validate patch is numeric
-        if (!int.TryParse(patchAndPrerelease, out _))
+    /// <summary>
+    /// A semver numeric identifier: one or more ASCII digits, no sign, no
+    /// whitespace, and no leading zeros (except "0" itself).
+    /// </summary>
+    private static bool IsStrictSemverNumber(string text)
+    {
+        if (text.Length == 0 || (text.Length > 1 && text[0] == '0'))
         {
-            return "0.0.0";
+            return false;
         }
 
-        // Reconstruct with prerelease if present
-        var prerelease = dash >= 0 ? patchPart[(dash + 1)..] : null;
-        var version = $"{parts[0]}.{parts[1]}.{patchAndPrerelease}";
-        if (prerelease != null)
+        foreach (var c in text)
         {
-            version += $"-{prerelease}";
+            if (c is < '0' or > '9')
+            {
+                return false;
+            }
         }
-        return version;
+
+        return true;
     }
 }
