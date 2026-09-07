@@ -78,12 +78,23 @@ jobs:
           actionlint -color .github/workflows/ci.yml
 
       - name: Script analyzer (PSScriptAnalyzer)
+        # PSScriptAnalyzer version + actionlint SHA-256 must equal the
+        # values in scripts/tool-versions.psd1; ci-parity.Tests.ps1
+        # asserts that equality so neither side can drift (W11). Bump
+        # the psd1 first, then both files.
         run: |
+          $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
+          $expectedHash = $versions.actionlint.Sha256
+          $pssaVersion = $versions.PSScriptAnalyzer.Version
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+            Install-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -Scope CurrentUser -Force
           }
           Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
             -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
+        # The actionlint pin below is the same value as
+        # scripts/tool-versions.psd1#actionlint.Sha256; ci-parity.Tests.ps1
+        # asserts equality. The W11 tripwire is the equality assertion,
+        # not removing the literal.
 
       - name: Script lint (Pester)
         # Delegates to the same entry point as verify-quick.ps1 step 7 so a

@@ -31,16 +31,22 @@ if (-not (Test-Path -LiteralPath $scriptsDir)) {
     exit 1
 }
 
-# Ensure Pester 5+ is available. Get-Module does not support
-# -MinimumVersion; check the highest installed version and install
-# only if it is missing or below 5.0.
+# Ensure Pester 5+ is available. The version is single-sourced from
+# scripts/tool-versions.psd1 (W11). Get-Module does not support
+# -MinimumVersion, so we check the highest installed version against
+# the pinned minimum.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
+$script:toolVersions = Import-PowerShellDataFile -LiteralPath $versionsPath
+$script:minPesterMajor = $script:toolVersions.Pester.MinimumMajor
+
 $installedPester = Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue |
     Sort-Object Version -Descending |
     Select-Object -First 1
-if (-not $installedPester -or $installedPester.Version -lt [Version]'5.0') {
-    Write-Host "Installing Pester 5..."
+if (-not $installedPester -or $installedPester.Version.Major -lt $script:minPesterMajor) {
+    Write-Host "Installing Pester $($script:minPesterMajor).0+..."
     try {
-        Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+        Install-Module -Name Pester -MinimumVersion "$($script:minPesterMajor).0" -Scope CurrentUser -Force -SkipPublisherCheck
     }
     catch {
         Write-Error "Failed to install Pester: $_"
@@ -50,10 +56,10 @@ if (-not $installedPester -or $installedPester.Version -lt [Version]'5.0') {
 
 # Import Pester
 try {
-    Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+    Import-Module Pester -MinimumVersion "$($script:minPesterMajor).0" -ErrorAction Stop
 }
 catch {
-    Write-Error "Pester 5+ not available: $_"
+    Write-Error "Pester $($script:minPesterMajor).0+ not available: $_"
     exit 1
 }
 

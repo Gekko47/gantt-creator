@@ -22,6 +22,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
 $workflowDir = Join-Path $repoRoot '.github\workflows'
 $ciYml = Join-Path $workflowDir 'ci.yml'
 
@@ -30,12 +31,16 @@ if (-not (Test-Path -LiteralPath $ciYml)) {
     exit 1
 }
 
-# Pinned actionlint version
-$version = '1.7.7'
+# Tool versions + integrity hash are single-sourced from scripts/tool-versions.psd1
+# (W11). ci-parity.Tests.ps1 asserts the same hash lives in ci.yml and here, so
+# neither side can drift without the tripwire firing.
+$script:versions = Import-PowerShellDataFile -LiteralPath $versionsPath
+$version = $script:versions.actionlint.Version
 $toolName = 'actionlint'
 $exeName = "$toolName.exe"
 $zipName = "actionlint_${version}_windows_amd64.zip"
-$downloadUrl = "https://github.com/rhysd/actionlint/releases/download/v${version}/${zipName}"
+$downloadUrl = $script:versions.actionlint.DownloadUrl -f $version
+$expectedHash = $script:versions.actionlint.Sha256
 $toolsDir = Join-Path $env:TEMP 'actionlint'
 $exePath = Join-Path $toolsDir $exeName
 
@@ -47,8 +52,9 @@ if (-not (Test-Path -LiteralPath $exePath)) {
         $zipPath = Join-Path $toolsDir $zipName
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
         # Integrity check: the same SHA-256 pin the CI workflow enforces.
-        # Both pins must stay identical (asserted by lint-ci.Tests.ps1).
-        $expectedHash = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
+        # The pin is single-sourced from scripts/tool-versions.psd1 so the
+        # two invocations can never disagree; ci-parity.Tests.ps1 enforces
+        # the equality. Both pins must stay identical.
         $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
         if ($actualHash -ne $expectedHash) {
             Write-Error "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"

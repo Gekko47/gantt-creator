@@ -1,0 +1,32 @@
+# Single source of truth for external tool versions and integrity
+# digests used by both CI (.github/workflows/ci.yml) and the local
+# scripts/ entry points. The CI-parity and tool-version anti-drift
+# Pester tests assert that ci.yml and the local scripts consume values
+# from this file (or a string-identical copy), so version drift between
+# local and CI cannot recur. See AGENTS.md "Test layers" and
+# docs/04-TEST-STRATEGY.md.
+@{
+    # Pester. CI installs newest >= 5.0; local has 6.1.0. test-scripts.ps1
+    # uses version-safe container counts (Pester 5/6) so behaviour is
+    # identical across the supported range. When a known-broken version
+    # ships, add a minimum here and assert it from Pester.
+    Pester = @{
+        MinimumMajor = 5
+    }
+
+    # PSScriptAnalyzer. 1.25.0 is the version CI installs and the version
+    # the local .NET host has. Bumping either side without bumping the
+    # other is caught by lint-ci.Tests.ps1 and pssa-gate.Tests.ps1.
+    PSScriptAnalyzer = @{
+        Version = '1.25.0'
+    }
+
+    # actionlint. Both the CI workflow and scripts/lint-ci.ps1 verify the
+    # SHA-256 below before using the downloaded binary. The hash must
+    # match the published actionlint 1.7.7 windows/amd64 zip.
+    actionlint = @{
+        Version     = '1.7.7'
+        Sha256      = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
+        DownloadUrl = 'https://github.com/rhysd/actionlint/releases/download/v{0}/actionlint_{0}_windows_amd64.zip'
+    }
+}
