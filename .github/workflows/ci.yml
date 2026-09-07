@@ -60,8 +60,14 @@ jobs:
             $url = "https://github.com/rhysd/actionlint/releases/download/v${version}/${zip}"
             $tmp = Join-Path $env:TEMP 'actionlint'
             if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
-            Invoke-WebRequest -Uri $url -OutFile (Join-Path $tmp $zip) -UseBasicParsing
-            Expand-Archive -Path (Join-Path $tmp $zip) -DestinationPath $tmp -Force
+            $zipPath = Join-Path $tmp $zip
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+            $expectedHash = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
+            $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+            if ($actualHash -ne $expectedHash) {
+                throw "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"
+            }
+            Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
             $exe = Join-Path $tmp 'actionlint.exe'
             $dest = Join-Path $env:USERPROFILE 'bin'
             if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
@@ -81,7 +87,10 @@ jobs:
 
       - name: Script lint (Pester)
         run: |
-          if (-not (Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue)) {
+          $installedPester = Get-Module -ListAvailable -Name Pester -ErrorAction SilentlyContinue |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          if (-not $installedPester -or $installedPester.Version -lt [Version]'5.0') {
             Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
           }
           Import-Module Pester -MinimumVersion 5.0
