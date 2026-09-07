@@ -30,9 +30,10 @@ public sealed partial class Redactor : IRedactor
     /// Redacts known sensitive patterns (emails, paths, dates, GUIDs, hex tokens)
     /// in the input text, replacing them with stable placeholder tokens.
     /// </summary>
-    /// <param name="input">The raw text to redact.</param>
-    /// <returns>The redacted text with sensitive patterns replaced.</returns>
-    public string Redact(string input)
+    /// <param name="input">The raw text to redact. May be <c>null</c>, in which case <c>null</c> is returned.</param>
+    /// <returns>The redacted text with sensitive patterns replaced, or <c>null</c> when <paramref name="input"/> is <c>null</c>.</returns>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(input))]
+    public string? Redact(string? input)
     {
         if (string.IsNullOrEmpty(input))
         {

@@ -133,7 +133,7 @@ public sealed class RollingLog : IRollingLog
                 return;
             }
 
-            var redacted = _redactor.Redact(message);
+            var redacted = _redactor.Redact(message) ?? string.Empty;
             var line = $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} {redacted}{Environment.NewLine}";
             var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
 

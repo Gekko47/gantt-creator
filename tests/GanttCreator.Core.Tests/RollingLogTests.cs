@@ -180,7 +180,7 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
-    public void Write_null_or_empty_creates_no_message_lines()
+    public void Write_null_or_empty_is_skipped_and_whitespace_is_written()
     {
         using (var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3))
         {
@@ -190,15 +190,10 @@ public sealed class RollingLogTests : IDisposable
         }
 
         var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
-        if (files.Length > 0)
-        {
-            // If a file was created, it should not contain the empty messages
-            foreach (var f in files)
-            {
-                var content = File.ReadAllText(f);
-                Assert.DoesNotContain("Test message", content, StringComparison.Ordinal);
-            }
-        }
+        _ = Assert.Single(files);
+        var lines = File.ReadAllLines(files[0]);
+        _ = Assert.Single(lines);
+        Assert.EndsWith("   ", lines[0], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -363,7 +358,8 @@ public sealed class RollingLogTests : IDisposable
 
     private sealed class FailingRedactor : IRedactor
     {
-        public string Redact(string input) => throw new InvalidOperationException("Simulated redactor failure");
+        [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(input))]
+        public string? Redact(string? input) => throw new InvalidOperationException("Simulated redactor failure");
     }
 
 }
