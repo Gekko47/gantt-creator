@@ -14,12 +14,14 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 $broken = New-Object System.Collections.Generic.List[string]
+$scanned = 0
 $roots = $Roots + $Entry
 foreach ($root in $roots)
 {
     $rootPath = Join-Path $repoRoot $root
     if (-not (Test-Path -LiteralPath $rootPath)) { continue }
     Get-ChildItem -LiteralPath $rootPath -Recurse -File -Filter '*.md' | ForEach-Object {
+        $script:scanned++
         $file = $_.FullName
         $content = Get-Content -LiteralPath $file -Raw
         # Relative and root-relative targets only; absolute URLs, anchors,
@@ -38,10 +40,17 @@ foreach ($root in $roots)
     }
 }
 
-if ($broken.Count -eq 0) {
-    Write-Host "OK: all relative markdown links resolve"
-    exit 0
+if ($broken.Count -gt 0) {
+    Write-Host "BROKEN LINKS:"
+    $broken | ForEach-Object { Write-Host "  $_" }
+    exit 1
 }
-Write-Host "BROKEN LINKS:"
-$broken | ForEach-Object { Write-Host "  $_" }
-exit 1
+if ($scanned -eq 0) {
+    # No-silent-pass: a zero-document scan proves nothing about the
+    # link budget, so an empty scan is a failure with an instruction,
+    # never a PASS. See W9.
+    Write-Error "check-md-links: scanned zero markdown files; verify the roots exist and contain .md files."
+    exit 1
+}
+Write-Host "OK: all relative markdown links resolve ($scanned file(s) scanned)"
+exit 0
