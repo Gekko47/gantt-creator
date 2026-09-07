@@ -58,10 +58,3 @@ Invoke-LockRestore -Label 'Run 2 -- honour lock files, no network'
 Write-Host ""
 Write-Host "R0.3 locked-restore test: PASS (two consecutive runs from a clean state)"
 exit 0
-
-
-
-
-
-
-
