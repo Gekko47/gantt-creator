@@ -9,6 +9,11 @@ description: Use this skill when the conversation is about branch and review pol
 - Name branches `type/roadmap-id-short-description`, for example `feat/r3-09-stacked-events`.
 - Rebase/merge policy is a team choice; do not let an agent rewrite shared history.
 - No direct production release from an unreviewed local working tree.
+- **A phase may not exit on local-only evidence.** The branch must be
+  pushed and the GitHub CI gate must have been observed green for the
+  work item. Local PASSes alone are insufficient — the W-12 amendment
+  was added after the PSSA blind-gate defect survived three QA rounds
+  because CI had never been run on the branch.
 ## Commit design
 Each commit:
 - implements one roadmap outcome or one isolated preparatory refactor;
@@ -51,38 +56,33 @@ runs `verify-quick.ps1` during editing and `verify.ps1` before a PR.
 See `AGENTS.md` and `scripts/pre-commit.ps1` for the full contract.
 Quick verification runs format check, Release build, and non-Office tests without coverage packaging. Full verification runs locked restore, format/analyzers, Release build, all non-Office tests with configured coverage thresholds, and repository hygiene checks.
 Do not commit when a gate is red. Do not bypass the script by running only the test that passes.
+## CI parity (W8)
+The CI workflow and the local verify scripts must agree on every step. The
+defect class "local says PASS, CI says FAIL because the two views diverged"
+includes:
+  - inline `dotnet test`/`Invoke-Pester` calls in `ci.yml` that drift
+    from the version-pinned `scripts/*.ps1` entry points (Pester 4→5
+    removed the `-Script` parameter; the first CI push of `stage-inspect`
+    would have failed on it);
+  - a tool pin declared in two places (e.g. actionlint SHA-256 in
+    both `ci.yml` and `lint-ci.ps1`) that is patched in one but not the
+    other;
+  - a script-side gate that silently passes locally but fails on the
+    CI runner (e.g. the Phase-C PSScriptAnalyzer `-EnableExit` defect).
+Rules:
+  - `.github/workflows/ci.yml` delegates every step to a
+    `scripts/*.ps1` entry point or to a vetted native MSBuild command
+    (`dotnet format`, `dotnet restore --locked-mode`). No inline Pester
+    or `dotnet test` invocations.
+  - Tool pins (Pester minimum major, PSScriptAnalyzer version, actionlint
+    SHA-256, actionlint download URL) live in `scripts/tool-versions.psd1`
+    and are consumed by `lint-ci.ps1`, `test-scripts.ps1`, and `ci.yml`.
+    `ci-parity.Tests.ps1` asserts the two file consumers match the psd1.
+  - Every gate that can produce zero output on a non-trivial input must
+    fail loudly (`check-md-links.ps1` now does this for zero scanned
+    files; the no-silent-pass rule extends to every future gate).
 ## CI jobs
 Required pull-request jobs:
-1. repository hygiene and secret scan;
-2. locked NuGet restore;
-3. `dotnet format --verify-no-changes`;
-4. Release build with warnings-as-errors;
-5. Core, Raster, Office contract, and AddIn tests;
-6. per-project coverage thresholds;
-7. architecture/dependency tests;
-8. golden image comparison on a pinned Windows runner;
-9. package vulnerability and licence report.
-Office integration runs on a controlled self-hosted Windows runner at phase exits, nightly if stable, and always before a release candidate. It is not replaced by unit coverage.
-Cache only NuGet packages keyed by lock files. Never cache build outputs in a way that can hide a clean-build failure.
-## Pull-request description
-Keep it brief and evidence-led:
-```markdown
-## Outcome
-<observable behaviour>
-## Scope
-- <important change>
-- <important change>
-## Proof
-- `<command>` — PASS
-- Office/visual check — PASS / Not run: <reason>
-## Risk and rollback
-<main risk and simple rollback>
-## Excluded
-<nearby work intentionally not done>
-```
-## Review checklist
-### Behaviour
-- Work item acceptance criteria are met and no extra product behaviour appeared.
 
 ---
 
