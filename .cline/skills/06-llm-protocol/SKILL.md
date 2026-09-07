@@ -67,22 +67,22 @@ Prohibited “fixes” include repeated unchanged commands, larger sleeps, broad
 - Ask the agent to summarise current facts before context compaction.
 - Do not feed customer workbooks or proprietary schedule descriptions to a hosted model.
 - Use synthetic/minimised reproductions; redact file paths, names, dates, and labels from logs/prompts where needed.
-## Coding behaviour
-The agent should:
-- inspect before editing;
-- use existing patterns when tested and consistent with current architecture;
-- prefer types and small functions to comments;
-- add tests before or with the behaviour;
-- run the narrow test after each meaningful edit;
-- run full verification once the slice is coherent;
-- leave the repository cleaner only within the touched scope.
-The agent should not:
-- design the whole system again in each task;
-- create abstraction layers without two concrete consumers or a clear port boundary;
-- generate speculative compatibility fallbacks;
-- rewrite working code for style alone;
-- introduce “temporary” hidden worksheets;
-- claim pixel perfection for live Excel screen display;
+## End-to-end code review methodology
+A full code review across the whole repository is a different exercise
+from a single-work-item implementation: the reviewer must find the
+defect classes that survive individual work-item gates, not the
+defects a single work item could have shipped. This section is the
+methodology, with worked references to the W-13 / Phase A/B/C run on
+this repo (2026-09-07) as the example.
+The five phases, in order:
+### 1. Read the source (line by line)
+Open the files. Read them. Do not rely on docs, on the README, on
+prior conversations, on what you remember of the codebase. The point
+of this phase is to know what the code *is*, not what someone said it
+is. The docs and the code are two separate things; they may disagree,
+and the defect you are looking for is often in the disagreement.
+For this repo the source-of-truth list at R0.8 is:
+- `src/GanttCreator.Core/` (3 files + Logging namespace at the time
 
 ---
 

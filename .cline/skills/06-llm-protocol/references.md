@@ -94,6 +94,158 @@ Prohibited “fixes” include repeated unchanged commands, larger sleeps, broad
 - Do not feed customer workbooks or proprietary schedule descriptions to a hosted model.
 - Use synthetic/minimised reproductions; redact file paths, names, dates, and labels from logs/prompts where needed.
 
+## End-to-end code review methodology
+
+A full code review across the whole repository is a different exercise
+from a single-work-item implementation: the reviewer must find the
+defect classes that survive individual work-item gates, not the
+defects a single work item could have shipped. This section is the
+methodology, with worked references to the W-13 / Phase A/B/C run on
+this repo (2026-09-07) as the example.
+
+The five phases, in order:
+
+### 1. Read the source (line by line)
+
+Open the files. Read them. Do not rely on docs, on the README, on
+prior conversations, on what you remember of the codebase. The point
+of this phase is to know what the code *is*, not what someone said it
+is. The docs and the code are two separate things; they may disagree,
+and the defect you are looking for is often in the disagreement.
+
+For this repo the source-of-truth list at R0.8 is:
+- `src/GanttCreator.Core/` (3 files + Logging namespace at the time
+  of the W-13 run)
+- `src/GanttCreator.Raster/` (1 file)
+- `src/GanttCreator.Office/` (empty)
+- `src/GanttCreator.AddIn/` (empty)
+- `tests/` (6 projects)
+- `scripts/` (20 PowerShell files)
+- `.github/workflows/ci.yml` (1 file)
+- `Directory.Build.props` + `Directory.Packages.props` + `global.json`
+
+Read every line that is not a generated file. The session is bounded
+by what the file count allows; the W-13 run read every one of the
+above in one pass.
+
+### 2. Probe empirically
+
+For every defect hypothesis, run a discriminating check *now*, in this
+session. Do not assume memory, do not assume the documentation, do
+not assume a PSSA warning is benign because someone disabled it once.
+The probes that produced the W-13 findings:
+
+- Direct invocation of the failing step, outside the verify script:
+  `pwsh -Command "Invoke-ScriptAnalyzer ... -Settings ... -EnableExit"`
+  and observed exit code 11 with 10 warnings. **The local gate had
+  been reporting PASS for the entire R0.8 round; the probe exposed
+  the blind-gate defect immediately.**
+- `Get-Module -ListAvailable PSScriptAnalyzer` to confirm the local
+  module version matched CI's pin (1.25.0). The probe was small and
+  the answer was decisive.
+- `Get-Command Invoke-Pester` to inspect the parameter surface;
+  output showed the `Script` parameter does not exist in Pester 5/6.
+  **This was the proof that the CI workflow's inline
+  `Invoke-Pester -Script` call could not work.**
+- `(Get-Content ... -Raw) -split "`n" | Select-String` to scan the CI
+  workflow and the lint-ci script for the actionlint hash. A SHA-256
+  pin declared in two files that disagrees is a drift defect.
+
+Every probe is a single command with an observed output. If a probe
+returns a result you cannot interpret, that is a finding, not a
+dead-end.
+
+### 3. Identify defect classes
+
+The four classes the W-13 run caught, in increasing severity:
+
+- **A. Gate integrity.** A gate that reports PASS while its target
+  failure exists. The PSScriptAnalyzer step was blind; every other
+  script gate is audited for the same defect (Phase C W8/W9/W13 work
+  hardened them all). **No script gate in this repo now relies on
+  `-EnableExit`, function-level `throw`, or any signal that does not
+  propagate through a pipeline.** Enforced by
+  `scripts/pssa-gate.Tests.ps1` (the positive-control test that would
+  catch a regression).
+- **B. Build pipeline drift.** A test that reads a `bin/` or
+  `publish/` artifact without naming the verify-script step that
+  produces it. On a fresh clone, the test could pass on a stale
+  artifact and the reviewer would not know. Enforced by
+  `tests/.../Architecture.Tests/ArtifactSourceMarkerTests.cs`.
+- **C. Docs/code drift.** A verify script's `.DESCRIPTION` block
+  enumerated the steps it runs, but nothing checked that the
+  enumeration matched the actual `Invoke-Step` calls. The reviewer
+  could be told "this script runs step 1, step 2, step 3" while the
+  script actually ran step 1, step 2, step 4. Enforced by
+  `scripts/step-parity.Tests.ps1`.
+- **D. Local/CI view divergence.** A test, tool pin, or behaviour
+  that was declared in two places (ci.yml + a local script) and
+  patched in one but not the other. On this repo the actionlint
+  SHA-256 and the PSScriptAnalyzer version were both such pins.
+  Enforced by `scripts/tool-versions.psd1` as the single source of
+  truth and `scripts/ci-parity.Tests.ps1` for the three-way equality
+  assertion.
+
+A full code review **must look for these four classes even when
+checklist A/B/C/D passes**. The checklists catch the per-item
+defects; the methodology catches the cross-cutting ones.
+
+### 4. Plan
+
+Apply the AGENTS.md task protocol to each defect class:
+
+- One work item per defect class. Mixing them creates a commit that
+  is impossible to bisect and hard to review.
+- For each item: restated outcome, files likely to change, exclusions,
+  acceptance tests, and uncertainties. If the answer is wider than
+  the work item, correct it before editing.
+- Where the fix touches a public contract, schema, dependency, or
+  supported-platform: stop and ask the human. The W-13 / Phase C
+  amendments did not touch any of those, so the human approved the
+  default policies.
+- Use the two-attempt no-loop rule. Every defect class above was
+  caught on the first probe; some required two attempts to fix
+  (the rolling-log rotation matcher, the check-md-links empty-scan
+  test). Three failures with no new evidence = stop and report.
+
+### 5. Implement, verify, commit
+
+- Every change ships with a positive test in the same commit. The
+  test constructs the bad input and asserts the error path fires.
+  `scripts/pssa-gate.Tests.ps1`, `scripts/step-parity.Tests.ps1`, and
+  `tests/.../Architecture.Tests/ArtifactSourceMarkerTests.cs` are the
+  three worked examples; they follow the same shape.
+- Run the narrow test after each meaningful edit. The Phase C
+  artefacts discovered two regressions this way (the W-9
+  `check-md-links` empty-scan test failed first run; the W-11 ci.yml
+  PSScriptAnalyzer literal-vs-variable was caught by the ci-parity
+  tripwire).
+- Run `pwsh ./scripts/verify-quick.ps1` once the slice is coherent,
+  not after every edit. The 12 steps take ~2 minutes; running them
+  per-edit is wasteful, and skipping them before commit has caught
+  regressions in the W-13 run.
+- Commit one concern per commit. Multiple concerns in one commit
+  produce a confusing diff and a misleading message; the W-13 run
+  produced seven commits for two defect classes (Phase A + Phase C)
+  and the human could review each independently.
+- The branch must be pushed and the GitHub CI gate observed green
+  before declaring the review done. Local PASSes are not enough
+  (this is the W-12 rule, motivated by the fact that the PSSA
+  blind-gate survived three rounds of local-only "all green"
+  reports). See the "Branch and review policy" section of
+  `docs/05-GIT-QUALITY.md`.
+
+### 6. Self-application
+
+This methodology was used to produce the W-13 / Phase A/B/C run on
+2026-09-07. The closing evidence is two green CI runs of `stage-inspect`
+on a branch that included every defect-class fix. A third CI run
+that observes the same green after a fresh clone is the strongest
+signal that the methodology produced durable, reproducible gates.
+Failing to observe green on the third run is a methodology failure,
+not a tooling failure, and should trigger a review of the probes and
+positive-control tests rather than a one-off workaround.
+
 ## Coding behaviour
 
 The agent should:
