@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core.Logging;
 
 namespace GanttCreator.Core.Tests;
@@ -388,4 +389,82 @@ public sealed class RollingLogTests : IDisposable
         public string? Redact(string? input) => throw new InvalidOperationException("Simulated redactor failure");
     }
 
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    [Fact]
+    public void Write_uses_injected_time_provider_for_timestamp()
+    {
+        var fixedTime = new DateTimeOffset(2030, 1, 2, 3, 4, 5, 678, TimeSpan.Zero);
+        using (var log = new RollingLog(
+            _testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3,
+            timeProvider: new FixedTimeProvider(fixedTime)))
+        {
+            log.Write("Clock test message");
+        }
+
+        var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+        _ = Assert.Single(files);
+        var content = File.ReadAllText(files[0]);
+        Assert.StartsWith("2030-01-02T03:04:05.678Z Clock test message", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void IsFailed_is_false_until_a_failure_is_latched()
+    {
+        using var log = new RollingLog(
+            _testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3,
+            redactor: new FailingRedactor());
+
+        Assert.False(log.IsFailed);
+        log.Write("Trigger failure");
+        Assert.True(log.IsFailed);
+    }
+
+    [Fact]
+    public void Rotation_never_touches_files_that_merely_share_the_base_name_prefix()
+    {
+        // Both files match the rotation enumeration glob "{base}*.log" but
+        // are not rotation files of this log; rotation must leave them alone.
+        var foreign1 = Path.Combine(_testLogDir, $"{_baseName}2.log");
+        var foreign2 = Path.Combine(_testLogDir, $"{_baseName}-backup.log");
+        File.WriteAllText(foreign1, "FOREIGN-1-CONTENT");
+        File.WriteAllText(foreign2, "FOREIGN-2-CONTENT");
+
+        using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 50, maxFileCount: 3);
+        for (var i = 0; i < 10; i++)
+        {
+            log.Write($"Message number {i} with enough content to rotate");
+        }
+
+        Assert.Equal("FOREIGN-1-CONTENT", File.ReadAllText(foreign1));
+        Assert.Equal("FOREIGN-2-CONTENT", File.ReadAllText(foreign2));
+    }
+
+    [Fact]
+    public void Write_format_overload_is_culture_invariant()
+    {
+        // Checklist A culture-roundtrip: the formatted overload must use the
+        // invariant culture regardless of the ambient locale.
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            using (var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3))
+            {
+                log.Write("Value: {0}", 1.5);
+            }
+
+            var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+            _ = Assert.Single(files);
+            var content = File.ReadAllText(files[0]);
+            Assert.Contains("Value: 1.5", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
 }
