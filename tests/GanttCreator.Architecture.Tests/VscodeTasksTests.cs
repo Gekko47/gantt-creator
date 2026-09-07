@@ -133,6 +133,38 @@ public sealed class VscodeTasksTests
     }
 
     [Fact]
+    public void Test_task_depends_on_publish_addin()
+    {
+        // The 'test' task runs AddInAssemblyTests, which consume the packed
+        // XLL produced by publish-addin. Without the dependency the inner
+        // loop is red on a clean tree (docs/02-ARCHITECTURE.md artifact
+        // contract: tests may only consume verify-script-produced artifacts).
+        var path = LocateTasksJson();
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+
+        JsonElement tasks = doc.RootElement.GetProperty("tasks");
+        JsonElement? testTask = null;
+
+        foreach (JsonElement task in tasks.EnumerateArray())
+        {
+            if (task.TryGetProperty("label", out JsonElement label) && label.GetString() == "test")
+            {
+                testTask = task;
+                break;
+            }
+        }
+
+        Assert.True(testTask.HasValue, "A 'test' task must exist.");
+        JsonElement dependsOn = testTask.Value.GetProperty("dependsOn");
+        var labels = new List<string>();
+        if (dependsOn.ValueKind == JsonValueKind.String)
+            labels.Add(dependsOn.GetString()!);
+        else if (dependsOn.ValueKind == JsonValueKind.Array)
+            labels.AddRange(dependsOn.EnumerateArray().Select(e => e.GetString()!));
+        Assert.Contains("publish-addin", labels, StringComparer.Ordinal);
+    }
+
+    [Fact]
     public void Test_all_depends_on_publish_addin()
     {
         var path = LocateTasksJson();

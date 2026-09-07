@@ -11,6 +11,11 @@ namespace GanttCreator.Architecture.Tests;
 /// so the architecture is enforced even if a developer wires a
 /// reference into <c>GanttCreator.Core.csproj</c>.
 /// </summary>
+// artifact-source: the GanttCreator.Core.dll consumed here is produced by
+// the 'build Release -warnaserror' step of scripts/verify-quick.ps1 and
+// scripts/verify.ps1 (docs/02-ARCHITECTURE.md build-pipeline artifact
+// contract). Debug output is also accepted so a plain `dotnet test` is not
+// artificially red.
 public sealed class CoreBoundaryTests
 {
     // Assemblies that GanttCreator.Core must never reference. The list is
@@ -86,9 +91,13 @@ public sealed class CoreBoundaryTests
             var candidate = Path.Combine(dir.FullName, "src", "GanttCreator.Core", "bin");
             if (Directory.Exists(candidate))
             {
-                // Prefer Release/net10.0; fall back to any TFM under Release.
+                // Prefer Release/net10.0; fall back to Debug/net10.0 so a
+                // plain `dotnet test` in Debug is not artificially red; then
+                // to any TFM under Release.
                 var releaseNet = Path.Combine(candidate, "Release", "net10.0", "GanttCreator.Core.dll");
                 if (File.Exists(releaseNet)) return releaseNet;
+                var debugNet = Path.Combine(candidate, "Debug", "net10.0", "GanttCreator.Core.dll");
+                if (File.Exists(debugNet)) return debugNet;
                 var anyRelease = Directory
                     .EnumerateFiles(Path.Combine(candidate, "Release"), "GanttCreator.Core.dll", SearchOption.AllDirectories)
                     .FirstOrDefault();

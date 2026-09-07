@@ -9,12 +9,23 @@ namespace GanttCreator.AddIn.Tests;
 /// </summary>
 public class AddInAssemblyTests
 {
+    // artifact-source: the packed XLL consumed by AddIn_packaged_xll_exists
+    // is produced by the 'publish AddIn (packed XLL)' step of
+    // scripts/verify-quick.ps1 and scripts/verify.ps1 at
+    // src/GanttCreator.AddIn/bin/Release/net10.0-windows/publish/ (the
+    // .vscode 'test' task depends on 'publish-addin' for the same reason).
+    // docs/02-ARCHITECTURE.md build-pipeline artifact contract.
+    //
     // The AddIn project is referenced by this test project, so the CLR
     // may already have loaded AddIn.dll from the test output. When that
     // happens, Assembly.LoadFrom returns the already-loaded copy and
     // .Location points at the test output, not the src build output.
     // We therefore resolve the src build directory by walking up from
-    // the test binary, independent of any loaded assembly.
+    // the test binary, independent of any loaded assembly. Any build
+    // configuration is accepted (Release preferred) so a plain
+    // `dotnet test` in Debug is not artificially red.
+    private static readonly string[] Configurations = ["Release", "Debug"];
+
     private static string LocateAddInBuildDirectory()
     {
         var dir = new DirectoryInfo(
@@ -22,15 +33,18 @@ public class AddInAssemblyTests
         while (dir is not null)
         {
             var addInBin = Path.Combine(dir.FullName, "src", "GanttCreator.AddIn", "bin");
-            var release = Path.Combine(addInBin, "Release", "net10.0-windows");
-            if (Directory.Exists(release))
+            foreach (var configuration in Configurations)
             {
-                return release;
+                var candidate = Path.Combine(addInBin, configuration, "net10.0-windows");
+                if (Directory.Exists(candidate))
+                {
+                    return candidate;
+                }
             }
             dir = dir.Parent;
         }
         throw new DirectoryNotFoundException(
-            "Could not locate src/GanttCreator.AddIn/bin/Release/net10.0-windows. " +
+            "Could not locate src/GanttCreator.AddIn/bin/{Release|Debug}/net10.0-windows. " +
             "Build the solution before running these tests.");
     }
 

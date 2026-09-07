@@ -39,7 +39,7 @@
     },
     {
       "label": "test",
-      "detail": "Runs all non-Office tests (dotnet test, OfficeIntegration excluded).",
+      "detail": "Runs all non-Office tests (dotnet test, OfficeIntegration excluded). Publishes the AddIn first because AddInAssemblyTests consume the packed XLL.",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -52,6 +52,9 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ],
+      "dependsOn": [
+        "publish-addin"
       ]
     },
     {
