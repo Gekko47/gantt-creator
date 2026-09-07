@@ -16,6 +16,7 @@ public sealed class RollingLog : IRollingLog
     private string _currentFilePath = string.Empty;
     private long _currentFileSize;
     private bool _disposed;
+    private bool _failed;
 
     /// <summary>
     /// Creates a new rolling log.
@@ -57,21 +58,21 @@ public sealed class RollingLog : IRollingLog
         RotateIfNeeded();
     }
 
-    private static string ValidateBaseName(string name)
+    private static string ValidateBaseName(string baseName)
     {
-        if (Path.IsPathRooted(name))
+        if (Path.IsPathRooted(baseName))
         {
             throw new ArgumentException(
                 "baseName must not contain path separators, rooted paths, or wildcard characters.",
-                nameof(name));
+                nameof(baseName));
         }
-        if (name.AsSpan().IndexOfAny(Path.GetInvalidFileNameChars()) is >= 0)
+        if (baseName.AsSpan().IndexOfAny(Path.GetInvalidFileNameChars()) is >= 0)
         {
             throw new ArgumentException(
                 "baseName must not contain path separators, rooted paths, or wildcard characters.",
-                nameof(name));
+                nameof(baseName));
         }
-        return name;
+        return baseName;
     }
 
     /// <summary>
@@ -87,14 +88,34 @@ public sealed class RollingLog : IRollingLog
     /// <param name="args">Format arguments.</param>
     public void Write(string format, params object?[] args)
     {
-        if (args is { Length: > 0 })
+        var message = format;
+        try
         {
-            WriteCore(string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args));
+            if (args is { Length: > 0 })
+            {
+                message = string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args);
+            }
         }
-        else
+        // CA1031: A logger must never propagate formatting exceptions to callers.
+        // Any exception type (FormatException, NullReferenceException from a bad
+        // arg, etc.) must be contained and disable further writes.
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
         {
-            WriteCore(format);
+            _gate.Enter();
+            try
+            {
+                MarkFailed();
+            }
+            finally
+            {
+                _gate.Exit();
+            }
+            return;
         }
+
+        WriteCore(message);
     }
 
     private void WriteCore(string message)
@@ -107,7 +128,7 @@ public sealed class RollingLog : IRollingLog
         _gate.Enter();
         try
         {
-            if (_disposed)
+            if (_disposed || _failed)
             {
                 return;
             }
@@ -117,9 +138,21 @@ public sealed class RollingLog : IRollingLog
             var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
 
             RotateIfNeeded(bytes);
+            if (_failed)
+            {
+                return;
+            }
+
             _currentWriter?.Write(line);
             _currentWriter?.Flush();
             _currentFileSize += bytes;
+        }
+        // CA1031: A logger must never propagate write/flush/rotation exceptions.
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            MarkFailed();
         }
         finally
         {
@@ -127,7 +160,55 @@ public sealed class RollingLog : IRollingLog
         }
     }
 
+    /// <summary>
+    /// Marks the logger as failed, preventing all further writes.
+    /// Releases the current writer to avoid leaking file handles.
+    /// Callers must hold <see cref="_gate"/>, except the constructor
+    /// which has exclusive access during initialization.
+    /// </summary>
+    private void MarkFailed()
+    {
+        _failed = true;
+        try
+        {
+            _currentWriter?.Dispose();
+        }
+        // CA1031: In a failure state, a disposal error must not mask the
+        // original failure or propagate to callers.
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            // Intentionally swallowed
+        }
+        _currentWriter = null;
+    }
+
     private void RotateIfNeeded(long incomingBytes = 0)
+    {
+        if (_failed || _disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            PerformRotation(incomingBytes);
+        }
+        // CA1031: Rotation I/O failures (move, delete, create) must be
+        // contained and disable further writes, never propagated.
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            MarkFailed();
+        }
+    }
+
+    // PerformRotation contains the unchanged rotation logic, extracted so
+    // that RotateIfNeeded can wrap it in a try-catch and contain any I/O
+    // failure (file move, delete, create) without propagating to callers.
+    private void PerformRotation(long incomingBytes)
     {
         if (_currentWriter is null || _currentFileSize + incomingBytes > _maxFileSizeBytes)
         {
@@ -216,21 +297,7 @@ public sealed class RollingLog : IRollingLog
         return lastDot >= 0 && int.TryParse(baseName[(lastDot + 1)..], out var index) ? index : int.MaxValue;
     }
 
-    private static void DeleteFile(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (IOException)
-        {
-            throw;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            throw;
-        }
-    }
+    private static void DeleteFile(string path) => File.Delete(path);
 
     /// <summary>
     /// Disposes the rolling log, releasing the current writer.

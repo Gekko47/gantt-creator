@@ -221,6 +221,7 @@ public sealed class RollingLogTests : IDisposable
         ArgumentException ex = Assert.Throws<ArgumentException>(() =>
             new RollingLog(_testLogDir, "C:/evil", maxFileSizeBytes: 1024, maxFileCount: 3));
         Assert.Contains("baseName", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("baseName", ex.ParamName);
     }
 
     [Fact]
@@ -229,15 +230,19 @@ public sealed class RollingLogTests : IDisposable
         ArgumentException ex = Assert.Throws<ArgumentException>(() =>
             new RollingLog(_testLogDir, "subdir/file", maxFileSizeBytes: 1024, maxFileCount: 3));
         Assert.Contains("baseName", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("baseName", ex.ParamName);
     }
 
     [Fact]
     public void BaseName_rejects_wildcard()
     {
-        _ = Assert.Throws<ArgumentException>(() =>
+        ArgumentException ex1 = Assert.Throws<ArgumentException>(() =>
             new RollingLog(_testLogDir, "file*", maxFileSizeBytes: 1024, maxFileCount: 3));
-        _ = Assert.Throws<ArgumentException>(() =>
+        Assert.Equal("baseName", ex1.ParamName);
+
+        ArgumentException ex2 = Assert.Throws<ArgumentException>(() =>
             new RollingLog(_testLogDir, "file?", maxFileSizeBytes: 1024, maxFileCount: 3));
+        Assert.Equal("baseName", ex2.ParamName);
     }
 
     [Fact]
@@ -290,4 +295,75 @@ public sealed class RollingLogTests : IDisposable
         // All indices are positive
         Assert.All(indices, i => Assert.True(i > 0));
     }
+
+    [Fact]
+    public void Write_format_failure_is_contained_and_disables_writes()
+    {
+        using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3);
+
+        // Unclosed format item throws FormatException -- must be contained
+        Exception ex = Record.Exception(() => log.Write("{0", "test"));
+        Assert.Null(ex);
+
+        // After failure, writes are silently disabled
+        log.Write("Should not appear");
+
+        var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+        _ = Assert.Single(files);
+        var content = File.ReadAllText(files[0]);
+        Assert.DoesNotContain("Should not appear", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Write_redaction_failure_is_contained_and_disables_writes()
+    {
+        using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3, redactor: new FailingRedactor());
+
+        Exception ex = Record.Exception(() => log.Write("Test message"));
+        Assert.Null(ex);
+
+        // After failure, writes are silently disabled
+        log.Write("Should not appear");
+
+        var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+        _ = Assert.Single(files);
+        var content = File.ReadAllText(files[0]);
+        Assert.DoesNotContain("Test message", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Should not appear", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Write_rotation_failure_is_contained_and_disables_writes()
+    {
+        using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 50, maxFileCount: 5);
+
+        // Write a small message to create the active log file and advance its size
+        log.Write("Initial");
+
+        // Open an exclusive handle on .1.log to block the rotation that
+        // moves the active log into the .1 slot.
+        var rotatedPath = Path.Combine(_testLogDir, $"{_baseName}.1.log");
+        using var blockingHandle = new FileStream(
+            rotatedPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+
+        // A message large enough to force rotation; PerformRotation cannot
+        // move files because .1.log is locked -- failure is contained.
+        Exception ex = Record.Exception(() => log.Write("Second message long enough to exceed the 50-byte limit"));
+        Assert.Null(ex);
+
+        // After failure, writes are silently disabled
+        log.Write("Should not appear");
+
+        var activePath = Path.Combine(_testLogDir, $"{_baseName}.log");
+        Assert.True(File.Exists(activePath));
+        var content = File.ReadAllText(activePath);
+        Assert.Contains("Initial", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Should not appear", content, StringComparison.Ordinal);
+    }
+
+    private sealed class FailingRedactor : IRedactor
+    {
+        public string Redact(string input) => throw new InvalidOperationException("Simulated redactor failure");
+    }
+
 }
