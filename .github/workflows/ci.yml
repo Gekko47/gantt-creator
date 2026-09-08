@@ -126,13 +126,30 @@ jobs:
         run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests
 
       - name: Build Release (warnings as errors)
-        run: dotnet build GanttCreator.slnx -c Release --no-restore -warnaserror
+        # Delegates to scripts/build-release.ps1, the same entry point as
+        # verify-quick.ps1 step 10 / verify.ps1 step 10. Inline dotnet
+        # build is forbidden by scripts/ci-parity.Tests.ps1 (W8).
+        run: |
+          pwsh -NoProfile -File scripts/build-release.ps1 -Solution GanttCreator.slnx -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "build-release.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Publish AddIn (packed XLL artifact)
-        run: dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c Release --no-build
+        # Delegates to scripts/publish-addin.ps1, the same entry point as
+        # verify-quick.ps1 step 11 / verify.ps1 step 11. Inline dotnet
+        # publish is forbidden by scripts/ci-parity.Tests.ps1 (W8).
+        run: |
+          pwsh -NoProfile -File scripts/publish-addin.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "publish-addin.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Test (OfficeIntegration excluded)
-        run: dotnet test GanttCreator.slnx -c Release --no-build --filter 'Category!=OfficeIntegration'
+        # Delegates to scripts/test-non-office.ps1, the same entry point
+        # as verify-quick.ps1 step 12. Inline dotnet test / Pester
+        # invocation logic in the workflow is forbidden by
+        # scripts/ci-parity.Tests.ps1 (W8): a test command inlined here
+        # can drift from the pinned script gate.
+        run: |
+          pwsh -NoProfile -File scripts/test-non-office.ps1 -Solution GanttCreator.slnx -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "test-non-office.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Upload packed XLL artifact
         uses: actions/upload-artifact@v4

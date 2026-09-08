@@ -82,7 +82,8 @@ Do not commit when a gate is red. Do not bypass the script by running only the t
 The CI workflow and the local verify scripts must agree on every step. The
 defect class "local says PASS, CI says FAIL because the two views diverged"
 includes:
-  - inline `dotnet test`/`Invoke-Pester` calls in `ci.yml` that drift
+  - inline `dotnet test`/`dotnet build`/`dotnet publish`/`Invoke-Pester`
+    calls in `ci.yml` that drift
     from the version-pinned `scripts/*.ps1` entry points (Pester 4→5
     removed the `-Script` parameter; the first CI push of `stage-inspect`
     would have failed on it);
@@ -96,7 +97,10 @@ Rules:
   - `.github/workflows/ci.yml` delegates every step to a
     `scripts/*.ps1` entry point or to a vetted native MSBuild command
     (`dotnet format`, `dotnet restore --locked-mode`). No inline Pester
-    or `dotnet test` invocations.
+    or `dotnet test`/`dotnet build`/`dotnet publish` invocations: those
+    commands live in `scripts/test-non-office.ps1`,
+    `scripts/build-release.ps1`, and `scripts/publish-addin.ps1`, the
+    same entry points verify-quick.ps1 and verify.ps1 call.
   - Tool pins (Pester minimum major, PSScriptAnalyzer version, actionlint
     SHA-256, actionlint download URL) live in `scripts/tool-versions.psd1`
     and are consumed by `lint-ci.ps1`, `test-scripts.ps1`, and `ci.yml`.

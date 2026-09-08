@@ -141,16 +141,21 @@ Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build
 }
 
 Invoke-Step 'build Release -warnaserror' {
-    dotnet build $Solution -c $Configuration --no-restore -warnaserror
+    # Shared entry point with verify.ps1 step 10 and the GitHub CI
+    # 'Build Release' step (W8 local/CI parity).
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-release.ps1') -Solution $Solution -Configuration $Configuration
 }
 
 Invoke-Step 'publish AddIn (packed XLL)' {
-    dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c $Configuration --no-build
+    # Shared entry point with verify.ps1 step 11 and the GitHub CI
+    # 'Publish AddIn' step (W8 local/CI parity).
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'publish-addin.ps1') -Configuration $Configuration
 }
 
 Invoke-Step 'test (OfficeIntegration excluded)' {
-    dotnet test $Solution -c $Configuration --no-build --no-restore `
-        --filter 'Category!=OfficeIntegration'
+    # Shared entry point with the GitHub CI 'Test (OfficeIntegration
+    # excluded)' step (W8 local/CI parity).
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-non-office.ps1') -Solution $Solution -Configuration $Configuration
 }
 
 $end = Get-Date

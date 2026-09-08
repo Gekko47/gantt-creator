@@ -188,9 +188,9 @@ Describe 'install-pre-commit.ps1' {
         (Test-Path -LiteralPath $script:installScriptPath) | Should -BeTrue
     }
 
-    It 'invokes PowerShell 7 (pwsh) for the hook shim' {
+    It 'invokes the cross-platform PowerShell 7 (pwsh) for the hook shim' {
         $content = Get-Content -LiteralPath $script:installScriptPath -Raw
-        $content | Should -Match 'exec pwsh\.exe'
+        $content | Should -Match 'exec pwsh'
         $content | Should -Match 'core\.hooksPath'
     }
 

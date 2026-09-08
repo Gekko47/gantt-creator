@@ -8,10 +8,13 @@
 #>
 
 BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    . (Join-Path $repoRoot 'scripts\verify-helpers.ps1')
-    $script:verifyQuick   = Join-Path $repoRoot 'scripts\verify-quick.ps1'
-    $script:verifyFull    = Join-Path $repoRoot 'scripts\verify.ps1'
+    # Top-level BeforeAll variables are not visible to It blocks under
+    # Pester 6, so hold everything in $script: scope (same pattern as
+    # review-runbook.Tests.ps1 and the W14 PSSA lesson).
+    $script:repoRoot = Split-Path -Parent $PSScriptRoot
+    . (Join-Path $script:repoRoot 'scripts\verify-helpers.ps1')
+    $script:verifyQuick   = Join-Path $script:repoRoot 'scripts\verify-quick.ps1'
+    $script:verifyFull    = Join-Path $script:repoRoot 'scripts\verify.ps1'
 }
 
 Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
@@ -74,7 +77,7 @@ Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
         # foreach over roots does continue for every entry (Test-Path
         # returns false) and $scanned stays at 0 -- the documented
         # no-silent-pass branch.
-        $scriptPath = Join-Path $repoRoot 'scripts\check-md-links.ps1'
+        $scriptPath = Join-Path $script:repoRoot 'scripts\check-md-links.ps1'
         $proc = Start-Process -FilePath pwsh -ArgumentList @(
             '-NoProfile','-File',$scriptPath,'-Roots','nonexistent-only','-Entry','nonexistent-only'
         ) -NoNewWindow -Wait -PassThru `
@@ -93,7 +96,7 @@ Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
             $docs = Join-Path $td 'docs'
             New-Item -ItemType Directory -Path $docs -Force | Out-Null
             Set-Content -LiteralPath (Join-Path $docs 'a.md') -Value '# a' -Encoding utf8
-            $scriptPath = Join-Path $repoRoot 'scripts\check-md-links.ps1'
+            $scriptPath = Join-Path $script:repoRoot 'scripts\check-md-links.ps1'
             $proc = Start-Process -FilePath pwsh -ArgumentList @(
                 '-NoProfile','-File',$scriptPath,'-Roots','docs','-Entry','AGENTS.md'
             ) -NoNewWindow -Wait -PassThru `

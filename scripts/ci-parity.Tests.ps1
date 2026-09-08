@@ -71,17 +71,62 @@ Describe 'ci.yml parity tripwires (W8)' {
         $block | Should -Match 'dotnet format'
     }
 
-    It 'workflow does not inline dotnet test (must call scripts/verify-quick.ps1 or verify.ps1 instead)' {
+    It 'workflow does not inline dotnet test/build/publish (must call scripts/*.ps1 or a vetted native command)' {
         # Verify scripts are the script-gate source of truth; the workflow
-        # must call them, not re-implement the test invocation. The two
-        # test steps (Test/OfficeIntegration-excluded and Test/OfficeIntegration)
-        # are paired with verify scripts in W11/Phase C; for now the
-        # tripwire is the broader 'no bare dotnet test outside verify' rule.
-        # (?m) makes ^ and $ match each workflow line so the tripwire sees
-        # the bare `run: dotnet test` invocation (with no trailing args)
-        # wherever it sits in the file; without it ^ is anchored to the
-        # whole-file start and the assertion could never fire.
-        $script:ciText | Should -Not -Match '(?m)^\s*run:\s*dotnet test\s*$'
+        # must call them, not re-implement the commands. The build, AddIn
+        # publish, and non-Office test commands live in
+        # scripts/build-release.ps1, scripts/publish-addin.ps1, and
+        # scripts/test-non-office.ps1, shared with verify-quick.ps1 and
+        # verify.ps1 (the W11/Phase C pairing completed here).
+        # The tripwire is the full negative-match contract: the only
+        # inline `run: dotnet <command>` lines allowed in ci.yml are the
+        # vetted native MSBuild commands `dotnet format` and
+        # `dotnet restore --locked-mode` (see docs/05-GIT-QUALITY.md
+        # "CI parity (W8)"). Any other inline dotnet gate command -- a
+        # `dotnet test` with or without trailing arguments, `dotnet
+        # build`, `dotnet publish`, or a future gate command -- is a
+        # violation, whether it sits on a single `run:` line or inside a
+        # multiline `run: |` block.
+        # (?mi) makes ^ match each line start so the tripwire sees the
+        # command at any indentation; `\s*`/`\s+` consume extra
+        # whitespace, and command-line options are irrelevant because the
+        # match stops at the command word.
+        $script:ciText | Should -Not -Match '(?mi)^\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
+    }
+
+    It 'inline dotnet gate regex fires on deliberate violations and not on vetted commands (positive control)' {
+        # Guards the negative tripwire above: if the regex cannot detect
+        # a single-line `run: dotnet test ...` with trailing args, or an
+        # indented `dotnet test` inside a multiline block, the anti-inline
+        # assertion could never fire and an inline slip in ci.yml would
+        # silently pass. The vetted commands must, conversely, not fire.
+        $single = @'
+steps:
+  - name: Test
+    run: dotnet test GanttCreator.slnx -c Release --filter 'Category!=OfficeIntegration'
+'@
+        $single | Should -Match '(?mi)^\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
+
+        $block = @'
+steps:
+  - name: Test
+    run: |
+      Set-Location "$env:GITHUB_WORKSPACE"
+      dotnet test GanttCreator.slnx --no-build
+'@
+        $block | Should -Match '(?mi)^\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
+
+        'run: dotnet restore --locked-mode' | Should -Not -Match '(?mi)^\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
+        'run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests' | Should -Not -Match '(?mi)^\s*(?:run:\s*)?dotnet\s+(?!format\b|restore\b)[a-z][a-z0-9-]*\b'
+    }
+
+    It 'test step delegates to scripts/test-non-office.ps1 (verify-quick parity)' {
+        # The non-Office dotnet test command is version-sensitive and must
+        # not be re-implemented inline in the workflow; the step points at
+        # the same entry point verify-quick.ps1 step 12 runs.
+        $block = Get-CiStepBlock -Text $script:ciText -StepName 'Test (OfficeIntegration excluded)'
+        $block | Should -Not -BeNullOrEmpty
+        $block | Should -Match 'test-non-office\.ps1'
     }
 
     It 'step extractor isolates exactly one step block (positive control)' {

@@ -64,7 +64,7 @@ foreach ($check in $checks) {
     }
     foreach ($line in $checkerOutput) { Write-Host "  $line" }
     if ($checkerExit -ne 0) {
-        Write-Error "[pre-commit] $($check.Name) failed. Commit blocked. Run the full verification gate and fix before retrying."
+        Write-Host "[pre-commit] $($check.Name) failed. Commit blocked. Run the full verification gate and fix before retrying."
         exit $checkerExit
     }
 }

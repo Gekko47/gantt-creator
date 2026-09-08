@@ -48,7 +48,7 @@ New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 # Resolve scripts/pre-commit.ps1 relative to the hooks directory so the
 # shim is portable across checkout paths and core.hooksPath configurations.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/../scripts/pre-commit.ps1"
+exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/../scripts/pre-commit.ps1"
 '@
 $hookFile = Join-Path $hooksDir 'pre-commit'
 # Write as UTF-8 without BOM, LF line endings (sh requires LF).
@@ -56,7 +56,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $contentLf = $shim -replace "`r`n", "`n"
 [System.IO.File]::WriteAllText($hookFile, $contentLf, $utf8NoBom)
 
-git config core.hooksPath .githooks
+git -C $repoRoot config core.hooksPath .githooks
 if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to set core.hooksPath'; exit 1 }
 
 Write-Host 'pre-commit hook installed.'
