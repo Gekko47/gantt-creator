@@ -193,7 +193,10 @@ public sealed class RollingLogTests : IDisposable
             log1.Write("First session");
         }
 
-        // Reopen without disposing log1 first (simulate fresh process restart)
+        // Reopen the same base name after log1 has been disposed; the
+        // constructor must append rather than truncate. (Previously this
+        // comment claimed we simulated a fresh process restart without
+        // disposing log1 first, which the scoped `using` did not do.)
         using (var log2 = new RollingLog(dir, baseName, maxFileSizeBytes: 1024, maxFileCount: 3))
         {
             log2.Write("Second session");
@@ -421,6 +424,31 @@ public sealed class RollingLogTests : IDisposable
         Assert.False(log.IsFailed);
         log.Write("Trigger failure");
         Assert.True(log.IsFailed);
+    }
+
+    [Fact]
+    public void IsFailed_is_exposed_through_the_IRollingLog_abstraction()
+    {
+        // Consumers that program against the abstraction must be able to
+        // detect the permanent failure latch without downcasting.
+        // CA1859 suggests the concrete type for performance; the whole point
+        // of this test is the interface reference, so the suggestion is
+        // intentionally declined here.
+#pragma warning disable CA1859
+        IRollingLog log = new RollingLog(
+            _testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3,
+            redactor: new FailingRedactor());
+#pragma warning restore CA1859
+        try
+        {
+            Assert.False(log.IsFailed);
+            log.Write("Trigger failure");
+            Assert.True(log.IsFailed);
+        }
+        finally
+        {
+            log.Dispose();
+        }
     }
 
     [Fact]

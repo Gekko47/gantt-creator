@@ -6,6 +6,15 @@ namespace GanttCreator.Core.Logging;
 public interface IRollingLog : IDisposable
 {
     /// <summary>
+    /// Indicates the logger has latched a failure (formatting, redaction,
+    /// rotation, or write) and will discard all further writes. The latch is
+    /// permanent by design: log failures must never propagate into product
+    /// code paths. Diagnostics should consult this property to detect that
+    /// logging has stopped.
+    /// </summary>
+    bool IsFailed { get; }
+
+    /// <summary>
     /// Writes a message to the log. The message is automatically redacted.
     /// </summary>
     /// <param name="message">The log message.</param>

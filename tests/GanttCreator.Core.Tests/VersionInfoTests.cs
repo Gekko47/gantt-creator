@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 
 namespace GanttCreator.Core.Tests;
 
@@ -12,10 +11,8 @@ public sealed class VersionInfoTests
     public void SemanticVersion_extracts_core_from_informational()
     {
         // The version string is computed at compile time via Directory.Build.props.
-        // We test the extraction logic directly.
-        Type coreType = typeof(VersionInfo);
-        FieldInfo? field = coreType.GetField("SemanticVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        var semantic = (string?)field?.GetValue(null);
+        // We assert the observable public field, not a private method by name.
+        var semantic = VersionInfo.SemanticVersion;
         Assert.NotNull(semantic);
         Assert.Matches(@"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?$", semantic);
     }
@@ -28,12 +25,10 @@ public sealed class VersionInfoTests
         // "0.0.0+local" in the absence of a real version, so the test
         // environment will see a valid semver value. We assert the prefix is a
         // 3-part semver; we no longer require a hardcoded "0.0.0".
-        Type coreType = typeof(VersionInfo);
-        FieldInfo? field = coreType.GetField("InformationalVersion", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-        var info = (string?)field?.GetValue(null);
+        var info = VersionInfo.InformationalVersion;
         Assert.NotNull(info);
         Assert.NotEmpty(info);
-        Assert.Matches(@"^\d+\.\d+\.\d+(?:[-+]|$)", info!);
+        Assert.Matches(@"^\d+\.\d+\.\d+(?:[-+]|$)", info);
     }
 
     [Theory]
@@ -50,12 +45,17 @@ public sealed class VersionInfoTests
     [InlineData("1.2.3-", "0.0.0")]
     [InlineData("1.2", "0.0.0")]
     [InlineData("1.2.3.4", "0.0.0")]
+    [InlineData("1.2.3-alpha..1", "0.0.0")]
+    [InlineData("1.2.3-.", "0.0.0")]
+    [InlineData("1.2.3-01", "0.0.0")]
+    [InlineData("1.2.3-beta.01", "0.0.0")]
+    [InlineData("1.2.3-alpha!beta", "0.0.0")]
+    [InlineData("1.2.3-0", "1.2.3-0")]
     public void ExtractSemanticVersion_known_formats(string input, string expected)
     {
-        Type coreType = typeof(VersionInfo);
-        MethodInfo? method = coreType.GetMethod("ExtractSemanticVersion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        var result = (string?)method?.Invoke(null, [input]);
-        Assert.Equal(expected, result);
+        // Invoke the public normalization contract directly; no reflection on
+        // private method names or visibility.
+        Assert.Equal(expected, VersionInfo.ExtractSemanticVersion(input));
     }
 
     [Fact]
@@ -67,10 +67,7 @@ public sealed class VersionInfoTests
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
-            Type coreType = typeof(VersionInfo);
-            MethodInfo? method = coreType.GetMethod("ExtractSemanticVersion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-            var result = (string?)method?.Invoke(null, ["1.2.3+abc123"]);
-            Assert.Equal("1.2.3", result);
+            Assert.Equal("1.2.3", VersionInfo.ExtractSemanticVersion("1.2.3+abc123"));
         }
         finally
         {

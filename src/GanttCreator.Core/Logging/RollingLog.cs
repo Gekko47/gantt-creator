@@ -257,9 +257,10 @@ public sealed class RollingLog : IRollingLog
             //   1. Delete the largest numeric rotation(s) if at cap (never the active .log).
             //   2. Shift existing numeric rotations in descending order (.N -> .N+1, ..., .1 -> .2).
             //   3. Move the active .log to .1.log only after shifting, so an existing .1.log is never overwritten.
-            // Get only rotated files (exclude the active .log, which has int.MaxValue rotation index),
-            // sorted descending so the largest numeric rotation comes first.
-            List<string> rotatedFiles = GetRotatedFilesNewestFirst();
+            // Get only rotated files (the active .log is never included:
+            // TryGetRotationIndex returns false for it), ordered descending
+            // by rotation index so the oldest (highest-numbered) file comes first.
+            List<string> rotatedFiles = GetRotatedFilesOldestFirst();
 
             // After rotation we'll have (rotatedFiles.Count + 1) rotated files plus the active .log,
             // so delete from the top when rotatedFiles.Count + 2 exceeds the cap.
@@ -269,10 +270,11 @@ public sealed class RollingLog : IRollingLog
                 DeleteFile(rotatedFiles[i]);
             }
 
-            // Re-get remaining rotated files after deletion, still newest first.
+            // Re-get remaining rotated files after deletion, still descending
+            // rotation index (oldest first).
             if (toDelete > 0)
             {
-                rotatedFiles = GetRotatedFilesNewestFirst();
+                rotatedFiles = GetRotatedFilesOldestFirst();
             }
 
             // Shift existing numeric rotations in descending order (.N -> .N+1, ..., .1 -> .2).
@@ -309,14 +311,16 @@ public sealed class RollingLog : IRollingLog
     }
 
     /// <summary>
-    /// Enumerates the rotated files for this base name, newest (highest
-    /// rotation index) first. Only files of the exact shape
-    /// <c>{baseName}.{index}.log</c> with ASCII-digit indexes are matched, so
-    /// unrelated files that merely share the base-name prefix (for example
-    /// <c>{baseName}-backup.log</c> or <c>{baseName}2.log</c> written by
-    /// another tool) are never shifted or deleted by rotation.
+    /// Enumerates the rotated files for this base name ordered by
+    /// descending rotation index: the oldest (highest-numbered) file
+    /// first, down to <c>{baseName}.1.log</c>. The active
+    /// <c>{baseName}.log</c> is never included. Only files of the exact
+    /// shape <c>{baseName}.{index}.log</c> with ASCII-digit indexes are
+    /// matched, so unrelated files that merely share the base-name prefix
+    /// (for example <c>{baseName}-backup.log</c> or <c>{baseName}2.log</c>
+    /// written by another tool) are never shifted or deleted by rotation.
     /// </summary>
-    private List<string> GetRotatedFilesNewestFirst()
+    private List<string> GetRotatedFilesOldestFirst()
     {
         return [.. Directory.GetFiles(_logDirectory, $"{_baseName}*.log")
             .Select(f => (Path: f, Index: TryGetRotationIndex(f, _baseName, out var i) ? i : (int?)null))

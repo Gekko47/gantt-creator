@@ -32,7 +32,14 @@ public static class VersionInfo
         return string.IsNullOrEmpty(attr?.InformationalVersion) ? "0.0.0-local" : attr.InformationalVersion;
     }
 
-    private static string ExtractSemanticVersion(string informational)
+    /// <summary>
+    /// Extracts the semver <c>major.minor.patch[-prerelease]</c> from an
+    /// informational version string, stripping any <c>+build</c> metadata.
+    /// Unparseable input degrades to <c>0.0.0</c>.
+    /// </summary>
+    /// <param name="informational">The informational version string.</param>
+    /// <returns>The semantic version, or <c>0.0.0</c> when unparseable.</returns>
+    public static string ExtractSemanticVersion(string informational)
     {
         if (string.IsNullOrEmpty(informational))
         {
@@ -69,9 +76,55 @@ public static class VersionInfo
             || !IsStrictSemverNumber(parts[0])
             || !IsStrictSemverNumber(parts[1])
             || !IsStrictSemverNumber(parts[2])
-            || (prerelease is not null && prerelease.Length == 0))
+            || (prerelease is not null && !IsValidPrerelease(prerelease)))
             ? "0.0.0"
             : (prerelease is null ? numbers : $"{numbers}-{prerelease}");
+    }
+
+    /// <summary>
+    /// A semver prerelease: one or more dot-separated identifiers, each
+    /// non-empty and made only of ASCII letters, digits, or hyphens. A
+    /// numeric identifier (all digits) must not have leading zeros, except
+    /// the single <c>"0"</c>. Invalid examples include <c>alpha..1</c>
+    /// (empty identifier between dots) and <c>.</c> (no identifier after
+    /// the dash).
+    /// </summary>
+    private static bool IsValidPrerelease(string prerelease)
+    {
+        if (prerelease.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var identifier in prerelease.Split('.'))
+        {
+            if (identifier.Length == 0)
+            {
+                return false;
+            }
+
+            var allDigits = true;
+            foreach (var c in identifier)
+            {
+                var isDigit = c is >= '0' and <= '9';
+                var isLetter = c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z');
+                if (!isDigit && !isLetter && c != '-')
+                {
+                    return false;
+                }
+                if (!isDigit)
+                {
+                    allDigits = false;
+                }
+            }
+
+            if (allDigits && identifier.Length > 1 && identifier[0] == '0')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
