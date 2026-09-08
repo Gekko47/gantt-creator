@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <##
 .SYNOPSIS
     Lightweight pre-commit gate for the fast, deterministic checks only.
@@ -32,6 +32,26 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $scriptRoot = Split-Path -Parent $PSCommandPath
+
+# The four checkers below read the working tree (docs/, .cline/skills/,
+# AGENTS.md, .github/). Validating the working tree is only equivalent to
+# validating the content that will be committed (the staged index) when the
+# two are identical. If a developer has unstaged edits under any inspected
+# root, the checkers could pass on a clean working tree while the staged
+# content that actually gets committed is dirty — or vice versa. Rather than
+# refactor every checker to read the index snapshot via `git show` (a broad
+# change to four scripts with different file-reading shapes), the minimal
+# correct alternative is to refuse to run while the working tree is dirty
+# under the inspected roots: that guarantees working tree == index for the
+# validated content, so no masking is possible.
+$inspectedRoots = @('docs', '.cline/skills', 'AGENTS.md', '.github')
+$dirty = git -C $scriptRoot status --porcelain -- $inspectedRoots 2>$null
+if ($LASTEXITCODE -eq 0 -and $dirty) {
+    Write-Host '[pre-commit] Working tree has unstaged and/or untracked changes under the inspected roots:'
+    $dirty -split "`n" | Where-Object { $_ } | ForEach-Object { Write-Host "  $_" }
+    Write-Host '[pre-commit] Commit blocked. Stage or stash these changes first so the gate validates exactly the content that will be committed.'
+    exit 1
+}
 
 # Fast checks. Each is idempotent and cheap (<3s). Fail fast on the first
 # issue so the developer sees one clear reason instead of a cascade.
