@@ -7,19 +7,18 @@
     Slower than verify-quick.ps1. Includes all quick gates plus:
       1. markdown link sanity (scripts/check-md-links.ps1)
       2. skill-tree drift gate (scripts/check-cline-skills.ps1)
-      3. SKILL.md canonical-phrase presence (scripts/check-skill-summary.ps1)
-      4. STATUS.md accuracy (scripts/check-status.ps1)
-      5. PSScriptAnalyzer over scripts/
-      6. workflow lint (actionlint) over .github/workflows/ci.yml
-      7. script lint (Pester) over scripts/*.ps1
-      8. dotnet restore --locked-mode
-      9. dotnet format --verify-no-changes --exclude tests
-     10. dotnet build -c Release -warnaserror
-     11. dotnet publish the AddIn in Release configuration
-     12. dotnet test on every non-OfficeIntegration project
-     13. coverage report and per-project threshold check
-     14. dotnet list package --vulnerable --include-transitive
-     15. repository hygiene (git status --short, dirty working tree)
+      3. STATUS.md accuracy (scripts/check-status.ps1)
+      4. PSScriptAnalyzer over scripts/
+      5. workflow lint (actionlint) over .github/workflows/ci.yml
+      6. script lint (Pester) over scripts/*.ps1
+      7. dotnet restore --locked-mode
+      8. dotnet format --verify-no-changes --exclude tests
+      9. dotnet build -c Release -warnaserror
+     10. dotnet publish the AddIn in Release configuration
+     11. dotnet test on every non-OfficeIntegration project
+     12. coverage report and per-project threshold check
+     13. dotnet list package --vulnerable --include-transitive
+     14. repository hygiene (git status --short, dirty working tree)
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -87,10 +86,6 @@ Invoke-Step 'markdown link sanity' {
 
 Invoke-Step 'skill tree in sync' {
     pwsh -NoProfile -File (Join-Path $scriptRoot 'check-cline-skills.ps1')
-}
-
-Invoke-Step 'skill summary phrases' {
-    pwsh -NoProfile -File (Join-Path $scriptRoot 'check-skill-summary.ps1')
 }
 
 Invoke-Step 'status accuracy' {

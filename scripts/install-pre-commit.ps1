@@ -62,6 +62,6 @@ if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to set core.hooksPath'; exit 1 }
 Write-Host 'pre-commit hook installed.'
 Write-Host '  hooksPath.cfg : .githooks'
 Write-Host '  delegate      : scripts/pre-commit.ps1'
-Write-Host '  gates         : skill-tree drift, skill-summary phrases, status accuracy, markdown links'
+Write-Host '  gates         : skill-tree drift, status accuracy, markdown links'
 Write-Host '  full verify   : still run pwsh ./scripts/verify-quick.ps1 during editing and pwsh ./scripts/verify.ps1 before a PR'
 exit 0

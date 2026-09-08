@@ -14,9 +14,8 @@
 
       1. skill-tree drift (check-cline-skills.ps1: working tree must
          be clean under docs/ and .cline/skills/)
-      2. SKILL.md canonical-phrase presence (check-skill-summary.ps1)
-      3. STATUS.md accuracy (check-status.ps1)
-      4. Markdown link sanity (check-md-links.ps1) -- staged docs only
+      2. STATUS.md accuracy (check-status.ps1)
+      3. Markdown link sanity (check-md-links.ps1) -- staged docs only
 
     Exit 0 allows the commit; exit 1 blocks it. The commit is not
     aborted mid-flight; this script runs BEFORE the commit object is
@@ -56,10 +55,9 @@ if ($LASTEXITCODE -eq 0 -and $dirty) {
 # Fast checks. Each is idempotent and cheap (<3s). Fail fast on the first
 # issue so the developer sees one clear reason instead of a cascade.
 $checks = @(
-    @{ Name = 'skill tree in sync (Phase 2)';  Script = 'check-cline-skills.ps1' }
-    @{ Name = 'skill summary phrases';         Script = 'check-skill-summary.ps1' }
-    @{ Name = 'status accuracy';               Script = 'check-status.ps1' }
-    @{ Name = 'markdown link sanity';          Script = 'check-md-links.ps1' }
+    @{ Name = 'skill tree in sync';  Script = 'check-cline-skills.ps1' }
+    @{ Name = 'status accuracy';     Script = 'check-status.ps1' }
+    @{ Name = 'markdown link sanity'; Script = 'check-md-links.ps1' }
 )
 
 foreach ($check in $checks) {

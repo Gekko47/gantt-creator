@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
     Pester tests for sync-cline-skills.ps1
@@ -25,7 +25,12 @@ Describe 'sync-cline-skills.ps1' {
             @'
 # Fixture document
 
+<!-- SKILL-SUMMARY:START -->
 This is a test canonical source for sync-cline-skills.
+
+Do not get wrong:
+- The SKILL-SUMMARY block is extracted verbatim.
+<!-- SKILL-SUMMARY:END -->
 
 It has more than one line so we can also see the summary truncation.
 '@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8
@@ -36,7 +41,12 @@ $map = @{
     '99-FIXTURE.md' = @{ Name = '99-fixture'; Description = 'Test skill.' }
 }
 '@
-            $syncBody = $syncBody -replace '(?s)\$map = @\{.*?\}(?=\s*foreach)', ($fixtureMap + "`n")
+            # Match only the $map block: from "$map = @{" to the first "}"
+            # on its own line. The old lookahead form (\}\s*foreach) broke
+            # when the sync script gained variable declarations between the
+            # map and its first foreach loop — the lazy match swallowed
+            # them and the harness script failed at runtime.
+            $syncBody = $syncBody -replace '(?ms)\$map = @\{.*?^\}', ($fixtureMap + "`n")
             $script:harnessSync = Join-Path $script:tempRoot 'sync-cline-skills.ps1'
             $syncBody | Set-Content -LiteralPath $script:harnessSync -Encoding utf8
         }
@@ -47,7 +57,7 @@ $map = @{
             }
         }
 
-        It 'exits 0 and regenerates SKILL.md + references.md on a valid fixture' {
+        It 'exits 0 and regenerates SKILL.md on a valid fixture with SKILL-SUMMARY block' {
             $outFile = Join-Path $script:tempRoot 'out-ok.txt'
             $errFile = Join-Path $script:tempRoot 'err-ok.txt'
             $proc = Start-Process -FilePath pwsh -ArgumentList @(
@@ -59,13 +69,14 @@ $map = @{
             $proc.ExitCode | Should -Be 0
             $stdout | Should -Match 'regenerated 1 skills'
             Test-Path -LiteralPath (Join-Path $script:skills '99-fixture/SKILL.md')    | Should -BeTrue
-            Test-Path -LiteralPath (Join-Path $script:skills '99-fixture/references.md') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $script:skills '99-fixture/references.md') | Should -BeFalse
 
-            # The first summary line of the canonical source is present
-            # in the regenerated SKILL.md (observable output, not a
-            # string match against the script source).
+            # The SKILL-SUMMARY block content is present in the regenerated SKILL.md
             $skillBody = Get-Content -LiteralPath (Join-Path $script:skills '99-fixture/SKILL.md') -Raw
-            $skillBody | Should -Match 'Fixture document'
+            $skillBody | Should -Match 'The SKILL-SUMMARY block is extracted verbatim'
+            # The footer points at the canonical source, not at a references.md duplicate
+            $skillBody | Should -Match 'Full reference:.*docs/99-FIXTURE.md'
+            $skillBody | Should -Not -Match 'references.md'
         }
 
         It 'exits non-zero when a canonical source listed in $map is missing' {

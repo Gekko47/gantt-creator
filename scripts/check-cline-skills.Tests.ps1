@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
     Pester tests for check-cline-skills.ps1
@@ -53,7 +53,12 @@ $map = @{
     '99-FIXTURE.md' = @{ Name = '99-fixture'; Description = 'Test skill.' }
 }
 '@
-            $syncBody = $syncBody -replace '(?s)\$map = @\{.*?\}(?=\s*foreach)', ($fixtureMap + "`n")
+            # Match only the $map block: from "$map = @{" to the first "}"
+            # on its own line. The old lookahead form (\}\s*foreach) broke
+            # when the sync script gained variable declarations between the
+            # map and its first foreach loop — the lazy match swallowed
+            # them and the harness script failed at runtime.
+            $syncBody = $syncBody -replace '(?ms)\$map = @\{.*?^\}', ($fixtureMap + "`n")
             $script:harnessSync = Join-Path $script:harness 'sync-cline-skills.ps1'
             $syncBody | Set-Content -LiteralPath $script:harnessSync -Encoding utf8
 

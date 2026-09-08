@@ -1,5 +1,24 @@
 # Git, quality gates, and review
 
+
+<!-- SKILL-SUMMARY:START -->
+Branch/review policy, commit design, local gates, CI parity, and the
+pull-request/review checklist.
+
+Do not get wrong:
+- A phase may not exit on local-only evidence: the branch must be
+  pushed and GitHub CI must have been observed green (the W-12 rule —
+  added after the PSSA blind-gate defect survived three local-only
+  "all green" QA rounds).
+- Conventional Commit prefixes only (`feat:`, `fix:`, `test:`,
+  `refactor:`, `docs:`, `build:`, `chore:`); one concern per commit.
+- Never rewrite shared history (amend/rebase/force-push) without
+  explicit instruction.
+- Comments only when they add current, non-obvious value; remove stale
+  ones in the touched area. Work items and STATUS are control records,
+  not diaries.
+<!-- SKILL-SUMMARY:END -->
+
 ## Branch and review policy
 
 - Protect `main`: pull requests, passing required checks, and one human approval.
@@ -35,6 +54,10 @@ Tests cover shuffled input, duplicate stack values, and clipping.
 ```
 
 Do not use messages such as `updates`, `fix stuff`, or an agent transcript.
+
+## Control-record discipline
+
+Keep the work item and status concise; they are control records, not diaries.
 
 ## Local gates
 

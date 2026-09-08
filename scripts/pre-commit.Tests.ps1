@@ -17,9 +17,9 @@ Describe 'pre-commit.ps1' {
         # .SYNOPSIS/.DESCRIPTION do not trip the negative match.
         $codeOnly = $raw -replace '(?s)<#.*?#>', ''
         $codeOnly | Should -Match 'check-cline-skills\.ps1'
-        $codeOnly | Should -Match 'check-skill-summary\.ps1'
         $codeOnly | Should -Match 'check-status\.ps1'
         $codeOnly | Should -Match 'check-md-links\.ps1'
+        $codeOnly | Should -Not -Match 'check-skill-summary\.ps1'
         # Must not INVOKE verify-quick.ps1 in the executable portion.
         $codeOnly | Should -Not -Match '(pwsh|\$\(|&)\s.*verify-quick\.ps1'
     }
@@ -97,9 +97,8 @@ exit $ExitCode
             }
         }
 
-        It 'invokes all four checkers in declared order and exits 0 when all pass' {
+        It 'invokes all three checkers in declared order and exits 0 when all pass' {
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
-            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 0
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
 
@@ -117,7 +116,6 @@ exit $ExitCode
             $script:output | Should -Match 'pre-commit: quick gates PASS'
             Get-Content -LiteralPath $script:invocationLog | Should -Be @(
                 'check-cline-skills.ps1',
-                'check-skill-summary.ps1',
                 'check-status.ps1',
                 'check-md-links.ps1'
             )
@@ -126,7 +124,6 @@ exit $ExitCode
         It 'exits non-zero with the blocking message and short-circuits on first failure' {
             # First two pass; third fails; fourth is staged but must never run.
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
-            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1'  -LogPath $script:invocationLog -ExitCode 0
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 7
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
 
@@ -143,10 +140,9 @@ exit $ExitCode
             $script:exitCode | Should -Not -Be 0
             $script:output | Should -Match 'Commit blocked'
 
-            # Fail-fast proof: the 3rd checker ran, the 4th did not.
+            # Fail-fast proof: the 2nd checker ran, the 3rd did not.
             Get-Content -LiteralPath $script:invocationLog | Should -Be @(
                 'check-cline-skills.ps1',
-                'check-skill-summary.ps1',
                 'check-status.ps1'
             )
         }
@@ -160,8 +156,8 @@ exit $ExitCode
             # pattern used by check-cline-skills.ps1 today); the third is
             # staged and must never run.
             Write-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
-            Write-PreCommitTerminatingErrorStubChecker -Path (Join-Path $script:scriptsDir 'check-skill-summary.ps1') -Name 'check-skill-summary.ps1' -LogPath $script:invocationLog -ExitCode 1
-            Write-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitTerminatingErrorStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 1
+            Write-PreCommitStubChecker               -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'      -LogPath $script:invocationLog -ExitCode 0
 
             $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
             $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
@@ -175,7 +171,7 @@ exit $ExitCode
             # Fail-fast proof: the 2nd checker ran (and failed), the 3rd did not.
             Get-Content -LiteralPath $script:invocationLog | Should -Be @(
                 'check-cline-skills.ps1',
-                'check-skill-summary.ps1'
+                'check-status.ps1'
             )
         }
     }

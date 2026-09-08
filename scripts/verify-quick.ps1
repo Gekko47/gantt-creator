@@ -12,16 +12,15 @@
     Steps:
       1. dotnet --version sanity check
       2. skill-tree drift gate
-      3. SKILL.md canonical-phrase presence gate
-      4. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
-      5. PSScriptAnalyzer over scripts/
-      6. Workflow lint (actionlint) over .github/workflows/ci.yml
-      7. Script lint (Pester) over scripts/*.ps1
-      8. dotnet restore --locked-mode (after a lock file is produced)
-      9. dotnet format --verify-no-changes --exclude tests
-     10. dotnet build -c Release -warnaserror
-     11. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
-     12. dotnet test on Core, Raster, Office contract, AddIn, Architecture
+      3. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
+      4. PSScriptAnalyzer over scripts/
+      5. Workflow lint (actionlint) over .github/workflows/ci.yml
+      6. Script lint (Pester) over scripts/*.ps1
+      7. dotnet restore --locked-mode (after a lock file is produced)
+      8. dotnet format --verify-no-changes --exclude tests
+      9. dotnet build -c Release -warnaserror
+     10. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
+     11. dotnet test on Core, Raster, Office contract, AddIn, Architecture
          (OfficeIntegration trait excluded)
 #>
 
@@ -80,14 +79,6 @@ Invoke-Step 'skill tree in sync' {
     # (.cline/skills/ or docs/) is out of date. Wired in so
     # a stale skill is caught at every commit.
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-cline-skills.ps1')
-}
-
-Invoke-Step 'skill summary phrases' {
-    # After sync, prove the regenerated SKILL.md files still contain the
-    # canonical phrases the source documents depend on (R0.8 note,
-    # artifact contract, culture-test policy). Catches summary-budget
-    # truncation and silent regeneration gaps.
-    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-skill-summary.ps1')
 }
 
 Invoke-Step 'status accuracy' {
