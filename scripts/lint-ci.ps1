@@ -54,12 +54,10 @@ if (-not (Test-Path -LiteralPath $exePath)) {
         # Integrity check: the same SHA-256 pin the CI workflow enforces.
         # The pin is single-sourced from scripts/tool-versions.psd1 so the
         # two invocations can never disagree; ci-parity.Tests.ps1 enforces
-        # the equality. Both pins must stay identical.
-        $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
-        if ($actualHash -ne $expectedHash) {
-            Write-Error "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"
-            exit 1
-        }
+        # the equality. Both pins must stay identical. The check itself lives
+        # in scripts/actionlint-hash.ps1 so it can be unit-tested offline.
+        & (Join-Path $PSScriptRoot 'actionlint-hash.ps1') -ZipPath $zipPath -ExpectedHash $expectedHash
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         Expand-Archive -Path $zipPath -DestinationPath $toolsDir -Force
         Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     }

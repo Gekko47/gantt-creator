@@ -47,4 +47,45 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
         $ciHash = [regex]::Match($script:ciText, '[0-9a-f]{64}').Value
         $ciHash | Should -Be $script:versions.actionlint.Sha256
     }
+
+    It 'actionlint-hash.ps1 accepts the pinned checksum and rejects a mismatched one (child process)' {
+        # The integrity check is no longer inlined in lint-ci.ps1; it lives in
+        # scripts/actionlint-hash.ps1. Exercise that helper in an isolated
+        # child process with a fixture archive so the test is deterministic and
+        # offline (no network download). Assert observable exit behavior.
+        $hashScript = Join-Path $repoRoot 'scripts\actionlint-hash.ps1'
+        (Test-Path -LiteralPath $hashScript) | Should -BeTrue
+
+        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('lint-ci-hash-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $td -Force | Out-Null
+        try {
+            $zipPath = Join-Path $td 'actionlint.zip'
+            # Deterministic fixture content; compute its real SHA-256.
+            $content = [byte[]]@(0x50, 0x4B, 0x03, 0x04) + [Text.Encoding]::UTF8.GetBytes('actionlint-fixture')
+            [IO.File]::WriteAllBytes($zipPath, $content)
+            $realHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+
+            # Acceptance: the helper exits 0 when the checksum matches.
+            $accept = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $hashScript, '-ZipPath', $zipPath, '-ExpectedHash', $realHash
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput (Join-Path $td 'accept-out.txt') `
+                -RedirectStandardError (Join-Path $td 'accept-err.txt')
+            $accept.ExitCode | Should -Be 0
+
+            # Rejection: the helper exits non-zero when the checksum is wrong.
+            $badHash = ('0' * 63) + '1'
+            $reject = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $hashScript, '-ZipPath', $zipPath, '-ExpectedHash', $badHash
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput (Join-Path $td 'reject-out.txt') `
+                -RedirectStandardError (Join-Path $td 'reject-err.txt')
+            $reject.ExitCode | Should -Not -Be 0
+            $errOut = Get-Content -LiteralPath (Join-Path $td 'reject-err.txt') -Raw
+            $errOut | Should -Match 'SHA-256 mismatch'
+        }
+        finally {
+            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }

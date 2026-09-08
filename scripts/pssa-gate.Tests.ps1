@@ -34,9 +34,15 @@ Describe 'PSScriptAnalyzer gate (verify scripts)' {
         function Invoke-GateOnFixture {
             param([string]$FixtureDir)
 
-            $outFile = Join-Path $FixtureDir 'gate-out.txt'
-            $errFile = Join-Path $FixtureDir 'gate-err.txt'
-            $runner  = Join-Path $FixtureDir 'run-gate.ps1'
+            # The runner script lives in a SIBLING temp directory, not inside
+            # $FixtureDir: Invoke-PssaGate -Path $FixtureDir must scan only the
+            # fixture contents, and the runner (which sources verify-helpers.ps1)
+            # would otherwise be PSSA-scanned alongside bad.ps1.
+            $runnerDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-runner-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $runnerDir -Force | Out-Null
+            $outFile = Join-Path $runnerDir 'gate-out.txt'
+            $errFile = Join-Path $runnerDir 'gate-err.txt'
+            $runner  = Join-Path $runnerDir 'run-gate.ps1'
             $runnerLines = @(
                 ". '$($script:helpersPath)'",
                 "Invoke-PssaGate -Path '$FixtureDir' -Settings '$($script:settingsPath)'"
@@ -47,7 +53,35 @@ Describe 'PSScriptAnalyzer gate (verify scripts)' {
                 '-NoProfile', '-File', $runner
             ) -NoNewWindow -Wait -PassThru `
                 -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-            return $proc
+            return [pscustomobject]@{ Proc = $proc; RunnerDir = $runnerDir }
+        }
+
+        # Reproduces the Invoke-Step / Tee-Object / ForEach-Object pipeline
+        # shape from scripts/verify-quick.ps1 (W13): the original -EnableExit
+        # defect only surfaced as a false PASS inside this pipeline, so the
+        # positive test must run the gate through the same shape, not only
+        # through a bare child process.
+        function Invoke-GateThroughPipeline {
+            param([string]$FixtureDir)
+
+            $runnerDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-pipe-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $runnerDir -Force | Out-Null
+            $outFile = Join-Path $runnerDir 'pipe-out.txt'
+            $errFile = Join-Path $runnerDir 'pipe-err.txt'
+            $runner  = Join-Path $runnerDir 'run-gate-pipe.ps1'
+            # Build the child script with string concatenation so the
+            # pipeline's literal `$_` and `$null` are not interpolated away.
+            $runnerContent = ". '$($script:helpersPath)'" + [Environment]::NewLine +
+                ('& { Invoke-PssaGate -Path ' + "'$FixtureDir'" + ' -Settings ' +
+                "'$($script:settingsPath)'" +
+                ' } 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { $null = $_ }')
+            Set-Content -LiteralPath $runner -Value $runnerContent -Encoding utf8
+
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $runner
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            return [pscustomobject]@{ Proc = $proc; RunnerDir = $runnerDir }
         }
     }
 
@@ -78,11 +112,14 @@ function foo { $x = 'declared but never read' }
 foo
 '@ | Set-Content -LiteralPath (Join-Path $td 'bad.ps1') -Encoding utf8
 
-            $proc = Invoke-GateOnFixture -FixtureDir $td
-            $proc.ExitCode | Should -Not -Be 0
+            $result = Invoke-GateOnFixture -FixtureDir $td
+            $result.Proc.ExitCode | Should -Not -Be 0
         }
         finally {
             Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+            if ($result.RunnerDir -and (Test-Path -LiteralPath $result.RunnerDir)) {
+                Remove-Item -LiteralPath $result.RunnerDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -95,11 +132,42 @@ foo
         New-Item -ItemType Directory -Path $td -Force | Out-Null
         try {
             Set-Content -LiteralPath (Join-Path $td 'ok.ps1') -Value "# fixture without analyzable code" -Encoding utf8
-            $proc = Invoke-GateOnFixture -FixtureDir $td
-            $proc.ExitCode | Should -Be 0
+            $result = Invoke-GateOnFixture -FixtureDir $td
+            $result.Proc.ExitCode | Should -Be 0
         }
         finally {
             Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+            if ($result.RunnerDir -and (Test-Path -LiteralPath $result.RunnerDir)) {
+                Remove-Item -LiteralPath $result.RunnerDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'the real gate reports FAIL through the Invoke-Step/Tee pipeline (W13 shape)' {
+        # The original -EnableExit defect only surfaced as a false PASS inside
+        # the Tee/ForEach pipeline; a bare child-process exit code is not
+        # enough to prove the fix. The gate must report FAIL through the same
+        # shape verify-quick.ps1 uses.
+        if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Set-ItResult -Skipped -Because 'PSScriptAnalyzer not installed on this host'
+            return
+        }
+        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-pipe-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $td -Force | Out-Null
+        try {
+            @'
+function foo { $x = 'declared but never read' }
+foo
+'@ | Set-Content -LiteralPath (Join-Path $td 'bad.ps1') -Encoding utf8
+
+            $result = Invoke-GateThroughPipeline -FixtureDir $td
+            $result.Proc.ExitCode | Should -Not -Be 0
+        }
+        finally {
+            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+            if ($result.RunnerDir -and (Test-Path -LiteralPath $result.RunnerDir)) {
+                Remove-Item -LiteralPath $result.RunnerDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
