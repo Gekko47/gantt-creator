@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The current release line is the only supported version. Security fixes are applied to the latest `stage-inspect` branch and released through the normal release process.
+The project is **pre-release**: no version has shipped yet, so there is no supported release line. Security fixes are applied to the in-development `stage-inspect` branch and released with the first stable release.
 
 ## Reporting a vulnerability
 

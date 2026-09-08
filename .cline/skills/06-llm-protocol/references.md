@@ -210,11 +210,17 @@ Apply the AGENTS.md task protocol to each defect class:
 
 ### 5. Implement, verify, commit
 
-- Every change ships with a positive test in the same commit. The
-  test constructs the bad input and asserts the error path fires.
-  `scripts/pssa-gate.Tests.ps1`, `scripts/step-parity.Tests.ps1`, and
+- Every behavior change that adds a validator (`if (bad) { error }`)
+  ships with a positive test in the same commit: a `[Fact]` (or the
+  script-test equivalent) that constructs the bad input and asserts the
+  error path fires. `scripts/pssa-gate.Tests.ps1`,
+  `scripts/step-parity.Tests.ps1`, and
   `tests/.../Architecture.Tests/ArtifactSourceMarkerTests.cs` are the
-  three worked examples; they follow the same shape.
+  three worked examples for validator behaviour; they follow the same
+  shape. Documentation-only changes do not need a validator positive
+  test; they carry the appropriate documentation, link, or drift test
+  instead (for example the skill-tree, STATUS, and markdown-link gates
+  in verify-quick.ps1).
 - Run the narrow test after each meaningful edit. The Phase C
   artefacts discovered two regressions this way (the W-9
   `check-md-links` empty-scan test failed first run; the W-11 ci.yml
