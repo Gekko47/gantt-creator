@@ -77,7 +77,11 @@ Describe 'ci.yml parity tripwires (W8)' {
         # test steps (Test/OfficeIntegration-excluded and Test/OfficeIntegration)
         # are paired with verify scripts in W11/Phase C; for now the
         # tripwire is the broader 'no bare dotnet test outside verify' rule.
-        $script:ciText | Should -Not -Match '^\s*run:\s*dotnet test\s*$'
+        # (?m) makes ^ and $ match each workflow line so the tripwire sees
+        # the bare `run: dotnet test` invocation (with no trailing args)
+        # wherever it sits in the file; without it ^ is anchored to the
+        # whole-file start and the assertion could never fire.
+        $script:ciText | Should -Not -Match '(?m)^\s*run:\s*dotnet test\s*$'
     }
 
     It 'step extractor isolates exactly one step block (positive control)' {

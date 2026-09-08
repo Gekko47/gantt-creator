@@ -99,7 +99,7 @@ defects a single work item could have shipped. This section is the
 methodology, with worked references to the W-13 / Phase A/B/C run on
 this repo (2026-09-07) as the example.
 
-The five phases, in order:
+The six phases, in order:
 
 ### 1. Read the source (line by line)
 
@@ -238,9 +238,16 @@ This methodology was used to produce the W-13 / Phase A/B/C run on
 on a branch that included every defect-class fix. A third CI run
 that observes the same green after a fresh clone is the strongest
 signal that the methodology produced durable, reproducible gates.
-Failing to observe green on the third run is a methodology failure,
-not a tooling failure, and should trigger a review of the probes and
-positive-control tests rather than a one-off workaround.
+A third green run remains the strongest signal, but failing to observe
+it is not automatically a methodology failure. Classify the failure from
+observed evidence first: runner, permission, network, or tooling
+failures are not repository-caused and do not by themselves impeach the
+probes or the positive-control tests. Only when the evidence points to
+the repository (a probe or positive-control test failing on a clean,
+supported environment) should the probes and positive-control tests be
+reviewed. If the evidence is inconclusive, record the run as `unknown`
+with the exact command, environment, and output rather than defaulting
+to either conclusion.
 
 ## Coding behaviour
 

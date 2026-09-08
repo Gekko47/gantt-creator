@@ -208,19 +208,23 @@ is affected.
   the gate. Future agents should feel no obligation to preserve
   these tests verbatim; the value is the harness pattern (temp root,
   child pwsh, observable assertions), not the literal `It` names.
-- The harness design is intentionally simple and easy to throw
-  away. There is no backwards-compat promise — if a future refactor
-  of `scripts/*.ps1` makes the harness approach too clever, it is
-  fine to simplify the tests back down to tripwire string matches.
-  The point is *some* observable check exists; the form is
-  negotiable.
+- The harness design is intentionally simple and easy to replace. There
+  is no backwards-compat promise, but the tests must stay at the
+  behaviour level (child-process output, exit codes, produced files).
+  Do not simplify them back down to tripwire string matches against
+  script source: a match on literal names asserts nothing about
+  behaviour. If behavioural testing becomes too costly to maintain,
+  obtain an approved policy change (per the AGENTS.md stop conditions)
+  before weakening the gate, rather than silently regressing to text
+  assertions.
 
 ## Suggested follow-up (not a roadmap item)
 
 - Add the path-traversal `It` case to `check-status.Tests.ps1`
   (risk 2).
-- Add the `-cnotmatch` tripwire to `check-skill-summary.Tests.ps1`
-  (risk 1).
+- Add a behaviour-level assertion to `check-skill-summary.Tests.ps1`
+  that a case-sensitivity mismatch fixture (x vs X) changes the gate
+  outcome (risk 1); do not reintroduce a text-level tripwire.
 - Consider extracting a `New-ScriptHarness -RepoRoot ...` helper
   into `scripts/test-helpers.ps1` once a fifth script test is
   added, to keep the `BeforeEach` blocks from drifting in style.

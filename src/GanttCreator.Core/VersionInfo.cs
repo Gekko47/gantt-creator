@@ -60,16 +60,18 @@ public static class VersionInfo
         var prerelease = dash >= 0 ? core[(dash + 1)..] : null;
 
         var parts = numbers.Split('.');
-        if (parts.Length != 3
+        // Expressed as a single conditional expression because IDE0046
+        // (enforced repo-wide now that the global suppression is scoped to
+        // RollingLog.ValidateBaseName) flags guard-else returns in a tail
+        // position: both outcomes are values, so the ternary form is the
+        // equal-behaviour spelling the analyzer accepts.
+        return (parts.Length != 3
             || !IsStrictSemverNumber(parts[0])
             || !IsStrictSemverNumber(parts[1])
             || !IsStrictSemverNumber(parts[2])
             || (prerelease is not null && prerelease.Length == 0))
-        {
-            return "0.0.0";
-        }
-
-        return prerelease is null ? numbers : $"{numbers}-{prerelease}";
+            ? "0.0.0"
+            : (prerelease is null ? numbers : $"{numbers}-{prerelease}");
     }
 
     /// <summary>

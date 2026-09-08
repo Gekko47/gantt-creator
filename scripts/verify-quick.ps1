@@ -33,6 +33,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
+. (Join-Path $scriptRoot 'verify-helpers.ps1')
 $artifacts  = Join-Path $scriptRoot '_artifacts'
 if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
 $report = Join-Path $artifacts 'verify-quick.txt'
@@ -102,31 +103,14 @@ Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
     # install it once per machine:
     #   Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
     #
-    # We capture findings and judge in this scope instead of using
-    # `-EnableExit`: `-EnableExit` calls `exit` from inside a function, which
-    # does not propagate to the parent process's $LASTEXITCODE when the
-    # cmdlet runs inside a Tee/ForEach pipeline. That would silently turn
-    # the analyzer step into a no-op fail, so we judge explicitly here.
-    # W13 fix: proven by the failing CI run on 2026-09-07.
-    if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-        Write-Error ('PSScriptAnalyzer is not installed. Run: ' +
-            'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
-        exit 1
-    }
-    $pssaFindings = @(Invoke-ScriptAnalyzer `
-        -Path (Join-Path $PSScriptRoot '.') `
-        -Recurse `
-        -Exclude '_artifacts' `
-        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'))
-    if ($pssaFindings.Count -gt 0) {
-        foreach ($f in $pssaFindings) {
-            $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
-            Write-Host $msg
-            Add-Content -LiteralPath $report -Value $msg
-        }
-        Write-Error "PSScriptAnalyzer reported $($pssaFindings.Count) issue(s). See report above."
-        exit 1
-    }
+    # The capture-then-judge gate lives in Invoke-PssaGate
+    # (scripts/verify-helpers.ps1) so pssa-gate.Tests.ps1 exercises the
+    # same code this step runs, never a copy. It must not rely on
+    # `-EnableExit`: the function-level `exit` does not survive the
+    # Tee/ForEach pipeline in Invoke-Step (W13, CI run 2026-09-07).
+    Invoke-PssaGate -Path (Join-Path $PSScriptRoot '.') `
+        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
+        -Report $report
 }
 
 Invoke-Step 'workflow lint (actionlint)' {

@@ -5,7 +5,7 @@
 ## Behaviour
 
 - [ ] Acceptance criteria in `docs/work-items/<ID>.md` are met; no extra product behaviour appeared.
-- [ ] Error / empty / boundary cases are visible in tests. No gate that produces zero output is reported as PASS without a no-silent-pass test asserting the negative path.
+- [ ] Error / empty / boundary cases are visible in tests. A gate that receives zero discovered inputs or an empty scan requires a negative-path test (no-silent-pass); a clean analyzer result with zero findings on a discovered, non-trivial input passes without that test.
 - [ ] The one-sheet rule is still true: the workbook has exactly one visible Gantt worksheet and one valid `_GanttCreatorConfig` VeryHidden worksheet.
 - [ ] The offline rule is still true: no telemetry, web fonts, cloud API, online licence check, or hidden network fallback.
 

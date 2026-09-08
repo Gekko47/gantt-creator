@@ -84,7 +84,7 @@ public static class ExportSize
     /// pixel dimensions. The height preserves the scene aspect ratio;
     /// it is calculated, never entered independently.
     /// </summary>
-    /// <param name="request">The parsed width request. Value must be finite and non-negative.</param>
+    /// <param name="request">The parsed width request. <see cref="WidthRequest.Value"/> must be finite and greater than zero.</param>
     /// <param name="sceneWidthPt">The scene width in points. Must be finite and greater than zero.</param>
     /// <param name="sceneHeightPt">The scene height in points. Must be finite and non-negative.</param>
     /// <exception cref="ArgumentOutOfRangeException">A dimension value is
@@ -129,11 +129,13 @@ public static class ExportSize
                 $"Computed pixel width exceeds the practical export limit of {MaxPixelDimension} px.");
         }
 
-        if (!double.IsFinite(pixelHeight) || pixelHeight > MaxPixelDimension)
+        if (!double.IsFinite(pixelHeight) || pixelHeight <= 0 || pixelHeight > MaxPixelDimension)
         {
+            // Zero/negative heights must be rejected here too: a zero height
+            // would otherwise round to PixelDimensions with a zero height.
             throw new ArgumentOutOfRangeException(
                 nameof(sceneHeightPt), pixelHeight,
-                $"Computed pixel height exceeds the practical export limit of {MaxPixelDimension} px.");
+                $"Computed pixel height must be finite, greater than zero, and within the practical export limit of {MaxPixelDimension} px.");
         }
 
         var pxWidth = (int)Math.Round(pixelWidth);

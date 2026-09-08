@@ -5,7 +5,10 @@
 #>
 
 Describe 'check-cline-skills.ps1' {
-    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-cline-skills.ps1' }
+    BeforeAll {
+        $script:repoRoot = Split-Path -Parent $PSScriptRoot
+        $script:scriptPath = Join-Path $script:repoRoot 'scripts\check-cline-skills.ps1'
+    }
 
     It 'exists and is readable' {
         (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
@@ -44,7 +47,7 @@ This is a test canonical source.
 
             # Inject a single-entry $map into a copy of sync-cline-skills.ps1
             # so it can run inside the harness.
-            $syncBody = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\sync-cline-skills.ps1') -Raw
+            $syncBody = Get-Content -LiteralPath (Join-Path $script:repoRoot 'scripts\sync-cline-skills.ps1') -Raw
             $fixtureMap = @'
 $map = @{
     '99-FIXTURE.md' = @{ Name = '99-fixture'; Description = 'Test skill.' }
@@ -56,7 +59,7 @@ $map = @{
 
             # Copy check-cline-skills.ps1 unchanged into the harness; it
             # re-invokes the harness sync via -SkillsRoot.
-            Copy-Item (Join-Path $repoRoot 'scripts\check-cline-skills.ps1') $script:harness
+            Copy-Item (Join-Path $script:repoRoot 'scripts\check-cline-skills.ps1') $script:harness
 
             # Prime the committed .cline/skills/ view so Phase 2 has a
             # committed view to byte-compare against.  Pass -DocsRoot

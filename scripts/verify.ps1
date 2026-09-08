@@ -42,6 +42,7 @@ $coverageThresholds = @{
 
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
+. (Join-Path $scriptRoot 'verify-helpers.ps1')
 $artifacts  = Join-Path $scriptRoot '_artifacts'
 if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
 $report = Join-Path $artifacts 'verify.txt'
@@ -97,28 +98,12 @@ Invoke-Step 'status accuracy' {
 }
 
 Invoke-Step 'script analyzer (PSScriptAnalyzer)' {
-    if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-        Write-Error ('PSScriptAnalyzer is not installed. Run: ' +
-            'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
-        exit 1
-    }
-    # See verify-quick.ps1 for the rationale: capture + judge rather than
-    # `-EnableExit` (the function-level `exit` does not survive the
-    # Tee/ForEach pipeline in Invoke-Step).
-    $pssaFindings = @(Invoke-ScriptAnalyzer `
-        -Path (Join-Path $PSScriptRoot '.') `
-        -Recurse `
-        -Exclude '_artifacts' `
-        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'))
-    if ($pssaFindings.Count -gt 0) {
-        foreach ($f in $pssaFindings) {
-            $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
-            Write-Host $msg
-            Add-Content -LiteralPath $report -Value $msg
-        }
-        Write-Error "PSScriptAnalyzer reported $($pssaFindings.Count) issue(s). See report above."
-        exit 1
-    }
+    # Same gate as verify-quick.ps1: Invoke-PssaGate (scripts/verify-helpers.ps1)
+    # captures findings and judges in the step's scope; never `-EnableExit`
+    # (its function-level `exit` is swallowed by the Tee/ForEach pipeline).
+    Invoke-PssaGate -Path (Join-Path $PSScriptRoot '.') `
+        -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1') `
+        -Report $report
 }
 
 Invoke-Step 'workflow lint (actionlint)' {

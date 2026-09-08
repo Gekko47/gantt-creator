@@ -163,6 +163,17 @@ public class ExportSizeTests
         _ = Assert.Throws<FormatException>(() => ExportSize.ParseWidth(input));
 
     [Fact]
+    public void ToPixels_zero_scene_height_throws()
+    {
+        // A zero scene height yields a zero computed pixel height, which the
+        // height guard must reject so ToPixels cannot return a PixelDimensions
+        // with a zero height.
+        var req = new WidthRequest(ExportUnit.Pixels, 600.0);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 0.0));
+    }
+
+    [Fact]
     public void ToPixels_zero_request_value_throws()
     {
         var req = new WidthRequest(ExportUnit.Pixels, 0.0);

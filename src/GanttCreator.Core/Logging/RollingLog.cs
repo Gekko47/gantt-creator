@@ -61,6 +61,13 @@ public sealed class RollingLog : IRollingLog
         RotateIfNeeded();
     }
 
+#pragma warning disable IDE0046  // 'if' statement can be simplified
+
+    // IDE0046 is suppressed here for separate guard clauses on purpose: the
+    // rooted-path check and the invalid-filename-char check are two
+    // independent failure modes, and one conditional expression would hide
+    // which guard fired. Scoped to this method only; every other file still
+    // enforces the rule (see Directory.Build.props).
     private static string ValidateBaseName(string baseName)
     {
         if (Path.IsPathRooted(baseName))
@@ -76,6 +83,7 @@ public sealed class RollingLog : IRollingLog
                 nameof(baseName));
         }
         return baseName;
+#pragma warning restore IDE0046
     }
 
     /// <summary>

@@ -100,9 +100,11 @@ Rules:
     SHA-256, actionlint download URL) live in `scripts/tool-versions.psd1`
     and are consumed by `lint-ci.ps1`, `test-scripts.ps1`, and `ci.yml`.
     `ci-parity.Tests.ps1` asserts the two file consumers match the psd1.
-  - Every gate that can produce zero output on a non-trivial input must
-    fail loudly (`check-md-links.ps1` now does this for zero scanned
-    files; the no-silent-pass rule extends to every future gate).
+  - Every gate must fail loudly when discovery yields zero files or
+    items to check (`check-md-links.ps1` now does this for zero scanned
+    files), while a clean result with zero findings on a non-trivial,
+    discovered input is a PASS. The no-silent-pass rule extends to every
+    future gate.
 
 ## CI jobs
 

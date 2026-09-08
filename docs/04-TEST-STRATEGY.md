@@ -114,9 +114,11 @@ that runs in a pipeline must obey three rules:
   whether to `Write-Error; exit 1`. Do not rely on `-EnableExit`,
   `throw`, or any function-level exit signal to propagate through a
   pipeline.
-- **No-silent-pass on empty input.** If the gate can produce zero
-  findings on a non-trivial input, the empty-findings case must be a
-  failure with an actionable error message — not a silent PASS. Concrete
+- **No-silent-pass on empty input.** A clean analysis of a discovered,
+  non-trivial input may PASS with zero findings; that is the normal good
+  result. The gate must FAIL — with an actionable error message, never a
+  silent PASS — only when input discovery yields no files or items to
+  check, because an empty scan proves nothing about the target. Concrete
   examples in the repo: `check-md-links.ps1` fails when its scan finds
   zero markdown files; `test-scripts.ps1` fails when no test files are
   discovered or a discovered file contains zero tests. Enforced by

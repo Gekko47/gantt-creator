@@ -63,11 +63,11 @@ catch {
     exit 1
 }
 
-# Find test files: *.Tests.ps1 or *Tests.ps1 in scripts/
-$testFiles = Get-ChildItem -Path $scriptsDir -Filter '*.Tests.ps1' -ErrorAction SilentlyContinue
-if ($testFiles.Count -eq 0) {
-    $testFiles = Get-ChildItem -Path $scriptsDir -Filter '*Tests.ps1' -ErrorAction SilentlyContinue
-}
+# Find test files in scripts/. A single '*Tests.ps1' wildcard covers both
+# documented name forms ('*.Tests.ps1' and '*Tests.ps1') in one call; the
+# previous two-call fallback meant the second pattern was only reached when
+# the first found nothing, contrary to the documented discovery contract.
+$testFiles = Get-ChildItem -Path $scriptsDir -Filter '*Tests.ps1' -ErrorAction SilentlyContinue
 
 if ($testFiles.Count -eq 0) {
     # No-silent-pass policy: a gate that finds nothing to check proves

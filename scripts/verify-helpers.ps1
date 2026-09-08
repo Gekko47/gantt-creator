@@ -4,7 +4,8 @@
     Shared helpers for the verify gate scripts (W9 step-parity / no-silent-pass).
 
 .DESCRIPTION
-    Two helpers, both used by:
+    Three helpers: the two step/description parsers below plus
+    Invoke-PssaGate (the PSScriptAnalyzer gate). Used by:
       - scripts/verify-quick.ps1 and scripts/verify.ps1, to document
         their step list in the .DESCRIPTION block at the top of the file
         and to wire the .DESCRIPTION numbering to the actual Invoke-Step
@@ -15,8 +16,9 @@
         helper against both verify scripts and asserts the two views
         match.
 
-    Exit codes: none of the helpers throw; the verify scripts wrap them
-    in their own Invoke-Step.
+    Exit codes: the two parsers do not throw; Invoke-PssaGate fails the
+    calling process with exit 1 when the analyzer reports findings, which
+    is the capture-then-judge behaviour the verify scripts rely on.
 #>
 
 function Read-VerifyStepName {
@@ -83,10 +85,52 @@ function Read-VerifyDescriptionStepNumber {
     $inDescription = $false
     foreach ($line in $lines) {
         if ($line -match '^\s*\.DESCRIPTION\s*$') { $inDescription = $true; continue }
-        if ($inDescription -and $line -match '^\s*\.SYNOPSIS\s*$') { break }
+        # Stop at the closing `#>` of the comment block, not at a later
+        # .SYNOPSIS: comment trailers or code after the terminator must not
+        # be scanned as description steps.
+        if ($inDescription -and $line -match '^\s*#>\s*$') { break }
         if ($inDescription -and $line -match '^\s*(\d+)\.\s') {
             $numbers.Add([int]$Matches[1])
         }
     }
     return $numbers.ToArray()
+}
+
+function Invoke-PssaGate {
+    <#
+    .SYNOPSIS
+        Runs PSScriptAnalyzer over a root directory with the repo settings
+        and fails the calling process when findings are present.
+
+    .DESCRIPTION
+        The PSSA gate used verbatim by verify-quick.ps1 and verify.ps1.
+        It captures findings and judges them in this same scope instead of
+        `-EnableExit`, whose function-level `exit` is swallowed by the
+        Tee/ForEach pipeline inside Invoke-Step (W13, proven by the
+        failing CI run on 2026-09-07). pssa-gate harness tests call this
+        exact function against known-bad fixtures so the tested gate is
+        the gate the verify scripts run.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Settings,
+        [string]$Report = ''
+    )
+
+    if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+        Write-Error ('PSScriptAnalyzer is not installed. Run: ' +
+            'Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck')
+        exit 1
+    }
+
+    $findings = @(Invoke-ScriptAnalyzer -Path $Path -Recurse -Exclude '_artifacts' -Settings $Settings)
+    if ($findings.Count -gt 0) {
+        foreach ($f in $findings) {
+            $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
+            Write-Host $msg
+            if ($Report) { Add-Content -LiteralPath $Report -Value $msg }
+        }
+        Write-Error "PSScriptAnalyzer reported $($findings.Count) issue(s). See output above."
+        exit 1
+    }
 }

@@ -139,6 +139,17 @@ public sealed class RedactorTests
         Assert.Equal(input, _redactor.Redact(input));
     }
 
+    [Fact]
+    public void Redact_scheme_urls_are_not_masked()
+    {
+        // "p://" inside a scheme must not be masked as a Windows drive, and
+        // UnixPathPattern cannot start at a '/' preceded by a word character,
+        // so the whole URL survives redaction unchanged.
+        var input = "See http://example.com/docs/index.html for details.";
+        var output = _redactor.Redact(input);
+        Assert.Equal(input, output);
+    }
+
     [Theory]
     [InlineData("Config /etc/app/config.yaml", "Config [path]")]
     [InlineData("Read /usr/share/doc for details", "Read [path] for details")]

@@ -11,7 +11,11 @@ public sealed partial class Redactor : IRedactor
     [GeneratedRegex(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex EmailPattern();
 
-    [GeneratedRegex(@"(?:\\\\[^\s]+|[A-Za-z]:[\\/][^\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    // The Windows drive-letter alternative carries the same token-start
+    // lookbehind as UnixPathPattern: without it "p:" inside a scheme URL
+    // such as "http://example.com" would match as the start of a drive path
+    // (the p + ':' + '/') and get masked as [path].
+    [GeneratedRegex(@"(?:\\\\[^\s]+|(?<![\w/])[A-Za-z]:[\\/][^\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex WindowsPathPattern();
 
     // The leading lookbehind requires the '/' to begin a token: it must not

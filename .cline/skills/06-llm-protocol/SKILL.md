@@ -74,7 +74,7 @@ defect classes that survive individual work-item gates, not the
 defects a single work item could have shipped. This section is the
 methodology, with worked references to the W-13 / Phase A/B/C run on
 this repo (2026-09-07) as the example.
-The five phases, in order:
+The six phases, in order:
 ### 1. Read the source (line by line)
 Open the files. Read them. Do not rely on docs, on the README, on
 prior conversations, on what you remember of the codebase. The point

@@ -73,8 +73,6 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
 
-    <NoWarn>IDE0046</NoWarn>
-
     <!--
       SDK derives AssemblyVersion and FileVersion from Version.
       InformationalVersion carries the semver+metadata suffix.
@@ -88,11 +86,12 @@
   <!--
     NoWarn list. Each rule here has a documented reason:
 
-    IDE0046 — 'if' statement can be simplified. The RollingLog
-              ValidateBaseName method intentionally uses separate guard
-              clauses for readability (one checks rooted paths, one checks
-              invalid filename chars). Suppressed globally as it's a style
-              preference, not a correctness issue.
+    IDE0046 — 'if' statement can be simplified. The suppression is scoped
+    to RollingLog.ValidateBaseName in src/GanttCreator.Core/Logging/RollingLog.cs,
+    which uses separate guard clauses for readability (one checks rooted
+    paths, one checks invalid filename chars) rather than a conditional
+    expression. It is deliberately NOT applied globally; every other file
+    still enforces the rule.
 
     CA1707 (identifiers should not contain underscores) is NOT suppressed
     globally — it is suppressed in tests/Directory.Build.props only, because

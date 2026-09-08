@@ -23,13 +23,14 @@ Describe 'W-7 review methodology runbook' {
         Test-Path -LiteralPath $path | Should -BeTrue
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match '## End-to-end code review methodology'
-        # The five phases must be present; a partial migration is a
+        # The six phases must be present; a partial migration is a
         # defect, not a stylistic choice.
         $text | Should -Match '### 1\. Read the source'
         $text | Should -Match '### 2\. Probe empirically'
         $text | Should -Match '### 3\. Identify defect classes'
         $text | Should -Match '### 4\. Plan'
         $text | Should -Match '### 5\. Implement, verify, commit'
+        $text | Should -Match '### 6\. Self-application'
     }
 
     It 'the four defect classes from the W-13 run are named in the methodology' {
