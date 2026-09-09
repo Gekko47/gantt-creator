@@ -110,7 +110,8 @@ Invoke-Step 'script lint (Pester)' {
 }
 
 Invoke-Step 'restore' {
-    dotnet restore --locked-mode
+    # Pass $Solution explicitly so the step does not depend on the caller's CWD.
+    dotnet restore $Solution --locked-mode
 }
 
 Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {

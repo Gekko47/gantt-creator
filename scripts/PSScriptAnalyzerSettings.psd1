@@ -22,4 +22,5 @@
         'PSAvoidUsingWriteHost'
         'PSReviewUnusedParameter'
         'PSUseSingularNouns'
+    )
 }

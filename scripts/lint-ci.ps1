@@ -41,7 +41,7 @@ $exeName = "$toolName.exe"
 $zipName = "actionlint_${version}_windows_amd64.zip"
 $downloadUrl = $script:versions.actionlint.DownloadUrl -f $version
 $expectedHash = $script:versions.actionlint.Sha256
-$toolsDir = Join-Path $env:TEMP 'actionlint'
+$toolsDir = Join-Path $env:TEMP "actionlint-$version"
 $exePath = Join-Path $toolsDir $exeName
 
 # Download if not present

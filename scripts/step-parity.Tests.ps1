@@ -24,12 +24,10 @@ Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
         $steps.Count | Should -Be $desc.Count
     }
 
-    It 'verify-quick.ps1: first numbered step matches first Invoke-Step' {
-        $desc  = Read-VerifyDescriptionStepNumber -Path $script:verifyQuick
-        $steps = Read-VerifyStepName           -Path $script:verifyQuick
-        # The .DESCRIPTION numbering starts at 1; the Invoke-Step list
-        # is the actual run order. They must align 1:1.
-        for ($i = 0; $i -lt [Math]::Min($desc.Count, $steps.Count); $i++) {
+    It 'verify-quick.ps1: .DESCRIPTION numbering is sequential from 1' {
+        $desc = Read-VerifyDescriptionStepNumber -Path $script:verifyQuick
+        # The .DESCRIPTION numbering starts at 1 and increments by 1.
+        for ($i = 0; $i -lt $desc.Count; $i++) {
             $desc[$i] | Should -Be ($i + 1)
         }
     }
@@ -90,17 +88,23 @@ Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
     }
 
     It 'check-md-links.ps1: non-empty scan with valid links is a PASS (positive control)' {
+        # check-md-links.ps1 resolves roots against Split-Path -Parent $PSScriptRoot,
+        # so to scan the fixture we must copy the script into the harness and run
+        # the copy — its $repoRoot then points at the temp dir. Relying on
+        # -WorkingDirectory alone would scan the real repo, not the fixture.
         $td = Join-Path ([System.IO.Path]::GetTempPath()) ('md-ok-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $td -Force | Out-Null
         try {
             $docs = Join-Path $td 'docs'
             New-Item -ItemType Directory -Path $docs -Force | Out-Null
             Set-Content -LiteralPath (Join-Path $docs 'a.md') -Value '# a' -Encoding utf8
-            $scriptPath = Join-Path $script:repoRoot 'scripts\check-md-links.ps1'
+            $harnessScripts = Join-Path $td 'scripts'
+            New-Item -ItemType Directory -Path $harnessScripts -Force | Out-Null
+            $harnessScript = Join-Path $harnessScripts 'check-md-links.ps1'
+            Copy-Item -LiteralPath (Join-Path $script:repoRoot 'scripts\check-md-links.ps1') -Destination $harnessScript
             $proc = Start-Process -FilePath pwsh -ArgumentList @(
-                '-NoProfile','-File',$scriptPath,'-Roots','docs','-Entry','AGENTS.md'
+                '-NoProfile','-File',$harnessScript,'-Roots','docs','-Entry','a.md'
             ) -NoNewWindow -Wait -PassThru `
-                -WorkingDirectory $td `
                 -RedirectStandardOutput (Join-Path $td 'out.txt') `
                 -RedirectStandardError (Join-Path $td 'err.txt')
             $proc.ExitCode | Should -Be 0

@@ -121,7 +121,8 @@ Invoke-Step 'restore' {
     # tests/ (RestorePackagesWithLockFile=true in Directory.Build.props),
     # so --locked-mode is always available. This matches verify.ps1 and
     # proves the lock files are honoured without network access.
-    dotnet restore --locked-mode
+    # Pass $Solution explicitly so the step does not depend on the caller's CWD.
+    dotnet restore $Solution --locked-mode
 }
 
 Invoke-Step 'format (production only; tests/ tolerated per tests/Directory.Build.props)' {

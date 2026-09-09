@@ -64,7 +64,6 @@ try {
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sync-cline-skills.ps1') `
         -SkillsRoot $tmpSkills 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "sync-cline-skills.ps1 failed with exit $LASTEXITCODE"
         exit $LASTEXITCODE
     }
 
@@ -80,7 +79,6 @@ try {
         $diffs.Add("--- drift in $committed ---")
         $diffs.Add($diffOut)
     } elseif ($code -ne 0) {
-        Write-Error "git diff failed with exit $code comparing $tmpSkills vs $committed"
         exit $code
     }
 

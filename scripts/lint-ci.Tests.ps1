@@ -14,10 +14,10 @@
 #>
 
 BeforeAll {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    $script:versions = Import-PowerShellDataFile -LiteralPath (Join-Path $repoRoot 'scripts\tool-versions.psd1')
-    $script:lintText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lint-ci.ps1') -Raw
-    $script:ciText   = Get-Content -LiteralPath (Join-Path $repoRoot '.github\workflows\ci.yml') -Raw
+    $script:repoRoot = Split-Path -Parent $PSScriptRoot
+    $script:versions = Import-PowerShellDataFile -LiteralPath (Join-Path $script:repoRoot 'scripts\tool-versions.psd1')
+    $script:lintText = Get-Content -LiteralPath (Join-Path $script:repoRoot 'scripts\lint-ci.ps1') -Raw
+    $script:ciText   = Get-Content -LiteralPath (Join-Path $script:repoRoot '.github\workflows\ci.yml') -Raw
     $script:hex64 = '[0-9a-f]{64}'
 }
 
@@ -53,7 +53,7 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
         # scripts/actionlint-hash.ps1. Exercise that helper in an isolated
         # child process with a fixture archive so the test is deterministic and
         # offline (no network download). Assert observable exit behavior.
-        $hashScript = Join-Path $repoRoot 'scripts\actionlint-hash.ps1'
+        $hashScript = Join-Path $script:repoRoot 'scripts\actionlint-hash.ps1'
         (Test-Path -LiteralPath $hashScript) | Should -BeTrue
 
         $td = Join-Path ([System.IO.Path]::GetTempPath()) ('lint-ci-hash-' + [guid]::NewGuid().ToString('N'))

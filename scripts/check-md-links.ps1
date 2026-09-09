@@ -33,7 +33,7 @@ foreach ($root in $roots)
             # Strip anchors
             $pathPart = ($rel -split '#')[0]
             if ([string]::IsNullOrWhiteSpace($pathPart)) { continue }
-            $target = if ([System.IO.Path]::IsPathRooted($pathPart)) { $pathPart } else { Join-Path $_.DirectoryName $pathPart }
+            $target = if ([System.IO.Path]::IsPathRooted($pathPart)) { Join-Path $repoRoot $pathPart.TrimStart('/', '\') } else { Join-Path $_.DirectoryName $pathPart }
             $resolved = (Resolve-Path -LiteralPath $target -ErrorAction SilentlyContinue)
             if (-not $resolved) { $broken.Add("$file -> $rel") }
         }
