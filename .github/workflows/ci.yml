@@ -89,8 +89,14 @@ jobs:
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
             Install-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -Scope CurrentUser -Force
           }
-          Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
-            -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
+          # Delegate to the same Invoke-PssaGate entry point as
+          # verify-quick.ps1 / verify.ps1 (scripts/verify-helpers.ps1). Never
+          # call -EnableExit directly: the function-level `exit` is swallowed
+          # by the Tee/ForEach pipeline in Invoke-Step (W13, CI run
+          # 2026-09-07). Enforced by scripts/ci-parity.Tests.ps1.
+          $scripts = Join-Path $PWD 'scripts'
+          . (Join-Path $scripts 'verify-helpers.ps1')
+          Invoke-PssaGate -Path $scripts -Settings (Join-Path $scripts 'PSScriptAnalyzerSettings.psd1')
         # The actionlint pin below is the same value as
         # scripts/tool-versions.psd1#actionlint.Sha256; ci-parity.Tests.ps1
         # asserts equality. The W11 tripwire is the equality assertion,

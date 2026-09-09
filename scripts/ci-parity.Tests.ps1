@@ -146,6 +146,23 @@ steps:
     }
 }
 
+Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)' {
+    It 'Script analyzer step routes through Invoke-PssaGate, not -EnableExit' {
+        # W13: -EnableExit's function-level `exit` is swallowed by the
+        # Tee/ForEach pipeline in Invoke-Step. The verify scripts route
+        # through Invoke-PssaGate (scripts/verify-helpers.ps1); CI must do the
+        # same or it re-introduces the W13 defect via a divergent path.
+        $block = Get-CiStepBlock -Text $script:ciText -StepName 'Script analyzer (PSScriptAnalyzer)'
+        $block | Should -Not -BeNullOrEmpty
+        $block | Should -Match 'Invoke-PssaGate'
+        # Strip comment lines (full-line # comments) before asserting the
+        # gate is not invoked via -EnableExit: the step comment legitimately
+        # names the forbidden switch as the reason for the delegation.
+        $codeLines = ($block -split "`n") | Where-Object { $_ -notmatch '^\s*#' }
+        ($codeLines -join "`n") | Should -Not -Match '-EnableExit'
+    }
+}
+
 Describe 'tool-versions.psd1 single source of truth (W11)' {
     BeforeAll {
         $versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
