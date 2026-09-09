@@ -174,6 +174,137 @@ exit $ExitCode
                 'check-status.ps1'
             )
         }
+
+        It 'refuses to run when an inspected root has unstaged changes' {
+            # Isolated fixture repo so this test does not depend on (or dirty)
+            # the real working tree. pre-commit.ps1 computes $repoRoot as the
+            # parent of $scriptRoot (= Split-Path $PSCommandPath), so the copied
+            # script must live at $repoRoot/scripts/pre-commit.ps1.
+            $script:tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+            $script:scriptsDir = Join-Path $script:tempDir 'scripts'
+            New-Item -ItemType Directory -Path $script:scriptsDir -Force | Out-Null
+
+            # Init a real git repo with a clean baseline: the guard compares
+            # working tree vs index, so both must start identical.
+            git -C $script:tempDir init -q
+            git -C $script:tempDir config user.email 'test@local'
+            git -C $script:tempDir config user.name 'test'
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir 'docs') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.cline\skills') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.github') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'initial'
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'docs\x.md') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.cline\skills\y.md') -Value 'y'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.github\ci.yml') -Value 'z'
+            git -C $script:tempDir add -A
+            git -C $script:tempDir commit -q -m 'init'
+
+            # Dirty an inspected root WITHOUT staging it.
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'changed'
+
+            # Copy the real pre-commit.ps1 into scripts/ so $PSCommandPath
+            # resolves to $repoRoot/scripts/pre-commit.ps1, matching production.
+            $script:copyScriptPath = Join-Path $script:scriptsDir 'pre-commit.ps1'
+            Copy-Item -LiteralPath $script:scriptPath -Destination $script:copyScriptPath -Force
+
+            $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
+            $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
+            $script:proc = Start-Process -FilePath pwsh -ArgumentList @('-NoProfile','-File',$script:copyScriptPath) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $script:stdoutFile -RedirectStandardError $script:stderrFile
+            $script:exitCode = $script:proc.ExitCode
+            $script:output = (Get-Content -LiteralPath $script:stdoutFile -Raw) + (Get-Content -LiteralPath $script:stderrFile -Raw)
+
+            $script:exitCode | Should -Not -Be 0
+            $script:output | Should -Match 'Commit blocked'
+        }
+
+        It 'runs normally when the working tree is clean under the inspected roots' {
+            # Mirror of the dirty case but with NO unstaged change: the guard
+            # must NOT fire and the gate must run through to the checkers.
+            $script:tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+            $script:scriptsDir = Join-Path $script:tempDir 'scripts'
+            $script:invocationLog = Join-Path $script:tempDir 'invocation.log'
+            New-Item -ItemType Directory -Path $script:scriptsDir -Force | Out-Null
+
+            git -C $script:tempDir init -q
+            git -C $script:tempDir config user.email 'test@local'
+            git -C $script:tempDir config user.name 'test'
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir 'docs') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.cline\skills') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.github') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'initial'
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'docs\x.md') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.cline\skills\y.md') -Value 'y'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.github\ci.yml') -Value 'z'
+            git -C $script:tempDir add -A
+            git -C $script:tempDir commit -q -m 'init'
+
+            # No unstaged change this time. Stub checkers are required because
+            # the guard passes and the gate proceeds to the checker loop.
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'      -LogPath $script:invocationLog -ExitCode 0
+
+            $script:copyScriptPath = Join-Path $script:scriptsDir 'pre-commit.ps1'
+            Copy-Item -LiteralPath $script:scriptPath -Destination $script:copyScriptPath -Force
+
+            $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
+            $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
+            $script:proc = Start-Process -FilePath pwsh -ArgumentList @('-NoProfile','-File',$script:copyScriptPath) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $script:stdoutFile -RedirectStandardError $script:stderrFile
+            $script:exitCode = $script:proc.ExitCode
+            $script:output = (Get-Content -LiteralPath $script:stdoutFile -Raw) + (Get-Content -LiteralPath $script:stderrFile -Raw)
+
+            $script:exitCode | Should -Be 0
+            $script:output | Should -Match 'pre-commit: quick gates PASS'
+            $script:output | Should -Not -Match 'Commit blocked'
+        }
+
+        It 'allows the commit when all inspected-root changes are staged (no unstaged/untracked)' {
+            # Regression guard for the staged-changes bug: the guard must use
+            # `git diff --name-only` (unstaged) + untracked, NOT `git status
+            # --porcelain` which would also flag staged changes and make the
+            # hook block every commit touching an inspected root. Staged
+            # changes (working tree == index) must pass.
+            $script:tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+            $script:scriptsDir = Join-Path $script:tempDir 'scripts'
+            $script:invocationLog = Join-Path $script:tempDir 'invocation.log'
+            New-Item -ItemType Directory -Path $script:scriptsDir -Force | Out-Null
+
+            git -C $script:tempDir init -q
+            git -C $script:tempDir config user.email 'test@local'
+            git -C $script:tempDir config user.name 'test'
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir 'docs') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.cline\skills') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $script:tempDir '.github') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'initial'
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'docs\x.md') -Value 'x'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.cline\skills\y.md') -Value 'y'
+            Set-Content -LiteralPath (Join-Path $script:tempDir '.github\ci.yml') -Value 'z'
+            git -C $script:tempDir add -A
+            git -C $script:tempDir commit -q -m 'init'
+
+            # Make a change and STAGE it (working tree == index). No unstaged
+            # or untracked changes remain.
+            Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'changed'
+            git -C $script:tempDir add AGENTS.md
+
+            # Stub checkers: the guard should pass and the gate should run.
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'      -LogPath $script:invocationLog -ExitCode 0
+
+            $script:copyScriptPath = Join-Path $script:scriptsDir 'pre-commit.ps1'
+            Copy-Item -LiteralPath $script:scriptPath -Destination $script:copyScriptPath -Force
+
+            $script:stdoutFile = Join-Path $script:tempDir 'stdout.txt'
+            $script:stderrFile = Join-Path $script:tempDir 'stderr.txt'
+            $script:proc = Start-Process -FilePath pwsh -ArgumentList @('-NoProfile','-File',$script:copyScriptPath) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $script:stdoutFile -RedirectStandardError $script:stderrFile
+            $script:exitCode = $script:proc.ExitCode
+            $script:output = (Get-Content -LiteralPath $script:stdoutFile -Raw) + (Get-Content -LiteralPath $script:stderrFile -Raw)
+
+            $script:exitCode | Should -Be 0
+            $script:output | Should -Match 'pre-commit: quick gates PASS'
+            $script:output | Should -Not -Match 'Commit blocked'
+        }
     }
 }
 
