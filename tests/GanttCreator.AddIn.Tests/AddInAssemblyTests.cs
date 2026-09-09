@@ -23,28 +23,42 @@ public class AddInAssemblyTests
     // We therefore resolve the src build directory by walking up from
     // the test binary, independent of any loaded assembly.
     //
-    // Release only: AddIn_packaged_xll_exists asserts the packed XLL under
-    // the publish output, which verify-quick.ps1 and verify.ps1 produce in
-    // Release. Fall back to Debug only when that configuration has been
-    // explicitly published before the assertion.
-    private static readonly string[] Configurations = ["Release"];
+    // Any build configuration is accepted (Release preferred) so a plain
+    // `dotnet test` in Debug is not artificially red. The exception is
+    // AddIn_packaged_xll_exists, which asserts the packed XLL produced by
+    // 'dotnet publish' in Release only — that test resolves the Release
+    // publish path directly via LocateAddInBinDirectory, not through this
+    // config walk.
+    private static readonly string[] Configurations = ["Release", "Debug"];
 
-    private static string LocateAddInBuildDirectory()
+    private static string LocateAddInBinDirectory()
     {
         var dir = new DirectoryInfo(
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
         while (dir is not null)
         {
             var addInBin = Path.Combine(dir.FullName, "src", "GanttCreator.AddIn", "bin");
-            foreach (var configuration in Configurations)
+            if (Directory.Exists(addInBin))
             {
-                var candidate = Path.Combine(addInBin, configuration, "net10.0-windows");
-                if (Directory.Exists(candidate))
-                {
-                    return candidate;
-                }
+                return addInBin;
             }
             dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "Could not locate src/GanttCreator.AddIn/bin. " +
+            "Build the solution before running these tests.");
+    }
+
+    private static string LocateAddInBuildDirectory()
+    {
+        var addInBin = LocateAddInBinDirectory();
+        foreach (var configuration in Configurations)
+        {
+            var candidate = Path.Combine(addInBin, configuration, "net10.0-windows");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
         }
         throw new DirectoryNotFoundException(
             "Could not locate src/GanttCreator.AddIn/bin/{Release|Debug}/net10.0-windows. " +
@@ -77,8 +91,14 @@ public class AddInAssemblyTests
         // the ExcelDna.Integration runtime) inside a single packed XLL.
         // This asserts the packaging pipeline actually produced a
         // non-trivial artefact for the x64 target.
-        var buildDir = LocateAddInBuildDirectory();
-        var xll = Path.Combine(buildDir, "publish", "GanttCreator.AddIn-AddIn64-packed.xll");
+        // The packed XLL is produced only by 'dotnet publish' in Release,
+        // so resolve the Release publish path directly rather than from the
+        // config-resolved buildDir (which may point at Debug and has no
+        // publish/ subdir).
+        var addInBin = LocateAddInBinDirectory();
+        var xll = Path.Combine(
+            addInBin, "Release", "net10.0-windows", "publish",
+            "GanttCreator.AddIn-AddIn64-packed.xll");
 
         Assert.True(File.Exists(xll), $"Expected packed XLL at '{xll}'.");
         var info = new FileInfo(xll);
