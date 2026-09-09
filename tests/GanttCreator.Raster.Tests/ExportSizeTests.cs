@@ -184,10 +184,12 @@ public class ExportSizeTests
     [Fact]
     public void ToPixels_max_dimension_is_accepted()
     {
+        // 4:1 scene keeps the total within MaxTotalPixels (65535x16384 ≈ 1.07B < 2B)
+        // while still exercising the per-axis MaxPixelDimension boundary.
         var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0);
+        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 180.0);
         Assert.Equal(65_535, px.PixelWidth);
-        Assert.Equal(32_768, px.PixelHeight);
+        Assert.Equal(16_384, px.PixelHeight);
     }
 
     [Fact]
@@ -206,5 +208,43 @@ public class ExportSizeTests
         var req = new WidthRequest(ExportUnit.Pixels, 1000.0);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
             () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 72_000.0));
+    }
+
+    [Fact]
+    public void ToPixels_total_budget_allows_square_at_boundary()
+    {
+        // 44,721 * 44,721 = 1,999,967,841 < MaxTotalPixels (2,000,000,000).
+        // Square scene (1:1) so height == width.
+        var req = new WidthRequest(ExportUnit.Pixels, 44_721.0);
+        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0);
+        Assert.Equal(44_721, px.PixelWidth);
+        Assert.Equal(44_721, px.PixelHeight);
+    }
+
+    [Fact]
+    public void ToPixels_total_budget_rejects_square_beyond_boundary()
+    {
+        // 44,722 * 44,722 = 2,000,057,284 > MaxTotalPixels (2,000,000,000).
+        var req = new WidthRequest(ExportUnit.Pixels, 44_722.0);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0));
+    }
+
+    [Fact]
+    public void ToPixels_subpixel_width_rounding_to_zero_is_rejected()
+    {
+        // 0.4 px is positive and finite pre-rounding but rounds to 0.
+        var req = new WidthRequest(ExportUnit.Pixels, 0.4);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0));
+    }
+
+    [Fact]
+    public void ToPixels_subpixel_height_rounding_to_zero_is_rejected()
+    {
+        // Width 0.6 rounds to 1 (OK), but height = 0.6 * (1/100) = 0.006 rounds to 0.
+        var req = new WidthRequest(ExportUnit.Pixels, 0.6);
+        _ = Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 1.0));
     }
 }

@@ -90,7 +90,7 @@ Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
     It 'check-md-links.ps1: non-empty scan with valid links is a PASS (positive control)' {
         # check-md-links.ps1 resolves roots against Split-Path -Parent $PSScriptRoot,
         # so to scan the fixture we must copy the script into the harness and run
-        # the copy — its $repoRoot then points at the temp dir. Relying on
+        # the copy -- its $repoRoot then points at the temp dir. Relying on
         # -WorkingDirectory alone would scan the real repo, not the fixture.
         $td = Join-Path ([System.IO.Path]::GetTempPath()) ('md-ok-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $td -Force | Out-Null

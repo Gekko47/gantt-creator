@@ -55,6 +55,14 @@ public static class ExportSize
     public const double MaxPixelDimension = 65_535;
 
     /// <summary>
+    /// Maximum total pixel count (width × height) for an export. This sits
+    /// well within per-axis <see cref="MaxPixelDimension"/> but rejects
+    /// dimension pairs whose combined allocation would exceed the budget
+    /// before rasterization. Square boundary: √2,000,000,000 ≈ 44,721.
+    /// </summary>
+    public const long MaxTotalPixels = 2_000_000_000L;
+
+    /// <summary>
     /// Parses a width string such as "10cm", "4in", or "800px"
     /// (case-insensitive, surrounding whitespace ignored) into a
     /// <see cref="WidthRequest"/>.
@@ -89,8 +97,9 @@ public static class ExportSize
     /// <param name="sceneHeightPt">The scene height in points. Must be finite and non-negative.</param>
     /// <exception cref="ArgumentOutOfRangeException">A dimension value is
     /// not finite, or sceneWidthPt is not greater than zero, or the
-    /// computed pixel dimensions exceed the practical export limit of
-    /// 65,535 px.
+    /// computed pixel dimensions exceed the per-axis limit of 65,535 px or
+    /// the total pixel budget of <see cref="MaxTotalPixels"/>, or a sub-pixel
+    /// request rounds to a zero dimension.
     /// </exception>
     public static PixelDimensions ToPixels(WidthRequest request, double sceneWidthPt, double sceneHeightPt)
     {
@@ -140,6 +149,30 @@ public static class ExportSize
 
         var pxWidth = (int)Math.Round(pixelWidth);
         var pxHeight = (int)Math.Round(pixelHeight);
+
+        // Reject rounded dimensions below 1: a sub-pixel request like 0.4 px is
+        // positive and finite pre-rounding but rounds to 0, which must not
+        // produce a zero-pixel export.
+        if (pxWidth < 1 || pxHeight < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request),
+                $"Rounded pixel dimensions must each be at least 1 px (got {pxWidth}x{pxHeight}).");
+        }
+
+        // Combined allocation budget: reject dimension pairs whose total pixel
+        // count exceeds the budget before rasterization, even when each axis
+        // is within the per-axis MaxPixelDimension limit.
+        var totalPixels = (long)pxWidth * pxHeight;
+#pragma warning disable IDE0046
+        if (totalPixels > MaxTotalPixels)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request), totalPixels,
+                $"Combined pixel dimensions ({pxWidth}x{pxHeight} = {totalPixels} px) exceed the maximum total of {MaxTotalPixels} pixels.");
+        }
+#pragma warning restore IDE0046
+
         return new PixelDimensions(pxWidth, pxHeight);
     }
 

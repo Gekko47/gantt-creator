@@ -21,10 +21,13 @@ public class AddInAssemblyTests
     // happens, Assembly.LoadFrom returns the already-loaded copy and
     // .Location points at the test output, not the src build output.
     // We therefore resolve the src build directory by walking up from
-    // the test binary, independent of any loaded assembly. Any build
-    // configuration is accepted (Release preferred) so a plain
-    // `dotnet test` in Debug is not artificially red.
-    private static readonly string[] Configurations = ["Release", "Debug"];
+    // the test binary, independent of any loaded assembly.
+    //
+    // Release only: AddIn_packaged_xll_exists asserts the packed XLL under
+    // the publish output, which verify-quick.ps1 and verify.ps1 produce in
+    // Release. Fall back to Debug only when that configuration has been
+    // explicitly published before the assertion.
+    private static readonly string[] Configurations = ["Release"];
 
     private static string LocateAddInBuildDirectory()
     {

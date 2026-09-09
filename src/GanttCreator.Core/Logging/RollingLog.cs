@@ -82,6 +82,15 @@ public sealed class RollingLog : IRollingLog
                 "baseName must not contain path separators, rooted paths, or wildcard characters.",
                 nameof(baseName));
         }
+        // Reject wildcard characters independently of Path.GetInvalidFileNameChars()
+        // so '*' and '?' can never be interpreted as a glob by GetRotatedFilesOldestFirst,
+        // even on platforms where they are not in the invalid-file-name set.
+        if (baseName.Contains('*', StringComparison.Ordinal) || baseName.Contains('?', StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "baseName must not contain path separators, rooted paths, or wildcard characters.",
+                nameof(baseName));
+        }
         return baseName;
 #pragma warning restore IDE0046
     }
@@ -155,7 +164,7 @@ public sealed class RollingLog : IRollingLog
 
             var redacted = _redactor.Redact(message) ?? string.Empty;
             DateTimeOffset now = _timeProvider.GetUtcNow();
-            var line = $"{now:yyyy-MM-ddTHH:mm:ss.fffZ} {redacted}{Environment.NewLine}";
+            var line = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:yyyy-MM-ddTHH:mm:ss.fffZ} {1}{2}", now, redacted, Environment.NewLine);
             var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
 
             RotateIfNeeded(bytes);
