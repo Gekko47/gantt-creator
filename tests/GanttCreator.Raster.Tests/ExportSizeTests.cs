@@ -184,12 +184,13 @@ public class ExportSizeTests
     [Fact]
     public void ToPixels_max_dimension_is_accepted()
     {
-        // 4:1 scene keeps the total within MaxTotalPixels (65535x16384 ≈ 1.07B < 2B)
-        // while still exercising the per-axis MaxPixelDimension boundary.
+        // A very flat scene keeps the total within MaxTotalPixels
+        // (65535 × 1456 ≈ 95.4M < 100M) while still exercising the
+        // per-axis MaxPixelDimension boundary.
         var req = new WidthRequest(ExportUnit.Pixels, ExportSize.MaxPixelDimension);
-        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 180.0);
+        PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 16.0);
         Assert.Equal(65_535, px.PixelWidth);
-        Assert.Equal(16_384, px.PixelHeight);
+        Assert.Equal(1_456, px.PixelHeight);
     }
 
     [Fact]
@@ -213,19 +214,19 @@ public class ExportSizeTests
     [Fact]
     public void ToPixels_total_budget_allows_square_at_boundary()
     {
-        // 44,721 * 44,721 = 1,999,967,841 < MaxTotalPixels (2,000,000,000).
-        // Square scene (1:1) so height == width.
-        var req = new WidthRequest(ExportUnit.Pixels, 44_721.0);
+        // 10,000 * 10,000 = 100,000,000 == MaxTotalPixels (100,000,000),
+        // which is within budget. Square scene (1:1) so height == width.
+        var req = new WidthRequest(ExportUnit.Pixels, 10_000.0);
         PixelDimensions px = ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0);
-        Assert.Equal(44_721, px.PixelWidth);
-        Assert.Equal(44_721, px.PixelHeight);
+        Assert.Equal(10_000, px.PixelWidth);
+        Assert.Equal(10_000, px.PixelHeight);
     }
 
     [Fact]
     public void ToPixels_total_budget_rejects_square_beyond_boundary()
     {
-        // 44,722 * 44,722 = 2,000,057,284 > MaxTotalPixels (2,000,000,000).
-        var req = new WidthRequest(ExportUnit.Pixels, 44_722.0);
+        // 10,001 * 10,001 = 100,020,001 > MaxTotalPixels (100,000,000).
+        var req = new WidthRequest(ExportUnit.Pixels, 10_001.0);
         _ = Assert.Throws<ArgumentOutOfRangeException>(
             () => ExportSize.ToPixels(req, sceneWidthPt: 100.0, sceneHeightPt: 100.0));
     }

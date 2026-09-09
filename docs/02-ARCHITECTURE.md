@@ -288,4 +288,4 @@ Do not optimise before profiling. Record the reference hardware and Office build
 - Excel/PowerPoint calls execute on the required STA/main thread. Do not use `Task.Run` around COM.
 - Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, calculation mode, status bar, and selection only when changed, using `try/finally`.
 - User errors are concise and actionable. Technical details go to a local rolling log with no workbook content unless explicitly opted in.
-- Public APIs need XML documentation when the contract is not obvious. Internal comments explain why, invariants, or Office quirks—not line-by-line mechanics.
+- Every public member carries XML documentation, enforced by `GenerateDocumentationFile` + CS1591 with warnings-as-errors; add detail beyond the summary when the contract is non-obvious. Internal comments explain why, invariants, or Office quirks—not line-by-line mechanics.

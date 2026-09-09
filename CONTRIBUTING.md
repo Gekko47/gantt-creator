@@ -7,7 +7,7 @@ Thank you for your interest in contributing. This document covers how to propose
 - Windows 11 (current), x64
 - .NET 10 SDK, x64
 - 64-bit Microsoft 365 desktop Excel and PowerPoint (for Office integration tests)
-- Visual Studio 2022 17.14+ or VS Code with the C# Dev Kit
+- Visual Studio 2026 (18) Community — the verification IDE (see `docs/adr/0003-visual-studio-2026.md`) — or VS Code with the C# Dev Kit
 - PowerShell 7 and Git for Windows
 
 See `docs/01-ENVIRONMENT.md` for the full setup checklist.
@@ -43,8 +43,9 @@ See `docs/01-ENVIRONMENT.md` for the full setup checklist.
 
 1. Open a pull request against `main`.
 2. `pwsh ./scripts/verify.ps1` must PASS before review.
-3. One human approval required.
-4. Address review findings with new commits; do not amend or rebase shared history.
+3. Push the branch to GitHub and observe the GitHub CI gate green for the PR commit before it is ready to merge. A passing local `verify.ps1` alone is insufficient (the W-12 rule; see `docs/05-GIT-QUALITY.md` "Branch and review policy").
+4. One human approval required.
+5. Address review findings with new commits; do not amend or rebase shared history.
 
 ## Scope-change protocol
 

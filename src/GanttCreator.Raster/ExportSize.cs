@@ -55,12 +55,16 @@ public static class ExportSize
     public const double MaxPixelDimension = 65_535;
 
     /// <summary>
-    /// Maximum total pixel count (width × height) for an export. This sits
-    /// well within per-axis <see cref="MaxPixelDimension"/> but rejects
-    /// dimension pairs whose combined allocation would exceed the budget
-    /// before rasterization. Square boundary: √2,000,000,000 ≈ 44,721.
+    /// Maximum total pixel count (width × height) for an export. Sized as a
+    /// tested safe allocation budget: the raster pipeline's 32-bit pixel
+    /// format costs 4 bytes per pixel, so a full-frame buffer is 4 × pixel
+    /// count. The old 2,000,000,000-pixel budget implied a ~8 GB frame plus
+    /// working buffers; the new 100,000,000-pixel budget keeps a full frame
+    /// around 400 MB with headroom for the renderer's working buffers, while
+    /// the per-axis <see cref="MaxPixelDimension"/> still governs each side.
+    /// Square boundary: √100,000,000 = 10,000.
     /// </summary>
-    public const long MaxTotalPixels = 2_000_000_000L;
+    public const long MaxTotalPixels = 100_000_000L;
 
     /// <summary>
     /// Parses a width string such as "10cm", "4in", or "800px"

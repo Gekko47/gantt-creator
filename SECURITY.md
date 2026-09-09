@@ -12,7 +12,7 @@ To report a security vulnerability in Gantt Creator:
 2. Contact the maintainer directly via the repository's GitHub "Security" tab (advisory) or through the contact listed in the project profile.
 3. Include a minimal reproduction, the affected version, and the potential impact.
 
-The maintainer acknowledges reports within 5 business days and aims to ship a fix or mitigation in the next patch release.
+The maintainer acknowledges reports within 5 business days and aims to ship a fix or mitigation in the current in-development `stage-inspect` branch, released with the next stable release (the project has no patch-release line while it is pre-release).
 
 ## Product security properties
 

@@ -154,9 +154,12 @@ The probes that produced the W-13 findings:
 
 - Direct invocation of the failing step, outside the verify script:
   `pwsh -Command "Invoke-ScriptAnalyzer ... -Settings ... -EnableExit"`
-  and observed exit code 11 with 10 warnings. **The local gate had
+  and observed exit code 11 with 11 warnings. **The local gate had
   been reporting PASS for the entire R0.8 round; the probe exposed
-  the blind-gate defect immediately.**
+  the blind-gate defect immediately.** (Count: this doc earlier said
+  10; `docs/STATUS.md` and `docs/KNOWN-LIMITATIONS.md` L10 both record
+  the verified 11, which is the number used here — reported rather
+  than silently reconciled.)
 - `Get-Module -ListAvailable PSScriptAnalyzer` to confirm the local
   module version matched CI's pin (1.25.0). The probe was small and
   the answer was decisive.

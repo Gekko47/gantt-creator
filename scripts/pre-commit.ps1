@@ -84,6 +84,12 @@ foreach ($check in $checks) {
     $checkerOutput = @()
     $checkerExit   = 0
     try {
+        # Reset $LASTEXITCODE immediately before invoking the checker so a
+        # checker that runs only cmdlets (or returns without a native
+        # command) cannot inherit a stale exit code from the git calls
+        # above or from the previous checker. Same pattern as
+        # scripts/verify.ps1 Invoke-Step.
+        $global:LASTEXITCODE = 0
         $checkerOutput = & (Join-Path $scriptRoot $check.Script) 2>&1
         $checkerExit   = $LASTEXITCODE
     } catch {

@@ -140,10 +140,11 @@ Invoke-Step 'test (OfficeIntegration excluded)' {
 }
 
 # The coverage-threshold check is intentionally permissive at R0.x. The
-# thresholds in $coverageThresholds above are the production targets, but
-# this step only records the targets next to the measured coverage; it does
-# not warn and it does not fail. Enforcement is enabled in R3.x when Core
-# has real tests (docs/04-TEST-STRATEGY.md).
+# thresholds in $coverageThresholds above are the production targets; this
+# step parses the measured coverage.cobertura.xml rates and prints them next
+# to each target, visibly flagging below-target entries as warnings. It does
+# not warn-and-fail. Enforcement is enabled in R3.x when Core has real
+# tests (docs/04-TEST-STRATEGY.md).
 Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
     if (-not (Test-Path -LiteralPath $coverageRoot)) {
@@ -155,10 +156,39 @@ Invoke-Step 'coverage threshold check' {
         Write-Host 'no coverage.cobertura.xml found; skipping threshold check.'
         return
     }
+    # Parse the measured line/branch rates from the cobertura XML so each
+    # target is reported next to the real number. Cobertura stores rates as
+    # invariant-culture decimal fractions (0..1) on the <package> element;
+    # the test command writes one coverage file per test project, so a
+    # package can appear in several files and the best measured rate wins.
+    $measured = @{}
+    foreach ($file in $coverageFiles) {
+        [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
+        foreach ($pkg in $xml.coverage.packages.package) {
+            $name = [string]$pkg.name
+            if (-not $measured.ContainsKey($name)) {
+                $measured[$name] = @{ Line = 0.0; Branch = 0.0 }
+            }
+            $lineRate = [double]$pkg.'line-rate'
+            $branchRate = [double]$pkg.'branch-rate'
+            if ($lineRate -gt $measured[$name].Line)   { $measured[$name].Line = $lineRate }
+            if ($branchRate -gt $measured[$name].Branch) { $measured[$name].Branch = $branchRate }
+        }
+    }
     foreach ($project in $coverageThresholds.Keys) {
         $expected = $coverageThresholds[$project]
         if ($expected.Line -eq 0) { continue }
-        $line = "{0}: target line >= {1}%, branch >= {2}% (threshold enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md)" -f $project, $expected.Line, $expected.Branch
+        if (-not $measured.ContainsKey($project)) {
+            $line = "{0}: no coverage package found (target line >= {1}%, branch >= {2}%)" -f $project, $expected.Line, $expected.Branch
+            Write-Host "  - $line"
+            Add-Content -LiteralPath $report -Value "  $line"
+            continue
+        }
+        $linePct = [math]::Round($measured[$project].Line * 100, 2)
+        $branchPct = [math]::Round($measured[$project].Branch * 100, 2)
+        $flag = ''
+        if ($linePct -lt $expected.Line) { $flag = '  <-- below target (warning)' }
+        $line = "{0}: measured line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
         Write-Host "  - $line"
         Add-Content -LiteralPath $report -Value "  $line"
     }

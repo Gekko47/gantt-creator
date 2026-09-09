@@ -76,7 +76,7 @@
     <!--
       SDK derives AssemblyVersion and FileVersion from Version.
       InformationalVersion carries the semver+metadata suffix.
-      See docs/07-GANTT-ENTITY-GUIDE.md for version policy.
+      See docs/work-items/R0.8-versioning-and-rolling-log.md for version policy.
     -->
     <Version Condition="'$(Version)' == ''">0.0.0</Version>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)+local</InformationalVersion>
