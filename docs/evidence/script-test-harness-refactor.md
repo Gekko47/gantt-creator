@@ -75,7 +75,7 @@ It '...' {
 | `check-cline-skills.ps1` | Yes — `git diff --name-only` and `git status --porcelain` both fail (exit 128) outside a repo. | Yes — Phase 1's `git diff` runs without `-C`, so it inherits the script's CWD. Without `-WorkingDirectory $tempRoot` the real repo's dirty `docs/STATUS.md` would be reported. | Yes — the script re-invokes `sync-cline-skills.ps1` via a hard-coded path, so the harness needs a copy of both. The harness copy of `sync` has a single-entry `$map` injected by regex. |
 | `check-skill-summary.ps1` | No. | Less critical — the script does `Join-Path $repoRoot $SkillsRoot` with an absolute `$repoRoot`. | Yes — `$repoRoot` is `Split-Path -Parent $PSScriptRoot`, and the script is placed one level deeper than `.cline/skills/` so the param resolves correctly. |
 | `check-status.ps1` | Yes — uses `git -C $repoRoot rev-parse --verify` for the hash check. | Recommended — keeps the script's CWD inside the harness, away from the real repo. | Yes — same `$repoRoot` reasoning. |
-| `sync-cline-skills.ps1` | No. | The script accepts `-DocsRoot` and `-SkillsRoot`; the test passes absolute paths so CWD is irrelevant. | No — the test mutates the script's `$map` via regex and writes a copy of the script into the temp root. |
+| `sync-cline-skills.ps1` | No. | The script accepts `-DocsRoot` and `-SkillsRoot`; the test passes absolute paths so CWD is irrelevant. | Yes (modified copy) — the test mutates the script's `$map` via regex and writes a copy of the script into the temp root; only the generated copy is used. |
 
 ### Phase 2 byte-compare subtlety (`check-cline-skills.ps1`)
 
@@ -121,10 +121,7 @@ is affected.
    against the script source. It no longer exists. If a future
    refactor replaces `-cnotmatch` with `-notmatch`
    (case-insensitive), the clean/bad fixture trees will still differ
-   in exit code and the test will not catch it. Mitigation candidate:
-   add one narrowly-scoped `Should -Match '-cnotmatch'` back as a
-   tripwire against the script source; the other 12 assertions can
-   remain behaviour-based.
+   in exit code and the test will not catch it.
 
 2. **Lost path-traversal regression guard on `check-status.ps1`.**
    The old negative-match `'\\.StartsWith\\(\\$repoRootFull'` was

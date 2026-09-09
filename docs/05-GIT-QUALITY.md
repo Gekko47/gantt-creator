@@ -84,7 +84,7 @@ pwsh ./scripts/install-pre-commit.ps1
 ```
 
 Once installed, every `git commit` runs the fast deterministic gates
-(skill-tree drift, SKILL.md canonical phrases, STATUS.md accuracy,
+(skill-tree drift, STATUS.md accuracy,
 markdown-link sanity) before the commit is created. A failure aborts
 the commit. The hook deliberately does **not** run `verify-quick.ps1`
 (~2 minutes build + test; runtime depends on the machine) so a commit

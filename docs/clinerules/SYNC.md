@@ -120,7 +120,7 @@ if ($LASTEXITCODE -ne 0) {
 4. Commit `docs/` and `.cline/skills/` together.
 
 A new canonical source without a `$map` entry will be invisible to the
-sync script and the gate will not catch it. A `$map$ entry pointing at
+sync script and the gate will not catch it. A `$map` entry pointing at
 a non-existent canonical source will fail-fast at sync time. A doc
 without a `SKILL-SUMMARY` block will still sync (via the fallback) but
 prints a warning every run until one is added.
