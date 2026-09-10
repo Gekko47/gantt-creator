@@ -188,10 +188,15 @@ is affected.
   pre-commit hook are the only consumers of these tests; CI does
   not run them on a schedule. The script tests are a developer
   aid, not a regulated artefact.
-- The Pester version is pinned to 6.1.0 by `scripts/test-scripts.ps1`
-  (`Get-Module -ListAvailable -Name Pester` + version check). Pester
-  5-only constructs (e.g. `[Diagnostics.CodeAnalysis]`
-  suppressions) are not used.
+- The local dev machine currently runs Pester 6.1.0; that is an
+  **observed local version, not a repository pin**. The repository's
+  compatibility contract is Pester 5+ (`Pester.MinimumMajor = 5` in
+  `scripts/tool-versions.psd1`, enforced by `scripts/test-scripts.ps1`
+  via `Get-Module -ListAvailable` + minimum-major check; CI installs
+  newest >= 5.0). Pester 5-only constructs (e.g. `[Diagnostics.CodeAnalysis]`
+  suppressions) are not used, and the version-safe container counting in
+  `test-scripts.ps1` works across the supported range. Exact version
+  parity across dev/CI remains deferred by design (L9).
 - `git status --short` shows several pre-existing uncommitted
   modifications unrelated to this refactor (e.g. `docs/STATUS.md`,
   `scripts/pre-commit.ps1`, `scripts/test-locked-restore.ps1`).
