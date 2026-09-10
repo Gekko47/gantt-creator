@@ -260,7 +260,9 @@ public sealed class RollingLog : IRollingLog
                 {
                     // File exists and has room - open in append mode
                     var appendStream = new FileStream(activeLogPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-                    _currentWriter = new StreamWriter(appendStream, System.Text.Encoding.UTF8);
+                    // UTF-8 without a BOM so the reopened file stays byte-exact with
+                    // the tracked _currentFileSize; Encoding.UTF8 would emit a preamble.
+                    _currentWriter = new StreamWriter(appendStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                     _currentFileSize = fileInfo.Length;
                     return;
                 }
@@ -318,7 +320,9 @@ public sealed class RollingLog : IRollingLog
             // Create new active log file
             var newActivePath = Path.Combine(_logDirectory, $"{_baseName}.log");
             var fileStream = new FileStream(newActivePath, FileMode.Create, FileAccess.Write, FileShare.Read);
-            _currentWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8);
+            // UTF-8 without a BOM so the created file's size equals the tracked
+            // Encoding.UTF8 byte count and rotation remains byte-exact.
+            _currentWriter = new StreamWriter(fileStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             _currentFileSize = 0;
         }
     }

@@ -48,6 +48,39 @@ public sealed class RollingLogTests : IDisposable
         Assert.Contains("Test message", content, StringComparison.Ordinal);
         Assert.Matches(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z ", content);
     }
+    [Fact]
+    public void Log_file_tracks_utf8_byte_count_exactly_without_preamble()
+    {
+        // Regression: RollingLog must write UTF-8 without a preamble. Encoding.UTF8
+        // is a BOM-emitting UTF8Encoding in .NET 10, so the real file size must equal
+        // the size tracked via Encoding.UTF8.GetByteCount or rotation drifts.
+        var fixedTime = new DateTimeOffset(2030, 1, 2, 3, 4, 5, 678, TimeSpan.Zero);
+        var message = "Preamble-free byte accounting";
+        var line = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "{0:yyyy-MM-ddTHH:mm:ss.fffZ} {1}{2}", fixedTime, message, Environment.NewLine);
+        var lineBytes = (long)System.Text.Encoding.UTF8.GetByteCount(line);
+
+        using (var log1 = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3,
+            timeProvider: new FixedTimeProvider(fixedTime)))
+        {
+            log1.Write(message);
+        }
+
+        var activeFile = Path.Combine(_testLogDir, $"{_baseName}.log");
+        var activeInfo = new FileInfo(activeFile);
+        Assert.Equal(lineBytes, (long)activeInfo.Length);
+
+        // Append reopen must not inject a preamble either; the reopened file size
+        // stays equal to the sum of the UTF-8 line byte counts.
+        using (var log2 = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3,
+            timeProvider: new FixedTimeProvider(fixedTime)))
+        {
+            log2.Write(message);
+        }
+
+        var reopenedInfo = new FileInfo(activeFile);
+        Assert.Equal(2 * lineBytes, (long)reopenedInfo.Length);
+    }
 
     [Fact]
     public void Write_redacts_sensitive_data_via_injected_redactor()
