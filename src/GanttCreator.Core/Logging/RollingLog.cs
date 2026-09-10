@@ -16,7 +16,11 @@ public sealed class RollingLog : IRollingLog
     private StreamWriter? _currentWriter;
     private long _currentFileSize;
     private bool _disposed;
-    private bool Failed { get; set; }
+
+    // Volatile so the lock-free IsFailed read reliably observes the latched
+    // flag across threads without acquiring _gate. Every write happens under
+    // _gate (or during construction, which has exclusive access).
+    private volatile bool _failed;
 
     /// <summary>
     /// Creates a new rolling log.
@@ -102,7 +106,7 @@ public sealed class RollingLog : IRollingLog
     /// code paths. Diagnostics should consult this property to detect that
     /// logging has stopped.
     /// </summary>
-    public bool IsFailed => Failed;
+    public bool IsFailed => _failed;
 
     /// <summary>
     /// Writes a message to the log. The message is automatically redacted.
@@ -157,7 +161,7 @@ public sealed class RollingLog : IRollingLog
         _gate.Enter();
         try
         {
-            if (_disposed || Failed)
+            if (_disposed || _failed)
             {
                 return;
             }
@@ -168,7 +172,7 @@ public sealed class RollingLog : IRollingLog
             var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
 
             RotateIfNeeded(bytes);
-            if (Failed)
+            if (_failed)
             {
                 return;
             }
@@ -198,7 +202,7 @@ public sealed class RollingLog : IRollingLog
     /// </summary>
     private void MarkFailed()
     {
-        Failed = true;
+        _failed = true;
         try
         {
             _currentWriter?.Dispose();
@@ -216,7 +220,7 @@ public sealed class RollingLog : IRollingLog
 
     private void RotateIfNeeded(long incomingBytes = 0)
     {
-        if (Failed || _disposed)
+        if (_failed || _disposed)
         {
             return;
         }
