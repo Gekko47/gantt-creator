@@ -4,7 +4,8 @@
     Quick verification gate. Run on every commit.
 
 .DESCRIPTION
-    Must complete in under ~2 minutes on a developer machine. Excludes the
+    Expected runtime ~2-5 min on a developer machine; runtime depends
+    on the machine. Excludes the
     Office-integration suite (per docs/adr/0001). Exits non-zero on any
     failure with the failing step's exit code preserved. Writes a
     human-readable report to scripts/_artifacts/verify-quick.txt.

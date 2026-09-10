@@ -99,4 +99,25 @@ Describe 'W-7 review methodology runbook' {
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match 'phase may not exit on local-only evidence'
     }
+
+    It 'no file claims verify-quick.ps1 or verify.ps1 completes in under ~2 minutes' {
+        # Docs/code drift class: 2c1519e corrected the verify-quick
+        # duration claim in docs/05-GIT-QUALITY.md, but stale copies
+        # survived in .vscode/tasks.json, scripts/install-pre-commit.ps1,
+        # and scripts/pre-commit.ps1. Every recorded verify-quick run in
+        # docs/STATUS.md is in the 97-333 s range, so any sub-minute
+        # duration token on a line that mentions one of the verify gates
+        # is stale. (The hook's own honest "a few seconds" wording and
+        # the "~N minutes" claims do not match this pattern.)
+        $offenders = Get-ChildItem -Path $script:repoRoot -Recurse -Include '*.md', '*.ps1', '*.json' -File |
+            Where-Object { $_.FullName -notmatch '\\(\.git|\.vs|bin|obj|node_modules|_artifacts)\\' } |
+            Select-String -Pattern '~\d{1,2}\s?s[\)\.;,]' |
+            Where-Object { $_.Line -match 'verify-quick|verify\.ps1|verify-full' }
+        if ($offenders) {
+            $offenders | ForEach-Object {
+                Write-Host "  $($_.Path):$($_.LineNumber): $($_.Line.Trim())"
+            }
+        }
+        $offenders | Should -BeNullOrEmpty -Because 'a stale sub-minute duration claim about a verify gate survived; this is the docs/code drift class that already shipped once (2c1519e fixed one copy, four more survived)'
+    }
 }

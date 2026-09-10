@@ -87,7 +87,7 @@ Once installed, every `git commit` runs the fast deterministic gates
 (skill-tree drift, STATUS.md accuracy,
 markdown-link sanity) before the commit is created. A failure aborts
 the commit. The hook deliberately does **not** run `verify-quick.ps1`
-(~2 minutes build + test; runtime depends on the machine) so a commit
+(~2-5 minutes build + test; runtime depends on the machine) so a commit
 is not slowed down; the developer still runs `verify-quick.ps1` during
 editing and `verify.ps1` before a PR.
 See `AGENTS.md` and `scripts/pre-commit.ps1` for the full contract.

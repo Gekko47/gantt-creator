@@ -6,7 +6,7 @@
 .DESCRIPTION
     Installed as the git pre-commit hook by scripts/install-pre-commit.ps1.
     Runs the fast checks that catch drift and formatting regressions without
-    paying the ~60s cost of a full verify-quick on every commit.
+    paying the ~2-5 minute cost of a full verify-quick on every commit.
 
     The hook is intentionally NOT the full verify-quick.ps1. Full
     verification stays a developer-initiated step before commit/PR per

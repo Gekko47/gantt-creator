@@ -247,7 +247,7 @@ Apply the AGENTS.md task protocol to each defect class:
   PSScriptAnalyzer literal-vs-variable was caught by the ci-parity
   tripwire).
 - Run `pwsh ./scripts/verify-quick.ps1` once the slice is coherent,
-  not after every edit. The 12 steps take ~2 minutes; running them
+  not after every edit. The 12 steps take ~2-5 minutes; running them
   per-edit is wasteful, and skipping them before commit has caught
   regressions in the W-13 run.
 - Commit one concern per commit. Multiple concerns in one commit

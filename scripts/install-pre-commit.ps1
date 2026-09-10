@@ -10,11 +10,11 @@
     drift from the codebase) and works on Windows where a bare
     .git/hooks/pre-commit file is not an executable bit issue.
 
-    The gate runs only the fast, deterministic checks (~10s):
-    skill-tree drift, skill-summary phrases, status accuracy, and
-    markdown links. It deliberately does NOT run the full
-    verify-quick.ps1 (~60s) so a commit is not slowed down by the
-    Release build and test suite.
+    The gate runs only the fast, deterministic checks (a few seconds):
+    skill-tree drift, status accuracy, and markdown links. It
+    deliberately does NOT run the full verify-quick.ps1 (~2-5 min;
+    runtime depends on the machine) so a commit is not slowed down by
+    the Release build and test suite.
 
     Policy per AGENTS.md / docs/05-GIT-QUALITY.md: the developer still
     runs pwsh ./scripts/verify-quick.ps1 during editing and
