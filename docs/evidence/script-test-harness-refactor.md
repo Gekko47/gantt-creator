@@ -11,6 +11,8 @@
 
 ## What changed
 
+Source commit: `7d69419` (2026-09-07, "test(scripts): refactor script tests to isolated child-pwsh harness"). The counts below (28/28) are from that commit's tree.
+
 The four script-test files
 
 - `scripts/check-cline-skills.Tests.ps1`
@@ -167,8 +169,10 @@ is affected.
 
 ## Acceptance evidence observed
 
-- `pwsh -NoProfile -File scripts/test-scripts.ps1` runs all six
-  Pester suites and aggregates **28 / 28 pass** (check-cline-skills
+These results are anchored to source commit `7d69419` (2026-09-07). The tree has since changed; see "Subsequent changes" below.
+
+- `pwsh -NoProfile -File scripts/test-scripts.ps1` ran all six
+  Pester suites and aggregated **28 / 28 pass** (check-cline-skills
   4, check-skill-summary 3, check-status 5, pre-commit 9,
   sync-cline-skills 3, test-locked-restore 4).
 - Targeted re-run of just the four updated files via
@@ -176,9 +180,18 @@ is affected.
   **15 / 15 pass**.
 - The two test files the change did *not* touch
   (`pre-commit.Tests.ps1` and `test-locked-restore.Tests.ps1`)
-  still pass at their previous counts (9 / 9 and 4 / 4), confirming
+  still passed at their previous counts (9 / 9 and 4 / 4), confirming
   the harness pattern is compatible with the existing per-file
   test runner (`scripts/test-scripts.ps1`).
+
+## Subsequent changes (post-`7d69419`, recorded in docs/STATUS.md)
+
+- **`check-skill-summary.Tests.ps1` removed** — commit `7ff732e` (2026-09-08) deleted the skill-summary phrase gate and its test file (the two-view discipline made it redundant).
+- **Traversal cases added to `check-status.Tests.ps1`** — "resolves outside the repository" (`..\\outside.md`) and absolute-path (`C:\\windows\\evil.md`) cases.
+- **`git -C $repoRoot` in `check-cline-skills.ps1`** — commit `531223a` (2026-09-10) hardened Phase 1 git calls to run against the repo root regardless of caller CWD.
+- **New suites added** — `check-md-links`, `ci-parity`, `lint-ci`, `pssa-gate`, `review-runbook`, `step-parity` (not part of the original four-file refactor).
+
+Counts above reflect the `7d69419` tree; run `pwsh scripts/test-scripts.ps1` for the current total.
 
 ## In-development context (do not skip when re-reading)
 
