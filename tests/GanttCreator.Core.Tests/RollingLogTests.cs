@@ -31,6 +31,10 @@ public sealed class RollingLogTests : IDisposable
         {
             // Best effort cleanup
         }
+        catch (UnauthorizedAccessException)
+        {
+            // Best effort cleanup
+        }
     }
 
     [Fact]

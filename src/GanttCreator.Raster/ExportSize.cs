@@ -120,10 +120,10 @@ public static class ExportSize
                 nameof(sceneWidthPt), sceneWidthPt, "Scene width must be finite and greater than zero.");
         }
 
-        if (!double.IsFinite(sceneHeightPt) || sceneHeightPt < 0)
+        if (!double.IsFinite(sceneHeightPt) || sceneHeightPt <= 0)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and non-negative.");
+                nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and greater than zero.");
         }
 
         var pixelWidth = request.Unit switch

@@ -105,6 +105,11 @@ foreach ($file in $map.Keys) {
     if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
         $summaryStart = $startIdx + $summaryStartMarker.Length
         $summary = $body.Substring($summaryStart, $endIdx - $summaryStart).Trim()
+        if ([string]::IsNullOrWhiteSpace($summary)) {
+            Write-Error ("sync-cline-skills: {0} has an empty SKILL-SUMMARY block. Every canonical doc must carry a " +
+                         "non-empty <!-- SKILL-SUMMARY:START --> / <!-- SKILL-SUMMARY:END --> block; add content to {0} and re-run." -f $file)
+            exit 1
+        }
     }
     else {
         Write-Error ("sync-cline-skills: {0} has no SKILL-SUMMARY block. Every canonical doc must carry a " +

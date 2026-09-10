@@ -98,9 +98,10 @@ public sealed class CoreBoundaryTests
                 if (File.Exists(releaseNet)) return releaseNet;
                 var debugNet = Path.Combine(candidate, "Debug", "net10.0", "GanttCreator.Core.dll");
                 if (File.Exists(debugNet)) return debugNet;
-                var anyRelease = Directory
-                    .EnumerateFiles(Path.Combine(candidate, "Release"), "GanttCreator.Core.dll", SearchOption.AllDirectories)
-                    .FirstOrDefault();
+                var releaseDir = Path.Combine(candidate, "Release");
+                var anyRelease = Directory.Exists(releaseDir) ? Directory
+                    .EnumerateFiles(releaseDir, "GanttCreator.Core.dll", SearchOption.AllDirectories)
+                    .FirstOrDefault() : null;
                 if (anyRelease is not null) return anyRelease;
             }
             dir = dir.Parent;

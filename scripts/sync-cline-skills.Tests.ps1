@@ -118,5 +118,29 @@ Just a body, no SKILL-SUMMARY markers anywhere.
             $proc.ExitCode | Should -Not -Be 0
             $combined | Should -Match 'no SKILL-SUMMARY block'
         }
+        It 'exits non-zero when the canonical doc has an empty SKILL-SUMMARY block' {
+            # Positive failure-path test for the empty-summary validator:
+            # whitespace-only summary must fail, never silently yield empty.
+            @'
+# Fixture document with an empty summary block
+
+<!-- SKILL-SUMMARY:START -->
+
+<!-- SKILL-SUMMARY:END -->
+
+Body content follows.
+'@ | Set-Content -LiteralPath (Join-Path $script:docs '99-FIXTURE.md') -Encoding utf8
+
+            $outFile = Join-Path $script:tempRoot 'out-emptysummary.txt'
+            $errFile = Join-Path $script:tempRoot 'err-emptysummary.txt'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',$script:harnessSync,'-DocsRoot',$script:docs,'-SkillsRoot',$script:skills
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+
+            $proc.ExitCode | Should -Not -Be 0
+            $combined | Should -Match 'empty SKILL-SUMMARY block'
+        }
     }
 }

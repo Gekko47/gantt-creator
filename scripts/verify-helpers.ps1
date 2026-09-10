@@ -37,7 +37,7 @@ function Read-VerifyStepName {
     param([Parameter(Mandatory)][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Get-VerifyStepNames: file not found: $Path"
+        throw "Read-VerifyStepName: file not found: $Path"
     }
 
     $names = New-Object System.Collections.Generic.List[string]
@@ -78,7 +78,7 @@ function Read-VerifyDescriptionStepNumber {
     param([Parameter(Mandatory)][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Get-VerifyDescriptionStepNumbers: file not found: $Path"
+        throw "Read-VerifyDescriptionStepNumber: file not found: $Path"
     }
     $numbers = New-Object System.Collections.Generic.List[int]
     $lines = Get-Content -LiteralPath $Path
