@@ -175,10 +175,9 @@ public sealed partial class ArtifactSourceMarkerTests
         var dir = new DirectoryInfo(Path.GetDirectoryName(typeof(ArtifactSourceMarkerTests).Assembly.Location)!);
         while (dir is not null)
         {
-            var rootCandidate = dir.FullName;
-            if (path.StartsWith(rootCandidate, StringComparison.OrdinalIgnoreCase))
+            if (Directory.Exists(Path.Combine(dir.FullName, "tests")))
             {
-                return path[(rootCandidate.Length + 1)..];
+                return Path.GetRelativePath(dir.FullName, path);
             }
             dir = dir.Parent;
         }
