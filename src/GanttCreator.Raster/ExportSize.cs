@@ -98,10 +98,11 @@ public static class ExportSize
     /// </summary>
     /// <param name="request">The parsed width request. <see cref="WidthRequest.Value"/> must be finite and greater than zero.</param>
     /// <param name="sceneWidthPt">The scene width in points. Must be finite and greater than zero.</param>
-    /// <param name="sceneHeightPt">The scene height in points. Must be finite and non-negative.</param>
+    /// <param name="sceneHeightPt">The scene height in points. Must be finite and greater than zero.</param>
     /// <exception cref="ArgumentOutOfRangeException">A dimension value is
-    /// not finite, or sceneWidthPt is not greater than zero, or the
-    /// computed pixel dimensions exceed the per-axis limit of 65,535 px or
+    /// not finite, or sceneWidthPt or sceneHeightPt is not greater than
+    /// zero, or the computed pixel dimensions exceed the per-axis limit of
+    /// 65,535 px or
     /// the total pixel budget of <see cref="MaxTotalPixels"/>, or a sub-pixel
     /// request rounds to a zero dimension.
     /// </exception>
