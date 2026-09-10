@@ -34,11 +34,15 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
+$repoRoot = Split-Path -Parent $PSScriptRoot
+
 # Phase 1: working tree must be free of unstaged and untracked
 # changes under the two views. Staged changes are allowed so the
 # gate is usable from the pre-commit hook (which runs after staging).
-$dirty = git diff --name-only -- docs/ .cline/skills/
-$untracked = git status --porcelain -- docs/ .cline/skills/ | Where-Object { $_.StartsWith('??') }
+# Both git calls run against the repository root (-C) so the gate
+# behaves identically no matter the caller's working directory.
+$dirty = git -C $repoRoot diff --name-only -- docs/ .cline/skills/
+$untracked = git -C $repoRoot status --porcelain -- docs/ .cline/skills/ | Where-Object { $_.StartsWith('??') }
 if ($dirty -or $untracked) {
     Write-Host 'check-cline-skills: WORKING TREE DIRTY'
     if ($dirty) {
@@ -68,7 +72,7 @@ try {
     }
 
     $diffs = New-Object System.Collections.Generic.List[string]
-    $committed = Join-Path (Split-Path -Parent $PSScriptRoot) '.cline/skills'
+    $committed = Join-Path $repoRoot '.cline/skills'
     # git diff --no-index: exit 0 = no diff, exit 1 = diff, exit 128 = error.
     # -c core.autocrlf=false keeps the comparison byte-exact and avoids
     # CRLF-normalisation noise in the violation report.
