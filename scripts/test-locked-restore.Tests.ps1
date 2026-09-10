@@ -96,6 +96,32 @@ Describe 'test-locked-restore.ps1' {
                          ($_.Extent.Text -replace "`r`n", "`n") -replace "`r", "`n"
                      }) -join "`n`n")
 
+                # Extract the script's own top-level statements from the same
+                # parsed AST (the unnamed block of the ScriptBlockAst),
+                # excluding the function definitions helpersCode already
+                # carries. The harness replays exactly this sequence instead
+                # of a hardcoded copy of it, so the test follows the script
+                # if the cleanup/restore sequence ever changes.
+                $mainBlock = $ast.FindAll(
+                    { param($n)
+                      $n -is [System.Management.Automation.Language.NamedBlockAst] -and
+                      $n.Parent -is [System.Management.Automation.Language.ScriptBlockAst]
+                    },
+                    $true) | Select-Object -First 1
+                if (-not $mainBlock) {
+                    throw "$script:scriptPath has no top-level statement block; the harness cannot derive the execution sequence."
+                }
+                $topLevelStatements = @(
+                    $mainBlock.Statements |
+                        Where-Object { $_ -isnot [System.Management.Automation.Language.FunctionDefinitionAst] }
+                )
+                if ($topLevelStatements.Count -lt 4) {
+                    throw ("Expected the top-level cleanup/restore sequence in {0} but found {1} non-function statement(s)." -f $script:scriptPath, $topLevelStatements.Count)
+                }
+                $topLevelCode = ($topLevelStatements | ForEach-Object {
+                    ($_.Extent.Text -replace "`r`n", "`n") -replace "`r", "`n"
+                }) -join "`n`n"
+
                 $script:copyScriptPath = Join-Path $script:scriptsDir 'test-locked-restore.ps1'
                 Set-Content -LiteralPath $script:copyScriptPath -Value $helpersCode -Encoding utf8NoBOM
 
@@ -162,13 +188,11 @@ function Invoke-LockRestore {
     & `$originalRestoreBody -Label `$Label
 }
 
-# Same sequence as the script's top-level code (lines 50-56 of the
-# original): cleanup, restore, cleanup, restore.
-Remove-ObjDirectory
-Invoke-LockRestore -Label 'Run 1'
-Remove-ObjDirectory
-Invoke-LockRestore -Label 'Run 2'
-exit 0
+# The script's own top-level statements, extracted from its parsed AST
+# above, so the harness always replays exactly the sequence the script
+# defines (cleanup, restore, cleanup, restore) instead of a hardcoded
+# copy of it.
+$topLevelCode
 "@
                 Set-Content -LiteralPath $script:harnessPath -Value $harnessBody -Encoding utf8NoBOM
             }
@@ -248,11 +272,14 @@ exit 0
 
             $log = Get-Content -LiteralPath $script:invocationLog
             $helperTrace = @($log | Where-Object { $_ -match '^(Remove-ObjDirectory|Invoke-LockRestore)' })
+            # Labels are the script's own top-level -Label arguments (the
+            # harness now replays the script's real sequence, not a
+            # hardcoded abbreviated copy of it).
             $helperTrace | Should -Be @(
                 'Remove-ObjDirectory',
-                'Invoke-LockRestore Run 1',
+                'Invoke-LockRestore Run 1 -- generate lock files (no cache)',
                 'Remove-ObjDirectory',
-                'Invoke-LockRestore Run 2'
+                'Invoke-LockRestore Run 2 -- honour lock files, no network'
             )
         }
     }
