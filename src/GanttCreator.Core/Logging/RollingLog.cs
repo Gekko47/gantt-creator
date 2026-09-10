@@ -263,6 +263,16 @@ public sealed class RollingLog : IRollingLog
             if (File.Exists(activeLogPath) && _currentFileSize == 0)
             {
                 var fileInfo = new FileInfo(activeLogPath);
+                if (fileInfo.Length == 0)
+                {
+                    // The active file exists on disk but is empty. An oversized single
+                    // message must be written directly here — rotating an empty file
+                    // would just produce an empty .1.log with no benefit.
+                    var emptyStream = new FileStream(activeLogPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                    _currentWriter = new StreamWriter(emptyStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    _currentFileSize = 0;
+                    return;
+                }
                 if (fileInfo.Length + incomingBytes <= _maxFileSizeBytes)
                 {
                     // File exists and has room - open in append mode
