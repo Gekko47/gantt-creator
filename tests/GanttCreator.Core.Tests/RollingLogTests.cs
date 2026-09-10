@@ -359,21 +359,24 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
-    public void Write_format_failure_is_contained_and_disables_writes()
+    public void Write_format_failure_is_contained_without_latching_failure()
     {
         using var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3);
 
         // Unclosed format item throws FormatException -- must be contained
+        // to the current call without latching the permanent failure flag.
         Exception ex = Record.Exception(() => log.Write("{0", "test"));
         Assert.Null(ex);
+        Assert.False(log.IsFailed);
 
-        // After failure, writes are silently disabled
-        log.Write("Should not appear");
+        // Subsequent writes still proceed after the skipped malformed message.
+        log.Write("Should appear");
+        log.Dispose();
 
         var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
         _ = Assert.Single(files);
         var content = File.ReadAllText(files[0]);
-        Assert.DoesNotContain("Should not appear", content, StringComparison.Ordinal);
+        Assert.Contains("Should appear", content, StringComparison.Ordinal);
     }
 
     [Fact]

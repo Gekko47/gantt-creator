@@ -6,7 +6,7 @@ namespace GanttCreator.Core.Logging;
 public interface IRollingLog : IDisposable
 {
     /// <summary>
-    /// Indicates the logger has latched a failure (formatting, redaction,
+    /// Indicates the logger has latched a failure (redaction,
     /// rotation, or write) and will discard all further writes. The latch is
     /// permanent by design: log failures must never propagate into product
     /// code paths. Diagnostics should consult this property to detect that
@@ -22,6 +22,8 @@ public interface IRollingLog : IDisposable
 
     /// <summary>
     /// Writes a formatted message to the log.
+    /// A malformed format string skips only that message without latching
+    /// <see cref="IsFailed"/>; subsequent writes still proceed.
     /// </summary>
     /// <param name="format">Composite format string.</param>
     /// <param name="args">Format arguments.</param>

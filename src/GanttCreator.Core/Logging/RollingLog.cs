@@ -113,7 +113,7 @@ public sealed class RollingLog : IRollingLog
     }
 
     /// <summary>
-    /// Indicates the logger has latched a failure (formatting, redaction,
+    /// Indicates the logger has latched a failure (redaction,
     /// rotation, or write) and will discard all further writes. The latch is
     /// permanent by design: log failures must never propagate into product
     /// code paths. Diagnostics should consult this property to detect that
@@ -129,6 +129,8 @@ public sealed class RollingLog : IRollingLog
 
     /// <summary>
     /// Writes a formatted message to the log.
+    /// A malformed format string skips only that message without latching
+    /// <see cref="IsFailed"/>; subsequent writes still proceed.
     /// </summary>
     /// <param name="format">Composite format string.</param>
     /// <param name="args">Format arguments.</param>
@@ -143,21 +145,13 @@ public sealed class RollingLog : IRollingLog
             }
         }
         // CA1031: A logger must never propagate formatting exceptions to callers.
-        // Any exception type (FormatException, NullReferenceException from a bad
-        // arg, etc.) must be contained and disable further writes.
+        // A malformed format string skips only the current message; it must
+        // not latch the permanent failure flag, which is reserved for I/O
+        // and rotation failures handled by WriteCore.
 #pragma warning disable CA1031
         catch
 #pragma warning restore CA1031
         {
-            _gate.Enter();
-            try
-            {
-                MarkFailed();
-            }
-            finally
-            {
-                _gate.Exit();
-            }
             return;
         }
 
