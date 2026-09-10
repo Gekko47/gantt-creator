@@ -41,11 +41,11 @@
     summary block cannot drift from its source the way a separate
     summary file could, and cannot be silently truncated by doc growth.
 
-    Until every docs/0N-*.md has a SKILL-SUMMARY block, this script
-    falls back to the old truncation heuristic for that file and
-    prints a warning. The fallback is deliberately non-fatal so this
-    script keeps working during the migration; treat the warning as a
-    to-do, not as an error to suppress.
+    The migration to hand-authored SKILL-SUMMARY blocks is complete: every
+    docs/0N-*.md in the $map carries one. A canonical doc that is missing
+    the block is therefore an ERROR, not a fallback: this script fails with
+    a non-zero exit so a summary can never again be silently truncated or
+    degraded by a heuristic. Add the block to the doc and re-run.
 
     This script is idempotent; running it twice in a row produces the
     same output. docs/clinerules/SYNC.md explains the discipline;
@@ -56,8 +56,7 @@
 [CmdletBinding()]
 param(
     [string]$DocsRoot     = 'docs',
-    [string]$SkillsRoot   = '.cline/skills',
-    [int]   $SummaryLines = 80
+    [string]$SkillsRoot   = '.cline/skills'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,7 +75,6 @@ $map = @{
 
 $summaryStartMarker = '<!-- SKILL-SUMMARY:START -->'
 $summaryEndMarker   = '<!-- SKILL-SUMMARY:END -->'
-$fallbackUsed       = @()
 
 foreach ($root in @($DocsRoot, $SkillsRoot)) {
     if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
@@ -98,8 +96,10 @@ foreach ($file in $map.Keys) {
 
     if (-not (Test-Path -LiteralPath $skillDir)) { New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }
 
-    # SKILL.md summary: hand-authored SKILL-SUMMARY block when present,
-    # otherwise fall back to the first N non-empty lines (with a warning).
+    # SKILL.md summary: the hand-authored SKILL-SUMMARY block is required.
+    # A doc without one fails the sync (the old truncation fallback is gone
+    # now that every mapped doc carries a block) so a summary can never be
+    # silently truncated by doc growth again.
     $startIdx = $body.IndexOf($summaryStartMarker)
     $endIdx   = $body.IndexOf($summaryEndMarker)
     if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
@@ -107,10 +107,9 @@ foreach ($file in $map.Keys) {
         $summary = $body.Substring($summaryStart, $endIdx - $summaryStart).Trim()
     }
     else {
-        $fallbackUsed += $file
-        Write-Warning "sync-cline-skills: $file has no SKILL-SUMMARY block; falling back to the first $SummaryLines non-empty lines. Add a <!-- SKILL-SUMMARY:START --> / <!-- SKILL-SUMMARY:END --> block to $file to fix this permanently."
-        $nonEmpty = $body -split "`r?`n" | Where-Object { $_.Trim() -ne '' }
-        $summary  = ($nonEmpty | Select-Object -First $SummaryLines) -join "`n"
+        Write-Error ("sync-cline-skills: {0} has no SKILL-SUMMARY block. Every canonical doc must carry a " +
+                     "<!-- SKILL-SUMMARY:START --> / <!-- SKILL-SUMMARY:END --> block; add one to {0} and re-run." -f $file)
+        exit 1
     }
 
     $fmName        = $file.Replace('.md', '')
@@ -141,7 +140,4 @@ Get-ChildItem -Path $SkillsRoot -Directory | ForEach-Object {
 
 $count = (Get-ChildItem -Path $SkillsRoot -Directory).Count
 Write-Host "sync-cline-skills: regenerated $count skills under $SkillsRoot"
-if ($fallbackUsed.Count -gt 0) {
-    Write-Host "sync-cline-skills: $($fallbackUsed.Count) skill(s) still using the line-truncation fallback: $($fallbackUsed -join ', ')"
-}
 exit 0

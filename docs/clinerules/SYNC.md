@@ -58,10 +58,11 @@ could, and can't be silently truncated by doc growth. If you edit a
 doc's `SKILL-SUMMARY` block, keep it honest: it should still name the
 things in the doc most likely to be gotten wrong, not just its topic.
 
-If a canonical doc has no `SKILL-SUMMARY` block, the sync script falls
-back to the old line-truncation heuristic and prints a warning — this
-keeps the script working but means that skill's summary can silently
-miss something important. Treat the warning as a to-do.
+If a canonical doc has no `SKILL-SUMMARY` block, the sync script now
+FAILS with a non-zero exit — the migration to hand-authored blocks is
+complete (every mapped doc carries one), so the old line-truncation
+fallback was removed. A missing block can never again be silently
+degraded into a truncated heuristic summary: add the block and re-run.
 
 ## What the sync script does
 
@@ -69,9 +70,8 @@ miss something important. Treat the warning as a to-do.
 
 1. Reads every `docs/0N-*.md` listed in its `$map`.
 2. For each, regenerates `.cline/skills/0N-name/SKILL.md`: front-matter,
-   the doc's `SKILL-SUMMARY` block (or, absent that, the first 80
-   non-empty lines, with a warning), and a footer pointing at the
-   canonical source.
+   the doc's `SKILL-SUMMARY` block (missing block = hard failure), and a
+   footer pointing at the canonical source.
 3. Validates that every skill directory has a `SKILL.md` and exits
    non-zero if any is missing.
 
@@ -122,5 +122,5 @@ if ($LASTEXITCODE -ne 0) {
 A new canonical source without a `$map` entry will be invisible to the
 sync script and the gate will not catch it. A `$map` entry pointing at
 a non-existent canonical source will fail-fast at sync time. A doc
-without a `SKILL-SUMMARY` block will still sync (via the fallback) but
-prints a warning every run until one is added.
+without a `SKILL-SUMMARY` block will fail the sync with a non-zero
+exit until one is added.

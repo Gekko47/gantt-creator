@@ -37,10 +37,16 @@ Describe 'check-cline-skills.ps1' {
             git -C $script:tempRoot commit -q -m 'init' | Out-Null
 
             # One canonical fixture source so the sync runs in isolation
-            # without needing all 7 real canonical files.
+            # without needing all 7 real canonical files. It carries a
+            # SKILL-SUMMARY block because the sync now fails on a doc
+            # without one (the truncation fallback is removed).
             $fixtureDoc = Join-Path $script:docs '99-FIXTURE.md'
             @'
 # Fixture document
+
+<!-- SKILL-SUMMARY:START -->
+This is a test canonical source.
+<!-- SKILL-SUMMARY:END -->
 
 This is a test canonical source.
 '@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8

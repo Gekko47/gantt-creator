@@ -96,5 +96,27 @@ $map = @{
             $proc.ExitCode | Should -Not -Be 0
             $combined | Should -Match 'Canonical source missing'
         }
+
+        It 'exits non-zero when the canonical doc has no SKILL-SUMMARY block (fallback removed)' {
+            # Regression guard for the removed truncation fallback: a mapped
+            # doc without the required block must fail the sync with a clear
+            # message, never silently degrade into a truncated summary.
+            @'
+# Fixture document without a summary block
+
+Just a body, no SKILL-SUMMARY markers anywhere.
+'@ | Set-Content -LiteralPath (Join-Path $script:docs '99-FIXTURE.md') -Encoding utf8
+
+            $outFile = Join-Path $script:tempRoot 'out-nosummary.txt'
+            $errFile = Join-Path $script:tempRoot 'err-nosummary.txt'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',$script:harnessSync,'-DocsRoot',$script:docs,'-SkillsRoot',$script:skills
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+
+            $proc.ExitCode | Should -Not -Be 0
+            $combined | Should -Match 'no SKILL-SUMMARY block'
+        }
     }
 }
