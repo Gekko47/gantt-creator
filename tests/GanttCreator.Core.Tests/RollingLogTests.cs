@@ -505,6 +505,24 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_latches_failure_when_log_directory_path_points_to_an_existing_file()
+    {
+        // Regression: Directory.CreateDirectory on a path occupied by an
+        // existing file throws IOException. The constructor must contain
+        // that failure through the permanent latch (like every other
+        // logging failure) instead of escaping into product code.
+        var occupiedPath = Path.Combine(_testLogDir, $"occupied-{Guid.NewGuid():N}");
+        File.WriteAllText(occupiedPath, "this is a file, not a directory");
+
+        using var log = new RollingLog(
+            occupiedPath, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3);
+
+        Assert.True(log.IsFailed);
+        log.Write("must be discarded");
+        Assert.True(log.IsFailed);
+    }
+
+    [Fact]
     public void Write_format_overload_is_culture_invariant()
     {
         // Checklist A culture-roundtrip: the formatted overload must use the

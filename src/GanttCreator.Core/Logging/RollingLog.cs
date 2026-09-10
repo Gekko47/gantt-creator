@@ -61,7 +61,20 @@ public sealed class RollingLog : IRollingLog
         _redactor = redactor ?? new Redactor();
         _timeProvider = timeProvider ?? TimeProvider.System;
 
-        _ = Directory.CreateDirectory(_logDirectory);
+        // CA1031: A logger must never propagate directory-creation failures
+        // (missing permissions, the path pointing at an existing file, ...)
+        // into product code. The failure is latched via MarkFailed so every
+        // subsequent write is discarded and IsFailed reports the condition.
+        try
+        {
+            _ = Directory.CreateDirectory(_logDirectory);
+        }
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            MarkFailed();
+        }
         RotateIfNeeded();
     }
 
