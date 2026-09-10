@@ -66,6 +66,7 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('cline-skills-' + [System.Gu
 $tmpSkills = Join-Path $tmp '.cline/skills'
 try {
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sync-cline-skills.ps1') `
+        -DocsRoot (Join-Path $repoRoot 'docs') `
         -SkillsRoot $tmpSkills 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
