@@ -88,4 +88,55 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
             Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'actionlint-hash.ps1 File mode accepts the pinned exe hash shape and rejects a mismatched one (child process)' {
+        # The executable-integrity check reuses the same standalone helper
+        # via its -FilePath parameter set (no network download needed).
+        $hashScript = Join-Path $script:repoRoot 'scripts\actionlint-hash.ps1'
+        (Test-Path -LiteralPath $hashScript) | Should -BeTrue
+
+        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('lint-ci-exe-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $td -Force | Out-Null
+        try {
+            $exePath = Join-Path $td 'actionlint.exe'
+            [IO.File]::WriteAllBytes($exePath, [Text.Encoding]::UTF8.GetBytes('actionlint-fixture-exe'))
+            $realHash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLower()
+
+            $accept = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $hashScript, '-FilePath', $exePath, '-ExpectedHash', $realHash
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput (Join-Path $td 'accept-out.txt') `
+                -RedirectStandardError (Join-Path $td 'accept-err.txt')
+            $accept.ExitCode | Should -Be 0
+
+            $badHash = ('f' * 63) + '0'
+            $reject = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $hashScript, '-FilePath', $exePath, '-ExpectedHash', $badHash
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput (Join-Path $td 'reject-out.txt') `
+                -RedirectStandardError (Join-Path $td 'reject-err.txt')
+            $reject.ExitCode | Should -Not -Be 0
+            $errOut = Get-Content -LiteralPath (Join-Path $td 'reject-err.txt') -Raw
+            $errOut | Should -Match 'SHA-256 mismatch'
+        }
+        finally {
+            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'pins a distinct, well-formed ExeSha256 for the cached-executable check' {
+        # The cached-executable validation needs its own pin (the archive
+        # hash cannot verify an extracted binary). It must be a 64-hex
+        # digest and differ from the archive pin.
+        $script:versions.actionlint.ExeSha256 | Should -Match '^[0-9a-f]{64}$'
+        $script:versions.actionlint.ExeSha256 | Should -Not -Be $script:versions.actionlint.Sha256
+    }
+
+    It 'lint-ci.ps1 validates the cached executable via actionlint-hash.ps1 before execution' {
+        # The cached-exe verification must run through the same standalone
+        # helper as the archive check (single integrity path), consuming the
+        # ExeSha256 pin from the psd1 at runtime rather than a literal.
+        $script:lintText | Should -Match 'actionlint\.ExeSha256'
+        $script:lintText | Should -Match "-FilePath .*-ExpectedHash"
+    }
 }

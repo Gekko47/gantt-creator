@@ -41,11 +41,29 @@ $exeName = "$toolName.exe"
 $zipName = "actionlint_${version}_windows_amd64.zip"
 $downloadUrl = $script:versions.actionlint.DownloadUrl -f $version
 $expectedHash = $script:versions.actionlint.Sha256
+$expectedExeHash = $script:versions.actionlint.ExeSha256
 $toolsDir = Join-Path $env:TEMP "actionlint-$version"
 $exePath = Join-Path $toolsDir $exeName
+$hashScript = Join-Path $PSScriptRoot 'actionlint-hash.ps1'
 
-# Download if not present
-if (-not (Test-Path -LiteralPath $exePath)) {
+# Cached-executable integrity: an already-downloaded exe is never trusted
+# blindly. Its SHA-256 is validated against the pinned ExeSha256 before
+# every execution; a missing or tampered cache is removed and replaced by
+# a fresh, hash-verified download instead of being used.
+$exeVerified = $false
+if (Test-Path -LiteralPath $exePath) {
+    & $hashScript -FilePath $exePath -ExpectedHash $expectedExeHash
+    if ($LASTEXITCODE -eq 0) {
+        $exeVerified = $true
+    }
+    else {
+        Write-Host 'Cached actionlint executable failed the SHA-256 check; removing the cache and redownloading...'
+        Remove-Item -LiteralPath $toolsDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Download if not present (or if the cached copy just failed verification).
+if (-not $exeVerified) {
     Write-Host "Downloading actionlint v$version..."
     try {
         if (-not (Test-Path -LiteralPath $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
@@ -56,13 +74,22 @@ if (-not (Test-Path -LiteralPath $exePath)) {
         # two invocations can never disagree; ci-parity.Tests.ps1 enforces
         # the equality. Both pins must stay identical. The check itself lives
         # in scripts/actionlint-hash.ps1 so it can be unit-tested offline.
-        & (Join-Path $PSScriptRoot 'actionlint-hash.ps1') -ZipPath $zipPath -ExpectedHash $expectedHash
+        & $hashScript -ZipPath $zipPath -ExpectedHash $expectedHash
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         Expand-Archive -Path $zipPath -DestinationPath $toolsDir -Force
         Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     }
     catch {
         Write-Error "Failed to download actionlint: $_"
+        exit 1
+    }
+
+    # Verify the freshly extracted executable against its own pin before
+    # use. A mismatch after a hash-verified archive download is a
+    # supply-chain failure: fail hard rather than execute the binary.
+    & $hashScript -FilePath $exePath -ExpectedHash $expectedExeHash
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $toolsDir -Recurse -Force -ErrorAction SilentlyContinue
         exit 1
     }
 }
