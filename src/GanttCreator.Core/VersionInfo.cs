@@ -9,7 +9,7 @@ public static class VersionInfo
     /// <summary>
     /// The full informational version string, suitable for <c>AssemblyInformationalVersion</c>.
     /// Format: <c>semver+commit-hash</c> when Git is available,
-    /// otherwise <c>0.0.0-local</c>.
+    /// otherwise <c>0.0.0+local</c>.
     /// </summary>
     public static readonly string InformationalVersion = ComputeVersion();
 
@@ -25,11 +25,11 @@ public static class VersionInfo
         // Read AssemblyInformationalVersionAttribute.InformationalVersion
         // from this assembly. Directory.Build.props sets InformationalVersion
         // at build time; if the attribute is absent (e.g., a partial-trust
-        // host or a stripped assembly), fall back to "0.0.0-local".
+        // host or a stripped assembly), fall back to "0.0.0+local".
         var attr = typeof(VersionInfo).Assembly
             .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
-        return string.IsNullOrEmpty(attr?.InformationalVersion) ? "0.0.0-local" : attr.InformationalVersion;
+        return string.IsNullOrEmpty(attr?.InformationalVersion) ? "0.0.0+local" : attr.InformationalVersion;
     }
 
     /// <summary>
@@ -46,16 +46,18 @@ public static class VersionInfo
             return "0.0.0";
         }
 
-        // Strip build metadata after '+'
-        var plus = informational.IndexOf('+', StringComparison.Ordinal);
-        var core = plus >= 0 ? informational[..plus] : informational;
-
-        // Special case: the fallback version "0.0.0-local" is a build-time marker,
-        // not a semver prerelease. Treat it as "0.0.0".
-        if (core == "0.0.0-local")
+        // Special case: the build-time fallback "0.0.0+local" (emitted by
+        // Directory.Build.props when no real version is set) is a marker,
+        // not a semver prerelease. Treat it as "0.0.0". Checked before the
+        // '+' strip so the full emitted value is matched exactly.
+        if (informational == "0.0.0+local")
         {
             return "0.0.0";
         }
+
+        // Strip build metadata after '+'
+        var plus = informational.IndexOf('+', StringComparison.Ordinal);
+        var core = plus >= 0 ? informational[..plus] : informational;
 
         // Strict semver major.minor.patch[-prerelease]. The numeric parts are
         // validated against ASCII digits only — never int.TryParse, whose

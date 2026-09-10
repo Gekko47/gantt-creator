@@ -34,7 +34,7 @@ public sealed class VersionInfoTests
     [Theory]
     [InlineData("1.2.3+abc123", "1.2.3")]
     [InlineData("2.0.0-beta.1+dirty", "2.0.0-beta.1")]
-    [InlineData("0.0.0-local", "0.0.0")]
+    [InlineData("0.0.0+local", "0.0.0")]
     [InlineData("10.5.2", "10.5.2")]
     [InlineData("1.2.3-beta.1", "1.2.3-beta.1")]
     [InlineData("-1.2.3", "0.0.0")]
