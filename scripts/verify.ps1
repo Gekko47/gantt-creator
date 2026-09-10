@@ -193,7 +193,7 @@ Invoke-Step 'coverage threshold check' {
         $linePct = [math]::Round($measured[$project].Line * 100, 2)
         $branchPct = [math]::Round($measured[$project].Branch * 100, 2)
         $flag = ''
-        if ($linePct -lt $expected.Line) { $flag = '  <-- below target (warning)' }
+        if ($linePct -lt $expected.Line -or $branchPct -lt $expected.Branch) { $flag = '  <-- below target (warning)' }
         $line = "{0}: measured line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
         Write-Host "  - $line"
         Add-Content -LiteralPath $report -Value "  $line"
