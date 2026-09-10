@@ -79,9 +79,21 @@ exit $ExitCode
 
         BeforeEach {
             $script:tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+            $script:baseTempDir = $script:tempDir
             $script:scriptsDir = Join-Path $script:tempDir 'scripts'
             $script:invocationLog = Join-Path $script:tempDir 'invocation.log'
             New-Item -ItemType Directory -Path $script:scriptsDir -Force | Out-Null
+
+            # The dirty-tree guard treats a git failure as a blocking
+            # condition, so the stub-checker tests must run inside a real
+            # (clean) git repo and exercise the normal checker loop — not
+            # rely on the git-failure bypass a non-repo directory would
+            # trigger. The repo is clean (empty-tree commit), so the guard
+            # passes and the checkers run.
+            git -C $script:tempDir init -q
+            git -C $script:tempDir config user.email 'test@local'
+            git -C $script:tempDir config user.name 'test'
+            git -C $script:tempDir commit -q -m 'init' --allow-empty
 
             # Copy the real pre-commit.ps1 verbatim. We do NOT dot-source it
             # or override its private $checks variable; the test exercises
@@ -92,8 +104,13 @@ exit $ExitCode
         }
 
         AfterEach {
-            if ($script:tempDir -and (Test-Path -LiteralPath $script:tempDir)) {
-                Remove-Item -LiteralPath $script:tempDir -Recurse -Force
+            # Tests that reassign $script:tempDir (the fixture-repo cases)
+            # orphan the directory BeforeEach created; remove both so neither
+            # leaks into the next test or the temp folder.
+            foreach ($dir in @($script:tempDir, $script:baseTempDir)) {
+                if ($dir -and (Test-Path -LiteralPath $dir)) {
+                    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
         }
 

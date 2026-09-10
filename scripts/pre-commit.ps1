@@ -51,10 +51,20 @@ $inspectedRoots = @('docs', '.cline/skills', 'AGENTS.md', '.github')
 # after staging. `git status --porcelain` would also flag staged changes
 # (`M `), which would make the hook block every commit touching an
 # inspected root — unusable. So we use `git diff` for the working-tree
-# half and `git status` only for the untracked (`??`) half.
+# half and `git status` only for the untracked (`??`) half. A git failure
+# itself (not a repo, git missing, lock contention) is a BLOCKING
+# condition: the guard must never let a failed inspection read as a pass.
 $unstaged = git -C $repoRoot diff --name-only -- $inspectedRoots 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host '[pre-commit] git diff failed while inspecting the working tree. Commit blocked (a failed inspection is never treated as a pass).'
+    exit 1
+}
 $untracked = git -C $repoRoot status --porcelain -- $inspectedRoots 2>$null | Where-Object { $_.StartsWith('??') }
-if ($LASTEXITCODE -eq 0 -and ($unstaged -or $untracked)) {
+if ($LASTEXITCODE -ne 0) {
+    Write-Host '[pre-commit] git status failed while inspecting the working tree. Commit blocked (a failed inspection is never treated as a pass).'
+    exit 1
+}
+if ($unstaged -or $untracked) {
     Write-Host '[pre-commit] Working tree has unstaged and/or untracked changes under the inspected roots:'
     if ($unstaged) { $unstaged | ForEach-Object { Write-Host "  $_" } }
     if ($untracked) { $untracked | ForEach-Object { Write-Host "  $_" } }
