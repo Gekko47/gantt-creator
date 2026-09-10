@@ -42,6 +42,12 @@ $coverageThresholds = @{
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 . (Join-Path $scriptRoot 'verify-helpers.ps1')
+# Default the solution against the repository root (not the caller's CWD)
+# so the gate works from any working directory. An explicitly supplied
+# -Solution is honoured exactly as given.
+if (-not $PSBoundParameters.ContainsKey('Solution')) {
+    $Solution = Join-Path (Split-Path -Parent $scriptRoot) 'GanttCreator.slnx'
+}
 $artifacts  = Join-Path $scriptRoot '_artifacts'
 if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
 $report = Join-Path $artifacts 'verify.txt'

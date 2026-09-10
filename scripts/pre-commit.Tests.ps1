@@ -86,7 +86,7 @@ exit $ExitCode
 
             # The dirty-tree guard treats a git failure as a blocking
             # condition, so the stub-checker tests must run inside a real
-            # (clean) git repo and exercise the normal checker loop — not
+            # (clean) git repo and exercise the normal checker loop, not
             # rely on the git-failure bypass a non-repo directory would
             # trigger. The repo is clean (empty-tree commit), so the guard
             # passes and the checkers run.
