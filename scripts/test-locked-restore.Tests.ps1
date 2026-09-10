@@ -128,11 +128,17 @@ Describe 'test-locked-restore.ps1' {
                 # `dotnet` shim. The .cmd wrapper hands its argv to a
                 # .ps1 stub so the captured argv is exact and free of
                 # cmd-quoting noise. Each call appends a line of the
-                # form `dotnet <args>` to the invocation log.
+                # form `dotnet <args> nugget_packages=<set|unset>` to the
+                # invocation log. The stub mirrors the real blocked-source
+                # behaviour the script relies on: when NUGET_PACKAGES is
+                # isolated to the empty control directory, package
+                # acquisition fails (exit 1); otherwise restore
+                # succeeds (exit 0).
                 $script:dotnetStubPs1 = Join-Path $script:stubDir 'dotnet-impl.ps1'
                 $stubPs1 = @"
 `$ErrorActionPreference = 'Stop'
-Add-Content -LiteralPath '$($script:invocationLog)' -Value ('dotnet ' + (`$args -join ' '))
+Add-Content -LiteralPath '$($script:invocationLog)' -Value ('dotnet ' + (`$args -join ' ') + ' nugget_packages=' + `$(if (`$env:NUGET_PACKAGES) { 'set' } else { 'unset' }))
+if (`$env:NUGET_PACKAGES) { exit 1 }
 exit 0
 "@
                 Set-Content -LiteralPath $script:dotnetStubPs1 -Value $stubPs1 -Encoding utf8NoBOM
@@ -183,15 +189,15 @@ function Remove-ObjDirectory {
     & `$originalRemoveObjBody @args
 }
 function Invoke-LockRestore {
-    param([string]`$Label)
+    param([string]`$Label, [string]`$ConfigFile, [switch]`$ExpectFailure)
     Add-Content -LiteralPath '$($script:invocationLog)' -Value ('Invoke-LockRestore ' + `$Label)
-    & `$originalRestoreBody -Label `$Label
+    & `$originalRestoreBody @PSBoundParameters
 }
 
 # The script's own top-level statements, extracted from its parsed AST
 # above, so the harness always replays exactly the sequence the script
-# defines (cleanup, restore, cleanup, restore) instead of a hardcoded
-# copy of it.
+# defines (two clean restores, a denied-network control, an offline
+# restore) instead of a hardcoded copy of it.
 $topLevelCode
 "@
                 Set-Content -LiteralPath $script:harnessPath -Value $harnessBody -Encoding utf8NoBOM
@@ -240,27 +246,56 @@ $topLevelCode
             Test-Path -LiteralPath $script:objOutside | Should -BeTrue
         }
 
-        It 'invokes two locked-mode restores each carrying --no-cache' {
+        It 'invokes four locked-mode restores; the two blocked ones carry the unreachable configfile' {
             Invoke-LockedRestoreHarness
             $script:runExitCode | Should -Be 0
 
-            # Two Invoke-LockRestore calls in the recording log prove
-            # two restore attempts; the `dotnet` shim lines carry the
+            # Four Invoke-LockRestore calls in the recording log prove
+            # four restore attempts; the `dotnet` shim lines carry the
             # exact argv so we can check --locked-mode and --no-cache.
             $log = Get-Content -LiteralPath $script:invocationLog
             $restoreCalls = @($log | Where-Object { $_ -match '^Invoke-LockRestore ' })
-            $restoreCalls.Count | Should -Be 2
+            $restoreCalls.Count | Should -Be 4
 
             $dotnetCalls = @($log | Where-Object { $_ -match '^dotnet ' })
-            $dotnetCalls.Count | Should -Be 2
+            $dotnetCalls.Count | Should -Be 4
             foreach ($line in $dotnetCalls) {
                 $line | Should -Match '--locked-mode'
                 $line | Should -Match '--no-cache'
                 $line | Should -Match 'GanttCreator\.slnx'
             }
+
+            # Runs 3 (control) and 4 (offline) point at the generated
+            # blocked NuGet.config and disable NuGetAudit (documented in
+            # the script header).
+            $blockedCalls = @($dotnetCalls | Where-Object { $_ -match '--configfile' })
+            $blockedCalls.Count | Should -Be 2
+            foreach ($line in $blockedCalls) {
+                $line | Should -Match 'nuget-blocked-[0-9a-f-]+\.config'
+                # The cmd/pwsh -File stub re-parses the attached
+                # `-p:NuGetAudit=false` token into `-p NuGetAudit=false`;
+                # both forms are equivalent MSBuild property syntax and the
+                # real script passes the attached form.
+                $line | Should -Match '-p[: ]NuGetAudit=false'
+            }
         }
 
-        It 'runs Remove-ObjDirectory before each restore' {
+        It 'fails the negative control (blocked source, empty cache) and still exits 0' {
+            # The stub `dotnet` exits non-zero exactly when NUGET_PACKAGES
+            # points at the isolated empty directory, mirroring the real
+            # blocked-source behaviour. An overall exit 0 therefore proves
+            # the control ran with isolation, was expected to fail, did
+            # fail, and did not abort the sequence before the offline run.
+            Invoke-LockedRestoreHarness
+            $script:runExitCode | Should -Be 0
+
+            $log = Get-Content -LiteralPath $script:invocationLog
+            $isolated = @($log | Where-Object { $_ -match '^dotnet .* nugget_packages=set' })
+            $isolated.Count | Should -Be 1 -Because 'exactly the negative-control restore must run with the isolated empty NUGET_PACKAGES'
+            $isolated[0] | Should -Match '--configfile'
+        }
+
+        It 'runs Remove-ObjDirectory before each success-expected restore with the control between runs 2 and 4' {
             # The recording wrappers append one line per helper call
             # in invocation order, so the helper-call lines in the
             # log ARE the execution trace. The `dotnet` shim also
@@ -274,12 +309,17 @@ $topLevelCode
             $helperTrace = @($log | Where-Object { $_ -match '^(Remove-ObjDirectory|Invoke-LockRestore)' })
             # Labels are the script's own top-level -Label arguments (the
             # harness now replays the script's real sequence, not a
-            # hardcoded abbreviated copy of it).
+            # hardcoded abbreviated copy of it). The control does not need
+            # a preceding obj/ cleanup, so no Remove-ObjDirectory line
+            # precedes it.
             $helperTrace | Should -Be @(
                 'Remove-ObjDirectory',
                 'Invoke-LockRestore Run 1 -- generate lock files (no cache)',
                 'Remove-ObjDirectory',
-                'Invoke-LockRestore Run 2 -- honour lock files, no network'
+                'Invoke-LockRestore Run 2 -- honour lock files from clean state',
+                'Invoke-LockRestore Run 3 control -- empty cache with blocked sources must fail',
+                'Remove-ObjDirectory',
+                'Invoke-LockRestore Run 4 -- locked restore with no reachable source (offline proof)'
             )
         }
     }
