@@ -21,17 +21,15 @@ Describe 'pre-commit.ps1' {
         $codeOnly | Should -Match 'check-md-links\.ps1'
         $codeOnly | Should -Not -Match 'check-skill-summary\.ps1'
         # Must not INVOKE verify-quick.ps1 in the executable portion.
-        $codeOnly | Should -Not -Match '(pwsh|\$\(|&)\s.*verify-quick\.ps1'
+        $codeOnly | Should -Not -Match '(pwsh|\$\(|&)\s?.*verify-quick\.ps1'
     }
 
     It 'fails fast with a non-zero exit and the blocking message' {
-        # The script must surface a 'Commit blocked' line and propagate
-        # a non-zero exit code. The exact token used to do that is an
-        # implementation detail (previously xit $LASTEXITCODE; now
-        # xit $checkerExit after the $LASTEXITCODE-reset fix).
+        # The script must surface a 'Commit blocked' line on failure.
+        # Exit-code propagation is covered by the behavioral tests
+        # (Start-Process invocation) later in this file.
         $content = Get-Content -LiteralPath $script:scriptPath -Raw
         $content | Should -Match 'Commit blocked'
-        $content | Should -Match 'exit \$checkerExit'
     }
 
     Context 'gate behavior (with stub checkers)' {

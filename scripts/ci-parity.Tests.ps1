@@ -187,8 +187,12 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
     }
 
     It 'actionlint SHA-256 in ci.yml equals the value in tool-versions.psd1' {
+        # Scope the match to the actionlint step block so the hash is taken
+        # from the download pin, not from anywhere else in the workflow.
+        $block = Get-CiStepBlock -Text $script:ciText -StepName 'Workflow lint (actionlint)'
+        $block | Should -Not -BeNullOrEmpty
         $localHash = $script:versions.actionlint.Sha256
-        $ciHash = [regex]::Match($script:ciText, '[0-9a-f]{64}').Value
+        $ciHash = [regex]::Match($block, '[0-9a-f]{64}').Value
         $ciHash | Should -Be $localHash
     }
 

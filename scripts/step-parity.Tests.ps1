@@ -44,6 +44,14 @@ Describe 'verify scripts: .DESCRIPTION step numbers match Invoke-Step names' {
         $steps.Count | Should -Be $desc.Count
     }
 
+    It 'verify.ps1: .DESCRIPTION numbering is sequential from 1' {
+        $desc = Read-VerifyDescriptionStepNumber -Path $script:verifyFull
+        # The .DESCRIPTION numbering starts at 1 and increments by 1.
+        for ($i = 0; $i -lt $desc.Count; $i++) {
+            $desc[$i] | Should -Be ($i + 1)
+        }
+    }
+
     It 'verify.ps1: every Invoke-Step name is non-empty and unique' {
         $steps = Read-VerifyStepName -Path $script:verifyFull
         $steps | Should -Not -BeNullOrEmpty
@@ -75,16 +83,20 @@ Describe 'W9 no-silent-pass: gate scripts fail on empty input' {
         # foreach over roots does continue for every entry (Test-Path
         # returns false) and $scanned stays at 0 -- the documented
         # no-silent-pass branch.
-        $scriptPath = Join-Path $script:repoRoot 'scripts\check-md-links.ps1'
-        $proc = Start-Process -FilePath pwsh -ArgumentList @(
-            '-NoProfile','-File',$scriptPath,'-Roots','nonexistent-only','-Entry','nonexistent-only'
-        ) -NoNewWindow -Wait -PassThru `
-            -WorkingDirectory $env:TEMP `
-            -RedirectStandardOutput (Join-Path $env:TEMP 'md-empty-out.txt') `
-            -RedirectStandardError (Join-Path $env:TEMP 'md-empty-err.txt')
-        $proc.ExitCode | Should -Not -Be 0
-        Remove-Item -LiteralPath (Join-Path $env:TEMP 'md-empty-out.txt') -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path $env:TEMP 'md-empty-err.txt') -Force -ErrorAction SilentlyContinue
+        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('md-empty-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $td -Force | Out-Null
+        try {
+            $scriptPath = Join-Path $script:repoRoot 'scripts\check-md-links.ps1'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',$scriptPath,'-Roots','nonexistent-only','-Entry','nonexistent-only'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput (Join-Path $td 'out.txt') `
+                -RedirectStandardError (Join-Path $td 'err.txt')
+            $proc.ExitCode | Should -Not -Be 0
+        }
+        finally {
+            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'check-md-links.ps1: non-empty scan with valid links is a PASS (positive control)' {
