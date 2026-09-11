@@ -102,7 +102,7 @@ public static class ExportSize
     /// <exception cref="ArgumentOutOfRangeException">A dimension value is
     /// not finite, or sceneWidthPt or sceneHeightPt is not greater than
     /// zero, or the computed pixel dimensions exceed the per-axis limit of
-    /// 65,535 px or
+    /// <see cref="MaxPixelDimension"/> or
     /// the total pixel budget of <see cref="MaxTotalPixels"/>, or a sub-pixel
     /// request rounds to a zero dimension.
     /// </exception>
