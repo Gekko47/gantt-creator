@@ -44,7 +44,12 @@
          concrete types, and let exceptions propagate (CA1031). If a specific
          test legitimately needs one of these, add a narrow scope-level
          suppression with a written justification. -->
-    <NoWarn>$(NoWarn);CA1707;IDE0011</NoWarn>
+    <!-- CA2007 suppressed: xUnit's analyzer (xUnit1030) requires
+         ConfigureAwait(true) or no ConfigureAwait in test methods; CA2007
+         demands ConfigureAwait(false) for library code. These rules
+         conflict in test code, and xUnit's rule takes precedence.
+         ConfigureAwait(true) is used throughout to satisfy both. -->
+    <NoWarn>$(NoWarn);CA1707;IDE0011;CA2007</NoWarn>
 
     <!--
       Test projects do not emit XML documentation files. The root
