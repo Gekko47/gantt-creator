@@ -16,4 +16,17 @@
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
     <ProjectReference Include="..\..\src\GanttCreator.Office\GanttCreator.Office.csproj" />
   </ItemGroup>
+
+  <!--
+    Enforces the docs/04-TEST-STRATEGY.md harness rule "serialize all tests
+    in one collection" (parallelizeTestCollections/parallelizeAssembly=false
+    in xunit.runner.json). The runner only honours the file when it is
+    copied to the test output directory, so it is wired here explicitly.
+    Deleting or skipping this file silently restores xUnit's default
+    per-class parallel collections and re-opens the Excel process-diffing
+    race in OfficeFixture.InitializeAsync.
+  -->
+  <ItemGroup>
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
