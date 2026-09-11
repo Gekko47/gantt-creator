@@ -222,8 +222,6 @@ Counts above reflect the `7d69419` tree; run `pwsh scripts/test-scripts.ps1` for
 
 ## Suggested follow-up (not a roadmap item)
 
-- Add the path-traversal `It` case to `check-status.Tests.ps1`
-  (risk 1).
 - Consider extracting a `New-ScriptHarness -RepoRoot ...` helper
   into `scripts/test-helpers.ps1` once a fifth script test is
   added, to keep the `BeforeEach` blocks from drifting in style.

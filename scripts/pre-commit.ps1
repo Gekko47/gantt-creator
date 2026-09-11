@@ -15,7 +15,7 @@
       1. skill-tree drift (check-cline-skills.ps1: working tree must
          be clean under docs/ and .cline/skills/)
       2. STATUS.md accuracy (check-status.ps1)
-      3. Markdown link sanity (check-md-links.ps1) -- staged docs only
+      3. Markdown link sanity (check-md-links.ps1) -- scans the documentation tree
 
     Exit 0 allows the commit; exit 1 blocks it. The commit is not
     aborted mid-flight; this script runs BEFORE the commit object is

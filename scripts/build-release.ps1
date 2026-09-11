@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Single source of truth for the Release build command shared by
-    verify-quick.ps1 step 10, verify.ps1 step 10, and the GitHub CI
+    verify-quick.ps1 step 9, verify.ps1 step 9, and the GitHub CI
     'Build Release (warnings as errors)' step. Inline `dotnet build` in
     ci.yml is forbidden by scripts/ci-parity.Tests.ps1 (W8); this entry
     point is the replacement, so local and CI cannot drift.

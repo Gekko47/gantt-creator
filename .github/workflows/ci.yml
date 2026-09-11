@@ -91,9 +91,16 @@ jobs:
         run: |
           $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
           $pssaVersion = $versions.PSScriptAnalyzer.Version
-          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+          # Verify the exact pinned version is available, not merely any
+          # installed PSScriptAnalyzer release. Install that version when
+          # absent, then explicitly import it before Invoke-PssaGate runs so
+          # the gate exercises the pinned module rather than a stale one left
+          # on the runner image.
+          $pssaInstalled = Get-Module -ListAvailable PSScriptAnalyzer | Where-Object { $_.Version -eq [version]$pssaVersion }
+          if (-not $pssaInstalled) {
             Install-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -Scope CurrentUser -Force
           }
+          Import-Module PSScriptAnalyzer -RequiredVersion $pssaVersion
           # Delegate to the same Invoke-PssaGate entry point as
           # verify-quick.ps1 / verify.ps1 (scripts/verify-helpers.ps1). Never
           # call -EnableExit directly: the function-level `exit` is swallowed
@@ -139,7 +146,7 @@ jobs:
 
       - name: Build Release (warnings as errors)
         # Delegates to scripts/build-release.ps1, the same entry point as
-        # verify-quick.ps1 step 10 / verify.ps1 step 10. Inline dotnet
+        # verify-quick.ps1 step 9 / verify.ps1 step 9. Inline dotnet
         # build is forbidden by scripts/ci-parity.Tests.ps1 (W8).
         run: |
           pwsh -NoProfile -File scripts/build-release.ps1 -Solution GanttCreator.slnx -Configuration Release
@@ -147,7 +154,7 @@ jobs:
 
       - name: Publish AddIn (packed XLL artifact)
         # Delegates to scripts/publish-addin.ps1, the same entry point as
-        # verify-quick.ps1 step 11 / verify.ps1 step 11. Inline dotnet
+        # verify-quick.ps1 step 10 / verify.ps1 step 10. Inline dotnet
         # publish is forbidden by scripts/ci-parity.Tests.ps1 (W8).
         run: |
           pwsh -NoProfile -File scripts/publish-addin.ps1 -Configuration Release
@@ -155,7 +162,7 @@ jobs:
 
       - name: Test (OfficeIntegration excluded)
         # Delegates to scripts/test-non-office.ps1, the same entry point
-        # as verify-quick.ps1 step 12. Inline dotnet test / Pester
+        # as verify-quick.ps1 step 11. Inline dotnet test / Pester
         # invocation logic in the workflow is forbidden by
         # scripts/ci-parity.Tests.ps1 (W8): a test command inlined here
         # can drift from the pinned script gate.

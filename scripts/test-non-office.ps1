@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Single source of truth for the `dotnet test` invocation shared by
-    verify-quick.ps1 step 12 and the GitHub CI
+    verify-quick.ps1 step 11 and the GitHub CI
     'Test (OfficeIntegration excluded)' step. Inline `dotnet test` in
     ci.yml is forbidden by scripts/ci-parity.Tests.ps1 (W8), for the
     same reason inline Pester is: a test command inlined in the workflow

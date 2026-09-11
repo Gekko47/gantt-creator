@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Single source of truth for the AddIn publish command shared by
-    verify-quick.ps1 step 11, verify.ps1 step 11, and the GitHub CI
+    verify-quick.ps1 step 10, verify.ps1 step 10, and the GitHub CI
     'Publish AddIn (packed XLL artifact)' step. Inline `dotnet publish`
     in ci.yml is forbidden by scripts/ci-parity.Tests.ps1 (W8); this
     entry point is the replacement, so local and CI cannot drift.
