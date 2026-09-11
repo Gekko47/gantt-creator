@@ -9,7 +9,7 @@
 
 ## Active work item
 
-- _none — Phase 0 complete; Phase 1 (Excel-DNA host and Ribbon shell) not yet started_
+- **R1.1 — Excel-DNA 1.9 entry point with `AutoOpen`/`AutoClose` logging** (in progress). `docs/work-items/R1.1-exceldna-entry-point.md` records outcome, scope, exclusions, and gates. New AddIn code: `AddInHost` (implements `ExcelDna.Integration.IExcelAddIn` — API verified by reflection against the installed `ExcelDna.Integration` 1.9.0 assembly), `AddInIdentity`, `AddInLifecycle`, `AddInLogFactory`; log location decision (human-approved 2026-09-12): `%LOCALAPPDATA%\GanttCreator\logs` with temp fallback, written by Core's `RollingLog`, identifier fields only (version, Excel version, bitness, XLL file name — never workbook content). Contract tests in `tests/GanttCreator.AddIn.Tests/`: entry-point reflection contract, one-record-per-call lifecycle shape, never-throw guarantees (log-source, identity-source, and log-write failures all degrade without propagating), factory layout/fallback/latch behaviour. Gates observed: `dotnet test -c Release tests/GanttCreator.AddIn.Tests` 22/22 PASS (242 ms); Architecture 19/19; `pwsh ./scripts/verify-quick.ps1` → PASS in 139.0 s (11/11 steps: PSSA, actionlint, Pester 96/96, restore, format, Release build 0/0, packed-XLL publish, non-Office tests). Office gate (F5 x64 XLL, AutoOpen/AutoClose breakpoints): Not run — requires Visual Studio against desktop Excel.
 
 ## Recently completed
 
