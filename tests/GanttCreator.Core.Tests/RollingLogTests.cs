@@ -308,6 +308,34 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_rejects_whitespace_only_log_directory()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            new RollingLog("   ", _baseName, maxFileSizeBytes: 1024, maxFileCount: 3));
+        Assert.Equal("logDirectory", ex.ParamName);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_rejects_non_positive_max_file_size_bytes(long maxFileSizeBytes)
+    {
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: maxFileSizeBytes, maxFileCount: 3));
+        Assert.Equal("maxFileSizeBytes", ex.ParamName);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_rejects_non_positive_max_file_count(int maxFileCount)
+    {
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: maxFileCount));
+        Assert.Equal("maxFileCount", ex.ParamName);
+    }
+
+    [Fact]
     public void Write_after_Dispose_is_silently_rejected()
     {
         var log = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3);
