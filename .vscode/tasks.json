@@ -3,7 +3,7 @@
   "tasks": [
     {
       "label": "verify-quick",
-      "detail": "Runs format check, Release build and AddIn publish, and non-Office unit tests (~10 s).",
+      "detail": "Runs format check, Release build and AddIn publish, and non-Office unit tests (~2-5 min; runtime depends on the machine).",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -21,7 +21,7 @@
     },
     {
       "label": "verify-full",
-      "detail": "Runs format/analyzer check, Release build and AddIn publish, non-Office tests with coverage, and hygiene checks (~60 s). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
+      "detail": "Runs format/analyzer check, Release build and AddIn publish, non-Office tests with coverage, and hygiene checks (~2-6 min; runtime depends on the machine). Use test-all or scripts/verify-office.ps1 for OfficeIntegration tests.",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -39,7 +39,7 @@
     },
     {
       "label": "test",
-      "detail": "Runs all non-Office tests (dotnet test, OfficeIntegration excluded).",
+      "detail": "Runs all non-Office tests (dotnet test, OfficeIntegration excluded). Publishes the AddIn first because AddInAssemblyTests consume the packed XLL.",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -52,6 +52,9 @@
       },
       "problemMatcher": [
         "$msCompile"
+      ],
+      "dependsOn": [
+        "publish-addin"
       ]
     },
     {

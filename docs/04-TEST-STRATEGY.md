@@ -1,8 +1,35 @@
 # Test strategy
 
+
+<!-- SKILL-SUMMARY:START -->
+Test layers, per-project coverage policy, the Core/raster/Office test
+catalogues, golden-image process, and the flaky-test policy.
+
+Do not get wrong:
+- "Cover the whole codebase" means every production component has an
+  appropriate automated or explicitly recorded host test — it does
+  NOT mean chasing a 100% line-coverage number.
+- Golden image updates require human review, a stated reason, and a
+  dedicated commit — never bundled with unrelated behaviour changes.
+- Office integration tests are tagged `OfficeIntegration`, serialize
+  access, start from clean fixtures, and clean up in `finally`.
+- Test observable behaviour, not private method implementation; Core
+  and scene/layout tests must be deterministic and parallel-safe.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+- `dotnet_test` — run tests and report coverage; the primary tool for every test-layer obligation.
+- `dotnet_build` — verify the solution builds before running tests.
+- `dotnet_packages` — check for outdated/vulnerable NuGet packages.
+- `vscode-mcp__get_diagnostics` — get compiler-grade diagnostics faster than `tsc --noEmit` / raw build.
+- `ast_grep_search` — find anti-patterns (`Thread.Sleep`, arbitrary delays, catch-and-ignore) across the codebase.
+- `search_codebase` / `grep_files` — trace acceptance criterion IDs to specific test names (traceability map).
+- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — the authoritative local gates.
+<!-- SKILL-TOOLS:END -->
+
 ## Test objective
 
-Testing must prove the domain and rendering logic without Office, then prove the thin Office adapters on a controlled Windows machine. “Cover the whole codebase” means every production component has an appropriate automated or explicitly recorded host test; it does not mean pursuing a misleading 100% line-coverage number.
+Testing must prove the domain and rendering logic without Office, then prove the thin Office adapters on a controlled Windows machine. Test observable behaviour, not private method implementation. Core and scene/layout tests must be deterministic and parallel-safe. “Cover the whole codebase” means every production component has an appropriate automated or explicitly recorded host test; it does not mean pursuing a misleading 100% line-coverage number.
 
 ## Test layers
 
@@ -92,6 +119,57 @@ domain-specific catalogue above. See also `docs/08-TEST-CHECKLIST.md`.
 - Every test that reads from `bin/` or `publish/` must be traceable to a
   step in `verify-quick.ps1` / `verify.ps1` that produces that artifact. The
   guarantee is documented in the work item, not assumed by the test.
+- Enforced automatically: every `tests/**/*.cs` that references `bin/` or
+  `publish/` must carry a `// artifact-source: <step-name>` marker
+  comment. `tests/GanttCreator.Architecture.Tests/ArtifactSourceMarkerTests`
+  asserts the rule on every commit. See "Artifact-source markers (W10)" in
+  `docs/05-GIT-QUALITY.md` for the rationale and the marker format.
+
+### Gate integrity (W-13)
+
+A gate that reports PASS while its target failure exists is the most
+expensive defect class: the CI badge turns green, the PR is approved,
+and the defect ships to production. The PSScriptAnalyzer step in
+`verify-quick.ps1` was blind for the entire R0.8 round because
+`Invoke-ScriptAnalyzer -EnableExit` calls `exit` from inside a function,
+and the parent process's `$LASTEXITCODE` is not updated when the cmdlet
+runs inside a Tee/ForEach pipeline in `Invoke-Step`. Every script gate
+that runs in a pipeline must obey three rules:
+
+- **Capture, then judge, in the same scope.** Call the gate cmdlet,
+  store its findings in a local variable, and decide in that same block
+  whether to `Write-Error; exit 1`. Do not rely on `-EnableExit`,
+  `throw`, or any function-level exit signal to propagate through a
+  pipeline.
+- **No-silent-pass on empty input.** A clean analysis of a discovered,
+  non-trivial input may PASS with zero findings; that is the normal good
+  result. The gate must FAIL — with an actionable error message, never a
+  silent PASS — only when input discovery yields no files or items to
+  check, because an empty scan proves nothing about the target. Concrete
+  examples in the repo: `check-md-links.ps1` fails when its scan finds
+  zero markdown files; `test-scripts.ps1` fails when no test files are
+  discovered or a discovered file contains zero tests. Enforced by
+  `scripts/step-parity.Tests.ps1` (W9) and `scripts/ci-parity.Tests.ps1`
+  (W8).
+- **Positive-control test for every gate.** Every `Invoke-Step` that
+  reports PASS must have a Pester test that proves the step would
+  FAIL on a synthetic failure input. `scripts/pssa-gate.Tests.ps1` is
+  the worked example: it constructs a fixture with a known PSSA
+  warning, runs the analyzer through the same capture-then-judge path
+  the gate uses, and asserts the findings are returned. A future
+  regression that makes the step blind again fails this test.
+
+### Step-parity (W9)
+
+Every verify script's `.DESCRIPTION` block numbers the steps it runs.
+The numbers and the actual `Invoke-Step` calls must agree. A drift
+between the two is a docs/code defect that lies to the reader about
+what the gate does. The contract is enforced by
+`scripts/step-parity.Tests.ps1`:
+- The number of `Invoke-Step '...' { ... }` calls equals the count of
+  numbered lines in the `.DESCRIPTION` block.
+- The names are non-empty and unique.
+- Both verify-quick.ps1 and verify.ps1 carry this property.
 
 ### NoWarn scope
 
@@ -237,3 +315,14 @@ Residual risk: <one sentence or None known>
 ```
 
 Only observed output is reported.
+
+## Pre-flight checklist
+
+Before declaring a test gate green, run these tools and observe their output:
+
+1. `dotnet_test` on the targeted project — must PASS.
+2. `dotnet_build` in Release — must succeed (the gate that CI runs).
+3. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS.
+4. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
+5. `ast_grep_search` for `Thread.Sleep` / `Task.Run` around COM in changed files — must find none.
+6. `search_codebase` to confirm the changed test name is referenced by the work-item acceptance criterion (traceability).

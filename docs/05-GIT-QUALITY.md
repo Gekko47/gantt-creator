@@ -1,11 +1,45 @@
 # Git, quality gates, and review
 
+
+<!-- SKILL-SUMMARY:START -->
+Branch/review policy, commit design, local gates, CI parity, and the
+pull-request/review checklist.
+
+Do not get wrong:
+- A phase may not exit on local-only evidence: the branch must be
+  pushed and GitHub CI must have been observed green (the W-12 rule —
+  added after the PSSA blind-gate defect survived three local-only
+  "all green" QA rounds).
+- Conventional Commit prefixes only (`feat:`, `fix:`, `test:`,
+  `refactor:`, `docs:`, `build:`, `chore:`); one concern per commit.
+- Never rewrite shared history (amend/rebase/force-push) without
+  explicit instruction.
+- Comments only when they add current, non-obvious value; remove stale
+  ones in the touched area. Work items and STATUS are control records,
+  not diaries.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+- `git_tool` (`status`, `diff`, `log`, `diff --check`) — inspect commits, check for conflict markers, verify Conventional Commit prefixes.
+- `github__list_commits` — verify commit history and push status.
+- `github__get_pull_request` / `github__get_pull_request_files` / `github__get_pull_request_reviews` — execute the review checklist against actual PR content.
+- `github__get_pull_request_status` — verify CI is green before merging (W-12 rule).
+- `github__create_pull_request_review` — submit structured reviews.
+- `pwsh_run` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
+- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
+<!-- SKILL-TOOLS:END -->
+
 ## Branch and review policy
 
 - Protect `main`: pull requests, passing required checks, and one human approval.
 - Name branches `type/roadmap-id-short-description`, for example `feat/r3-09-stacked-events`.
 - Rebase/merge policy is a team choice; do not let an agent rewrite shared history.
 - No direct production release from an unreviewed local working tree.
+- **A phase may not exit on local-only evidence.** The branch must be
+  pushed and the GitHub CI gate must have been observed green for the
+  work item. Local PASSes alone are insufficient — the W-12 amendment
+  was added after the PSSA blind-gate defect survived three QA rounds
+  because CI had never been run on the branch.
 
 ## Commit design
 
@@ -31,6 +65,10 @@ Tests cover shuffled input, duplicate stack values, and clipping.
 
 Do not use messages such as `updates`, `fix stuff`, or an agent transcript.
 
+## Control-record discipline
+
+Keep the work item and status concise; they are control records, not diaries.
+
 ## Local gates
 
 During editing:
@@ -49,9 +87,69 @@ git diff --stat
 git diff
 ```
 
+## Pre-flight checklist
+
+Before declaring a commit or PR green, run these tools and observe their output:
+
+1. `dotnet_test` on the targeted project — must PASS.
+2. `pwsh_run` with `scripts/verify-quick.ps1` (during editing) or `scripts/verify.ps1` (before PR) — must PASS.
+3. `git_tool` with `diff --check` — must show no conflict markers or whitespace drift.
+4. `git_tool` with `log --oneline -1` — verify Conventional Commit prefix.
+5. `github__get_pull_request_status` (if a PR exists) — must show `success` (W-12 rule).
+6. `memra_add` — record the green state as a fact with the commit hash and CI run URL.
+
+Pre-commit safety net (optional, recommended):
+
+```powershell
+pwsh ./scripts/install-pre-commit.ps1
+```
+
+Once installed, every `git commit` runs the fast deterministic gates
+(skill-tree drift, STATUS.md accuracy,
+markdown-link sanity) before the commit is created. A failure aborts
+the commit. The hook deliberately does **not** run `verify-quick.ps1`
+(~2-5 minutes build + test; runtime depends on the machine) so a commit
+is not slowed down; the developer still runs `verify-quick.ps1` during
+editing and `verify.ps1` before a PR.
+See `AGENTS.md` and `scripts/pre-commit.ps1` for the full contract.
+
 Quick verification runs format check, Release build, and non-Office tests without coverage packaging. Full verification runs locked restore, format/analyzers, Release build, all non-Office tests with configured coverage thresholds, and repository hygiene checks.
 
 Do not commit when a gate is red. Do not bypass the script by running only the test that passes.
+
+## CI parity (W8)
+
+The CI workflow and the local verify scripts must agree on every step. The
+defect class "local says PASS, CI says FAIL because the two views diverged"
+includes:
+  - inline `dotnet test`/`dotnet build`/`dotnet publish`/`Invoke-Pester`
+    calls in `ci.yml` that drift
+    from the version-pinned `scripts/*.ps1` entry points (Pester 4→6+
+    removed the `-Script` parameter; the first CI push of `stage-inspect`
+    would have failed on it);
+  - a tool pin declared in two places (e.g. actionlint SHA-256 in
+    both `ci.yml` and `lint-ci.ps1`) that is patched in one but not the
+    other;
+  - a script-side gate that silently passes locally but fails on the
+    CI runner (e.g. the Phase-C PSScriptAnalyzer `-EnableExit` defect).
+
+Rules:
+  - `.github/workflows/ci.yml` delegates every step to a
+    `scripts/*.ps1` entry point or to a vetted native MSBuild command
+    (`dotnet format`, `dotnet restore --locked-mode`). No inline Pester
+    or `dotnet test`/`dotnet build`/`dotnet publish` invocations: those
+    commands live in `scripts/test-non-office.ps1`,
+    `scripts/build-release.ps1`, and `scripts/publish-addin.ps1`, the
+    same entry points verify-quick.ps1 and verify.ps1 call.
+  - Tool pins (Pester minimum major, PSScriptAnalyzer version, actionlint
+    SHA-256, actionlint download URL) live in `scripts/tool-versions.psd1`
+    and are consumed by `lint-ci.ps1`, `test-scripts.ps1`, and `ci.yml`.
+    `ci-parity.Tests.ps1` asserts the two file consumers match the psd1.
+  - Every gate must fail loudly when discovery yields zero files or
+    items to check (`check-md-links.ps1` now does this for zero scanned
+    files), while a clean result with zero findings on a non-trivial,
+    discovered input is a PASS. The no-silent-pass rule extends to every
+    future gate.
 
 ## CI jobs
 

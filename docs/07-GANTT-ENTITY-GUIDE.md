@@ -2,6 +2,32 @@
 
 > Created 2 September 2026 under a new filename. This revision uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
 
+
+<!-- SKILL-SUMMARY:START -->
+The implementation contract for every visible Gantt entity: shared
+geometry/colour/typography tokens, z-order, and a per-entity
+geometry/style/label/validation/renderer-equivalence spec for all 26
+entity types (chart frame through legend and validation indicators).
+
+Do not get wrong:
+- The numeric and colour values in the token tables are **initial
+  design defaults, not visually approved facts** — an agent must not
+  change them; only an approved product-owner review updates this
+  file, tests, and golden images together.
+- If a requested visual behaviour is not defined here, it is
+  `unknown` — stop for a decision. Never infer it from a screenshot.
+- Milestones and delineators use `Start` only for geometry; `Finish`
+  is never used for their positioning.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+- `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — trace a renderer implementation back to its entity contract.
+- `symbols_outline` — index a file or directory to find where geometry tokens and style keys are defined.
+- `search_codebase` / `grep_files` — find all usages of a token, z-order constant, or renderer-equivalence entry.
+- `read_files` on `docs/07-GANTT-ENTITY-GUIDE.md` — confirm a behaviour is defined before implementing; classify absence as `unknown`.
+- `dotnet_test` on golden-image tests — verify cross-renderer equivalence after any visual change.
+<!-- SKILL-TOOLS:END -->
+
 ## Purpose and authority
 
 This is the implementation contract for every visible Gantt entity. It prevents each renderer—or an LLM—from making independent decisions about geometry, colour, labels, z-order, clipping, or export behaviour.

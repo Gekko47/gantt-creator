@@ -1,23 +1,28 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-    Drift gate for the .clinerules/ and .cline/skills/ trees.
+    Drift gate for the .cline/skills/ tree.
 
 .DESCRIPTION
-    Fails if any of the three views (docs/, .clinerules/, .cline/skills/)
-    has uncommitted changes, OR if the rule / skill content is out of
-    date relative to the canonical source.
+    Fails if either view (docs/ or .cline/skills/) has unstaged or
+    untracked changes, OR if the skill content is out of date relative
+    to the canonical source.
+
+    Always-on rules live in AGENTS.md at the repository root and are
+    hand-maintained; they are not checked by this gate.
 
     The check is two-phase:
-      1. If there are uncommitted changes anywhere in the three views,
-         the developer must run scripts/sync-cline-skills.ps1 and commit
-         the result. We do not auto-sync here because the sync would
-         silently overwrite a hand-edited rule, which the discipline
-         forbids.
-      2. After the working tree is clean, we re-run the sync and verify
-         that no diff is produced (idempotency check). If the canonical
-         source changed and the rules were not regenerated, this catches
-         it.
+      1. If there are unstaged or untracked changes anywhere in the
+         two views, the developer must run scripts/sync-cline-skills.ps1
+         and commit the result. We do not auto-sync here because the
+         sync would silently overwrite a hand-edited skill, which the
+         discipline forbids. Staged changes (i.e. `git add` already
+         done) are allowed at this stage so the gate is usable from the
+         pre-commit hook, which runs after staging.
+      2. After the working tree is clean, we re-run the sync into a
+         temporary directory and byte-compare against the committed
+         versions. If the regeneration produces a diff the canonical
+         source has changed without the skills being refreshed.
 
     Exit 0 on clean; exit 1 on drift.
 
@@ -29,9 +34,15 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-# Phase 1: working tree must be clean under the three views.
-$dirty = git diff --name-only -- docs/ .clinerules/ .cline/skills/
-$untracked = git status --porcelain -- docs/ .clinerules/ .cline/skills/ | Where-Object { $_.StartsWith('??') }
+$repoRoot = Split-Path -Parent $PSScriptRoot
+
+# Phase 1: working tree must be free of unstaged and untracked
+# changes under the two views. Staged changes are allowed so the
+# gate is usable from the pre-commit hook (which runs after staging).
+# Both git calls run against the repository root (-C) so the gate
+# behaves identically no matter the caller's working directory.
+$dirty = git -C $repoRoot diff --name-only -- docs/ .cline/skills/
+$untracked = git -C $repoRoot status --porcelain -- docs/ .cline/skills/ | Where-Object { $_.StartsWith('??') }
 if ($dirty -or $untracked) {
     Write-Host 'check-cline-skills: WORKING TREE DIRTY'
     if ($dirty) {
@@ -42,32 +53,51 @@ if ($dirty -or $untracked) {
         Write-Host '  untracked:'
         $untracked | ForEach-Object { Write-Host "    $_" }
     }
-    Write-Error ('One or more of docs/, .clinerules/, .cline/skills/ has uncommitted ' +
-                 'changes. Either commit the regenerated rule/skill files, or revert them.')
+    Write-Error ('One or more of docs/ or .cline/skills/ has uncommitted ' +
+                 'changes. Either commit the regenerated skill files, or revert them.')
     exit 1
 }
 
-# Phase 2: the canonical source and the rule/skill files must already
-# be in sync. We cannot use "git diff" here (the working tree is clean),
-# so we re-run the sync in a temp worktree-free way: write the
-# regenerated content to a temporary directory and compare byte-for-byte
-# against the committed versions. If the regeneration produces a diff
-# the canonical source has changed without the rules/skills being
-# refreshed.
+# Phase 2: re-run the sync into a temp directory and byte-compare
+# against the committed versions. The sync is idempotent; if the
+# generated content differs from the committed content, the canonical
+# source has changed without the skills being regenerated.
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('cline-skills-' + [System.Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+$tmpSkills = Join-Path $tmp '.cline/skills'
 try {
-    # We cannot run sync-cline-skills.ps1 with a different -SkillsRoot
-    # in its current form (it hardcodes '.clinerules'), so instead we
-    # compare the existing files to a fresh regeneration in a tmp dir,
-    # then mirror. Simpler: we rely on phase 1's check. A canonical-
-    # source-only change cannot be caught here without writing the
-    # content twice; we accept that and require the developer to run
-    # the sync manually after a docs/ change. The verify-quick
-    # docstring points at the script.
+    $syncOutput = pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sync-cline-skills.ps1') `
+        -DocsRoot (Join-Path $repoRoot 'docs') `
+        -SkillsRoot $tmpSkills 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'check-cline-skills: sync-cline-skills.ps1 failed; its output follows:'
+        $syncOutput | ForEach-Object { Write-Host "  $_" }
+        exit $LASTEXITCODE
+    }
 
-    Write-Host 'check-cline-skills: working tree is clean under the three views'
-    Write-Host 'check-cline-skills: in sync (post-commit; pre-sync: working tree was clean)'
+    $diffs = New-Object System.Collections.Generic.List[string]
+    $committed = Join-Path $repoRoot '.cline/skills'
+    # git diff --no-index: exit 0 = no diff, exit 1 = diff, exit 128 = error.
+    # -c core.autocrlf=false keeps the comparison byte-exact and avoids
+    # CRLF-normalisation noise in the violation report.
+    $null = git -c core.autocrlf=false diff --no-index --quiet -- "$tmpSkills" "$committed" 2>&1
+    $code = $LASTEXITCODE
+    if ($code -eq 1) {
+        $diffOut = git -c core.autocrlf=false diff --no-index -- "$tmpSkills" "$committed" 2>&1 | Out-String
+        $diffs.Add("--- drift in $committed ---")
+        $diffs.Add($diffOut)
+    } elseif ($code -ne 0) {
+        exit $code
+    }
+
+    if ($diffs.Count -gt 0) {
+        Write-Host 'check-cline-skills: DRIFT DETECTED between canonical source and generated views'
+        $diffs | ForEach-Object { Write-Host $_ }
+        Write-Error ('The skill files are out of date relative to the canonical ' +
+                     'source. Run scripts/sync-cline-skills.ps1 and commit the result.')
+        exit 1
+    }
+
+    Write-Host 'check-cline-skills: in sync (working tree clean; generated views match committed views)'
     exit 0
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

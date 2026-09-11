@@ -39,6 +39,20 @@
       `NoWarnScopeTests` architecture test asserts these two IDs remain
       scoped to tests/ only.
     -->
+    <!-- CA1307, CA1859, CA1031 removed: tests should use modern analyzers like
+         .AsSpan().IndexOfAny() over ToString().Contains(), interfaces over
+         concrete types, and let exceptions propagate (CA1031). If a specific
+         test legitimately needs one of these, add a narrow scope-level
+         suppression with a written justification. -->
+    <!-- CA2007 is enforced in tests/ (no NoWarn entry). The approved
+         exception, recorded 2026-09-11: xUnit test and fixture awaits
+         use ConfigureAwait(true), which satisfies both CA2007 (an
+         awaited task must call ConfigureAwait) and xUnit1030. No
+         precedence is declared between the two rules; the single
+         await pattern meets both. If a future test await cannot call
+         ConfigureAwait, add a file- or member-scoped suppression with
+         a written justification instead of re-adding a project-wide
+         NoWarn entry. -->
     <NoWarn>$(NoWarn);CA1707;IDE0011</NoWarn>
 
     <!--

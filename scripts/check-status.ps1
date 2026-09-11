@@ -33,8 +33,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $statusFile = Join-Path $repoRoot $StatusPath
 $roadmapFile = Join-Path $repoRoot $RoadmapPath
 
-if (-not (Test-Path $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
-if (-not (Test-Path $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
+if (-not (Test-Path -LiteralPath $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
+if (-not (Test-Path -LiteralPath $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
 
 $status  = Get-Content -LiteralPath $statusFile -Raw
 $roadmap = Get-Content -LiteralPath $roadmapFile -Raw
@@ -58,14 +58,61 @@ foreach ($h in $hashTokens)
 }
 
 # --- 2. Repo paths ---
+function Get-RepoPathTokenStatus {
+    <#
+    .SYNOPSIS
+        Classifies a backticked STATUS token for the repo-path check.
+
+    .DESCRIPTION
+        Returns a status object describing whether the token is a
+        repo-relative path candidate and, when it is, whether it carries
+        wildcard metacharacters that must be rejected before any filesystem
+        test is attempted.
+
+          IsPath      $true  the token matches the repo-path shape: it has a
+                                separator, ends in an extension-like suffix, and
+                                carries no whitespace, glob, URL, or leading-dash
+                                noise.
+          HasWildcard $true  when IsPath is $true but the token contains ?[]
+                                (a glob-traversal risk that must be rejected).
+          Both $false        the token is not a path at all (a commit hash, a
+                                URL, an attribute annotation like [Fact], ...).
+
+        The base-shape predicate and the wildcard rejection live here together
+        so the validation loop and the verified-path summary count share one
+        definition; a token rejected for wildcard metacharacters is excluded
+        from the check-status: OK total.
+    #>
+    param([Parameter(Mandatory)][string]$Token)
+
+    $isPath = $Token -match '[/\\]' `
+        -and $Token -notmatch '[\s*(){}]' `
+        -and $Token -notmatch '^-' `
+        -and $Token -notmatch '://' `
+        -and $Token -match '\.[A-Za-z0-9]+$'
+
+    if (-not $isPath) {
+        return [pscustomobject]@{ Token = $Token; IsPath = $false; HasWildcard = $false }
+    }
+
+    # Reject wildcard metacharacters that could be used for glob traversal.
+    # Only real paths are checked here; attribute annotations like [Fact] or
+    # [Trait(...)] never reach this branch because they fail the base shape
+    # (no separator, and they contain spaces or parentheses).
+    $hasWildcard = $Token -match '[?\[\]]'
+
+    return [pscustomobject]@{ Token = $Token; IsPath = $isPath; HasWildcard = $hasWildcard }
+}
+
 foreach ($t in $tokens)
 {
-    $isPath = $t -match '[/\\]' `
-        -and $t -notmatch '[\s*(){}]' `
-        -and $t -notmatch '^-' `
-        -and $t -notmatch '://' `
-        -and $t -match '\.[A-Za-z0-9]+$'
-    if (-not $isPath) { continue }
+    $pathStatus = Get-RepoPathTokenStatus -Token $t
+    if (-not $pathStatus.IsPath) { continue }
+
+    if ($pathStatus.HasWildcard) {
+        $violations.Add("STATUS references path '$t' contains wildcard metacharacters (?[\]); rejected.")
+        continue
+    }
 
     $candidate = Join-Path $repoRoot $t
     # Reject path traversal: the resolved path must stay inside $repoRoot.
@@ -75,13 +122,19 @@ foreach ($t in $tokens)
     # against C:\repos\gantt-creator on Ordinal comparison).
     $resolved = [System.IO.Path]::GetFullPath($candidate)
     $repoRootFull = [System.IO.Path]::GetFullPath($repoRoot)
-    $rel = [System.IO.Path]::GetRelativePath($repoRootFull, $resolved)
-    if ($rel -eq '..' -or $rel.StartsWith('..\')) {
+    # Normalise the relative path to forward slashes so parent traversal is
+    # recognised with both Windows ('..\') and POSIX ('../') separators,
+    # regardless of the host that runs the gate.
+    $rel = [System.IO.Path]::GetRelativePath($repoRootFull, $resolved).Replace('\', '/')
+    if ($rel -eq '..' -or $rel.StartsWith('../')) {
         $violations.Add("STATUS references path '$t' which resolves outside the repository.")
         continue
     }
 
-    if (-not (Test-Path $candidate))
+    # Use -LiteralPath so the candidate is treated as a literal path,
+    # not a glob pattern (wildcards already rejected above, but -LiteralPath
+    # is the correct API for exact filesystem checks).
+    if (-not (Test-Path -LiteralPath $candidate))
     {
         $violations.Add("STATUS references path '$t' which does not exist.")
     }
@@ -107,5 +160,10 @@ if ($violations.Count -gt 0)
     exit 1
 }
 
-Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs verified)" -f $hashTokens.Count, ($tokens | Where-Object { $_ -match '[/\\]' -and $_ -notmatch '[\s*(){}]' -and $_ -notmatch '^-' -and $_ -notmatch '://' -and $_ -match '\.[A-Za-z0-9]+$' }).Count, $idTokens.Count)
+# Verified-path count: every token classified as a repo path by the shared
+# predicate, minus those rejected for wildcard metacharacters, so the OK
+# total never reports a rejected token as verified.
+$verifiedPathCount = ($tokens | ForEach-Object { Get-RepoPathTokenStatus -Token $_ } |
+    Where-Object { $_.IsPath -and -not $_.HasWildcard }).Count
+Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs verified)" -f $hashTokens.Count, $verifiedPathCount, $idTokens.Count)
 exit 0

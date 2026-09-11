@@ -98,6 +98,9 @@ BenchmarkDotNet.Artifacts/
 # .NET Core
 project.lock.json
 project.fragment.lock.json
+# Per-project packages.lock.json files are committed for deterministic
+# restores. The .NET SDK (with RestorePackagesWithLockFile=true) generates
+# one in each project directory; they are tracked by Git and NOT ignored.
 artifacts/
 .artifacts/
 

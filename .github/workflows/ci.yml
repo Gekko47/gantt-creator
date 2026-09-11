@@ -32,35 +32,89 @@ jobs:
 
     steps:
       - name: Checkout (full history — check-status resolves referenced commit hashes)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Repository doc gates (md links, STATUS accuracy, skill-tree sync)
+      - name: Repository doc gate — markdown links
         run: |
           pwsh -NoProfile -File scripts/check-md-links.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-md-links.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Repository doc gate — STATUS accuracy
+        run: |
           pwsh -NoProfile -File scripts/check-status.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-status.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Repository doc gate — skill-tree sync
+        run: |
           pwsh -NoProfile -File scripts/check-cline-skills.ps1
           if ($LASTEXITCODE -ne 0) { throw "check-cline-skills.ps1 failed with exit $LASTEXITCODE" }
 
-      - name: Script analyzer (PSScriptAnalyzer)
+      - name: Workflow lint (actionlint)
         run: |
-          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          # Delegate to scripts/lint-ci.ps1, the same entry point as
+          # verify-quick.ps1 step 5. It validates every workflow YAML file
+          # under .github/workflows (matching the coverage provided by
+          # scripts/lint-ci.ps1), always installs the pinned actionlint
+          # binary into a private directory, and validates any existing
+          # executable against the configured Version, Sha256, and
+          # ExeSha256 values from scripts/tool-versions.psd1 before use          # (W11 single source of truth; ci-parity.Tests.ps1 asserts the
+          # workflow delegates to scripts/lint-ci.ps1 which reads
+          # $versions.actionlint.Sha256 at runtime, not a literal mirror).
+          pwsh -NoProfile -File scripts/lint-ci.ps1
+          if ($LASTEXITCODE -ne 0) { throw "lint-ci.ps1 failed with exit $LASTEXITCODE" }
+
+      - name: Script analyzer (PSScriptAnalyzer)
+        # PSScriptAnalyzer version is single-sourced from
+        # scripts/tool-versions.psd1; ci-parity.Tests.ps1 asserts the workflow
+        # imports the psd1 and uses the version variable (W11). Bump the psd1
+        # first, then both files.
+        run: |
+          $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
+          $pssaVersion = $versions.PSScriptAnalyzer.Version
+          # Verify the exact pinned version is available, not merely any
+          # installed PSScriptAnalyzer release. Install that version when
+          # absent, then explicitly import it before Invoke-PssaGate runs so
+          # the gate exercises the pinned module rather than a stale one left
+          # on the runner image.
+          $pssaInstalled = Get-Module -ListAvailable PSScriptAnalyzer | Where-Object { $_.Version -eq [version]$pssaVersion }
+          if (-not $pssaInstalled) {
+            Install-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -Scope CurrentUser -Force
           }
-          Invoke-ScriptAnalyzer -Path scripts -Recurse -Exclude '_artifacts' `
-            -Settings scripts/PSScriptAnalyzerSettings.psd1 -EnableExit
+          Import-Module PSScriptAnalyzer -RequiredVersion $pssaVersion
+          # Delegate to the same Invoke-PssaGate entry point as
+          # verify-quick.ps1 / verify.ps1 (scripts/verify-helpers.ps1). Never
+          # call -EnableExit directly: the function-level `exit` is swallowed
+          # by the Tee/ForEach pipeline in Invoke-Step (W13, CI run
+          # 2026-09-07). Enforced by scripts/ci-parity.Tests.ps1.
+          $scripts = Join-Path $PWD 'scripts'
+          . (Join-Path $scripts 'verify-helpers.ps1')
+          Invoke-PssaGate -Path $scripts -Settings (Join-Path $scripts 'PSScriptAnalyzerSettings.psd1')
+        # The actionlint version + SHA-256 pin is single-sourced in the
+        # "Workflow lint (actionlint)" step above (reads
+        # scripts/tool-versions.psd1#actionlint at runtime); ci-parity.Tests.ps1
+        # asserts the workflow imports the psd1 and references that property.
+        # The W11 tripwire is that import+reference, not a literal in this step.
+
+      - name: Script lint (Pester)
+        # Delegates to the same entry point as verify-quick.ps1 step 7 so a
+        # local PASS predicts a CI PASS. Never inline Pester invocation logic
+        # here: the Pester 4→6+ transition removed the `-Script` parameter,
+        # and workflow-inlined logic cannot be kept in sync with the pinned
+        # script gate. Enforced by scripts/ci-parity.Tests.ps1.
+        run: |
+          pwsh -NoProfile -File scripts/test-scripts.ps1
+          if ($LASTEXITCODE -ne 0) { throw "test-scripts.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Setup .NET SDK 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
       - name: Cache NuGet packages (keyed on lock files)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}
@@ -74,16 +128,33 @@ jobs:
         run: dotnet format GanttCreator.slnx --verify-no-changes --exclude tests
 
       - name: Build Release (warnings as errors)
-        run: dotnet build GanttCreator.slnx -c Release --no-restore -warnaserror
+        # Delegates to scripts/build-release.ps1, the same entry point as
+        # verify-quick.ps1 step 9 / verify.ps1 step 9. Inline dotnet
+        # build is forbidden by scripts/ci-parity.Tests.ps1 (W8).
+        run: |
+          pwsh -NoProfile -File scripts/build-release.ps1 -Solution GanttCreator.slnx -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "build-release.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Publish AddIn (packed XLL artifact)
-        run: dotnet publish src/GanttCreator.AddIn/GanttCreator.AddIn.csproj -c Release --no-build
+        # Delegates to scripts/publish-addin.ps1, the same entry point as
+        # verify-quick.ps1 step 10 / verify.ps1 step 10. Inline dotnet
+        # publish is forbidden by scripts/ci-parity.Tests.ps1 (W8).
+        run: |
+          pwsh -NoProfile -File scripts/publish-addin.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "publish-addin.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Test (OfficeIntegration excluded)
-        run: dotnet test GanttCreator.slnx -c Release --no-build --filter "Category!=OfficeIntegration"
+        # Delegates to scripts/test-non-office.ps1, the same entry point
+        # as verify-quick.ps1 step 11. Inline dotnet test / Pester
+        # invocation logic in the workflow is forbidden by
+        # scripts/ci-parity.Tests.ps1 (W8): a test command inlined here
+        # can drift from the pinned script gate.
+        run: |
+          pwsh -NoProfile -File scripts/test-non-office.ps1 -Solution GanttCreator.slnx -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "test-non-office.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Upload packed XLL artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ganttcreator-addin-packed-xll
           path: src/GanttCreator.AddIn/bin/Release/net10.0-windows/publish/

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Delegates to the versioned pre-commit gate. Installed by
+# scripts/install-pre-commit.ps1; do not edit by hand.
+# Resolve scripts/pre-commit.ps1 relative to the hooks directory so the
+# shim is portable across checkout paths and core.hooksPath configurations.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT_DIR/../scripts/pre-commit.ps1"

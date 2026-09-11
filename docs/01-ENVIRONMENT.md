@@ -1,5 +1,29 @@
 # Environment and first run
 
+
+<!-- SKILL-SUMMARY:START -->
+Dev-machine baseline, first-run install checklist, and the offline
+acceptance check for this repo.
+
+Do not get wrong:
+- Record actual installed versions in the work item and CI output;
+  never silently develop against a different baseline than the one
+  recorded in the baseline table of `docs/01-ENVIRONMENT.md`.
+- Trust the Windows build number, not the `ProductName` registry
+  string, which can misreport "Windows 10 Pro" on a Windows 11 host.
+- The IDE in use is Visual Studio 2026 Community (see ADR 0003), not
+  a generic "VS 2022 17.14+" — check the ADR before assuming version
+  parity with the baseline table in `docs/01-ENVIRONMENT.md`.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+- `run_commands` / `pwsh_run` — run `dotnet --info`, `(Get-CimInstance Win32_OperatingSystem).BuildNumber`, and other environment probes.
+- `read_files` — read `global.json`, `Directory.Packages.props`, `tool-versions.psd1` to verify pinned versions.
+- `dotnet_build` / `dotnet_test` — run the offline acceptance check; build and test without Office.
+- `dotnet_packages` — audit NuGet references for outdated/vulnerable versions against the baseline.
+- `read_files` on `docs/adr/` — check ADRs before assuming version parity (e.g. ADR 0003 for VS version).
+<!-- SKILL-TOOLS:END -->
+
 ## Supported development baseline
 
 Record actual versions in the first work item and CI output. Do not silently develop against a different baseline.
@@ -8,7 +32,7 @@ Record actual versions in the first work item and CI output. Do not silently dev
 | --- | --- | --- |
 | OS | Windows 11 x64 | Office COM, clipboard, RibbonX, and Excel-DNA are Windows-hosted. The actual host is Windows 11 25H2 (build 26200); see `docs/adr/0005-windows-host-build-number.md`. The `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion` `ProductName` string may report "Windows 10 Pro" on some configurations; trust the build number, not the string. |
 | Excel/PowerPoint | Microsoft 365 desktop, x64 | Primary deployment target and `ppPasteShape` host |
-| Visual Studio | 2022 17.14+ | Excel launch/debug and Copilot Agent Mode (the actual IDE in use is Visual Studio 2026 Community; see `docs/adr/0003-visual-studio-2026.md`) |
+| Visual Studio | 2026 Community (18) | Excel launch/debug and Copilot Agent Mode; the verification IDE per `docs/adr/0003-visual-studio-2026.md`. VS 2022 17.14+ remains a relaxed portability target for release rehearsal, not a hard requirement |
 | .NET | SDK 10 LTS and Desktop Runtime 10 x64 | Current Excel-DNA 1.9 guidance |
 | Excel-DNA | 1.9.0 | Produces the `.xll` and hosts RibbonX/C# |
 | VS Code | Current stable | Cline workspace and cross-platform editing |
@@ -23,7 +47,7 @@ Pin application dependencies in `Directory.Packages.props`. Pin the SDK with `gl
 
 In Visual Studio Installer:
 
-1. Install or modify Visual Studio 2022.
+1. Install or modify Visual Studio 2026.
 2. Select **.NET desktop development**.
 3. In individual components, confirm the `.NET 10 SDK`, Git for Windows, and NuGet package manager.
 4. Install GitHub Copilot if using Visual Studio's built-in agent.
@@ -42,13 +66,13 @@ The `Office/SharePoint development` workload is not required by Excel-DNA itself
 
 1. Install VS Code, C# Dev Kit, and Cline from their official publishers.
 2. Open the repository root.
-3. In Cline's rules view, enable `AGENTS.md` and all `.clinerules` files.
+3. In Cline's rules view, enable `AGENTS.md`.
 4. Confirm project skills appear from `.cline/skills/`.
 5. Do not enable blanket auto-approval. Safe read-only commands and targeted test commands may be approved per workspace after review.
 
 ### Copilot Agent Mode
 
-1. Use Visual Studio 2022 17.14 or later.
+1. Use Visual Studio 2026 (18) or later.
 2. Open **Tools > Options > GitHub > Copilot**.
 3. Enable Agent Mode, planning, and repository custom instructions.
 4. Check that `.github/copilot-instructions.md` appears in response references.

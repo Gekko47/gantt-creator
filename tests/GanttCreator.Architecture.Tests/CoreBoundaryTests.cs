@@ -1,7 +1,6 @@
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using Xunit;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -14,13 +13,19 @@ namespace GanttCreator.Architecture.Tests;
 /// so the architecture is enforced even if a developer wires a
 /// reference into <c>GanttCreator.Core.csproj</c>.
 /// </summary>
+// artifact-source: verify-quick.ps1 -> 'build Release -warnaserror'
+// The GanttCreator.Core.dll consumed here is produced by
+// the 'build Release -warnaserror' step of scripts/verify-quick.ps1 and
+// scripts/verify.ps1 (docs/02-ARCHITECTURE.md build-pipeline artifact
+// contract). Debug output is also accepted so a plain `dotnet test` is not
+// artificially red.
 public sealed class CoreBoundaryTests
 {
     // Assemblies that GanttCreator.Core must never reference. The list is
     // intentionally explicit; an unknown offender fails the test rather
     // than slipping through.
     private static readonly string[] ForbiddenAssemblies =
-    {
+    [
         // Office / Excel-DNA / PowerPoint
         "Microsoft.Office",
         "Microsoft.Office.Interop",
@@ -45,7 +50,7 @@ public sealed class CoreBoundaryTests
         "PresentationFramework",
         "WindowsBase",
         "System.Xaml",
-    };
+    ];
 
     [Fact]
     public void Core_assembly_does_not_reference_forbidden_assemblies()
@@ -61,8 +66,8 @@ public sealed class CoreBoundaryTests
 
         foreach (var forbidden in ForbiddenAssemblies)
         {
-            Assert.DoesNotContain(assemblyNames, n => string.Equals(n, forbidden, System.StringComparison.OrdinalIgnoreCase)
-                || (n?.StartsWith(forbidden + ".", System.StringComparison.OrdinalIgnoreCase) ?? false));
+            Assert.DoesNotContain(assemblyNames, n => string.Equals(n, forbidden, StringComparison.OrdinalIgnoreCase)
+                || (n?.StartsWith(forbidden + ".", StringComparison.OrdinalIgnoreCase) ?? false));
         }
     }
 
@@ -71,8 +76,7 @@ public sealed class CoreBoundaryTests
     {
         var coreDll = LocateCoreAssembly();
         Assert.True(File.Exists(coreDll));
-
-        var assembly = Assembly.LoadFrom(coreDll);
+        _ = Assembly.LoadFrom(coreDll);
         // The simple test: the assembly's image location is the net10.0
         // build output. A path under net10.0-windows would mean Core
         // drifted to a Windows target. The build will not produce both
@@ -81,22 +85,64 @@ public sealed class CoreBoundaryTests
         Assert.DoesNotContain("net10.0-windows", coreDll.Replace('\\', '/'), StringComparison.Ordinal);
     }
 
+    private static string ActiveTestConfiguration()
+    {
+        // The test binary lives under tests/<Project>/bin/<Configuration>/<TFM>/,
+        // so the TFM folder names its parent as the active build
+        // configuration. A Debug `dotnet test` therefore inspects the Debug
+        // output rather than a stale Release artifact.
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null)
+        {
+            if (dir.Name.StartsWith("net10.0", StringComparison.Ordinal))
+            {
+                return dir.Parent?.Name ?? "Release";
+            }
+            dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "Could not determine the active build configuration from the test output path: " +
+            Assembly.GetExecutingAssembly().Location);
+    }
+
     private static string LocateCoreAssembly()
     {
+        var configuration = ActiveTestConfiguration();
+
         // Walk up from the test binary until we find a sibling src/ folder.
         var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
         while (dir is not null)
         {
-            var candidate = Path.Combine(dir.FullName, "src", "GanttCreator.Core", "bin");
-            if (Directory.Exists(candidate))
+            var binRoot = Path.Combine(dir.FullName, "src", "GanttCreator.Core", "bin");
+            if (Directory.Exists(binRoot))
             {
-                // Prefer Release/net10.0; fall back to any TFM under Release.
-                var releaseNet = Path.Combine(candidate, "Release", "net10.0", "GanttCreator.Core.dll");
-                if (File.Exists(releaseNet)) return releaseNet;
-                var anyRelease = Directory
-                    .EnumerateFiles(Path.Combine(candidate, "Release"), "GanttCreator.Core.dll", SearchOption.AllDirectories)
-                    .FirstOrDefault();
-                if (anyRelease is not null) return anyRelease;
+                var configDir = Path.Combine(binRoot, configuration);
+                if (Directory.Exists(configDir))
+                {
+                    var netDll = Path.Combine(configDir, "net10.0", "GanttCreator.Core.dll");
+                    if (File.Exists(netDll)) return netDll;
+
+                    // Any TFM under the active configuration (e.g. a future
+                    // net10.0-windows output) is still that configuration's
+                    // artifact; only fallbacks that leave the active
+                    // configuration are disallowed, so a Debug test cannot be
+                    // satisfied by a stale Release DLL.
+                    var withinConfig = Directory
+                        .EnumerateFiles(configDir, "GanttCreator.Core.dll", SearchOption.AllDirectories)
+                        .Where(p => !Path.GetDirectoryName(p)!
+                            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(part => part.Equals("ref", StringComparison.Ordinal) ||
+                                         part.Equals("publish", StringComparison.Ordinal)))
+                        .OrderBy(p => p)
+                        .FirstOrDefault();
+                    if (withinConfig is not null) return withinConfig;
+                }
+
+                throw new DirectoryNotFoundException(
+                    "Could not locate GanttCreator.Core.dll under " +
+                    "src/GanttCreator.Core/bin/" + configuration + "/ (the active test " +
+                    "configuration). Build the '" + configuration +
+                    "' configuration before running these tests.");
             }
             dir = dir.Parent;
         }

@@ -27,8 +27,8 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $artifacts  = Join-Path $scriptRoot '_artifacts'
 $evidence   = Join-Path $artifacts 'office-evidence'
-if (-not (Test-Path $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
-if (-not (Test-Path $evidence))  { New-Item -ItemType Directory -Path $evidence  | Out-Null }
+if (-not (Test-Path -LiteralPath $artifacts)) { New-Item -ItemType Directory -Path $artifacts | Out-Null }
+if (-not (Test-Path -LiteralPath $evidence))  { New-Item -ItemType Directory -Path $evidence  | Out-Null }
 $report = Join-Path $artifacts 'verify-office.txt'
 "" | Set-Content -LiteralPath $report
 
@@ -57,15 +57,31 @@ Log 'build Release -warnaserror'
 dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Log 'test OfficeIntegration (deadline enforced by --blame-hang-timeout)'
-dotnet test $Solution -c $Configuration --no-build --no-restore `
-    --filter 'Category=OfficeIntegration' `
-    --blame-hang-timeout $DeadlineSeconds `
-    --logger 'trx;LogFileName=office.trx'
-
-if ($LASTEXITCODE -ne 0) {
-    Log "FAIL: OfficeIntegration tests exited $LASTEXITCODE. Evidence preserved under $evidence."
-    exit $LASTEXITCODE
+Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
+$testArgs = @(
+    'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
+    '--filter', 'Category=OfficeIntegration',
+    '--logger', 'trx;LogFileName=office.trx'
+)
+$watchdogIntervalSeconds = 5
+$dotnetExe = 'dotnet'
+$testProc = Start-Process -FilePath $dotnetExe -ArgumentList $testArgs -NoNewWindow -PassThru
+$watchdog = [System.Diagnostics.Stopwatch]::StartNew()
+while (-not $testProc.HasExited -and $watchdog.Elapsed.TotalSeconds -lt $DeadlineSeconds)
+{
+    Start-Sleep -Seconds $watchdogIntervalSeconds
+}
+if (-not $testProc.HasExited)
+{
+    # Soft timeout: stop only the owned dotnet test child (via its process
+    # handle, never by Office process name), so user-owned EXCEL.EXE is safe.
+    Stop-Process -InputObject $testProc -Force -ErrorAction SilentlyContinue
+    Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
+    exit 124
+}
+if ($testProc.ExitCode -ne 0) {
+    Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."
+    exit $testProc.ExitCode
 }
 
 Log "verify-office: PASS. Report: $report"

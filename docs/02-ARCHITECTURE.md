@@ -2,6 +2,36 @@
 
 > Created 2 September 2026 under a new filename. This revision defines the scope, schema, lifecycle, migration and non-security status of the approved `_GanttCreatorConfig` VeryHidden worksheet. When installed, use the path `docs/02-ARCHITECTURE.md`.
 
+<!-- SKILL-SUMMARY:START -->
+Product boundary, worksheet contracts, scene-first rendering model,
+and COM/error-handling rules for the add-in.
+
+Do not get wrong:
+- Exactly one visible worksheet plus one `xlSheetVeryHidden`
+  `_GanttCreatorConfig` worksheet — never a second helper sheet, and
+  never schedule rows, shapes, or logs on the VeryHidden sheet.
+- `verify-quick.ps1`/`verify.ps1` are the only authoritative producers
+  of `bin/`, `publish/`, and `coverage/` — a test that reads one of
+  these artifacts without naming the producing step is a drift risk
+  (see docs/04-TEST-STRATEGY.md "Build pipeline traceability").
+- This is not a CPM scheduling engine; it must never imply it
+  calculates contractual entitlement or delay causation.
+- The "C# and architecture conventions" section at the end of this doc
+  is binding for every C# change: nullable/analyzers on, immutable Core
+  types with `DateOnly`, point-based geometry with one rounding policy,
+  injected clock/dialog/clipboard/Office/logging boundaries, no
+  `dynamic`, Excel state save/restore in `try/finally`.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+- `vscode-mcp__get_diagnostics` — surface nullable/analyzer violations; the binding C# conventions are compiler-grade checks.
+- `roslyn_analyze` — enforce architecture invariants (dependency direction, no `dynamic`, no chained COM calls) during review.
+- `dotnet_packages` — verify Core has no Office/Excel-DNA/SkiaSharp/UI dependency.
+- `ast_grep_search` — find pattern violations (`Thread.Sleep`, `Task.Run` around COM, chained COM property access).
+- `vscode-mcp__get_symbol_lsp_info` / `get_references` — trace DI boundaries and verify injected vs. direct instantiation.
+- `dotnet_test` on `GanttCreator.Architecture.Tests` — run the architecture test layer after any structural change.
+<!-- SKILL-TOOLS:END -->
+
 ## Product boundary
 
 The add-in creates fast, presentation-quality construction-delay visuals from one visible worksheet. It is a drawing tool backed by tabular schedule events, not a critical-path scheduling engine. It must not imply that it calculates contractual entitlement, CPM logic, or delay causation.
@@ -255,3 +285,16 @@ Do not optimise before profiling. Record the reference hardware and Office build
 - arbitrary user-authored shape templates;
 - editable `.pptx` file generation or automatic presentation saving;
 - cloud storage, telemetry, accounts, or licensing services.
+
+## C# and architecture conventions
+
+- Nullable reference types, implicit usings, analyzers, and warnings-as-errors remain enabled.
+- Prefer immutable records/value objects in Core. Use `DateOnly` for date-only schedule data.
+- Define geometry in points with central rounding/tolerance policies. Do not scatter pixel conversions or magic offsets.
+- Inject clock, file dialog, clipboard, Office application, and logging boundaries.
+- Avoid `dynamic` unless an isolated, documented late-binding compatibility adapter requires it.
+- Avoid chained COM property calls. Hold each COM proxy in a local variable and release it through one tested ownership helper.
+- Excel/PowerPoint calls execute on the required STA/main thread. Do not use `Task.Run` around COM.
+- Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, calculation mode, status bar, and selection only when changed, using `try/finally`.
+- User errors are concise and actionable. Technical details go to a local rolling log with no workbook content unless explicitly opted in.
+- Every public member carries XML documentation, enforced by `GenerateDocumentationFile` + CS1591 with warnings-as-errors; add detail beyond the summary when the contract is non-obvious. Internal comments explain why, invariants, or Office quirks—not line-by-line mechanics.

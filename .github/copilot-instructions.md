@@ -1,6 +1,6 @@
 # Copilot custom instructions
 
-These instructions apply to GitHub Copilot in Visual Studio when Agent Mode is enabled. They mirror the always-on rules in `.clinerules/00..07-*.md` and `AGENTS.md`. When they conflict, the kit wins; the human reviews the diff.
+These instructions apply to GitHub Copilot in Visual Studio when Agent Mode is enabled. They mirror `AGENTS.md` (the always-on contract) and the `.cline/skills/` reference material. When they conflict, stop and report the conflict instead of silently choosing a source.
 
 ## Read these first
 
@@ -32,7 +32,7 @@ These are restated from the kit. Treat them as hard constraints.
 1. Read the active work item. Restate outcome, exclusions, acceptance tests, and unknowns.
 2. Make the smallest coherent change that proves one behaviour.
 3. Add or change tests in the same commit as behaviour.
-4. Run `pwsh ./scripts/verify-quick.ps1` after each meaningful edit; `pwsh ./scripts/verify.ps1` before requesting review.
+4. Run `pwsh ./scripts/verify-quick.ps1` once the current slice is coherent; `pwsh ./scripts/verify.ps1` before requesting review.
 5. Update `docs/STATUS.md` with the result and any newly recorded known limitations.
 6. Do not commit Office temporary files, build output, test results, customer images, or local logs.
 7. Do not amend, rebase, force-push, tag, or publish unless explicitly asked.
