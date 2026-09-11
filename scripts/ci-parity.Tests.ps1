@@ -62,7 +62,11 @@ Describe 'ci.yml parity tripwires (W8)' {
     It 'workflow never calls Invoke-Pester inline' {
         # Inline Pester invocation cannot stay in sync with the pinned
         # script gate; the parameter surface differs between Pester 5 and 6.
-        $script:ciText | Should -Not -Match 'Invoke-Pester'
+        # Strip full-line comments (matching PSSA tripwire behaviour) so the
+        # forbidden-pattern assertion ignores comment-only mentions and still
+        # detects Invoke-Pester in executable workflow content.
+        $ciCode = ($script:ciText -split "`n") | Where-Object { $_ -notmatch '^\s*#' }
+        ($ciCode -join "`n") | Should -Not -Match 'Invoke-Pester'
     }
 
     It 'format step delegates to dotnet format (allow-listed: native MSBuild command, not a script duplicate)' {

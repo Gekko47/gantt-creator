@@ -343,6 +343,61 @@ Describe 'install-pre-commit.ps1' {
         $content | Should -Match 'WriteAllText'
     }
 
+    It 'installs the hook shim with POSIX executable bit on non-Windows' {
+        # End-to-end verification that the installer produces a hook file with
+        # the executable bit set on POSIX hosts. On Windows the executable bit
+        # is not required (git for Windows runs hooks via its bundled sh), so
+        # we guard the assertion and still verify the hook file is created.
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
+        $scriptsDir = Join-Path $tempDir 'scripts'
+        New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+
+        # The installer expects scripts/pre-commit.ps1 to exist relative to
+        # the repo root, so plant a minimal stub in the temp repo.
+        $stubContent = @'
+`$ErrorActionPreference = 'Stop'
+Write-Host 'pre-commit stub'
+exit 0
+'@
+        Set-Content -LiteralPath (Join-Path $scriptsDir 'pre-commit.ps1') -Value $stubContent -Encoding utf8NoBOM
+
+        git -C $tempDir init -q
+        git -C $tempDir config user.email 'test@local'
+        git -C $tempDir config user.name 'test'
+        git -C $tempDir commit -q -m 'init' --allow-empty
+
+        # Run the installer against the temp repo. The installer reads its
+        # own path to derive $scriptRoot and $repoRoot, so we invoke it from
+        # a location where Split-Path -Parent gives us the temp repo root.
+        # Simplest approach: copy the installer into the temp repo's scripts/
+        # folder and run it from there.
+        $installerCopy = Join-Path $scriptsDir 'install-pre-commit.ps1'
+        Copy-Item -LiteralPath $script:installScriptPath -Destination $installerCopy -Force
+
+        $stdoutFile = Join-Path $tempDir 'stdout.txt'
+        $stderrFile = Join-Path $tempDir 'stderr.txt'
+        $proc = Start-Process -FilePath pwsh -ArgumentList @('-NoProfile', '-File', $installerCopy) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        $exitCode = $proc.ExitCode
+        $output = (Get-Content -LiteralPath $stdoutFile -Raw) + (Get-Content -LiteralPath $stderrFile -Raw)
+
+        $exitCode | Should -Be 0
+        $output | Should -Match 'pre-commit hook installed'
+
+        # The installer writes the shim to .githooks/pre-commit relative to
+        # the repo root (which is the parent of scripts/).
+        $githooksDir = Join-Path $tempDir '.githooks'
+        $hookFile = Join-Path $githooksDir 'pre-commit'
+        $hookFile | Should -Exist
+
+        if (-not $IsWindows) {
+            # On POSIX hosts the installer runs chmod +x; verify the bit is set.
+            $attrs = Get-Item -LiteralPath $hookFile
+            ($attrs.Attributes -band [System.IO.FileAttributes]::Executable) | Should -Be ([System.IO.FileAttributes]::Executable)
+        }
+
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     It 'marks the hook shim executable on POSIX hosts' {
         # Windows hosts do not need the executable bit (git for Windows runs
         # hooks via its bundled sh); POSIX hosts execute the file directly, so

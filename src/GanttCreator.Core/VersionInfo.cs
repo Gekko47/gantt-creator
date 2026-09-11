@@ -46,15 +46,6 @@ public static class VersionInfo
             return "0.0.0";
         }
 
-        // Special case: the build-time fallback "0.0.0+local" (emitted by
-        // Directory.Build.props when no real version is set) is a marker,
-        // not a semver prerelease. Treat it as "0.0.0". Checked before the
-        // '+' strip so the full emitted value is matched exactly.
-        if (informational == "0.0.0+local")
-        {
-            return "0.0.0";
-        }
-
         // Strip build metadata after '+'
         var plus = informational.IndexOf('+', StringComparison.Ordinal);
         var core = plus >= 0 ? informational[..plus] : informational;

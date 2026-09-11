@@ -86,6 +86,15 @@ $map = @{
             # The footer points at the canonical source, not at a references.md duplicate
             $skillBody | Should -Match 'Full reference:.*docs/99-FIXTURE.md'
             $skillBody | Should -Not -Match 'references.md'
+
+            # Loader contract: the YAML front-matter `name:` must match the
+            # skill directory name, because Cline loads a skill by matching
+            # the requested name against that front-matter field.
+            $frontMatter = ($skillBody -split '(?ms)^---$', 3)[1]
+            ($frontMatter -split '\r?\n' | Where-Object { $_ -match '^name:\s*(.*)' })[0] -match '^name:\s*(.+)$'
+            $yamlName = $Matches[1].Trim()
+            $skillDirName = (Split-Path -Leaf (Split-Path -Parent (Join-Path $script:skills '99-fixture/SKILL.md')))
+            $yamlName | Should -Be $skillDirName
         }
 
         It 'exits non-zero when a canonical source listed in $map is missing' {
