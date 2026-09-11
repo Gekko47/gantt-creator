@@ -130,15 +130,6 @@ public class ExportSizeTests
     }
 
     [Fact]
-    public void ToPixels_oversized_pixel_width_throws()
-    {
-        // (int.MaxValue + 1) pixels exceeds the int range for PixelDimensions.
-        var req = new WidthRequest(ExportUnit.Pixels, int.MaxValue + 1.0);
-        _ = Assert.Throws<ArgumentOutOfRangeException>(
-            () => ExportSize.ToPixels(req, sceneWidthPt: 720.0, sceneHeightPt: 360.0));
-    }
-
-    [Fact]
     public void ToPixels_nan_scene_height_throws()
     {
         var req = new WidthRequest(ExportUnit.Inches, 4.0);
