@@ -16,6 +16,14 @@ Do not get wrong:
   parity with the baseline table.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `run_commands` / `pwsh_run` — run `dotnet --info`, `(Get-CimInstance Win32_OperatingSystem).BuildNumber`, and other environment probes.
+- `read_files` — read `global.json`, `Directory.Packages.props`, `tool-versions.psd1` to verify pinned versions.
+- `dotnet_build` / `dotnet_test` — run the offline acceptance check; build and test without Office.
+- `dotnet_packages` — audit NuGet references for outdated/vulnerable versions against the baseline.
+- `read_files` on `docs/adr/` — check ADRs before assuming version parity (e.g. ADR 0003 for VS version).
+<!-- SKILL-TOOLS:END -->
+
 ## Supported development baseline
 
 Record actual versions in the first work item and CI output. Do not silently develop against a different baseline.

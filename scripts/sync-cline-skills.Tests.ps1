@@ -32,6 +32,11 @@ Do not get wrong:
 - The SKILL-SUMMARY block is extracted verbatim.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `dotnet_test` — run tests.
+- `dotnet_build` — build the solution.
+<!-- SKILL-TOOLS:END -->
+
 It has more than one line so we can also see the summary truncation.
 '@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8
 
@@ -145,6 +150,58 @@ Body content follows.
 
             $proc.ExitCode | Should -Not -Be 0
             $combined | Should -Match 'empty SKILL-SUMMARY block'
+        }
+        It 'exits non-zero when the canonical doc has no SKILL-TOOLS block' {
+            # Regression guard: a mapped doc without the required
+            # SKILL-TOOLS block must fail the sync with a clear message.
+            @'
+# Fixture document without a tools block
+
+<!-- SKILL-SUMMARY:START -->
+This is a test canonical source for sync-cline-skills.
+<!-- SKILL-SUMMARY:END -->
+
+Just a body, no SKILL-TOOLS markers anywhere.
+'@ | Set-Content -LiteralPath (Join-Path $script:docs '99-FIXTURE.md') -Encoding utf8
+
+            $outFile = Join-Path $script:tempRoot 'out-notools.txt'
+            $errFile = Join-Path $script:tempRoot 'err-notools.txt'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',$script:harnessSync,'-DocsRoot',$script:docs,'-SkillsRoot',$script:skills
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+
+            $proc.ExitCode | Should -Not -Be 0
+            $combined | Should -Match 'no SKILL-TOOLS block'
+        }
+        It 'exits non-zero when the canonical doc has an empty SKILL-TOOLS block' {
+            # Positive failure-path test for the empty-tools validator:
+            # whitespace-only tools must fail, never silently yield empty.
+            @'
+# Fixture document with an empty tools block
+
+<!-- SKILL-SUMMARY:START -->
+This is a test canonical source for sync-cline-skills.
+<!-- SKILL-SUMMARY:END -->
+
+<!-- SKILL-TOOLS:START -->
+
+<!-- SKILL-TOOLS:END -->
+
+Body content follows.
+'@ | Set-Content -LiteralPath (Join-Path $script:docs '99-FIXTURE.md') -Encoding utf8
+
+            $outFile = Join-Path $script:tempRoot 'out-emptytools.txt'
+            $errFile = Join-Path $script:tempRoot 'err-emptytools.txt'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',$script:harnessSync,'-DocsRoot',$script:docs,'-SkillsRoot',$script:skills
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+
+            $proc.ExitCode | Should -Not -Be 0
+            $combined | Should -Match 'empty SKILL-TOOLS block'
         }
     }
 }

@@ -24,6 +24,17 @@ Do not get wrong:
 
 ---
 
+## Tools
+
+- `vscode-mcp__get_diagnostics` — surface nullable/analyzer violations; the binding C# conventions are compiler-grade checks.
+- `roslyn_analyze` — enforce architecture invariants (dependency direction, no `dynamic`, no chained COM calls) during review.
+- `dotnet_packages` — verify Core has no Office/Excel-DNA/SkiaSharp/UI dependency.
+- `ast_grep_search` — find pattern violations (`Thread.Sleep`, `Task.Run` around COM, chained COM property access).
+- `vscode-mcp__get_symbol_lsp_info` / `get_references` — trace DI boundaries and verify injected vs. direct instantiation.
+- `dotnet_test` on `GanttCreator.Architecture.Tests` — run the architecture test layer after any structural change.
+
+---
+
 ## Where to read more
 
 - Full reference: `docs/02-ARCHITECTURE.md` (this is the canonical source; there is no separate copy under .cline/skills/)

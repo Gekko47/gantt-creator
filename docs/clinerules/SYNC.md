@@ -64,13 +64,36 @@ complete (every mapped doc carries one), so the old line-truncation
 fallback was removed. A missing block can never again be silently
 degraded into a truncated heuristic summary: add the block and re-run.
 
+### The SKILL-TOOLS block
+
+Each canonical doc also carries a hand-authored tools block the sync
+script extracts verbatim:
+
+```markdown
+<!-- SKILL-TOOLS:START -->
+- `tool-name` — one-line description of when to use it.
+- `another-tool` — ...
+<!-- SKILL-TOOLS:END -->
+```
+
+Place it directly after the `SKILL-SUMMARY` block. This block is the
+bridge from the skill's knowledge to the MCP tools that execute it.
+Without it, a skill tells the agent what to know but never which tool
+to reach for. Each entry names one MCP tool and the situation where it
+is the right choice. Keep entries concise — one line each.
+
+If a canonical doc has no `SKILL-TOOLS` block, the sync script FAILS
+with a non-zero exit. A missing block can never again leave a skill
+without a tool bridge: add the block and re-run.
+
 ## What the sync script does
 
 `scripts/sync-cline-skills.ps1`:
 
 1. Reads every `docs/0N-*.md` listed in its `$map`.
 2. For each, regenerates `.cline/skills/0N-name/SKILL.md`: front-matter,
-   the doc's `SKILL-SUMMARY` block (missing block = hard failure), and a
+   the doc's `SKILL-SUMMARY` block (missing block = hard failure), the
+   doc's `SKILL-TOOLS` block (missing block = hard failure), and a
    footer pointing at the canonical source.
 3. Validates that every skill directory has a `SKILL.md` and exits
    non-zero if any is missing.
@@ -113,7 +136,7 @@ if ($LASTEXITCODE -ne 0) {
 ## Adding a new skill
 
 1. Add `docs/0N-name.md` with the new content, including a
-   `SKILL-SUMMARY` block near the top.
+   `SKILL-SUMMARY` block and a `SKILL-TOOLS` block near the top.
 2. Add an entry to the `$map` in `scripts/sync-cline-skills.ps1`
    (`Name`, `Description`).
 3. Run `pwsh ./scripts/sync-cline-skills.ps1`.

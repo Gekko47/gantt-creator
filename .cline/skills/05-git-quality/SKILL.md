@@ -21,6 +21,18 @@ Do not get wrong:
 
 ---
 
+## Tools
+
+- `git_tool` (`status`, `diff`, `log`, `diff --check`) — inspect commits, check for conflict markers, verify Conventional Commit prefixes.
+- `github__list_commits` — verify commit history and push status.
+- `github__get_pull_request` / `github__get_pull_request_files` / `github__get_pull_request_reviews` — execute the review checklist against actual PR content.
+- `github__get_pull_request_status` — verify CI is green before merging (W-12 rule).
+- `github__create_pull_request_review` — submit structured reviews.
+- `pwsh_run` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
+- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
+
+---
+
 ## Where to read more
 
 - Full reference: `docs/05-GIT-QUALITY.md` (this is the canonical source; there is no separate copy under .cline/skills/)

@@ -48,6 +48,11 @@ Describe 'check-cline-skills.ps1' {
 This is a test canonical source.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `dotnet_test` — run tests.
+- `dotnet_build` — build the solution.
+<!-- SKILL-TOOLS:END -->
+
 This is a test canonical source.
 '@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8
 

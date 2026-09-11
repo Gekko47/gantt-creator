@@ -17,6 +17,16 @@ Do not get wrong:
   and scene/layout tests must be deterministic and parallel-safe.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `dotnet_test` — run tests and report coverage; the primary tool for every test-layer obligation.
+- `dotnet_build` — verify the solution builds before running tests.
+- `dotnet_packages` — check for outdated/vulnerable NuGet packages.
+- `vscode-mcp__get_diagnostics` — get compiler-grade diagnostics faster than `tsc --noEmit` / raw build.
+- `ast_grep_search` — find anti-patterns (`Thread.Sleep`, arbitrary delays, catch-and-ignore) across the codebase.
+- `search_codebase` / `grep_files` — trace acceptance criterion IDs to specific test names (traceability map).
+- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — the authoritative local gates.
+<!-- SKILL-TOOLS:END -->
+
 ## Test objective
 
 Testing must prove the domain and rendering logic without Office, then prove the thin Office adapters on a controlled Windows machine. Test observable behaviour, not private method implementation. Core and scene/layout tests must be deterministic and parallel-safe. “Cover the whole codebase” means every production component has an appropriate automated or explicitly recorded host test; it does not mean pursuing a misleading 100% line-coverage number.
@@ -305,3 +315,14 @@ Residual risk: <one sentence or None known>
 ```
 
 Only observed output is reported.
+
+## Pre-flight checklist
+
+Before declaring a test gate green, run these tools and observe their output:
+
+1. `dotnet_test` on the targeted project — must PASS.
+2. `dotnet_build` in Release — must succeed (the gate that CI runs).
+3. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS.
+4. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
+5. `ast_grep_search` for `Thread.Sleep` / `Task.Run` around COM in changed files — must find none.
+6. `search_codebase` to confirm the changed test name is referenced by the work-item acceptance criterion (traceability).

@@ -23,6 +23,15 @@ Do not get wrong:
   `dynamic`, Excel state save/restore in `try/finally`.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `vscode-mcp__get_diagnostics` — surface nullable/analyzer violations; the binding C# conventions are compiler-grade checks.
+- `roslyn_analyze` — enforce architecture invariants (dependency direction, no `dynamic`, no chained COM calls) during review.
+- `dotnet_packages` — verify Core has no Office/Excel-DNA/SkiaSharp/UI dependency.
+- `ast_grep_search` — find pattern violations (`Thread.Sleep`, `Task.Run` around COM, chained COM property access).
+- `vscode-mcp__get_symbol_lsp_info` / `get_references` — trace DI boundaries and verify injected vs. direct instantiation.
+- `dotnet_test` on `GanttCreator.Architecture.Tests` — run the architecture test layer after any structural change.
+<!-- SKILL-TOOLS:END -->
+
 ## Product boundary
 
 The add-in creates fast, presentation-quality construction-delay visuals from one visible worksheet. It is a drawing tool backed by tabular schedule events, not a critical-path scheduling engine. It must not imply that it calculates contractual entitlement, CPM logic, or delay causation.

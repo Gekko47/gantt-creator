@@ -21,6 +21,19 @@ Do not get wrong:
   classes the per-item gates do not catch by construction.
 <!-- SKILL-SUMMARY:END -->
 
+<!-- SKILL-TOOLS:START -->
+- `memra_add` / `memra_add_decision` — persist evidence-ledger rows and irreversible decisions across turns.
+- `memra_bootstrap` — recall prior decisions and patterns at session start.
+- `memra_add_pattern` — store reusable methodologies (e.g. the full-repo review phases).
+- `memra_search` / `memra_recall` — retrieve prior evidence by semantic similarity.
+- `sequential-thinking__sequentialthinking` — structure multi-step reasoning (review methodology, failure classification).
+- `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — get compiler-grade type/symbol info instead of guessing APIs.
+- `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
+- `context7__query-docs` / `microsoft-learn__microsoft_docs_search` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
+- `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
+- `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
+<!-- SKILL-TOOLS:END -->
+
 ## Purpose
 
 This protocol makes an LLM useful as a bounded engineering assistant. It does not delegate product ownership, evidence, release authority, or irreversible actions.
@@ -51,6 +64,16 @@ For interoperability investigations, maintain this compact table in the work ite
 
 Allowed statuses are `fact`, `inference`, `proposal`, and `unknown`. An inference cannot become a fact because the agent repeats it.
 
+### Persisting the ledger
+
+The evidence ledger is a cross-turn record. Persist every row so it survives session restarts:
+
+- Every `fact` row → `memra_add` with `type: "fact"`, `importance: 8`, and the evidence URL or command in metadata.
+- Every irreversible decision → `memra_add_decision` with the context that made it irreversible.
+- Every reusable methodology (e.g. the full-repo review phases) → `memra_add_pattern`.
+- Session start → `memra_bootstrap` to recall prior decisions before restating unknowns.
+- When a statement's status changes → `memra_supersede` to keep the history chain intact.
+
 ## Anti-drift controls
 
 - One active work item; one acceptance boundary.
@@ -63,13 +86,14 @@ Allowed statuses are `fact`, `inference`, `proposal`, and `unknown`. An inferenc
 
 ## Anti-hallucination controls
 
-For every unfamiliar API or version-sensitive claim:
+For every unfamiliar API or version-sensitive claim, use this tool order (highest fidelity first):
 
-1. Search installed source/metadata or use Visual Studio Object Browser.
-2. Check official Excel-DNA, Microsoft, .NET, SkiaSharp, Cline, or GitHub documentation.
-3. Compile a minimal usage.
-4. If host behaviour remains uncertain, write a disposable spike with one measurable assertion.
-5. Keep the statement `unknown` until evidence exists.
+1. `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — compiler-grade type and symbol info; the primary inspection path.
+2. `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
+3. `context7__query-docs` / `microsoft-learn__microsoft_docs_search` / `microsoft-learn__microsoft_docs_fetch` — official .NET, Excel-DNA, SkiaSharp, or Microsoft documentation; preferred over memory and blogs.
+4. `dotnet_build` — compile a minimal usage to verify the API exists and behaves as claimed.
+5. If host behaviour remains uncertain, write a disposable spike with one measurable assertion (`dotnet_new` + `dotnet_test`).
+6. Keep the statement `unknown` until evidence exists.
 
 The agent must not fabricate command output. If it cannot run a test, it says `Not run` and provides the exact command the human should run.
 
@@ -344,3 +368,14 @@ Next: <roadmap ID>
 ```
 
 This is intentionally short. The code, tests, work item, and Git diff are the durable record.
+
+## Pre-flight checklist
+
+Before declaring a work item done, run these tools and observe their output:
+
+1. `dotnet_test` on the targeted project — must PASS.
+2. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS.
+3. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
+4. `memra_add` — persist the evidence ledger rows for this session.
+5. `memra_add_decision` (if an irreversible decision was made) — persist it with context.
+6. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.

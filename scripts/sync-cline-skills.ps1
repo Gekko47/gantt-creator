@@ -47,6 +47,17 @@
     a non-zero exit so a summary can never again be silently truncated or
     degraded by a heuristic. Add the block to the doc and re-run.
 
+    Each canonical doc also carries a hand-authored tools block:
+
+      <!-- SKILL-TOOLS:START -->
+      ... MCP tools most relevant to this skill, one per line ...
+      <!-- SKILL-TOOLS:END -->
+
+    This block is the bridge from the skill's knowledge to the MCP tools
+    that execute it. Without it, a skill tells the agent what to know but
+    never which tool to reach for. A canonical doc missing this block is
+    an ERROR: this script fails with a non-zero exit.
+
     This script is idempotent; running it twice in a row produces the
     same output. docs/clinerules/SYNC.md explains the discipline;
     verify-quick.ps1 and verify.ps1 run scripts/check-cline-skills.ps1
@@ -75,6 +86,8 @@ $map = @{
 
 $summaryStartMarker = '<!-- SKILL-SUMMARY:START -->'
 $summaryEndMarker   = '<!-- SKILL-SUMMARY:END -->'
+$toolsStartMarker   = '<!-- SKILL-TOOLS:START -->'
+$toolsEndMarker     = '<!-- SKILL-TOOLS:END -->'
 
 # Only create the generated-output root. The docs/ root is the canonical
 # source of truth; if it is missing, let the per-file validation below report
@@ -118,6 +131,27 @@ foreach ($file in $map.Keys) {
         exit 1
     }
 
+    # SKILL.md tools: the hand-authored SKILL-TOOLS block is required.
+    # It lists the MCP tools most relevant to this skill and when to
+    # reach for them. A doc without one fails the sync so a skill can
+    # never again ship without a tool bridge.
+    $toolsStartIdx = $body.IndexOf($toolsStartMarker)
+    $toolsEndIdx   = $body.IndexOf($toolsEndMarker)
+    if ($toolsStartIdx -ge 0 -and $toolsEndIdx -gt $toolsStartIdx) {
+        $toolsStart = $toolsStartIdx + $toolsStartMarker.Length
+        $tools = $body.Substring($toolsStart, $toolsEndIdx - $toolsStart).Trim()
+        if ([string]::IsNullOrWhiteSpace($tools)) {
+            Write-Error ("sync-cline-skills: {0} has an empty SKILL-TOOLS block. Every canonical doc must carry a " +
+                         "non-empty <!-- SKILL-TOOLS:START --> / <!-- SKILL-TOOLS:END --> block; add content to {0} and re-run." -f $file)
+            exit 1
+        }
+    }
+    else {
+        Write-Error ("sync-cline-skills: {0} has no SKILL-TOOLS block. Every canonical doc must carry a " +
+                     "<!-- SKILL-TOOLS:START --> / <!-- SKILL-TOOLS:END --> block; add one to {0} and re-run." -f $file)
+        exit 1
+    }
+
     $fmName        = $file.Replace('.md', '')
     $fmDescription = $entry.Description
     $skillLines = @(
@@ -127,6 +161,12 @@ foreach ($file in $map.Keys) {
         '---'
         ''
         $summary
+        ''
+        '---'
+        ''
+        '## Tools'
+        ''
+        $tools
         ''
         '---'
         ''

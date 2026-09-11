@@ -20,6 +20,16 @@ Do not get wrong:
 
 ---
 
+## Tools
+
+- `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — trace a renderer implementation back to its entity contract.
+- `symbols_outline` — index a file or directory to find where geometry tokens and style keys are defined.
+- `search_codebase` / `grep_files` — find all usages of a token, z-order constant, or renderer-equivalence entry.
+- `read_files` on `docs/07-GANTT-ENTITY-GUIDE.md` — confirm a behaviour is defined before implementing; classify absence as `unknown`.
+- `dotnet_test` on golden-image tests — verify cross-renderer equivalence after any visual change.
+
+---
+
 ## Where to read more
 
 - Full reference: `docs/07-GANTT-ENTITY-GUIDE.md` (this is the canonical source; there is no separate copy under .cline/skills/)

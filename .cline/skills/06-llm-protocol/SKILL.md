@@ -23,6 +23,21 @@ Do not get wrong:
 
 ---
 
+## Tools
+
+- `memra_add` / `memra_add_decision` — persist evidence-ledger rows and irreversible decisions across turns.
+- `memra_bootstrap` — recall prior decisions and patterns at session start.
+- `memra_add_pattern` — store reusable methodologies (e.g. the full-repo review phases).
+- `memra_search` / `memra_recall` — retrieve prior evidence by semantic similarity.
+- `sequential-thinking__sequentialthinking` — structure multi-step reasoning (review methodology, failure classification).
+- `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — get compiler-grade type/symbol info instead of guessing APIs.
+- `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
+- `context7__query-docs` / `microsoft-learn__microsoft_docs_search` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
+- `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
+- `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
+
+---
+
 ## Where to read more
 
 - Full reference: `docs/06-LLM-PROTOCOL.md` (this is the canonical source; there is no separate copy under .cline/skills/)
