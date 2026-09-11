@@ -13,7 +13,8 @@ self-apply).
 
 Do not get wrong:
 - Two failed attempts on the same failure = stop and report; never a
-  third unchanged retry.
+  third unchanged retry — except exactly one recorded retry for a
+  documented flaky external Office operation (AGENTS.md).
 - An inference cannot become a fact by being repeated — use the
   `fact`/`inference`/`proposal`/`unknown` ledger honestly.
 - A full-repo review must look for gate-integrity, build-pipeline

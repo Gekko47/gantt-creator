@@ -157,5 +157,39 @@ $map = @{
             $proc.ExitCode | Should -Not -Be 0
             $combined | Should -Match 'DRIFT DETECTED'
         }
+
+        It 'exits 1 and surfaces the sync failure output when the canonical source is malformed (Phase 2)' {
+            # Phase 2 re-runs the sync into a temp dir; a malformed canonical
+            # doc makes the sync itself fail. The gate must emit the sync's
+            # captured output so the failure is actionable, then exit with the
+            # sync's exit code (regression guard for the old `2>&1 | Out-Null`
+            # that discarded the diagnostic).
+            $fixtureDoc = Join-Path $script:docs '99-FIXTURE.md'
+            @'
+# Fixture document
+
+<!-- SKILL-SUMMARY:START -->
+This is a test canonical source.
+<!-- SKILL-SUMMARY:END -->
+'@ | Set-Content -LiteralPath $fixtureDoc -Encoding utf8
+
+            # Commit the malformed doc so Phase 1 (dirty tree) stays clean
+            # and only Phase 2's sync failure can fire.
+            git -C $script:tempRoot -c core.autocrlf=false add -A | Out-Null
+            git -C $script:tempRoot -c core.autocrlf=false commit -q -m 'bad-doc' | Out-Null
+
+            $outFile = Join-Path $script:tempRoot 'out-syncfail.txt'
+            $errFile = Join-Path $script:tempRoot 'err-syncfail.txt'
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile','-File',(Join-Path $script:harness 'check-cline-skills.ps1')
+            ) -NoNewWindow -Wait -PassThru `
+                -WorkingDirectory $script:tempRoot `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+
+            $proc.ExitCode | Should -Not -Be 0
+            $combined | Should -Match 'has no SKILL-TOOLS block'
+            $combined | Should -Match 'sync-cline-skills.ps1 failed'
+        }
     }
 }

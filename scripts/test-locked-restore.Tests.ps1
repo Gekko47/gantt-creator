@@ -173,6 +173,12 @@ exit 0
 #requires -Version 7
 `$ErrorActionPreference = 'Stop'
 `$env:PATH = '$($script:stubDir);' + `$env:PATH
+# Clear any inherited NUGET_PACKAGES so the replayed sequence starts from
+# a deterministic environment: only the script's own isolation control
+# (run 3) sets it, keeping the single nugget_packages=set assertion stable
+# when the parent shell exports the variable (e.g. a global NuGet cache
+# folder).
+Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue
 . "$($script:copyScriptPath)"
 
 # Capture the original helper bodies BEFORE we shadow the names.

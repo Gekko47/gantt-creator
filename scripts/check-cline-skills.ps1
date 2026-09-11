@@ -65,10 +65,12 @@ if ($dirty -or $untracked) {
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('cline-skills-' + [System.Guid]::NewGuid().ToString('N'))
 $tmpSkills = Join-Path $tmp '.cline/skills'
 try {
-    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sync-cline-skills.ps1') `
+    $syncOutput = pwsh -NoProfile -File (Join-Path $PSScriptRoot 'sync-cline-skills.ps1') `
         -DocsRoot (Join-Path $repoRoot 'docs') `
-        -SkillsRoot $tmpSkills 2>&1 | Out-Null
+        -SkillsRoot $tmpSkills 2>&1
     if ($LASTEXITCODE -ne 0) {
+        Write-Host 'check-cline-skills: sync-cline-skills.ps1 failed; its output follows:'
+        $syncOutput | ForEach-Object { Write-Host "  $_" }
         exit $LASTEXITCODE
     }
 

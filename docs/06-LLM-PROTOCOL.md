@@ -12,7 +12,8 @@ self-apply).
 
 Do not get wrong:
 - Two failed attempts on the same failure = stop and report; never a
-  third unchanged retry.
+  third unchanged retry — except exactly one recorded retry for a
+  documented flaky external Office operation (AGENTS.md).
 - An inference cannot become a fact by being repeated — use the
   `fact`/`inference`/`proposal`/`unknown` ledger honestly.
 - A full-repo review must look for gate-integrity, build-pipeline
@@ -116,7 +117,10 @@ Attempt 2:
 - inspect environment/process/loaded-module evidence where relevant;
 - make one different fix and rerun.
 
-If the same failure occurs again, stop. Report:
+If the same failure occurs again, stop. The sole exception is one
+recorded retry of a documented flaky external Office operation, per
+the bounded retry rule in AGENTS.md; the retry must be recorded and
+becomes a defect if it passes only on retry. Report:
 
 - exact command and environment;
 - shortest useful error excerpt;

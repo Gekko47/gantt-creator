@@ -118,14 +118,7 @@ is affected.
 
 ## Residual risks (record for the next pass)
 
-1. **Lost case-sensitivity tripwire on `check-skill-summary.ps1`.**
-   The old `Should -Match '-cnotmatch'` assertion was a string-match
-   against the script source. It no longer exists. If a future
-   refactor replaces `-cnotmatch` with `-notmatch`
-   (case-insensitive), the clean/bad fixture trees will still differ
-   in exit code and the test will not catch it.
-
-2. **Lost path-traversal regression guard on `check-status.ps1`.**
+1. **Lost path-traversal regression guard on `check-status.ps1`.**
    The old negative-match `'\\.StartsWith\\(\\$repoRootFull'` was
    guarding the `GetFullPath` + `GetRelativePath` fix that replaced
    a `StartsWith` containment check. The new test cases cover the
@@ -135,27 +128,27 @@ is affected.
    and assert that the script rejects it with the
    `outside the repository` violation.
 
-3. **Test suite wall time.** The four updated files now spawn
+2. **Test suite wall time.** The four updated files now spawn
    ~14 child-`pwsh` processes; the full `scripts/test-scripts.ps1`
    suite went from ~2 s to ~30 s. Acceptable for the in-development
    gate, but if the suite grows further, consider a single pwsh
    process per harness with multiple invocations.
 
-4. **Temp-root path-length brittleness on Windows.** The harness
+3. **Temp-root path-length brittleness on Windows.** The harness
    creates deeply-nested paths
    (`$tempRoot/harness/.cline/skills/...`). On long Windows temp
    paths (e.g. nested `TEMP` env vars), `git` can hit MAX_PATH. Not
    observed in the current environment; record it as a known
    limitation if it surfaces on a CI runner.
 
-5. **PowerShell `BeforeEach` cleanup of the temp dir is best-effort.**
+4. **PowerShell `BeforeEach` cleanup of the temp dir is best-effort.**
    `Remove-Item -ErrorAction SilentlyContinue` swallows the case
    where the dir was already removed or partially-removed. If a
    future test changes the temp dir to a network share, the cleanup
    will hang indefinitely. Not a concern for the current
    `GetTempPath()` use.
 
-6. **Diagnostic commit artefact.** The "stale" test in
+5. **Diagnostic commit artefact.** The "stale" test in
    `check-cline-skills.Tests.ps1` issues `git commit -m 'stale'`
    inside the temp harness. If a future change ever runs the test
    in a directory that is itself a git repo with
@@ -233,10 +226,7 @@ Counts above reflect the `7d69419` tree; run `pwsh scripts/test-scripts.ps1` for
 ## Suggested follow-up (not a roadmap item)
 
 - Add the path-traversal `It` case to `check-status.Tests.ps1`
-  (risk 2).
-- Add a behaviour-level assertion to `check-skill-summary.Tests.ps1`
-  that a case-sensitivity mismatch fixture (x vs X) changes the gate
-  outcome (risk 1); do not reintroduce a text-level tripwire.
+  (risk 1).
 - Consider extracting a `New-ScriptHarness -RepoRoot ...` helper
   into `scripts/test-helpers.ps1` once a fifth script test is
   added, to keep the `BeforeEach` blocks from drifting in style.

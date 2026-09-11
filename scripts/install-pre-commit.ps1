@@ -56,6 +56,17 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $contentLf = $shim -replace "`r`n", "`n"
 [System.IO.File]::WriteAllText($hookFile, $contentLf, $utf8NoBom)
 
+# POSIX hosts execute the hook file directly, so the shim must carry the
+# executable bit; git for Windows runs hooks through its bundled sh and
+# does not need one.
+if (-not $IsWindows) {
+    & chmod +x $hookFile
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to set executable permission on $hookFile."
+        exit 1
+    }
+}
+
 git -C $repoRoot config core.hooksPath .githooks
 if ($LASTEXITCODE -ne 0) { Write-Error 'Failed to set core.hooksPath'; exit 1 }
 

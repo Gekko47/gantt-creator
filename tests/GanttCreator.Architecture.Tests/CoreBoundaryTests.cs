@@ -82,27 +82,59 @@ public sealed class CoreBoundaryTests
         Assert.DoesNotContain("net10.0-windows", coreDll.Replace('\\', '/'), StringComparison.Ordinal);
     }
 
+    private static string ActiveTestConfiguration()
+    {
+        // The test binary lives under tests/<Project>/bin/<Configuration>/<TFM>/,
+        // so the TFM folder names its parent as the active build
+        // configuration. A Debug `dotnet test` therefore inspects the Debug
+        // output rather than a stale Release artifact.
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null)
+        {
+            if (dir.Name.StartsWith("net10.0", StringComparison.Ordinal))
+            {
+                return dir.Parent?.Name ?? "Release";
+            }
+            dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "Could not determine the active build configuration from the test output path: " +
+            Assembly.GetExecutingAssembly().Location);
+    }
+
     private static string LocateCoreAssembly()
     {
+        var configuration = ActiveTestConfiguration();
+
         // Walk up from the test binary until we find a sibling src/ folder.
         var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
         while (dir is not null)
         {
-            var candidate = Path.Combine(dir.FullName, "src", "GanttCreator.Core", "bin");
-            if (Directory.Exists(candidate))
+            var binRoot = Path.Combine(dir.FullName, "src", "GanttCreator.Core", "bin");
+            if (Directory.Exists(binRoot))
             {
-                // Prefer Release/net10.0; fall back to Debug/net10.0 so a
-                // plain `dotnet test` in Debug is not artificially red; then
-                // to any TFM under Release.
-                var releaseNet = Path.Combine(candidate, "Release", "net10.0", "GanttCreator.Core.dll");
-                if (File.Exists(releaseNet)) return releaseNet;
-                var debugNet = Path.Combine(candidate, "Debug", "net10.0", "GanttCreator.Core.dll");
-                if (File.Exists(debugNet)) return debugNet;
-                var releaseDir = Path.Combine(candidate, "Release");
-                var anyRelease = Directory.Exists(releaseDir) ? Directory
-                    .EnumerateFiles(releaseDir, "GanttCreator.Core.dll", SearchOption.AllDirectories)
-                    .FirstOrDefault() : null;
-                if (anyRelease is not null) return anyRelease;
+                var configDir = Path.Combine(binRoot, configuration);
+                if (Directory.Exists(configDir))
+                {
+                    var netDll = Path.Combine(configDir, "net10.0", "GanttCreator.Core.dll");
+                    if (File.Exists(netDll)) return netDll;
+
+                    // Any TFM under the active configuration (e.g. a future
+                    // net10.0-windows output) is still that configuration's
+                    // artifact; only fallbacks that leave the active
+                    // configuration are disallowed, so a Debug test cannot be
+                    // satisfied by a stale Release DLL.
+                    var withinConfig = Directory
+                        .EnumerateFiles(configDir, "GanttCreator.Core.dll", SearchOption.AllDirectories)
+                        .FirstOrDefault();
+                    if (withinConfig is not null) return withinConfig;
+                }
+
+                throw new DirectoryNotFoundException(
+                    "Could not locate GanttCreator.Core.dll under " +
+                    "src/GanttCreator.Core/bin/" + configuration + "/ (the active test " +
+                    "configuration). Build the '" + configuration +
+                    "' configuration before running these tests.");
             }
             dir = dir.Parent;
         }

@@ -71,12 +71,15 @@ Describe 'check-status.ps1' {
 
         It 'exits 0 on a clean status file (valid hash, existing path, known roadmap id)' {
             # All three checks pass: real commit hash, real on-disk file,
-            # R0.8 in the roadmap.  The "path" token here is STATUS.md
-            # itself, which exists at $repoRoot/STATUS.md.
+            # R0.8 in the roadmap. The "path" token must contain a directory
+            # separator for the path rule to engage, and the file must exist
+            # in the harness repository before the gate runs.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'exists' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\exists.md') -Encoding utf8
             $body = @"
 # Status
 
-References the commit ``$($script:realHash)`` and the file ``STATUS.md`` and the roadmap id ``R0.8``.
+References the commit ``$($script:realHash)`` and the file ``docs\exists.md`` and the roadmap id ``R0.8``.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0
@@ -125,6 +128,21 @@ References roadmap item ``R9.9`` which is absent.
 # Status
 
 References the file ``..\outside.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'resolves outside the repository'
+        }
+
+        It 'exits 1 when STATUS references a POSIX-style parent path that resolves outside the repository' {
+            # Same containment contract as the backslash form: the normalised
+            # relative-path check must reject '../' traversal too, on whatever
+            # host the gate runs (the check must not depend on the platform
+            # separator token used in the status file).
+            $body = @"
+# Status
+
+References the file ``../outside.md``.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Not -Be 0

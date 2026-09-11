@@ -137,7 +137,7 @@ exit $ExitCode
         }
 
         It 'exits non-zero with the blocking message and short-circuits on first failure' {
-            # First two pass; third fails; fourth is staged but must never run.
+            # First stub passes; second fails; third is staged but must never run.
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'   -LogPath $script:invocationLog -ExitCode 0
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'         -LogPath $script:invocationLog -ExitCode 7
             Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'       -LogPath $script:invocationLog -ExitCode 0
@@ -341,5 +341,16 @@ Describe 'install-pre-commit.ps1' {
         $content | Should -Match 'New-Object System\.Text\.UTF8Encoding'
         $content | Should -Match '\$contentLf'
         $content | Should -Match 'WriteAllText'
+    }
+
+    It 'marks the hook shim executable on POSIX hosts' {
+        # Windows hosts do not need the executable bit (git for Windows runs
+        # hooks via its bundled sh); POSIX hosts execute the file directly, so
+        # the installer must chmod +x it there, guarded by !$IsWindows. The
+        # branch cannot run on this Windows test host, hence the source-level
+        # assertion on the guard.
+        $content = Get-Content -LiteralPath $script:installScriptPath -Raw
+        $content | Should -Match 'chmod \+x \$hookFile'
+        $content | Should -Match 'IsWindows'
     }
 }

@@ -23,13 +23,37 @@ public class AddInAssemblyTests
     // We therefore resolve the src build directory by walking up from
     // the test binary, independent of any loaded assembly.
     //
-    // Any build configuration is accepted (Release preferred) so a plain
-    // `dotnet test` in Debug is not artificially red. The exception is
-    // AddIn_packaged_xll_exists, which asserts the packed XLL produced by
-    // 'dotnet publish' in Release only — that test resolves the Release
-    // publish path directly via LocateAddInBinDirectory, not through this
-    // config walk.
+    // The active test build configuration is resolved from the test output
+    // path (tests/<Project>/bin/<Configuration>/<TFM>/), so a plain
+    // `dotnet test` in Debug is not diverted to a stale Release output and
+    // vice versa. A candidate directory only counts when the AddIn DLL
+    // actually exists in it, so empty or stale directories are skipped
+    // instead of failing with a confusing missing-file error downstream.
+    // The exception is AddIn_packaged_xll_exists, which asserts the packed
+    // XLL produced by 'dotnet publish' in Release only — that test resolves
+    // the Release publish path directly via LocateAddInBinDirectory, not
+    // through this config walk.
     private static readonly string[] Configurations = ["Release", "Debug"];
+
+    private static string ActiveTestConfiguration()
+    {
+        // The test binary lives under tests/<Project>/bin/<Configuration>/<TFM>/,
+        // so the TFM folder (the first ancestor whose name starts with the
+        // TFM prefix) names its parent as the active build configuration.
+        var dir = new DirectoryInfo(
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null)
+        {
+            if (dir.Name.StartsWith("net10.0", StringComparison.Ordinal))
+            {
+                return dir.Parent?.Name ?? "Release";
+            }
+            dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "Could not determine the active build configuration from the test output path: " +
+            Assembly.GetExecutingAssembly().Location);
+    }
 
     private static string LocateAddInBinDirectory()
     {
@@ -52,16 +76,35 @@ public class AddInAssemblyTests
     private static string LocateAddInBuildDirectory()
     {
         var addInBin = LocateAddInBinDirectory();
+        var active = ActiveTestConfiguration();
+
+        // The active configuration is searched first; the configured
+        // fallbacks keep a plain `dotnet test` working when only the other
+        // configuration's artifacts exist, provided the DLL is actually
+        // present there. Empty or stale directories are skipped.
+        var order = new List<string>();
+        order.Add(active);
         foreach (var configuration in Configurations)
         {
+            if (!string.Equals(configuration, active, StringComparison.Ordinal))
+            {
+                order.Add(configuration);
+            }
+        }
+
+        foreach (var configuration in order)
+        {
             var candidate = Path.Combine(addInBin, configuration, "net10.0-windows");
-            if (Directory.Exists(candidate))
+            var dll = Path.Combine(candidate, "GanttCreator.AddIn.dll");
+            if (Directory.Exists(candidate) && File.Exists(dll))
             {
                 return candidate;
             }
         }
+
         throw new DirectoryNotFoundException(
-            "Could not locate src/GanttCreator.AddIn/bin/{Release|Debug}/net10.0-windows. " +
+            "Could not locate GanttCreator.AddIn.dll under " +
+            "src/GanttCreator.AddIn/bin/{Release|Debug}/net10.0-windows. " +
             "Build the solution before running these tests.");
     }
 

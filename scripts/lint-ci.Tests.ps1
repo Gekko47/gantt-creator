@@ -137,6 +137,6 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
         # helper as the archive check (single integrity path), consuming the
         # ExeSha256 pin from the psd1 at runtime rather than a literal.
         $script:lintText | Should -Match 'actionlint\.ExeSha256'
-        $script:lintText | Should -Match "-FilePath .*-ExpectedHash"
+        $script:lintText | Should -Match "-FilePath (?s).*-ExpectedHash"
     }
 }

@@ -82,8 +82,11 @@ foreach ($t in $tokens)
     # against C:\repos\gantt-creator on Ordinal comparison).
     $resolved = [System.IO.Path]::GetFullPath($candidate)
     $repoRootFull = [System.IO.Path]::GetFullPath($repoRoot)
-    $rel = [System.IO.Path]::GetRelativePath($repoRootFull, $resolved)
-    if ($rel -eq '..' -or $rel.StartsWith('..\')) {
+    # Normalise the relative path to forward slashes so parent traversal is
+    # recognised with both Windows ('..\') and POSIX ('../') separators,
+    # regardless of the host that runs the gate.
+    $rel = [System.IO.Path]::GetRelativePath($repoRootFull, $resolved).Replace('\', '/')
+    if ($rel -eq '..' -or $rel.StartsWith('../')) {
         $violations.Add("STATUS references path '$t' which resolves outside the repository.")
         continue
     }
