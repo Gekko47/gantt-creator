@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Interop.Excel;
 
@@ -206,9 +207,11 @@ internal sealed class OfficeFixture : IAsyncLifetime
         await PollForProcessExitAsync(_excelProcessId);
 
         // Report any cleanup exception after all cleanup attempts complete.
+        // Use ExceptionDispatchInfo to preserve the original stack trace
+        // from the workbook or Quit() cleanup failure.
         if (cleanupException != null)
         {
-            throw cleanupException;
+            ExceptionDispatchInfo.Capture(cleanupException).Throw();
         }
     }
 

@@ -89,6 +89,24 @@ public sealed class RedactorTests
         Assert.Equal("Value abc123", output);
     }
 
+    // The LongHexTokenPattern requires at least one hexadecimal letter, so
+    // purely decimal identifiers of 16+ digits must survive redaction.
+    [Fact]
+    public void Redact_purely_decimal_16_digit_identifier_not_masked()
+    {
+        var input = "Card 1234567890123456 processed";
+        var output = _redactor.Redact(input);
+        Assert.Equal(input, output);
+    }
+
+    [Fact]
+    public void Redact_purely_decimal_20_digit_identifier_not_masked()
+    {
+        var input = "Sequence 00000000000000000000 is not a token";
+        var output = _redactor.Redact(input);
+        Assert.Equal(input, output);
+    }
+
     [Fact]
     public void Redact_null_or_empty_returns_same()
     {

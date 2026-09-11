@@ -108,8 +108,8 @@ public sealed class RollingLog : IRollingLog
                 "baseName must not contain path separators, rooted paths, or wildcard characters.",
                 nameof(baseName));
         }
-        return baseName;
 #pragma warning restore IDE0046
+        return baseName;
     }
 
     /// <summary>

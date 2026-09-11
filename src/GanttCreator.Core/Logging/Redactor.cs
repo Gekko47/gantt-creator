@@ -32,7 +32,13 @@ public sealed partial class Redactor : IRedactor
     [GeneratedRegex(@"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex GuidPattern();
 
-    [GeneratedRegex(@"\b[0-9a-fA-F]{16,}\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    // The leading lookahead is scoped to the hex run itself ([0-9a-fA-F]*),
+    // so it cannot pull in letters from surrounding words. It requires at
+    // least one hexadecimal letter (a-f or A-F). Without it, purely decimal
+    // 16-digit identifiers such as credit-card numbers or sequence IDs would
+    // be redacted as [token], destroying log usefulness. Genuine long hex
+    // tokens (hashes, checksums, nonces) always contain at least one letter.
+    [GeneratedRegex(@"\b(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{16,}\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex LongHexTokenPattern();
 
     /// <summary>
