@@ -33,14 +33,14 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot   = Split-Path -Parent $scriptRoot
 
-# The four checkers below read the working tree (docs/, .cline/skills/,
+# The three checkers below read the working tree (docs/, .cline/skills/,
 # AGENTS.md, .github/). Validating the working tree is only equivalent to
 # validating the content that will be committed (the staged index) when the
 # two are identical. If a developer has unstaged edits under any inspected
 # root, the checkers could pass on a clean working tree while the staged
 # content that actually gets committed is dirty — or vice versa. Rather than
 # refactor every checker to read the index snapshot via `git show` (a broad
-# change to four scripts with different file-reading shapes), the minimal
+# change to three scripts with different file-reading shapes), the minimal
 # correct alternative is to refuse to run while the working tree is dirty
 # under the inspected roots: that guarantees working tree == index for the
 # validated content, so no masking is possible.

@@ -355,7 +355,7 @@ Describe 'install-pre-commit.ps1' {
         # The installer expects scripts/pre-commit.ps1 to exist relative to
         # the repo root, so plant a minimal stub in the temp repo.
         $stubContent = @'
-`$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 Write-Host 'pre-commit stub'
 exit 0
 '@
