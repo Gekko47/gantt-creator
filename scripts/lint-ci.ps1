@@ -27,12 +27,15 @@ $workflowDir = Join-Path $repoRoot '.github\workflows'
 
 # Collect every workflow file under .github/workflows so the lint gate
 # validates the whole set, not only ci.yml. Actionlint accepts multiple
-# file arguments, so we pass them all in one invocation.
-$workflowFiles = Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yml' -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty FullName
-$workflowFiles += Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yaml' -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty FullName
-$workflowFiles = $workflowFiles | Sort-Object -Unique
+# file arguments, so we pass them all in one invocation. The @() coercion
+# keeps a single-file result an array: without it a scalar String splats
+# character-by-character (@workflowFiles enumerates 'C', ':', '\', ...).
+[object[]]$workflowFiles = @(
+    Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yml' -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
+    Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yaml' -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
+) | Sort-Object -Unique
 
 if ($workflowFiles.Count -eq 0) {
     Write-Error "No workflow files found under $workflowDir"

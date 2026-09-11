@@ -162,4 +162,8 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
         $script:lintText | Should -Match 'actionlint\.ExeSha256'
         $script:lintText | Should -Match "-FilePath (?s).*-ExpectedHash"
     }
+
+    It 'keeps a single workflow file an array so splat passes the path' {
+        $script:lintText | Should -Match 'object\[\]\]\$workflowFiles'
+    }
 }
