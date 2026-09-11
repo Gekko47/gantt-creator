@@ -1,11 +1,15 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
-  - package-ecosystem: "github-actions" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # packages.lock.json makes this repo lock-file-driven (R0.3); a
+    # Dependabot PR here must update the lock file too, not just
+    # Directory.Packages.props, or the R0.3 offline-restore proof
+    # breaks. Confirm Dependabot's NuGet lock-file support covers this
+    # before merging its first PR rather than assuming it.
