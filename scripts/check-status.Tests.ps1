@@ -149,6 +149,39 @@ References the file ``../outside.md``.
             $r.Output | Should -Match 'resolves outside the repository'
         }
 
+        It 'exits 1 when STATUS references a path containing wildcard metacharacters' {
+            # Positive test for the wildcard-rejection validator: a path-shaped
+            # token (it has a directory separator and an extension) carrying ?
+            # or [] must be rejected before any filesystem test, with the
+            # documented message, and must not be counted as verified.
+            $body = @"
+# Status
+
+References the glob-style path ``docs?[a]/file.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            # Assert on a literal substring: the token itself carries ? and [],
+            # which are regex metacharacters for -Match and wildcard metacharacters
+            # for -like, so use String.Contains (literal) instead.
+            $r.Output.Contains("STATUS references path 'docs?[a]/file.md' contains wildcard metacharacters") | Should -BeTrue
+        }
+
+        It 'exits 0 when a wildcard token is present but is not path-shaped' {
+            # The wildcard rule must not fire on non-path tokens (e.g. attribute
+            # annotations like [Fact]); the shared predicate must classify them
+            # out of the path check entirely so they cannot trigger a false
+            # wildcard violation.
+            $body = @"
+# Status
+
+References the attribute annotation ``[Fact]`` and the roadmap id ``R0.8``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
         It 'exits 1 when STATUS references an absolute path outside the repository' {
             $body = @"
 # Status
