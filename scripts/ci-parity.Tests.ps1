@@ -190,14 +190,22 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
         $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
     }
 
-    It 'actionlint SHA-256 in ci.yml equals the value in tool-versions.psd1' {
-        # Scope the match to the actionlint step block so the hash is taken
-        # from the download pin, not from anywhere else in the workflow.
+    It 'actionlint step imports tool-versions.psd1 and derives version + hash from it' {
+        # W11: the version + archive SHA-256 are single-sourced from
+        # scripts/tool-versions.psd1. The workflow imports the psd1 and reads
+        # $versions.actionlint.Version / $versions.actionlint.Sha256 at runtime
+        # rather than carrying a literal mirror. The anti-drift assertion is
+        # therefore the import + property reference (mirroring the
+        # PSScriptAnalyzer test below), scoped to the actionlint step block so
+        # the import in the PSScriptAnalyzer step does not satisfy it.
         $block = Get-CiStepBlock -Text $script:ciText -StepName 'Workflow lint (actionlint)'
         $block | Should -Not -BeNullOrEmpty
-        $localHash = $script:versions.actionlint.Sha256
-        $ciHash = [regex]::Match($block, '[0-9a-f]{64}').Value
-        $ciHash | Should -Be $localHash
+        $block | Should -Match 'Import-PowerShellDataFile.*tool-versions\.psd1'
+        $block | Should -Match 'actionlint\.Version'
+        $block | Should -Match 'actionlint\.Sha256'
+        # The runtime value still equals the psd1 pin: the property read is
+        # the only source, so the two cannot diverge.
+        $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
     }
 
     It 'actionlint SHA-256 in scripts/lint-ci.ps1 is sourced from tool-versions.psd1' {

@@ -54,15 +54,21 @@ jobs:
 
       - name: Workflow lint (actionlint)
         run: |
+          # Version + archive SHA-256 are single-sourced from
+          # scripts/tool-versions.psd1 (W11). ci-parity.Tests.ps1 asserts the
+          # workflow imports the psd1 and references $versions.actionlint.Sha256
+          # at runtime (not a literal mirror).
+          $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
           if (-not (Get-Command actionlint -ErrorAction SilentlyContinue)) {
-            $version = '1.7.7'
+            $version = $versions.actionlint.Version
             $zip = "actionlint_${version}_windows_amd64.zip"
-            $url = "https://github.com/rhysd/actionlint/releases/download/v${version}/${zip}"
+            $url = $versions.actionlint.DownloadUrl -f $version
             $tmp = Join-Path $env:TEMP 'actionlint'
             if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
             $zipPath = Join-Path $tmp $zip
             Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-            $expectedHash = '7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731'
+            $expectedHash = $versions.actionlint.Sha256
+            Write-Host "Verifying actionlint archive SHA-256: $expectedHash"
             $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
             if ($actualHash -ne $expectedHash) {
                 throw "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"
@@ -78,13 +84,12 @@ jobs:
           actionlint -color .github/workflows/ci.yml
 
       - name: Script analyzer (PSScriptAnalyzer)
-        # PSScriptAnalyzer version + actionlint SHA-256 must equal the
-        # values in scripts/tool-versions.psd1; ci-parity.Tests.ps1
-        # asserts that equality so neither side can drift (W11). Bump
-        # the psd1 first, then both files.
+        # PSScriptAnalyzer version is single-sourced from
+        # scripts/tool-versions.psd1; ci-parity.Tests.ps1 asserts the workflow
+        # imports the psd1 and uses the version variable (W11). Bump the psd1
+        # first, then both files.
         run: |
           $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
-          $expectedHash = $versions.actionlint.Sha256
           $pssaVersion = $versions.PSScriptAnalyzer.Version
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
             Install-Module PSScriptAnalyzer -RequiredVersion $pssaVersion -Scope CurrentUser -Force
@@ -97,10 +102,11 @@ jobs:
           $scripts = Join-Path $PWD 'scripts'
           . (Join-Path $scripts 'verify-helpers.ps1')
           Invoke-PssaGate -Path $scripts -Settings (Join-Path $scripts 'PSScriptAnalyzerSettings.psd1')
-        # The actionlint pin below is the same value as
-        # scripts/tool-versions.psd1#actionlint.Sha256; ci-parity.Tests.ps1
-        # asserts equality. The W11 tripwire is the equality assertion,
-        # not removing the literal.
+        # The actionlint version + SHA-256 pin is single-sourced in the
+        # "Workflow lint (actionlint)" step above (reads
+        # scripts/tool-versions.psd1#actionlint at runtime); ci-parity.Tests.ps1
+        # asserts the workflow imports the psd1 and references that property.
+        # The W11 tripwire is that import+reference, not a literal in this step.
 
       - name: Script lint (Pester)
         # Delegates to the same entry point as verify-quick.ps1 step 7 so a
