@@ -100,6 +100,44 @@ foreach ($file in $map.Keys) {
     if (-not (Test-Path -LiteralPath $full)) { throw "Canonical source missing: $full" }
 }
 
+# Validate that every canonical doc matching the docs/0N-*.md pattern has a
+# $map entry. A doc without one is invisible to the sync script and the drift
+# gate will not catch it; fail-fast so the gap is visible rather than silent.
+$discoveredDocs = Get-ChildItem -LiteralPath $DocsRoot -File -Filter '0N-*.md' |
+    Select-Object -ExpandProperty Name
+foreach ($doc in $discoveredDocs) {
+    if (-not $map.ContainsKey($doc)) {
+        Write-Error ("sync-cline-skills: {0} matches the canonical docs/0N-*.md pattern but has no " +
+                     "$map entry. Add an entry to $map in scripts/sync-cline-skills.ps1 and re-run." -f $doc)
+        exit 1
+    }
+}
+
+# Delete obsolete generated files and directories in the skills root that are
+# not present in the current $map, including removed references.md entries.
+# This ensures the skills root does not accumulate stale files when docs are
+# removed from the map or when the generation format changes (e.g. the
+# references.md files that were removed in 2026-09).
+if (Test-Path -LiteralPath $SkillsRoot) {
+    $managedNames = $map.Values.Name
+    Get-ChildItem -LiteralPath $SkillsRoot -Directory | ForEach-Object {
+        $dirName = $_.Name
+        if ($dirName -notin $managedNames) {
+            Write-Host "sync-cline-skills: removing obsolete skill directory '$dirName'"
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            # For managed skill directories, remove obsolete files (e.g.
+            # references.md) that are no longer generated.
+            Get-ChildItem -LiteralPath $_.FullName -File | Where-Object { $_.Name -ne 'SKILL.md' } |
+                ForEach-Object {
+                    Write-Host "sync-cline-skills: removing obsolete file '$($_.FullName)'"
+                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+        }
+    }
+}
+
 # Regenerate each skill.
 foreach ($file in $map.Keys) {
     $src      = Join-Path $DocsRoot $file

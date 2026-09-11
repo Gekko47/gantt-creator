@@ -190,7 +190,7 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
         $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
     }
 
-    It 'actionlint step imports tool-versions.psd1 and derives version + hash from it' {
+    It 'actionlint step delegates to scripts/lint-ci.ps1 (verify-quick parity)' {
         # W11: the version + archive SHA-256 are single-sourced from
         # scripts/tool-versions.psd1. The workflow imports the psd1 and reads
         # $versions.actionlint.Version / $versions.actionlint.Sha256 at runtime
@@ -200,12 +200,7 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
         # the import in the PSScriptAnalyzer step does not satisfy it.
         $block = Get-CiStepBlock -Text $script:ciText -StepName 'Workflow lint (actionlint)'
         $block | Should -Not -BeNullOrEmpty
-        $block | Should -Match 'Import-PowerShellDataFile.*tool-versions\.psd1'
-        $block | Should -Match 'actionlint\.Version'
-        $block | Should -Match 'actionlint\.Sha256'
-        # The runtime value still equals the psd1 pin: the property read is
-        # the only source, so the two cannot diverge.
-        $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
+        $block | Should -Match 'lint-ci\.ps1'
     }
 
     It 'actionlint SHA-256 in scripts/lint-ci.ps1 is sourced from tool-versions.psd1' {

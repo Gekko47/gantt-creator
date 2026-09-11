@@ -69,9 +69,15 @@ $map = @{
             # when the sync script gained variable declarations between the
             # map and its first foreach loop — the lazy match swallowed
             # them and the harness script failed at runtime.
+            $originalBody = $syncBody
             $syncBody = $syncBody -replace '(?ms)\$map = @\{.*?^\}', ($fixtureMap + "`n")
+            # Guard: fail fast if the regex didn't match, so the harness
+            # doesn't silently ship the full production $map instead.
+            if ($syncBody -eq $originalBody) {
+                throw "Harness setup failed: `$map substitution pattern did not match; the unmodified production map would be written to the harness script."
+            }
             $script:harnessSync = Join-Path $script:harness 'sync-cline-skills.ps1'
-            $syncBody | Set-Content -LiteralPath $script:harnessSync -Encoding utf8
+            $syncBody | Set-Content -LiteralPath $script:harnessSync -Encoding utf8NoBOM
 
             # Copy check-cline-skills.ps1 unchanged into the harness; it
             # re-invokes the harness sync via -SkillsRoot.

@@ -62,13 +62,29 @@ internal sealed class OfficeFixture : IAsyncLifetime
             .Select(p => p.Id)
             .ToHashSet();
 
-        var app = new Application
-        {
-            Visible = false,
-            DisplayAlerts = false,
-            ScreenUpdating = false,
-        };
+        var app = new Application();
         _excel = app;
+
+        // Configure Excel properties in a guarded path that can clean up
+        // if any setter throws.
+        try
+        {
+            app.Visible = false;
+            app.DisplayAlerts = false;
+            app.ScreenUpdating = false;
+        }
+        catch
+        {
+            // If property configuration fails, ensure we clean up the
+            // Application instance we just created.
+            // CA1031 is narrowed below: Quit/ReleaseComObject failures during
+            // guarded cleanup must not mask the original property-setter error.
+#pragma warning disable CA1031
+            try { app.Quit(); } catch { }
+#pragma warning restore CA1031
+            Marshal.ReleaseComObject(app);
+            throw;
+        }
 
         // Identify the new EXCEL.EXE process by diffing the snapshot.
         var after = Process.GetProcessesByName("EXCEL")
@@ -137,26 +153,6 @@ internal sealed class OfficeFixture : IAsyncLifetime
                     }
                 }
             }
-
-            try
-            {
-                _excel.Quit();
-            }
-            finally
-            {
-                // Release the Excel Application proxy even if Quit failed.
-                if (_excel != null)
-                {
-                    try
-                    {
-                        Marshal.ReleaseComObject(_excel);
-                    }
-                    finally
-                    {
-                        _excel = null;
-                    }
-                }
-            }
         }
         catch (COMException ex)
         {
@@ -165,7 +161,6 @@ internal sealed class OfficeFixture : IAsyncLifetime
             // GC + orphan-poll phase.
             cleanupException = ex;
             _workbooks = null;
-            _excel = null;
         }
         catch (ArgumentException ex)
         {
@@ -173,7 +168,6 @@ internal sealed class OfficeFixture : IAsyncLifetime
             // cleanup. Best-effort: capture and continue.
             cleanupException = ex;
             _workbooks = null;
-            _excel = null;
         }
         catch (InvalidOperationException ex)
         {
@@ -181,20 +175,73 @@ internal sealed class OfficeFixture : IAsyncLifetime
             // Best-effort: capture and continue.
             cleanupException = ex;
             _workbooks = null;
-            _excel = null;
         }
         catch (NotImplementedException ex)
         {
             // COM method not implemented. Best-effort: capture and continue.
             cleanupException = ex;
             _workbooks = null;
-            _excel = null;
         }
         catch (NotSupportedException ex)
         {
             // COM method not supported. Best-effort: capture and continue.
             cleanupException = ex;
             _workbooks = null;
+        }
+
+        // Always attempt application shutdown independently, even if
+        // workbook cleanup threw. Preserve the first cleanup error, then
+        // execute Quit() and ReleaseComObject in a separate phase.
+        try
+        {
+            _excel.Quit();
+        }
+        catch (COMException ex)
+        {
+            // Excel may already be shutting down; capture if this is the
+            // first error we've seen.
+            if (cleanupException == null)
+            {
+                cleanupException = ex;
+            }
+        }
+#pragma warning disable CA1031 // General-completed: intentionally aggregated; first failure preserved and rethrown via ExceptionDispatchInfo.
+        catch (Exception ex)
+        {
+            if (cleanupException == null)
+            {
+                cleanupException = ex;
+            }
+        }
+#pragma warning restore CA1031
+
+        // Always attempt to release the Excel Application proxy, even if
+        // Quit() failed or was not attempted.
+        try
+        {
+            if (_excel != null)
+            {
+                Marshal.ReleaseComObject(_excel);
+            }
+        }
+        catch (COMException ex)
+        {
+            if (cleanupException == null)
+            {
+                cleanupException = ex;
+            }
+        }
+#pragma warning disable CA1031 // General-completed: intentionally aggregated; first failure preserved and rethrown via ExceptionDispatchInfo.
+        catch (Exception ex)
+        {
+            if (cleanupException == null)
+            {
+                cleanupException = ex;
+            }
+        }
+#pragma warning restore CA1031
+        finally
+        {
             _excel = null;
         }
 
@@ -204,7 +251,7 @@ internal sealed class OfficeFixture : IAsyncLifetime
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        await PollForProcessExitAsync(_excelProcessId);
+        await PollForProcessExitAsync(_excelProcessId).ConfigureAwait(true);
 
         // Report any cleanup exception after all cleanup attempts complete.
         // Use ExceptionDispatchInfo to preserve the original stack trace

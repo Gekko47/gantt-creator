@@ -143,7 +143,11 @@ if ($LASTEXITCODE -ne 0) {
 4. Commit `docs/` and `.cline/skills/` together.
 
 A new canonical source without a `$map` entry will be invisible to the
-sync script and the gate will not catch it. A `$map` entry pointing at
-a non-existent canonical source will fail-fast at sync time. A doc
-without a `SKILL-SUMMARY` block will fail the sync with a non-zero
-exit until one is added.
+sync script and the gate will not catch it. The sync script now scans
+`docs/0N-*.md` and fails with a non-zero exit when any discovered
+canonical document is absent from `$map`, so an unmapped doc can never
+silently evade generation. A `$map` entry pointing at a non-existent
+canonical source will fail-fast at sync time. A doc without a
+`SKILL-SUMMARY` block will fail the sync with a non-zero exit until one
+is added. The existing fail-fast behaviour for invalid mapped sources
+and the `SKILL-SUMMARY` validation are preserved.

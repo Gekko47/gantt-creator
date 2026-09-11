@@ -19,7 +19,10 @@ $roots = $Roots + $Entry
 foreach ($root in $roots)
 {
     $rootPath = Join-Path $repoRoot $root
-    if (-not (Test-Path -LiteralPath $rootPath)) { continue }
+    if (-not (Test-Path -LiteralPath $rootPath)) {
+        Write-Error "check-md-links: configured scan root '$root' does not exist at $rootPath. A missing configured root fails the gate instead of being silently skipped."
+        exit 1
+    }
     Get-ChildItem -LiteralPath $rootPath -Recurse -File -Filter '*.md' | ForEach-Object {
         $script:scanned++
         $file = $_.FullName

@@ -19,7 +19,9 @@ namespace GanttCreator.Office.IntegrationTests;
 ///
 /// All awaited calls use <c>ConfigureAwait(true)</c> because xUnit's
 /// analyzer (xUnit1030) requires it for test parallelization, and
-/// <c>true</c> satisfies both xUnit1030 and CA2007.
+/// <c>true</c> satisfies both xUnit1030 and CA2007. Awaits are written
+/// as explicit calls (never <c>await using</c>) so CA2007 can observe
+/// the <c>ConfigureAwait(true)</c> on the disposal path.
 /// </summary>
 public class OfficeFixtureTests
 {
@@ -34,16 +36,23 @@ public class OfficeFixtureTests
     [Fact]
     public async Task Excel_launches_and_reports_process_id()
     {
-        await using var fixture = new OfficeFixture();
-        await fixture.InitializeAsync().ConfigureAwait(true);
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
 
-        Assert.NotNull(fixture.Excel);
-        Assert.True(fixture.ProcessId != 0,
-            "Excel launched but process ID was not captured.");
+            Assert.NotNull(fixture.Excel);
+            Assert.True(fixture.ProcessId != 0,
+                "Excel launched but process ID was not captured.");
 
-        _output.WriteLine(
-            $"Excel launched: PID={fixture.ProcessId}, " +
-            $"Version={fixture.Excel.Version}");
+            _output.WriteLine(
+                $"Excel launched: PID={fixture.ProcessId}, " +
+                $"Version={fixture.Excel.Version}");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
     }
 
     [Trait("Category", "OfficeIntegration")]
@@ -51,7 +60,8 @@ public class OfficeFixtureTests
     public async Task Excel_teardown_leaves_no_orphan_process()
     {
         var pid = 0;
-        await using (var fixture = new OfficeFixture())
+        var fixture = new OfficeFixture();
+        try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
             pid = fixture.ProcessId;
@@ -59,7 +69,11 @@ public class OfficeFixtureTests
                 "Excel launched but process ID was not captured.");
             _output.WriteLine($"Excel launched, PID={pid}");
         }
-        // DisposeAsync has run at this point.
+        finally
+        {
+            // DisposeAsync runs here, before the orphan poll below.
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
 
         // Poll until the process exits or the deadline elapses.
         var sw = Stopwatch.StartNew();
@@ -92,17 +106,23 @@ public class OfficeFixtureTests
 
         for (int i = 1; i <= 5; i++)
         {
-            await using var fixture = new OfficeFixture();
-            await fixture.InitializeAsync().ConfigureAwait(true);
+            var fixture = new OfficeFixture();
+            try
+            {
+                await fixture.InitializeAsync().ConfigureAwait(true);
 
-            var pid = fixture.ProcessId;
-            Assert.True(pid != 0,
-                $"Cycle {i}: Excel launched but process ID was not captured.");
+                var pid = fixture.ProcessId;
+                Assert.True(pid != 0,
+                    $"Cycle {i}: Excel launched but process ID was not captured.");
 
-            pids.Add(pid);
-            _output.WriteLine($"Cycle {i}: Excel launched, PID={pid}");
-
-            // Dispose happens at the end of the `await using` scope.
+                pids.Add(pid);
+                _output.WriteLine($"Cycle {i}: Excel launched, PID={pid}");
+            }
+            finally
+            {
+                // Dispose runs at the end of each cycle, not at test end.
+                await fixture.DisposeAsync().ConfigureAwait(true);
+            }
         }
 
         // After all five cycles, verify every owned process exited.

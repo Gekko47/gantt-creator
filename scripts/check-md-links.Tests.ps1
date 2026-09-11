@@ -18,11 +18,16 @@ Describe 'check-md-links.ps1' {
             $script:harness  = Join-Path $script:tempRoot 'scripts'
             New-Item -ItemType Directory -Path $script:harness -Force | Out-Null
             New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            # Create the default configured roots (.github/, AGENTS.md) so the
+            # harness tests exercise the real default-root set. A missing
+            # configured root now fails the gate instead of being silently
+            # skipped, so the isolated tests must create every default root.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot '.github') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'AGENTS.md') -Value '# agents' -Encoding utf8
 
             # Copy the script unchanged into the harness; its $PSScriptRoot
             # is $script:harness, so its repo root is $script:tempRoot and it
-            # scans $script:tempRoot\docs. The default .github and AGENTS.md
-            # roots do not exist in the harness and are skipped.
+            # scans $script:tempRoot\docs plus the default roots created above.
             Copy-Item $script:scriptPath $script:harness
 
             function Invoke-MdLinksHarness {
@@ -67,6 +72,18 @@ Describe 'check-md-links.ps1' {
             $r = Invoke-MdLinksHarness
             $r.Exit   | Should -Not -Be 0
             $r.Output | Should -Match '\./missing\.md'
+        }
+
+        It 'fails the gate when a configured scan root does not exist (positive test)' {
+            # A missing configured root must fail the gate rather than being
+            # silently skipped. The harness BeforeEach creates docs/, .github/,
+            # and AGENTS.md (the default roots), so we delete one and assert
+            # the gate exits non-zero with the documented message.
+            Remove-Item -LiteralPath (Join-Path $script:tempRoot 'AGENTS.md') -Force
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'AGENTS.md'
+            $r.Output | Should -Match 'does not exist'
         }
     }
 }

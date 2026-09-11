@@ -54,34 +54,18 @@ jobs:
 
       - name: Workflow lint (actionlint)
         run: |
-          # Version + archive SHA-256 are single-sourced from
-          # scripts/tool-versions.psd1 (W11). ci-parity.Tests.ps1 asserts the
-          # workflow imports the psd1 and references $versions.actionlint.Sha256
-          # at runtime (not a literal mirror).
-          $versions = Import-PowerShellDataFile -LiteralPath scripts/tool-versions.psd1
-          if (-not (Get-Command actionlint -ErrorAction SilentlyContinue)) {
-            $version = $versions.actionlint.Version
-            $zip = "actionlint_${version}_windows_amd64.zip"
-            $url = $versions.actionlint.DownloadUrl -f $version
-            $tmp = Join-Path $env:TEMP 'actionlint'
-            if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp -Force | Out-Null }
-            $zipPath = Join-Path $tmp $zip
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-            $expectedHash = $versions.actionlint.Sha256
-            Write-Host "Verifying actionlint archive SHA-256: $expectedHash"
-            $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
-            if ($actualHash -ne $expectedHash) {
-                throw "actionlint archive SHA-256 mismatch: expected $expectedHash, got $actualHash"
-            }
-            Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
-            $exe = Join-Path $tmp 'actionlint.exe'
-            $dest = Join-Path $env:USERPROFILE 'bin'
-            if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
-            Copy-Item $exe -Destination (Join-Path $dest 'actionlint.exe') -Force
-            Write-Host "$dest added to PATH for this job"
-            $env:PATH = "$dest;$env:PATH"
-          }
-          actionlint -color .github/workflows/ci.yml
+          # Delegate to scripts/lint-ci.ps1, the same entry point as
+          # verify-quick.ps1 step 5. It validates every workflow YAML file
+          # under .github/workflows (matching the coverage provided by
+          # scripts/lint-ci.ps1), always installs the pinned actionlint
+          # binary into a private directory, and validates any existing
+          # executable against the configured Version, Sha256, and
+          # ExeSha256 values from scripts/tool-versions.psd1 before use
+          # (W11 single source of truth; ci-parity.Tests.ps1 asserts the
+          # workflow imports the psd1 and references
+          # $versions.actionlint.Sha256 at runtime, not a literal mirror).
+          pwsh -NoProfile -File scripts/lint-ci.ps1
+          if ($LASTEXITCODE -ne 0) { throw "lint-ci.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Script analyzer (PSScriptAnalyzer)
         # PSScriptAnalyzer version is single-sourced from

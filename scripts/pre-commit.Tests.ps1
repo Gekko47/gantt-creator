@@ -250,6 +250,7 @@ exit $ExitCode
             # script must live at $repoRoot/scripts/pre-commit.ps1.
             $script:tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
             $script:scriptsDir = Join-Path $script:tempDir 'scripts'
+            $script:invocationLog = Join-Path $script:tempDir 'invocation.log'
             New-Item -ItemType Directory -Path $script:scriptsDir -Force | Out-Null
 
             # Init a real git repo with a clean baseline: the guard compares
@@ -270,6 +271,15 @@ exit $ExitCode
             # Dirty an inspected root WITHOUT staging it.
             Set-Content -LiteralPath (Join-Path $script:tempDir 'AGENTS.md') -Value 'changed'
 
+            # Install passing checker stubs so the only reason for failure is
+            # the dirty-tree guard itself, not a real checker failing on the
+            # fixture. The stubs append their name to the invocation log and
+            # exit 0; they must never run because the guard short-circuits
+            # before the checker loop.
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-cline-skills.ps1')  -Name 'check-cline-skills.ps1'  -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-status.ps1')        -Name 'check-status.ps1'        -LogPath $script:invocationLog -ExitCode 0
+            Write-PreCommitStubChecker -Path (Join-Path $script:scriptsDir 'check-md-links.ps1')      -Name 'check-md-links.ps1'      -LogPath $script:invocationLog -ExitCode 0
+
             # Copy the real pre-commit.ps1 into scripts/ so $PSCommandPath
             # resolves to $repoRoot/scripts/pre-commit.ps1, matching production.
             $script:copyScriptPath = Join-Path $script:scriptsDir 'pre-commit.ps1'
@@ -283,6 +293,13 @@ exit $ExitCode
 
             $script:exitCode | Should -Not -Be 0
             $script:output | Should -Match 'Commit blocked'
+            # Dirty-tree-specific diagnostic: the guard must name the dirty
+            # inspected root, not just the generic blocking message.
+            $script:output | Should -Match 'Working tree has unstaged'
+            # Fail-fast proof: no checker ran because the guard fired first.
+            if (Test-Path -LiteralPath $script:invocationLog) {
+                (Get-Content -LiteralPath $script:invocationLog -Raw) | Should -Be ''
+            }
         }
 
         It 'runs normally when the working tree is clean under the inspected roots' {

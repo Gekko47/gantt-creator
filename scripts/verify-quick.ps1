@@ -11,18 +11,17 @@
     human-readable report to scripts/_artifacts/verify-quick.txt.
 
     Steps:
-      1. dotnet --version sanity check
-      2. skill-tree drift gate
-      3. STATUS.md accuracy gate (hashes, paths, roadmap IDs)
-      4. PSScriptAnalyzer over scripts/
-      5. Workflow lint (actionlint) over .github/workflows/ci.yml
-      6. Script lint (Pester) over scripts/*.ps1
-      7. dotnet restore --locked-mode (after a lock file is produced)
-      8. dotnet format --verify-no-changes --exclude tests
-      9. dotnet build -c Release -warnaserror
-     10. dotnet publish GanttCreator.AddIn (packed XLL for AddInAssemblyTests)
-     11. dotnet test on Core, Raster, Office contract, AddIn, Architecture
-         (OfficeIntegration trait excluded)
+      1. dotnet --version
+      2. skill tree in sync
+      3. status accuracy
+      4. script analyzer (PSScriptAnalyzer)
+      5. workflow lint (actionlint)
+      6. script lint (Pester)
+      7. restore
+      8. format (production only; tests/ tolerated per tests/Directory.Build.props)
+      9. build Release -warnaserror
+     10. publish AddIn (packed XLL)
+     11. test (OfficeIntegration excluded)
 #>
 
 [CmdletBinding()]

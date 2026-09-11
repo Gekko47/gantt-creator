@@ -5,20 +5,20 @@
 
 .DESCRIPTION
     Slower than verify-quick.ps1. Includes all quick gates plus:
-      1. markdown link sanity (scripts/check-md-links.ps1)
-      2. skill-tree drift gate (scripts/check-cline-skills.ps1)
-      3. STATUS.md accuracy (scripts/check-status.ps1)
-      4. PSScriptAnalyzer over scripts/
-      5. workflow lint (actionlint) over .github/workflows/ci.yml
-      6. script lint (Pester) over scripts/*.ps1
-      7. dotnet restore --locked-mode
-      8. dotnet format --verify-no-changes --exclude tests
-      9. dotnet build -c Release -warnaserror
-     10. dotnet publish the AddIn in Release configuration
-     11. dotnet test on every non-OfficeIntegration project
-     12. coverage report and per-project threshold check
-     13. dotnet list package --vulnerable --include-transitive
-     14. repository hygiene (git status --short, dirty working tree)
+      1. markdown link sanity
+      2. skill tree in sync
+      3. status accuracy
+      4. script analyzer (PSScriptAnalyzer)
+      5. workflow lint (actionlint)
+      6. script lint (Pester)
+      7. restore
+      8. format (production only; tests/ tolerated per tests/Directory.Build.props)
+      9. build Release -warnaserror
+     10. publish AddIn (packed XLL)
+     11. test (OfficeIntegration excluded)
+     12. coverage threshold check
+     13. package vulnerability scan
+     14. working tree hygiene
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.

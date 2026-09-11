@@ -85,10 +85,8 @@ function Read-VerifyDescriptionStepNumber {
     $inDescription = $false
     foreach ($line in $lines) {
         if ($line -match '^\s*\.DESCRIPTION\s*$') { $inDescription = $true; continue }
-        # Stop at the closing `#>` of the comment block, not at a later
-        # .SYNOPSIS: comment trailers or code after the terminator must not
-        # be scanned as description steps.
-        if ($inDescription -and $line -match '^\s*#>\s*$') { break }
+        # Stop processing at the closing `#>` of the comment block
+        if ($inDescription -and $line -match '^\s*#>\s*$') { return $numbers.ToArray() }
         if ($inDescription -and $line -match '^\s*(\d+)\.\s') {
             $numbers.Add([int]$Matches[1])
         }
@@ -96,6 +94,39 @@ function Read-VerifyDescriptionStepNumber {
     return $numbers.ToArray()
 }
 
+function Read-VerifyDescriptionStepLabel {
+    <#
+    .SYNOPSIS
+        Parses the description labels from the .DESCRIPTION block of a
+        verify script and returns them in declaration order.
+    .DESCRIPTION
+        Each step in the .DESCRIPTION block appears as: `  N. Label text`
+        The parser extracts the label text (everything after "N. ") for
+        each numbered step, in order. This allows ordered comparison of
+        description labels against Invoke-Step names to catch docs/code
+        drift where the counts match but the step meanings differ.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Read-VerifyDescriptionStepLabel: file not found: $Path"
+    }
+    $labels = New-Object System.Collections.Generic.List[string]
+    $lines = Get-Content -LiteralPath $Path
+    $inDescription = $false
+    foreach ($line in $lines) {
+        if ($line -match '^\s*\.DESCRIPTION\s*$') { $inDescription = $true; continue }
+        # Stop processing at the closing `#>` of the comment block
+        if ($inDescription -and $line -match '^\s*#>\s*$') { return $labels.ToArray() }
+        if ($inDescription -and $line -match '^\s*(\d+)\.\s+(.*)') {
+            $label = $Matches[2].TrimEnd()
+            if (-not [string]::IsNullOrWhiteSpace($label)) {
+                $labels.Add($label)
+            }
+        }
+    }
+    return $labels.ToArray()
+}
 function Invoke-PssaGate {
     <#
     .SYNOPSIS

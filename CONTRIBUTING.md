@@ -19,7 +19,7 @@ See `docs/01-ENVIRONMENT.md` for the full setup checklist.
 3. **Restate the boundary**: outcome, files likely to change, exclusions, acceptance tests, and unknowns.
 4. **Make the smallest coherent change** that proves one behaviour. Add or change tests in the same commit.
 5. **Run the gates**:
-   - `pwsh ./scripts/verify-quick.ps1` after each meaningful edit
+   - `pwsh ./scripts/verify-quick.ps1` once the slice is coherent, not after every edit
    - `pwsh ./scripts/verify.ps1` before requesting review
 6. **One concern per commit**. Conventional Commit prefixes (`feat:`, `fix:`, `test:`, `refactor:`, `docs:`, `build:`, `chore:`).
 7. **Update control documents**: `docs/STATUS.md` after every commit; `docs/DECISIONS.md` and `docs/KNOWN-LIMITATIONS.md` only when necessary.
