@@ -24,10 +24,18 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
 $workflowDir = Join-Path $repoRoot '.github\workflows'
-$ciYml = Join-Path $workflowDir 'ci.yml'
 
-if (-not (Test-Path -LiteralPath $ciYml)) {
-    Write-Error "Workflow file not found: $ciYml"
+# Collect every workflow file under .github/workflows so the lint gate
+# validates the whole set, not only ci.yml. Actionlint accepts multiple
+# file arguments, so we pass them all in one invocation.
+$workflowFiles = Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yml' -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty FullName
+$workflowFiles += Get-ChildItem -LiteralPath $workflowDir -File -Filter '*.yaml' -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty FullName
+$workflowFiles = $workflowFiles | Sort-Object -Unique
+
+if ($workflowFiles.Count -eq 0) {
+    Write-Error "No workflow files found under $workflowDir"
     exit 1
 }
 
@@ -102,12 +110,12 @@ if (-not (Test-Path -LiteralPath $exePath)) {
     exit 1
 }
 
-Write-Host "Running actionlint v$version against $ciYml..."
-& $exePath -color $ciYml 2>&1
+Write-Host "Running actionlint v$version against $($workflowFiles.Count) workflow file(s)..."
+& $exePath -color @workflowFiles 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "actionlint found issues in $ciYml"
+    Write-Error "actionlint found issues in $($workflowFiles -join ', ')"
     exit $LASTEXITCODE
 }
 
-Write-Host "lint-ci: PASS (ci.yml validated by actionlint v$version)"
+Write-Host "lint-ci: PASS ($($workflowFiles.Count) workflow file(s) validated by actionlint v$version)"
 exit 0
