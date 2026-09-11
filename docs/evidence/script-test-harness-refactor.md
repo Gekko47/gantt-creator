@@ -118,15 +118,12 @@ is affected.
 
 ## Residual risks (record for the next pass)
 
-1. **Lost path-traversal regression guard on `check-status.ps1`.**
-   The old negative-match `'\\.StartsWith\\(\\$repoRootFull'` was
-   guarding the `GetFullPath` + `GetRelativePath` fix that replaced
+1. **Path-traversal regression guard on `check-status.ps1` — RESOLVED.**
+   The old negative-match was guarding the `GetFullPath` + `GetRelativePath` fix that replaced
    a `StartsWith` containment check. The new test cases cover the
-   "missing path" case, but a deliberate `..\\evil-repo` case is not
-   in the suite. Mitigation candidate: add one `It` whose status
-   body contains a backticked path like `..\\evil-repo\\STATUS.md`
-   and assert that the script rejects it with the
-   `outside the repository` violation.
+   "missing path" case, and subsequent commits added the deliberate traversal cases:
+   `..\\outside.md`, `../outside.md`, and `C:\\windows\\evil.md` are all rejected.
+   The residual-risk entry from the original `7d69419` refactor is no longer applicable.
 
 2. **Test suite wall time.** The four updated files now spawn
    ~14 child-`pwsh` processes; the full `scripts/test-scripts.ps1`

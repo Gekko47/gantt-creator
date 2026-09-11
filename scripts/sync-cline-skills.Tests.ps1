@@ -91,7 +91,8 @@ $map = @{
             # skill directory name, because Cline loads a skill by matching
             # the requested name against that front-matter field.
             $frontMatter = ($skillBody -split '(?ms)^---$', 3)[1]
-            ($frontMatter -split '\r?\n' | Where-Object { $_ -match '^name:\s*(.*)' })[0] -match '^name:\s*(.+)$'
+            $nameMatch = (@($frontMatter -split '\r?\n' | Where-Object { $_ -match '^name:\s*(.*)' })[0]) -match '^name:\s*(.+)$'
+            $nameMatch | Should -BeTrue -Because "the SKILL.md front-matter must contain a name: line"
             $yamlName = $Matches[1].Trim()
             $skillDirName = (Split-Path -Leaf (Split-Path -Parent (Join-Path $script:skills '99-fixture/SKILL.md')))
             $yamlName | Should -Be $skillDirName

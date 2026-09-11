@@ -21,10 +21,24 @@ public sealed partial class ArtifactSourceMarkerTests
     private static readonly Regex BinPublishRef = BinPublishRefImpl();
     private static readonly Regex MarkerLine = MarkerLineImpl();
 
+    // Recognized verify scripts and their step names for artifact-source markers.
+    // A marker is valid only when it references a known script AND a known step.
+    private static readonly HashSet<string> KnownScripts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "verify-quick.ps1",
+        "verify.ps1",
+    };
+
+    private static readonly HashSet<string> KnownSteps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "publish AddIn (packed XLL)",
+        "build Release -warnaserror",
+    };
+
     [GeneratedRegex(@"\b(bin|publish)\b(?:[/\\]|"")", RegexOptions.IgnoreCase)]
     private static partial Regex BinPublishRefImpl();
 
-    [GeneratedRegex(@"^\s*//\s*artifact-source\s*:\s*\S", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*//\s*artifact-source\s*:\s*\S+\s*->\s*'", RegexOptions.IgnoreCase)]
     private static partial Regex MarkerLineImpl();
 
     [Fact]
@@ -53,9 +67,11 @@ public sealed partial class ArtifactSourceMarkerTests
         Assert.True(
             offenders.Count == 0,
             "Test files reference bin/ or publish/ but lack the required " +
-            "`// artifact-source: <step-name>` marker comment. Add the marker " +
-            "to the file (the comment text is free-form; cite the verify-script " +
-            "step that produces the artifact). Offenders: " +
+            "`// artifact-source: <script> -> '<step>` marker comment. " +
+            "The marker must reference a known verify script and step. " +
+            "Known scripts: verify-quick.ps1, verify.ps1. " +
+            "Known steps: publish AddIn (packed XLL), build Release -warnaserror. " +
+            "Offenders: " +
             string.Join(", ", offenders));
     }
 
@@ -65,7 +81,7 @@ public sealed partial class ArtifactSourceMarkerTests
     // not in xUnit 2.9. Asserting against the source pattern string is
     // the only analyzer-clean form.
     private const string BinPublishPattern = @"\b(bin|publish)\b(?:[/\\]|"")";
-    private const string MarkerLinePattern = @"^\s*//\s*artifact-source\s*:\s*\S";
+    private const string MarkerLinePattern = @"^\s*//\s*artifact-source\s*:\s*\S+\s*->\s*'";
 
     [Fact]
     public void Positive_control_synthetic_file_with_marker_is_clean()
@@ -86,24 +102,45 @@ public sealed partial class ArtifactSourceMarkerTests
     {
         // True when the file references a bin/ or publish/ artifact segment
         // (as a path or as a quoted Path.Combine argument) but carries no
-        // artifact-source marker line.
+        // artifact-source marker line, or the marker references an unknown
+        // script or step.
         var text = File.ReadAllText(filePath);
         if (!BinPublishRef.IsMatch(text))
         {
             return false;
         }
 
-        var hasMarker = false;
         foreach (var line in text.Split('\n'))
         {
-            if (MarkerLine.IsMatch(line))
+            var match = MarkerLine.Match(line);
+            if (match.Success)
             {
-                hasMarker = true;
-                break;
+                // Extract the script and step from the marker.
+                // Format: // artifact-source: <script> -> '<step>'
+                var markerContent = line[match.Index..].TrimStart();
+                var colonIdx = markerContent.IndexOf(':', StringComparison.Ordinal);
+                var arrowIdx = markerContent.IndexOf("->", StringComparison.Ordinal);
+                var quoteStart = markerContent.IndexOf('\'', arrowIdx);
+                var quoteEnd = markerContent.IndexOf('\'', quoteStart + 1);
+
+                if (colonIdx > 0 && arrowIdx > colonIdx && quoteStart > arrowIdx && quoteEnd > quoteStart)
+                {
+                    var script = markerContent[(colonIdx + 1)..arrowIdx].Trim();
+                    var step = markerContent[(quoteStart + 1)..quoteEnd];
+
+                    // Valid marker requires both a known script and a known step.
+                    if (KnownScripts.Contains(script) && KnownSteps.Contains(step))
+                    {
+                        return false;
+                    }
+                }
+
+                // Marker present but invalid (unknown script or step).
+                return true;
             }
         }
 
-        return !hasMarker;
+        return true;
     }
 
     [Fact]
@@ -148,6 +185,56 @@ public sealed partial class ArtifactSourceMarkerTests
                 "}" + Environment.NewLine);
 
             Assert.False(HasMissingMarker(file), "A marked Path.Combine bin consumer must be clean.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Regression_marker_with_unknown_script_is_rejected()
+    {
+        var td = Path.Combine(Path.GetTempPath(), "asm-inv-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(td);
+        try
+        {
+            var file = Path.Combine(td, "FailTests.cs");
+            File.WriteAllText(file,
+                "// artifact-source: unknown-script.ps1 -> 'some step'" + Environment.NewLine +
+                "class FailTests {" + Environment.NewLine +
+                "  static void M() {" + Environment.NewLine +
+                "    var binDir = Path.Combine(root, \"bin\", \"Release\");" + Environment.NewLine +
+                "  }" + Environment.NewLine +
+                "}" + Environment.NewLine);
+
+            Assert.True(HasMissingMarker(file),
+                "A marker referencing an unknown script must be rejected.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Regression_marker_with_unknown_step_is_rejected()
+    {
+        var td = Path.Combine(Path.GetTempPath(), "asm-inv2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(td);
+        try
+        {
+            var file = Path.Combine(td, "FailTests2.cs");
+            File.WriteAllText(file,
+                "// artifact-source: verify-quick.ps1 -> 'unknown step'" + Environment.NewLine +
+                "class FailTests2 {" + Environment.NewLine +
+                "  static void M() {" + Environment.NewLine +
+                "    var binDir = Path.Combine(root, \"bin\", \"Release\");" + Environment.NewLine +
+                "  }" + Environment.NewLine +
+                "}" + Environment.NewLine);
+
+            Assert.True(HasMissingMarker(file),
+                "A marker referencing an unknown step must be rejected.");
         }
         finally
         {

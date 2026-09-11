@@ -9,7 +9,7 @@ namespace GanttCreator.AddIn.Tests;
 /// </summary>
 public class AddInAssemblyTests
 {
-    // artifact-source: the packed XLL consumed by AddIn_packaged_xll_exists
+    // artifact-source: verify-quick.ps1 -> 'publish AddIn (packed XLL)'
     // is produced by the 'publish AddIn (packed XLL)' step of
     // scripts/verify-quick.ps1 and scripts/verify.ps1 at
     // src/GanttCreator.AddIn/bin/Release/net10.0-windows/publish/ (the
@@ -33,8 +33,6 @@ public class AddInAssemblyTests
     // XLL produced by 'dotnet publish' in Release only — that test resolves
     // the Release publish path directly via LocateAddInBinDirectory, not
     // through this config walk.
-    private static readonly string[] Configurations = ["Release", "Debug"];
-
     private static string ActiveTestConfiguration()
     {
         // The test binary lives under tests/<Project>/bin/<Configuration>/<TFM>/,
@@ -78,33 +76,22 @@ public class AddInAssemblyTests
         var addInBin = LocateAddInBinDirectory();
         var active = ActiveTestConfiguration();
 
-        // The active configuration is searched first; the configured
-        // fallbacks keep a plain `dotnet test` working when only the other
-        // configuration's artifacts exist, provided the DLL is actually
-        // present there. Empty or stale directories are skipped.
-        var order = new List<string>();
-        order.Add(active);
-        foreach (var configuration in Configurations)
+        // The active configuration is searched first and only the active
+        // configuration is considered. Fallback entries from Configurations
+        // are not added to the search order, and other configurations are
+        // not considered. If the active DLL is missing, report the missing
+        // active artifact as an error instead of loading another configuration's
+        // DLL (which would mask a misconfigured build).
+        var candidate = Path.Combine(addInBin, active, "net10.0-windows");
+        var dll = Path.Combine(candidate, "GanttCreator.AddIn.dll");
+        if (Directory.Exists(candidate) && File.Exists(dll))
         {
-            if (!string.Equals(configuration, active, StringComparison.Ordinal))
-            {
-                order.Add(configuration);
-            }
-        }
-
-        foreach (var configuration in order)
-        {
-            var candidate = Path.Combine(addInBin, configuration, "net10.0-windows");
-            var dll = Path.Combine(candidate, "GanttCreator.AddIn.dll");
-            if (Directory.Exists(candidate) && File.Exists(dll))
-            {
-                return candidate;
-            }
+            return candidate;
         }
 
         throw new DirectoryNotFoundException(
             "Could not locate GanttCreator.AddIn.dll under " +
-            "src/GanttCreator.AddIn/bin/{Release|Debug}/net10.0-windows. " +
+            $"src/GanttCreator.AddIn/bin/{active}/net10.0-windows. " +
             "Build the solution before running these tests.");
     }
 

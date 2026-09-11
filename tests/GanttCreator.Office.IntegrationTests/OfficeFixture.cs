@@ -91,33 +91,108 @@ internal sealed class OfficeFixture : IAsyncLifetime
 
         if (_excel == null) return;
 
+        Exception? cleanupException = null;
+
         try
         {
-            _workbooks = _excel.Workbooks;
-
-            // Close every open workbook without saving. The Excel COM
-            // collection is 1-based; iterate backwards so index shifts
-            // from removals do not skip entries.
-            var count = _workbooks.Count;
-            for (int i = count; i >= 1; i--)
+            try
             {
-                Workbook wb = _workbooks[i];
-                wb.Close(SaveChanges: false);
-                Marshal.ReleaseComObject(wb);
+                _workbooks = _excel.Workbooks;
+
+                // Close every open workbook without saving. The Excel COM
+                // collection is 1-based; iterate backwards so index shifts
+                // from removals do not skip entries.
+                var count = _workbooks.Count;
+                for (int i = count; i >= 1; i--)
+                {
+                    Workbook? wb = null;
+                    try
+                    {
+                        wb = _workbooks[i];
+                        wb.Close(SaveChanges: false);
+                    }
+                    finally
+                    {
+                        if (wb != null)
+                        {
+                            Marshal.ReleaseComObject(wb);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                // Release the Workbooks collection proxy even if workbook
+                // cleanup failed.
+                if (_workbooks != null)
+                {
+                    try
+                    {
+                        Marshal.ReleaseComObject(_workbooks);
+                    }
+                    finally
+                    {
+                        _workbooks = null;
+                    }
+                }
             }
 
-            Marshal.ReleaseComObject(_workbooks);
-            _workbooks = null;
-
-            _excel.Quit();
-            Marshal.ReleaseComObject(_excel);
-            _excel = null;
+            try
+            {
+                _excel.Quit();
+            }
+            finally
+            {
+                // Release the Excel Application proxy even if Quit failed.
+                if (_excel != null)
+                {
+                    try
+                    {
+                        Marshal.ReleaseComObject(_excel);
+                    }
+                    finally
+                    {
+                        _excel = null;
+                    }
+                }
+            }
         }
-        catch (COMException)
+        catch (COMException ex)
         {
             // Excel may already be shutting down from a prior failure.
-            // Best-effort cleanup: drop references and continue to the
+            // Best-effort cleanup: capture the exception and continue to the
             // GC + orphan-poll phase.
+            cleanupException = ex;
+            _workbooks = null;
+            _excel = null;
+        }
+        catch (ArgumentException ex)
+        {
+            // Workbook index out of range or similar argument issues during
+            // cleanup. Best-effort: capture and continue.
+            cleanupException = ex;
+            _workbooks = null;
+            _excel = null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Excel application in invalid state during cleanup.
+            // Best-effort: capture and continue.
+            cleanupException = ex;
+            _workbooks = null;
+            _excel = null;
+        }
+        catch (NotImplementedException ex)
+        {
+            // COM method not implemented. Best-effort: capture and continue.
+            cleanupException = ex;
+            _workbooks = null;
+            _excel = null;
+        }
+        catch (NotSupportedException ex)
+        {
+            // COM method not supported. Best-effort: capture and continue.
+            cleanupException = ex;
             _workbooks = null;
             _excel = null;
         }
@@ -129,6 +204,12 @@ internal sealed class OfficeFixture : IAsyncLifetime
         GC.Collect();
 
         await PollForProcessExitAsync(_excelProcessId);
+
+        // Report any cleanup exception after all cleanup attempts complete.
+        if (cleanupException != null)
+        {
+            throw cleanupException;
+        }
     }
 
     /// <summary>

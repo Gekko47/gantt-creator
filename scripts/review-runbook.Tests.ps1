@@ -111,7 +111,7 @@ Describe 'W-7 review methodology runbook' {
         # the "~N minutes" claims do not match this pattern.)
         $offenders = Get-ChildItem -Path $script:repoRoot -Recurse -Include '*.md', '*.ps1', '*.json' -File |
             Where-Object { $_.FullName -notmatch '\\(\.git|\.vs|bin|obj|node_modules|_artifacts)\\' } |
-            Select-String -Pattern '~\d{1,2}\s?s\b[\)\.;,]?' |
+            Select-String -Pattern '~\s?(?:[1-9]|[1-5]\d)\s?s\b[\)\.;,]?' |
             Where-Object { $_.Line -match 'verify-quick|verify\.ps1|verify-full' }
         if ($offenders) {
             $offenders | ForEach-Object {

@@ -11,7 +11,8 @@ namespace GanttCreator.Architecture.Tests;
 /// so the architecture is enforced even if a developer wires a
 /// reference into <c>GanttCreator.Core.csproj</c>.
 /// </summary>
-// artifact-source: the GanttCreator.Core.dll consumed here is produced by
+// artifact-source: verify-quick.ps1 -> 'build Release -warnaserror'
+// The GanttCreator.Core.dll consumed here is produced by
 // the 'build Release -warnaserror' step of scripts/verify-quick.ps1 and
 // scripts/verify.ps1 (docs/02-ARCHITECTURE.md build-pipeline artifact
 // contract). Debug output is also accepted so a plain `dotnet test` is not

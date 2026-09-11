@@ -44,7 +44,30 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
 
     It 'ci.yml mirrors the same actionlint pin (anti-drift)' {
         $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
-        $ciHash = [regex]::Match($script:ciText, '[0-9a-f]{64}').Value
+        # Scope the match to the "Workflow lint (actionlint)" step block so
+        # the hash comes from the download pin, not from anywhere else in the
+        # workflow (matching the scoping approach in ci-parity.Tests.ps1).
+        # A foreach loop is used instead of ForEach-Object -Begin/-Process/-End
+        # so PSScriptAnalyzer tracks the variables within a single scope.
+        $ciStepBlockLines = [System.Collections.Generic.List[string]]::new()
+        $inBlock = $false
+        foreach ($line in ($script:ciText -split "`r?`n"))
+        {
+            if ($line.Trim() -match '^- name:\s*Workflow lint \(actionlint\)')
+            {
+                $inBlock = $true
+            }
+            elseif ($inBlock -and $line.Trim() -match '^- name:')
+            {
+                $inBlock = $false
+            }
+            elseif ($inBlock)
+            {
+                $null = $ciStepBlockLines.Add($line)
+            }
+        }
+        $ciStepBlock = $ciStepBlockLines -join "`n"
+        $ciHash = [regex]::Match($ciStepBlock, '[0-9a-f]{64}').Value
         $ciHash | Should -Be $script:versions.actionlint.Sha256
     }
 
