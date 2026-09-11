@@ -164,7 +164,7 @@ The probes that produced the W-13 findings:
   module version matched CI's pin (1.25.0). The probe was small and
   the answer was decisive.
 - `Get-Command Invoke-Pester` to inspect the parameter surface;
-  output showed the `Script` parameter does not exist in Pester 5/6.
+  output showed the `Script` parameter does not exist in Pester 6+.
   **This was the proof that the CI workflow's inline
   `Invoke-Pester -Script` call could not work.**
 - `(Get-Content ... -Raw) -split "`n" | Select-String` to scan the CI

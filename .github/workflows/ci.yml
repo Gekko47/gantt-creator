@@ -105,7 +105,7 @@ jobs:
       - name: Script lint (Pester)
         # Delegates to the same entry point as verify-quick.ps1 step 7 so a
         # local PASS predicts a CI PASS. Never inline Pester invocation logic
-        # here: the Pester 4→5 transition removed the `-Script` parameter,
+        # here: the Pester 4→6+ transition removed the `-Script` parameter,
         # and workflow-inlined logic cannot be kept in sync with the pinned
         # script gate. Enforced by scripts/ci-parity.Tests.ps1.
         run: |

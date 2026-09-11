@@ -103,7 +103,7 @@ defect class "local says PASS, CI says FAIL because the two views diverged"
 includes:
   - inline `dotnet test`/`dotnet build`/`dotnet publish`/`Invoke-Pester`
     calls in `ci.yml` that drift
-    from the version-pinned `scripts/*.ps1` entry points (Pester 4→5
+    from the version-pinned `scripts/*.ps1` entry points (Pester 4→6+
     removed the `-Script` parameter; the first CI push of `stage-inspect`
     would have failed on it);
   - a tool pin declared in two places (e.g. actionlint SHA-256 in
