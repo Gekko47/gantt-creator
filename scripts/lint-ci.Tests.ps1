@@ -45,13 +45,13 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
     It 'ci.yml mirrors the same actionlint pin (anti-drift)' {
         $script:versions.actionlint.Sha256 | Should -Match '^[0-9a-f]{64}$'
         # W11: the workflow no longer carries a literal mirror of the pin; it
-        # imports scripts/tool-versions.psd1 and reads $versions.actionlint.Sha256
-        # at runtime. Assert the indirection rather than a literal: the import
-        # and the property reference must both be present in the actionlint
-        # step block (scoped so the import in the PSScriptAnalyzer step does
-        # not satisfy it). A foreach loop is used instead of
-        # ForEach-Object -Begin/-Process/-End so PSScriptAnalyzer tracks the
-        # variables within a single scope.
+        # delegates to scripts/lint-ci.ps1, which imports
+        # scripts/tool-versions.psd1 and reads $versions.actionlint.Sha256
+        # internally. Assert the delegation rather than an inline import:
+        # the actionlint step must route through lint-ci.ps1 so the
+        # single source of truth cannot drift without the tripwire firing.
+        # The block is scoped so the import in the PSScriptAnalyzer step
+        # does not satisfy it.
         $ciStepBlockLines = [System.Collections.Generic.List[string]]::new()
         $inBlock = $false
         foreach ($line in ($script:ciText -split "`r?`n"))
@@ -70,9 +70,7 @@ Describe 'lint-ci.ps1 (W11 source-of-truth)' {
             }
         }
         $ciStepBlock = $ciStepBlockLines -join "`n"
-        $ciStepBlock | Should -Match 'Import-PowerShellDataFile.*tool-versions\.psd1'
-        $ciStepBlock | Should -Match 'actionlint\.Sha256'
-        $ciStepBlock | Should -Match 'actionlint\.Version'
+        $ciStepBlock | Should -Match 'lint-ci\.ps1'
     }
 
     It 'actionlint-hash.ps1 accepts the pinned checksum and rejects a mismatched one (child process)' {

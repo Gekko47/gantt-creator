@@ -60,9 +60,8 @@ jobs:
           # scripts/lint-ci.ps1), always installs the pinned actionlint
           # binary into a private directory, and validates any existing
           # executable against the configured Version, Sha256, and
-          # ExeSha256 values from scripts/tool-versions.psd1 before use
-          # (W11 single source of truth; ci-parity.Tests.ps1 asserts the
-          # workflow imports the psd1 and references
+          # ExeSha256 values from scripts/tool-versions.psd1 before use          # (W11 single source of truth; ci-parity.Tests.ps1 asserts the
+          # workflow delegates to scripts/lint-ci.ps1 which reads
           # $versions.actionlint.Sha256 at runtime, not a literal mirror).
           pwsh -NoProfile -File scripts/lint-ci.ps1
           if ($LASTEXITCODE -ne 0) { throw "lint-ci.ps1 failed with exit $LASTEXITCODE" }

@@ -192,12 +192,14 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
 
     It 'actionlint step delegates to scripts/lint-ci.ps1 (verify-quick parity)' {
         # W11: the version + archive SHA-256 are single-sourced from
-        # scripts/tool-versions.psd1. The workflow imports the psd1 and reads
-        # $versions.actionlint.Version / $versions.actionlint.Sha256 at runtime
-        # rather than carrying a literal mirror. The anti-drift assertion is
-        # therefore the import + property reference (mirroring the
-        # PSScriptAnalyzer test below), scoped to the actionlint step block so
-        # the import in the PSScriptAnalyzer step does not satisfy it.
+# scripts/tool-versions.psd1. The workflow delegates to
+# scripts/lint-ci.ps1 which imports the psd1 and reads
+# $versions.actionlint.Version / $versions.actionlint.Sha256
+# internally, rather than carrying a literal mirror in the workflow.
+# The anti-drift assertion is the delegation to lint-ci.ps1
+# (mirroring the PSScriptAnalyzer test below), scoped to the
+# actionlint step block so it cannot be satisfied by the PSScriptAnalyzer
+# step's import.
         $block = Get-CiStepBlock -Text $script:ciText -StepName 'Workflow lint (actionlint)'
         $block | Should -Not -BeNullOrEmpty
         $block | Should -Match 'lint-ci\.ps1'
