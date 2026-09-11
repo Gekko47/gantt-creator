@@ -6,12 +6,11 @@
 # local and CI cannot recur. See AGENTS.md "Test layers" and
 # docs/04-TEST-STRATEGY.md.
 @{
-    # Pester. CI installs newest >= 5.0; local has 6.1.0. test-scripts.ps1
-    # uses version-safe container counts (Pester 5/6) so behaviour is
-    # identical across the supported range. When a known-broken version
-    # ships, add a minimum here and assert it from Pester.
+    # Pester. CI installs newest >= 6.0; local runs 6.1.0. When a
+    # known-broken version ships, add a minimum here and assert it from
+    # Pester.
     Pester = @{
-        MinimumMajor = 5
+        MinimumMajor = 6
     }
 
     # PSScriptAnalyzer. 1.25.0 is the version CI installs and the version

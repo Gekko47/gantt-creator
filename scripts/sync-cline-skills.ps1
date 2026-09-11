@@ -76,9 +76,10 @@ $map = @{
 $summaryStartMarker = '<!-- SKILL-SUMMARY:START -->'
 $summaryEndMarker   = '<!-- SKILL-SUMMARY:END -->'
 
-foreach ($root in @($DocsRoot, $SkillsRoot)) {
-    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null }
-}
+# Only create the generated-output root. The docs/ root is the canonical
+# source of truth; if it is missing, let the per-file validation below report
+# "Canonical source missing" rather than silently masking the absence.
+if (-not (Test-Path -LiteralPath $SkillsRoot)) { New-Item -ItemType Directory -Path $SkillsRoot -Force | Out-Null }
 
 # Validate that every mapped canonical source exists.
 foreach ($file in $map.Keys) {

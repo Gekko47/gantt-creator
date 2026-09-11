@@ -196,8 +196,8 @@ Describe 'tool-versions.psd1 single source of truth (W11)' {
         # W11: lint-ci.ps1 reads the pin from the psd1 at runtime; the
         # script source no longer carries the literal. The integrity
         # assertion follows the same indirection: both consumers read the
-        # same property of the same psd1.
-        $script:lintCiText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lint-ci.ps1') -Raw
+        # same property of the same psd1. $script:lintCiText is already
+        # initialized by this Describe block's BeforeAll.
         $script:lintCiText | Should -Match 'Import-PowerShellDataFile'
         $script:lintCiText | Should -Match 'actionlint\.Sha256'
     }

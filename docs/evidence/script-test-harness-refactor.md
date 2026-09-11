@@ -203,13 +203,10 @@ Counts above reflect the `7d69419` tree; run `pwsh scripts/test-scripts.ps1` for
   aid, not a regulated artefact.
 - The local dev machine currently runs Pester 6.1.0; that is an
   **observed local version, not a repository pin**. The repository's
-  compatibility contract is Pester 5+ (`Pester.MinimumMajor = 5` in
+  compatibility contract is Pester 6+ (`Pester.MinimumMajor = 6` in
   `scripts/tool-versions.psd1`, enforced by `scripts/test-scripts.ps1`
   via `Get-Module -ListAvailable` + minimum-major check; CI installs
-  newest >= 5.0). Pester 5-only constructs (e.g. `[Diagnostics.CodeAnalysis]`
-  suppressions) are not used, and the version-safe container counting in
-  `test-scripts.ps1` works across the supported range. Exact version
-  parity across dev/CI remains deferred by design (L9).
+  newest >= 6.0).
 - `git status --short` shows several pre-existing uncommitted
   modifications unrelated to this refactor (e.g. `docs/STATUS.md`,
   `scripts/pre-commit.ps1`, `scripts/test-locked-restore.ps1`).

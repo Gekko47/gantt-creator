@@ -31,11 +31,10 @@ if (-not (Test-Path -LiteralPath $scriptsDir)) {
     exit 1
 }
 
-# Ensure Pester 5+ is available. The version is single-sourced from
+# Ensure Pester 6+ is available. The version is single-sourced from
 # scripts/tool-versions.psd1 (W11). Get-Module does not support
 # -MinimumVersion, so we check the highest installed version against
 # the pinned minimum.
-$repoRoot = Split-Path -Parent $PSScriptRoot
 $versionsPath = Join-Path $repoRoot 'scripts\tool-versions.psd1'
 $script:toolVersions = Import-PowerShellDataFile -LiteralPath $versionsPath
 $script:minPesterMajor = $script:toolVersions.Pester.MinimumMajor
@@ -89,8 +88,8 @@ $failedTests = 0
 
 foreach ($testFile in $testFiles) {
     Write-Host "Running $($testFile.Name)..."
-    # Pester 5 and 6 both expose PassedCount / FailedCount / TotalCount on
-    # the -PassThru result. The Pester 4-era `.TestResult` collection is NOT
+    # Pester 6 exposes PassedCount / FailedCount / TotalCount on the
+    # -PassThru result. The Pester 4-era `.TestResult` collection is NOT
     # version-safe: under Pester 6 it no longer lists every test, which made
     # this gate report "Total=0, Passed=0" while tests actually ran.
     $result = Invoke-Pester -Path $testFile.FullName -PassThru -Output Detailed

@@ -68,7 +68,10 @@ if (-not $exeVerified) {
     try {
         if (-not (Test-Path -LiteralPath $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null }
         $zipPath = Join-Path $toolsDir $zipName
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+        # Explicit timeout: no script-wide convention exists, so a fixed
+        # 300s ceiling is used. A stalled download must fail promptly rather
+        # than hang the lint gate indefinitely on a dead connection.
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 300
         # Integrity check: the same SHA-256 pin the CI workflow enforces.
         # The pin is single-sourced from scripts/tool-versions.psd1 so the
         # two invocations can never disagree; ci-parity.Tests.ps1 enforces
