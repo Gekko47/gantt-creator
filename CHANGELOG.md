@@ -5,6 +5,8 @@ All notable changes to the Gantt Creator project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Conventional Commits](https://www.conventionalcommits.org/).
 
+> **Note:** The `stage-inspect` → `main` PR was squash-merged. This changelog lists all individual commits that were collapsed into the squash merge. The resulting `main` history contains a single squashed commit, but this document preserves the granular breakdown of each change. Merge commits (`Merge branch`, `Merge pull request`) are excluded from the count.
+
 ## [Unreleased]
 
 ### Added
