@@ -20,8 +20,61 @@ Describe 'pre-commit.ps1' {
         $codeOnly | Should -Match 'check-status\.ps1'
         $codeOnly | Should -Match 'check-md-links\.ps1'
         $codeOnly | Should -Not -Match 'check-skill-summary\.ps1'
-        # Must not INVOKE verify-quick.ps1 in the executable portion.
-        $codeOnly | Should -Not -Match '(pwsh|\$\(|&)\s?.*verify-quick\.ps1'
+        # Must not reference verify-quick.ps1 in executable code. We match
+        # the filename directly (after stripping all comments) rather than
+        # guessing invocation patterns, so direct, wrapped, and multi-line
+        # invocations are all rejected. The XML doc block and line comments
+        # are the only intended contexts for the filename to appear.
+        $executableOnly = $codeOnly -replace '(?m)\s*#.*$', ''
+        $executableOnly | Should -Not -Match 'verify-quick\.ps1'
+    }
+
+    It 'positive control: the verify-quick.ps1 source-text check rejects direct, wrapped, and multi-line invocations' {
+        # Proves the negative assertion above is not a no-op: stubs that
+        # invoke verify-quick.ps1 in each shape must remain detectable
+        # after comment stripping, i.e. the Should -Not -Match check
+        # would fire.
+        $shapes = @{
+            direct      = @'
+#requires -Version 7
+$ErrorActionPreference = 'Stop'
+& verify-quick.ps1
+'@
+            wrapped     = @'
+#requires -Version 7
+$ErrorActionPreference = 'Stop'
+$(pwsh -File verify-quick.ps1)
+'@
+            'multi-line' = @'
+#requires -Version 7
+$ErrorActionPreference = 'Stop'
+& `
+    verify-quick.ps1
+'@
+        }
+        foreach ($shape in $shapes.Keys) {
+            $codeOnly      = $shapes[$shape] -replace '(?s)<#.*?#>', ''
+            $executableOnly = $codeOnly -replace '(?m)\s*#.*$', ''
+            $executableOnly | Should -Match 'verify-quick\.ps1' -Because "check must detect $shape invocation of verify-quick.ps1"
+        }
+    }
+
+    It 'positive control: the verify-quick.ps1 check allows the filename only in comment/documentation contexts' {
+        # The filename may legitimately appear in the XML doc block and
+        # line comments -- the only intended documentation contexts.
+        # After stripping both, the check must NOT find it.
+        $docCommentStub = @'
+#requires -Version 7
+<##
+.SYNOPSIS
+    References verify-quick.ps1 in a doc comment only.
+#>
+$ErrorActionPreference = 'Stop'
+Write-Host 'done'
+'@
+        $codeOnly       = $docCommentStub -replace '(?s)<#.*?#>', ''
+        $executableOnly = $codeOnly -replace '(?m)\s*#.*$', ''
+        $executableOnly | Should -Not -Match 'verify-quick\.ps1' -Because 'doc-comment mention is documentation, not an invocation'
     }
 
     It 'fails fast with a non-zero exit and the blocking message' {

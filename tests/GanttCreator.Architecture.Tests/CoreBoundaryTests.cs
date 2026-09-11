@@ -1,3 +1,5 @@
+using System.IO;
+using System.Linq;
 using System.Reflection;
 
 namespace GanttCreator.Architecture.Tests;
@@ -127,6 +129,11 @@ public sealed class CoreBoundaryTests
                     // satisfied by a stale Release DLL.
                     var withinConfig = Directory
                         .EnumerateFiles(configDir, "GanttCreator.Core.dll", SearchOption.AllDirectories)
+                        .Where(p => !Path.GetDirectoryName(p)!
+                            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                            .Any(part => part.Equals("ref", StringComparison.Ordinal) ||
+                                         part.Equals("publish", StringComparison.Ordinal)))
+                        .OrderBy(p => p)
                         .FirstOrDefault();
                     if (withinConfig is not null) return withinConfig;
                 }

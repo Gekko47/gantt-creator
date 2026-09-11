@@ -81,7 +81,17 @@ $map = @{
             # committed view to byte-compare against.  Pass -DocsRoot
             # and -SkillsRoot as absolute paths so the sync does not
             # resolve them against the parent test CWD.
+            #
+            # Capture $LASTEXITCODE (the sync's process exit code reported
+            # by pwsh -File) immediately after the invocation and fail the
+            # fixture/setup early if it is non-zero.  Output is still
+            # suppressed with 2>$null | Out-Null so the priming step stays
+            # quiet in normal runs; only the captured exit code is checked.
             pwsh -NoProfile -File $script:harnessSync -DocsRoot $script:docs -SkillsRoot $script:skills 2>$null | Out-Null
+            $script:primeExitCode = $LASTEXITCODE
+            if ($script:primeExitCode -ne 0) {
+                throw "sync-cline-skills.ps1 priming failed with exit code $script:primeExitCode (fixture/setup error)"
+            }
 
             # Commit the primed tree so the baseline is clean; per-test
             # `It` blocks may then deliberately introduce dirt or drift.

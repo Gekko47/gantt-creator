@@ -155,7 +155,8 @@ public sealed class VscodeTasksTests
         }
 
         Assert.True(testTask.HasValue, "A 'test' task must exist.");
-        JsonElement dependsOn = testTask.Value.GetProperty("dependsOn");
+        Assert.True(testTask.Value.TryGetProperty("dependsOn", out JsonElement dependsOn),
+            "A 'test' task must have a 'dependsOn' property.");
         var labels = new List<string>();
         if (dependsOn.ValueKind == JsonValueKind.String)
             labels.Add(dependsOn.GetString()!);

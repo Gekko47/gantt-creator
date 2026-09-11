@@ -45,7 +45,7 @@ public sealed partial class ArtifactSourceMarkerTests
     public void Every_test_file_referencing_bin_or_publish_has_artifact_source_marker()
     {
         var testsRoot = LocateTestsRoot();
-        var files = Directory.GetFiles(testsRoot, "*.cs", SearchOption.AllDirectories);
+        var files = EnumerateSourceFiles(testsRoot, "*.cs");
         var offenders = new List<string>();
 
         foreach (var file in files)
@@ -269,5 +269,44 @@ public sealed partial class ArtifactSourceMarkerTests
             dir = dir.Parent;
         }
         return path;
+    }
+
+    /// <summary>
+    /// Recursively enumerates source files under <paramref name="root"/>,
+    /// excluding build output directories (bin/obj) so results are
+    /// independent of build artifacts. Preserves the caller-supplied
+    /// search pattern (e.g. "*.cs") and is case-insensitive on the
+    /// directory-name exclusion.
+    /// </summary>
+    private static IEnumerable<string> EnumerateSourceFiles(string root, string searchPattern)
+    {
+        var exclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bin",
+            "obj",
+        };
+
+        return EnumerateFilesRecursive(root, searchPattern, exclusions);
+    }
+
+    private static IEnumerable<string> EnumerateFilesRecursive(string dir, string searchPattern, HashSet<string> exclusions)
+    {
+        IEnumerable<string> EnumerateDir(string current)
+        {
+            // Skip excluded directories entirely so we never descend into
+            // build output trees.
+            var name = Path.GetFileName(current);
+            if (exclusions.Contains(name))
+            {
+                return Enumerable.Empty<string>();
+            }
+
+            var files = Directory.EnumerateFiles(current, searchPattern);
+            var subDirs = Directory.EnumerateDirectories(current);
+
+            return files.Concat(subDirs.SelectMany(EnumerateDir));
+        }
+
+        return EnumerateDir(dir);
     }
 }
