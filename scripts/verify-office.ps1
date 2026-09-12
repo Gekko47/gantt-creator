@@ -9,10 +9,10 @@
     that requires Excel / PowerPoint / clipboard and is run at phase
     exit and before release. The script:
       1. records the Office version, channel, bitness, locale, and display scale
-      2. cleans any prior EXCEL.EXE / POWERPNT.EXE processes that the
-         test harness itself started (we never kill user-owned Office)
+      2. captures any existing EXCEL.EXE / POWERPNT.EXE processes (user-owned, not killed)
       3. runs the OfficeIntegration tests with a deadline
-      4. on failure, retains logs and a screenshot manifest under
+      4. on timeout, kills the owned dotnet-test tree and any harness-owned Office processes that appeared during the run
+      5. on failure, retains logs and a screenshot manifest under
          scripts/_artifacts/office-evidence/
 #>
 
@@ -33,6 +33,39 @@ $report = Join-Path $artifacts 'verify-office.txt'
 "" | Set-Content -LiteralPath $report
 
 function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value $s }
+
+
+function Remove-HarnessOwnedOfficeProcesses {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param([int[]]$BeforeSnapshot)
+
+    $beforeSet = @{}
+    foreach ($processId in $BeforeSnapshot) { $beforeSet[$processId] = $true }
+
+    $currentPids = @()
+    try {
+        $currentPids = @(Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Where-Object { $_ } | Sort-Object -Unique
+    } catch {
+        Log "WARN: Could not enumerate Office processes for sweep: $($_.Exception.Message)"
+        return
+    }
+
+    foreach ($processId in $currentPids) {
+        if (-not $beforeSet.ContainsKey($processId)) {
+            Log "Killing harness-owned Office process PID $processId (not present before test run)"
+            try {
+                if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
+                    & taskkill /PID $processId /T /F 2>$null
+                    if ($LASTEXITCODE -ne 0) {
+                        Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
+                    }
+                }
+            } catch {
+                Log "WARN: taskkill threw for PID ${processId}: $($_.Exception.Message)"
+            }
+        }
+    }
+}
 
 Log "verify-office: started $(Get-Date -Format 'o')"
 Log "Solution: $Solution"
@@ -57,6 +90,15 @@ Log 'build Release -warnaserror'
 dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Capture the Office processes that existed before this script started, so the
+# timeout sweep can distinguish harness-owned processes from user-owned ones.
+$officeBeforeSnapshot = @{}
+try {
+    $officeBeforeSnapshot = @(Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Where-Object { $_ } | Sort-Object -Unique
+} catch {
+    $officeBeforeSnapshot = @()
+}
+
 Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
 $testArgs = @(
     'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
@@ -73,9 +115,16 @@ while (-not $testProc.HasExited -and $watchdog.Elapsed.TotalSeconds -lt $Deadlin
 }
 if (-not $testProc.HasExited)
 {
-    # Soft timeout: stop only the owned dotnet test child (via its process
-    # handle, never by Office process name), so user-owned EXCEL.EXE is safe.
-    Stop-Process -InputObject $testProc -Force -ErrorAction SilentlyContinue
+    # Soft timeout: kill the whole dotnet-test process tree (not just the
+    # launcher -- Stop-Process alone leaves the actual test-host child,
+    # and any Excel it owns, running as an orphan). taskkill /T reaches
+    # the tree; by PID, never by Office process name.
+    & taskkill /PID $testProc.Id /T /F 2>$null
+    # A genuine timeout means OfficeFixture.DisposeAsync never ran, so its
+    # owned Excel can be orphaned outside the killed tree too -- re-run
+    # this script's own sweep (harness-owned processes only, never user-owned)
+    # as a safety net.
+    Remove-HarnessOwnedOfficeProcesses $officeBeforeSnapshot
     Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
     exit 124
 }

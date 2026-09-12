@@ -39,6 +39,52 @@ exit /b 0
         $codeOnly | Should -Not -Match 'blame-hang-timeout'
     }
 
+    It 'timeout path kills the dotnet-test process tree with taskkill /T' {
+        # The watchdog must kill the whole dotnet-test tree, not just the
+        # launcher. Strip full-line comments so a comment mentioning the
+        # command does not trip the match.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'taskkill /PID \$testProc\.Id /T /F'
+        $codeOnly | Should -Not -Match 'Stop-Process -InputObject \$testProc'
+    }
+
+    It 'timeout path sweeps harness-owned Office processes' {
+        # On timeout the sweep must run as a safety net for orphaned Office
+        # processes that were not in the before-snapshot.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses \$officeBeforeSnapshot'
+    }
+
+    It 'sweep uses taskkill /T /F by PID, never Stop-Process' {
+        # The sweep must kill only processes not in the before-snapshot,
+        # and it must use taskkill /T /F by PID rather than Stop-Process.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'taskkill /PID \$processId /T /F 2>\$null'
+        $codeOnly | Should -Not -Match 'Stop-Process -InputObject \$processId'
+    }
+
+
+    It 'captures an Office process snapshot before starting dotnet test' {
+        # The sweep must distinguish harness-owned Office processes from
+        # user-owned ones by comparing against a before-snapshot.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue"
+        $codeOnly | Should -Match '\$officeBeforeSnapshot'
+    }
+
+    It 'positive control: the taskkill assertion fires on a flagged stub' {
+        # Ensure the negative assertion above can detect a regression where
+        # taskkill /T is removed from the timeout path.
+        $flagged = "if (-not `$testProc.HasExited) { Stop-Process -InputObject `$testProc -Force }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'taskkill /PID \$testProc\.Id /T /F'
+    }
+
+
     It 'positive control: the --blame-hang-timeout assertion fires on a flagged stub' {
         $flagged = "dotnet test --blame-hang-timeout 600`n"
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
