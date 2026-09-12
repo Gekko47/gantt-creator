@@ -64,6 +64,21 @@ public sealed class AddInHost(
                 throw;
             }
             _log = log;
+
+            // Wire the log into the diagnostics service so the ribbon's
+            // Diagnostics button can display the active log path.
+            try
+            {
+                DiagnosticsService.Instance.SetLog(log);
+            }
+            catch (InvalidOperationException)
+            {
+                // Non-fatal: the diagnostics button degrades gracefully.
+            }
+            catch (IOException)
+            {
+                // Non-fatal: the diagnostics button degrades gracefully.
+            }
         }
 #pragma warning disable CA1031
         catch

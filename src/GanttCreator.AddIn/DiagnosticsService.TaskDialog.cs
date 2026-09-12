@@ -73,19 +73,24 @@ internal static partial class TaskDialogApi
         public int dwFlags;
         public int dwCommonButtons;
         public IntPtr pszWindowTitle;
+        public IntPtr pszMainIcon;
         public IntPtr pszMainInstruction;
         public IntPtr pszContent;
-        public IntPtr pszFooter;
-        public IntPtr pszExpandedInformation;
-        public IntPtr pszCollapsedControlText;
-        public IntPtr pszExpandedControlText;
+        public uint cButtons;
+        public IntPtr pButtons;
         public int nDefaultButton;
+        public uint cRadioButtons;
+        public IntPtr pRadioButtons;
         public int nDefaultRadioButton;
         public IntPtr pszVerificationText;
+        public IntPtr pszExpandedInformation;
+        public IntPtr pszExpandedControlText;
+        public IntPtr pszCollapsedControlText;
+        public IntPtr pszFooterIcon;
+        public IntPtr pszFooter;
         public IntPtr pCallback;
-        public IntPtr pvReserved;
-        public int cbRefData;
-        public IntPtr pRefData;
+        public IntPtr lpCallbackData;
+        public uint cxWidth;
     }
 
     private sealed class CallbackHolder
@@ -148,8 +153,13 @@ internal static partial class TaskDialogApi
 
         try
         {
-            var buttonId = TaskDialogIndirect(ref config, out _, out _, out _);
-
+            var hresult = TaskDialogIndirect(ref config, out int buttonId, out _, out _);
+            if (hresult < 0)
+            {
+                // HRESULT failure -- the dialog did not display. Don't report
+                // the HRESULT as a button ID.
+                return 0;
+            }
             return buttonId;
         }
         finally

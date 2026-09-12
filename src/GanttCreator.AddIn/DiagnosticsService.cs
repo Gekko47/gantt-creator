@@ -190,6 +190,38 @@ public sealed class DiagnosticsService
     }
 
     /// <summary>
+    /// Writes a diagnostics callback error to the log file (if available) for
+    /// diagnosis. Non-fatal: failures here do not surface to the user.
+    /// </summary>
+    /// <param name="ex">The exception that was caught.</param>
+    public static void WriteDiagnosticsError(Exception ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+
+        var logPath = Instance.LogFilePath;
+        if (string.IsNullOrWhiteSpace(logPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var errorFile = logPath + ".callback-error.txt";
+            System.IO.File.AppendAllText(
+                errorFile,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] OnDiagnosticsClick failed: {ex}\n{ex.StackTrace}\n\n");
+        }
+        catch (IOException)
+        {
+            // Non-fatal: if we can't write the error, there's nothing more to do.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Non-fatal: if we can't write the error, there's nothing more to do.
+        }
+    }
+
+    /// <summary>
     /// Writes a diagnostic record to the log, using the same format as
     /// <see cref="ShowDiagnostics"/>. Public so contract tests can verify
     /// the log-writing path without invoking the TaskDialog UI.

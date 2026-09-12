@@ -60,10 +60,23 @@ public class GanttRibbon : ExcelRibbon
         {
             DiagnosticsService.Instance.ShowDiagnostics();
         }
-        catch
-#pragma warning restore CA1031
+        catch (Exception ex)
         {
-            // Intentionally empty: no propagation.
+            // Capture the exception for diagnosis. The button is non-functional
+            // until this is resolved, so we need visibility into what's failing.
+            try
+            {
+                DiagnosticsService.WriteDiagnosticsError(ex);
+            }
+            catch (IOException)
+            {
+                // If we can't even write the error, there's nothing more to do.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // If we can't even write the error, there's nothing more to do.
+            }
         }
+#pragma warning restore CA1031
     }
 }
