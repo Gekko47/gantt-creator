@@ -54,15 +54,25 @@ public sealed class AddInHost(
         try
         {
             IRollingLog log = _logSource();
+            try
+            {
+                new AddInLifecycle(log).LogOpen(_identitySource());
+            }
+            catch
+            {
+                log.Dispose();
+                throw;
+            }
             _log = log;
-            new AddInLifecycle(log).LogOpen(_identitySource());
         }
 #pragma warning disable CA1031
         catch
 #pragma warning restore CA1031
         {
             // Intentionally empty: no log record, no propagation. See the
-            // justification comment above.
+            // justification comment above. The candidate log is disposed on
+            // the failure path so AutoClose cannot emit an unmatched close
+            // record; _log is only assigned after LogOpen succeeds.
         }
     }
 
@@ -92,8 +102,21 @@ public sealed class AddInHost(
         }
         finally
         {
-            _log?.Dispose();
-            _log = null;
+            try
+            {
+                _log?.Dispose();
+            }
+#pragma warning disable CA1031
+            catch
+#pragma warning restore CA1031
+            {
+                // Suppress disposal exceptions so AutoClose never
+                // propagates into Excel.
+            }
+            finally
+            {
+                _log = null;
+            }
         }
     }
 

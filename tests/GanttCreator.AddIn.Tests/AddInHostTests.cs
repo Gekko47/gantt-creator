@@ -179,4 +179,43 @@ public class AddInHostTests
 
         public void Dispose() => Disposed = true;
     }
+
+    /// <summary>
+    /// A log whose <see cref="IRollingLog.Dispose"/> throws — verifies
+    /// that AutoClose suppresses the disposal exception and always
+    /// clears <see cref="AddInHost._log"/>.
+    /// </summary>
+    private sealed class ThrowingDisposeLog : IRollingLog
+    {
+        public bool Disposed { get; private set; }
+
+        public bool IsFailed => false;
+
+        public void Write(string message) { }
+
+        public void Write(string format, params object?[] args) { }
+
+        public void Dispose() => throw new IOException("dispose failed");
+    }
+
+    private static T? ReadPrivateField<T>(object obj, string fieldName)
+    {
+        var field = typeof(AddInHost).GetField(fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        return field is null ? default : (T?)field.GetValue(obj);
+    }
+
+    [Fact]
+    public void AutoClose_dispose_failure_never_throws_and_clears_log()
+    {
+        var log = new ThrowingDisposeLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        host.AutoOpen();
+
+        var exception = Record.Exception(host.AutoClose);
+
+        Assert.Null(exception);
+        Assert.Null(ReadPrivateField<IRollingLog?>(host, "_log"));
+        Assert.False(log.Disposed);
+    }
 }
