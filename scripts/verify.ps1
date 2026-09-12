@@ -5,20 +5,20 @@
 
 .DESCRIPTION
     Slower than verify-quick.ps1. Includes all quick gates plus:
-      1. markdown link sanity
-      2. skill tree in sync
-      3. status accuracy
-      4. script analyzer (PSScriptAnalyzer)
-      5. workflow lint (actionlint)
-      6. script lint (Pester)
-      7. restore
-      8. format (production only; tests/ tolerated per tests/Directory.Build.props)
-      9. build Release -warnaserror
-     10. publish AddIn (packed XLL)
-     11. test (OfficeIntegration excluded)
-     12. coverage threshold check
-     13. package vulnerability scan
-     14. working tree hygiene
+      1. working tree hygiene
+      2. markdown link sanity
+      3. skill tree in sync
+      4. status accuracy
+      5. script analyzer (PSScriptAnalyzer)
+      6. workflow lint (actionlint)
+      7. script lint (Pester)
+      8. restore
+      9. format (production only; tests/ tolerated per tests/Directory.Build.props)
+     10. build Release -warnaserror
+     11. publish AddIn (packed XLL)
+     12. test (OfficeIntegration excluded)
+     13. coverage threshold check
+     14. package vulnerability scan
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -82,6 +82,21 @@ function Invoke-Step {
         $line = "  -> FAIL (exception) in {0:N1}s: {1}" -f $sw.Elapsed.TotalSeconds, $msg
         Write-Host $line -ForegroundColor Red
         Add-Content -LiteralPath $report -Value $line
+        exit 1
+    }
+}
+
+# Runs FIRST so a dirty tree fails in under a second instead of after the
+# ~2-minute suite (the R1.1 session paid that cost). The gate certifies a
+# committed state: verify-quick.ps1 accepts staged changes (pre-commit),
+# but verify.ps1's coverage/publish artifacts must correspond to the
+# committed tree, so staged-but-uncommitted work also counts as dirty.
+Invoke-Step 'working tree hygiene' {
+    $dirty = git status --short
+    if ($dirty) {
+        Add-Content -LiteralPath $report -Value "Dirty working tree:"
+        $dirty | ForEach-Object { Add-Content -LiteralPath $report -Value "  $_" }
+        Write-Error 'Working tree is dirty. Commit or stash before running verify.ps1.'
         exit 1
     }
 }
@@ -205,16 +220,6 @@ Invoke-Step 'package vulnerability scan' {
     # dotnet list does not set a non-zero exit on found vulnerabilities, so
     # we cannot make this step a hard fail until the team approves an
     # explicit vulnerability gate. For now this is informational.
-}
-
-Invoke-Step 'working tree hygiene' {
-    $dirty = git status --short
-    if ($dirty) {
-        Add-Content -LiteralPath $report -Value "Dirty working tree:"
-        $dirty | ForEach-Object { Add-Content -LiteralPath $report -Value "  $_" }
-        Write-Error 'Working tree is dirty. Commit or stash before running verify.ps1.'
-        exit 1
-    }
 }
 
 $end = Get-Date
