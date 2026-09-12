@@ -122,6 +122,13 @@ public sealed class RollingLog : IRollingLog
     public bool IsFailed => _failed;
 
     /// <summary>
+    /// The full path to the active log file, or null when the log has not been
+    /// initialized or has failed during initialization. This is an informational
+    /// property for diagnostics; it does not affect write behaviour.
+    /// </summary>
+    public string? LogFilePath => _failed || _disposed ? null : Path.Combine(_logDirectory, _baseName + ".log");
+
+    /// <summary>
     /// Writes a message to the log. The message is automatically redacted.
     /// </summary>
     /// <param name="message">The log message.</param>

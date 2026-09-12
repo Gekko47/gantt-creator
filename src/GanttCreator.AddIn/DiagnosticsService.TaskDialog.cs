@@ -1,0 +1,158 @@
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace GanttCreator.AddIn;
+
+/// <summary>
+/// P/Invoke wrappers for the Windows TaskDialog API (comctl32.dll),
+/// used to display diagnostic information with a clickable hyperlink
+/// to the active log file.
+/// </summary>
+/// <remarks>
+/// TaskDialog is available on Windows Vista and later. The hyperlink
+/// flag (TDF_ENABLE_HYPERLINKS) enables the TDN_HYPERLINK notification
+/// when the user clicks a link in the dialog content.
+/// </remarks>
+internal static partial class TaskDialogApi
+{
+    private const string ComCtl32 = "comctl32.dll";
+
+    /// <summary>
+    /// Indicates that the dialog content contains hyperlinks that the
+    /// user can click. When a link is clicked, the TDN_HYPERLINK
+    /// notification is sent to the callback.
+    /// </summary>
+    private const int TDF_ENABLE_HYPERLINKS = 0x00000020;
+
+    /// <summary>
+    /// Notification code for a hyperlink click within the dialog content.
+    /// </summary>
+    private const int TDN_HYPERLINK = 0xFFFFFD9F;
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int TaskDialogCallback(IntPtr hwndDlg, int msg, IntPtr wParam, IntPtr lParam, IntPtr referenceData);
+
+    [DllImport(ComCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int TaskDialog(
+        IntPtr hwndOwner,
+        IntPtr hInstance,
+        string title,
+        string content,
+        string? mainInstruction,
+        int flags,
+        string? radioButton1,
+        string? verificationText,
+        out int buttonId);
+
+    [DllImport(ComCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int TaskDialogIndirect(
+        ref TASKDIALOGCONFIG config,
+        out int buttonId,
+        out int checkboxState,
+        out int verificationState);
+
+    [DllImport(ComCtl32, SetLastError = true)]
+    private static extern IntPtr GetDesktopWindow();
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct TASKDIALOGCONFIG
+    {
+        public int cbSize;
+        public IntPtr hwndParent;
+        public IntPtr hInstance;
+        public int dwFlags;
+        public int dwCommonButtons;
+        public IntPtr pszWindowTitle;
+        public IntPtr pszMainInstruction;
+        public IntPtr pszContent;
+        public IntPtr pszFooter;
+        public IntPtr pszExpandedInformation;
+        public IntPtr pszCollapsedControlText;
+        public IntPtr pszExpandedControlText;
+        public int nDefaultButton;
+        public int nDefaultRadioButton;
+        public IntPtr pszVerificationText;
+        public IntPtr pCallback;
+        public IntPtr pvReserved;
+        public int cbRefData;
+        public IntPtr pRefData;
+    }
+
+    private sealed class CallbackHolder
+    {
+        public TaskDialogCallback Callback;
+    }
+
+    /// <summary>
+    /// Shows a TaskDialog with the given title, main instruction, content,
+    /// and a clickable hyperlink. The hyperlink is detected by the callback
+    /// and the provided <paramref name="openFileAction"/> is invoked with
+    /// the hyperlink text (expected to be a file path).
+    /// </summary>
+    /// <param name="title">Dialog title.</param>
+    /// <param name="mainInstruction">Main instruction text.</param>
+    /// <param name="content">Dialog content; may contain a hyperlink.</param>
+    /// <param name="openFileAction">Action invoked with the hyperlink file path when the user clicks it.</param>
+    /// <returns>The ID of the button the user clicked, or 0 on failure.</returns>
+    public static int ShowWithHyperlink(
+        string title,
+        string mainInstruction,
+        string content,
+        Action<string> openFileAction)
+    {
+        IntPtr owner = GetDesktopWindow();
+
+        var callbackHolder = new CallbackHolder
+        {
+            Callback = (hwndDlg, msg, wParam, lParam, referenceData) =>
+            {
+                if (msg == TDN_HYPERLINK)
+                {
+                    // The hyperlink text is passed as lParam (pointer to string)
+                    string? linkText = Marshal.PtrToStringUni(lParam);
+                    if (!string.IsNullOrEmpty(linkText))
+                    {
+                        try
+                        {
+                            openFileAction(linkText);
+                        }
+                        catch
+                        {
+                            // Non-fatal: the dialog already displayed; a failed
+                            // open attempt does not need to reach the user again.
+                        }
+                    }
+                }
+                return 0;
+            }
+        };
+
+        var config = new TASKDIALOGCONFIG
+        {
+            cbSize = Marshal.SizeOf<TASKDIALOGCONFIG>(),
+            hwndParent = owner,
+            dwFlags = TDF_ENABLE_HYPERLINKS,
+            pszWindowTitle = Marshal.StringToCoTaskMemUni(title),
+            pszMainInstruction = Marshal.StringToCoTaskMemUni(mainInstruction),
+            pszContent = Marshal.StringToCoTaskMemUni(content),
+            pCallback = Marshal.GetFunctionPointerForDelegate(callbackHolder.Callback),
+        };
+
+        try
+        {
+            int buttonId = TaskDialogIndirect(
+                ref config,
+                out _,
+                out _,
+                out _);
+
+            return buttonId;
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(config.pszWindowTitle);
+            Marshal.FreeCoTaskMem(config.pszMainInstruction);
+            Marshal.FreeCoTaskMem(config.pszContent);
+        }
+    }
+}

@@ -5,6 +5,9 @@
       <tab id="tabGanttCreator" label="Gantt Creator">
         <group id="grpPlaceholder" label="Gantt Creator">
         </group>
+        <group id="grpDiagnostics" label="Diagnostics">
+          <button id="btnDiagnostics" label="Diagnostics" imageMso="Information" onAction="OnDiagnosticsClick"/>
+        </group>
       </tab>
     </tabs>
   </ribbon>

@@ -97,6 +97,22 @@ predates the current 12-step gate and is superseded by the measured
 - **CI PSSA step delegates to Invoke-PssaGate (pending commit)** — `ci.yml` PSSA step still called `Invoke-ScriptAnalyzer ... -EnableExit` directly instead of routing through `Invoke-PssaGate` (the entry point verify-quick.ps1/verify.ps1 use, hardened in W13). Fixed by dot-sourcing verify-helpers.ps1 and calling Invoke-PssaGate; added a ci-parity.Tests.ps1 `Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)'` block asserting the step matches Invoke-PssaGate and (on code lines only, stripping full-line comments) does not match -EnableExit. Pester 13/13 ci-parity, 4/4 pssa-gate.
 
 
+## Active work item
+
+- **R1.3 — Add diagnostics command showing add-in/Office/bitness identifiers** —
+  `DiagnosticsService` singleton added to `src/GanttCreator.AddIn/` with
+  `DiagnosticsService.TaskDialog.cs` (P/Invoke wrappers for Windows TaskDialog
+  with `TDF_ENABLE_HYPERLINKS`); `GanttRibbon` extended with `OnDiagnosticsClick`
+  callback; Ribbon button added in `src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`
+  with `onAction`; Core's `IRollingLog` extended with read-only `LogFilePath` property
+  implemented by `RollingLog`; button label in `src/GanttCreator.AddIn/RibbonResources.resx`.
+  Contract tests in `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`
+  (8 `[Fact]`s covering singleton lifetime, log path, identifier gathering, content
+  building, and log write). Commits pending. Gates: `dotnet test tests/GanttCreator.AddIn.Tests`
+  38/38 PASS; full non-office suite green; Release build 0 warnings; Office gate
+  (F5, click Diagnostics, TaskDialog with clickable hyperlink, log written):
+  **Not run by the agent** — requires Visual Studio against desktop Excel.
+
 ## Environment (recorded once, then referenced)
 
 - **Host OS**: Windows 11 25H2 (build 26200), x64, Professional. The registry `ProductName` may report "Windows 10 Pro" — trust the build number, not the string. See `docs/adr/0005-windows-host-build-number.md`.
