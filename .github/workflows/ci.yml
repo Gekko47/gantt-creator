@@ -154,7 +154,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "test-non-office.ps1 failed with exit $LASTEXITCODE" }
 
       - name: Upload packed XLL artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ganttcreator-addin-packed-xll
           path: src/GanttCreator.AddIn/bin/Release/net10.0-windows/publish/
