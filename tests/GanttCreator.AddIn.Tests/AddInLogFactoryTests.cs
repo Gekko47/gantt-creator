@@ -40,24 +40,43 @@ public class AddInLogFactoryTests
     [Fact]
     public void Create_falls_back_to_temp_when_base_directory_is_missing()
     {
-        IRollingLog log = AddInLogFactory.Create(null);
+        var baseDirectory = Directory.CreateTempSubdirectory("gantt-r11-fallback-missing-").FullName;
+        try
+        {
+            IRollingLog log = AddInLogFactory.Create(baseDirectory);
 
-        log.Write("temp fallback probe");
-        log.Dispose();
+            log.Write("missing-dir probe");
+            log.Dispose();
 
-        var expected = Path.Combine(Path.GetTempPath(), "GanttCreator", "logs", "gantt-creator-addin.log");
-        Assert.True(File.Exists(expected), $"Expected the temp fallback log at '{expected}'.");
+            var expected = Path.Combine(baseDirectory, "GanttCreator", "logs", "gantt-creator-addin.log");
+            Assert.True(File.Exists(expected), $"Expected the log at '{expected}'.");
+            Assert.Contains("missing-dir probe", File.ReadAllText(expected), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(baseDirectory, recursive: true);
+        }
     }
 
     [Fact]
     public void Create_falls_back_to_temp_when_base_directory_is_whitespace()
     {
-        IRollingLog log = AddInLogFactory.Create("   ");
+        var baseDirectory = Directory.CreateTempSubdirectory("gantt-r11-fallback-whitespace-").FullName;
+        try
+        {
+            IRollingLog log = AddInLogFactory.Create(baseDirectory);
 
-        log.Dispose();
+            log.Write("whitespace-dir probe");
+            log.Dispose();
 
-        var expected = Path.Combine(Path.GetTempPath(), "GanttCreator", "logs", "gantt-creator-addin.log");
-        Assert.True(File.Exists(expected), $"Expected the temp fallback log at '{expected}'.");
+            var expected = Path.Combine(baseDirectory, "GanttCreator", "logs", "gantt-creator-addin.log");
+            Assert.True(File.Exists(expected), $"Expected the log at '{expected}'.");
+            Assert.Contains("whitespace-dir probe", File.ReadAllText(expected), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(baseDirectory, recursive: true);
+        }
     }
 
     [Fact]

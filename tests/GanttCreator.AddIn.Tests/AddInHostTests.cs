@@ -164,8 +164,10 @@ public class AddInHostTests
     }
 
     /// <summary>
-    /// A log whose writes throw — the never-throw guarantee of the entry
-    /// point must hold even when the logging boundary misbehaves.
+    /// A log whose writes throw after the first call — the never-throw
+    /// guarantee of the entry point must hold even when the logging
+    /// boundary misbehaves. The first write (AutoOpen) succeeds so the
+    /// log is retained; subsequent writes (AutoClose) throw.
     /// </summary>
     private sealed class ThrowingLog : IRollingLog
     {
@@ -173,9 +175,19 @@ public class AddInHostTests
 
         public bool IsFailed => false;
 
-        public void Write(string message) => throw new IOException("log write failed");
+        private int _writeCount;
 
-        public void Write(string format, params object?[] args) => throw new IOException("log write failed");
+        public void Write(string message)
+        {
+            if (++_writeCount > 1)
+                throw new IOException("log write failed");
+        }
+
+        public void Write(string format, params object?[] args)
+        {
+            if (++_writeCount > 1)
+                throw new IOException("log write failed");
+        }
 
         public void Dispose() => Disposed = true;
     }
@@ -191,11 +203,17 @@ public class AddInHostTests
 
         public bool IsFailed => false;
 
+        public int DisposeCalls { get; private set; }
+
         public void Write(string message) { }
 
         public void Write(string format, params object?[] args) { }
 
-        public void Dispose() => throw new IOException("dispose failed");
+        public void Dispose()
+        {
+            DisposeCalls++;
+            throw new IOException("dispose failed");
+        }
     }
 
     private static T? ReadPrivateField<T>(object obj, string fieldName)
@@ -217,5 +235,6 @@ public class AddInHostTests
         Assert.Null(exception);
         Assert.Null(ReadPrivateField<IRollingLog?>(host, "_log"));
         Assert.False(log.Disposed);
+        Assert.Equal(1, log.DisposeCalls);
     }
 }
