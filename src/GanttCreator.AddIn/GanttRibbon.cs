@@ -54,8 +54,6 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>
     /// The RibbonX document, or null when the RibbonID is not the workbook.
     /// </returns>
-    public override string GetCustomUI(string RibbonID)
-    {
-        return RibbonID != "Microsoft.Excel.Workbook" ? null! : _ribbonXml;
-    }
+    public override string GetCustomUI(string RibbonID) =>
+        RibbonID != "Microsoft.Excel.Workbook" ? null! : _ribbonXml;
 }
