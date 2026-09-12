@@ -34,7 +34,7 @@ public static class AddInLogFactory
     public static IRollingLog Create()
     {
         var baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var log = Create(baseDirectory);
+        IRollingLog log = Create(baseDirectory);
         if (!string.IsNullOrWhiteSpace(baseDirectory) && log.IsFailed)
         {
             log.Dispose();
