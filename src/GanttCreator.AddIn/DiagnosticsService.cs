@@ -27,8 +27,9 @@ public sealed class DiagnosticsService
     private static DiagnosticsService? _instance;
 
     /// <summary>
-    /// The singleton instance for the current Excel session. Returns null
-    /// until <see cref="SetLog"/> is called.
+    /// The singleton instance for the current Excel session. Creates and
+    /// returns a <see cref="DiagnosticsService"/> on first access; the
+    /// injected log may be absent until <see cref="SetLog"/> is called.
     /// </summary>
     public static DiagnosticsService Instance
     {
@@ -207,7 +208,7 @@ public sealed class DiagnosticsService
         try
         {
             var errorFile = logPath + ".callback-error.txt";
-            System.IO.File.AppendAllText(
+            File.AppendAllText(
                 errorFile,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] OnDiagnosticsClick failed: {ex}\n{ex.StackTrace}\n\n");
         }

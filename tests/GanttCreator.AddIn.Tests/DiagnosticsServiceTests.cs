@@ -1,9 +1,8 @@
-using System.IO;
-using System.Security.AccessControl;
 using System.Globalization;
+using System.IO;
 using ExcelDna.Integration;
-using GanttCreator.Core.Logging;
 using GanttCreator.Core;
+using GanttCreator.Core.Logging;
 using Moq;
 
 namespace GanttCreator.AddIn.Tests;
@@ -57,7 +56,8 @@ public class DiagnosticsServiceTests
     {
         var log = new RollingLog(
             Path.Combine(Path.GetTempPath(), "GanttCreatorTests", Guid.NewGuid().ToString("N"), "logs"),
-            baseName: "test-diagnostics");
+            baseName: "test-diagnostics"
+        );
 
         try
         {
@@ -80,49 +80,35 @@ public class DiagnosticsServiceTests
     [Fact]
     public void LogFilePath_returns_null_when_log_has_failed()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            "GanttCreatorTests",
-            Guid.NewGuid().ToString("N"),
-            "logs");
-
-        Directory.CreateDirectory(directory);
+        // Create a file path (not a directory) to cause RollingLog initialization
+        // to fail deterministically: Directory.CreateDirectory throws when the
+        // target path is an existing file, and RollingLog catches that and
+        // latches MarkFailed so LogFilePath returns null.
+        var tempDir = Path.Combine(Path.GetTempPath(), "GanttCreatorTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var filePath = Path.Combine(tempDir, "not-a-directory");
+        File.WriteAllText(filePath, "placeholder");
 
         try
         {
             var service = DiagnosticsService.Instance;
-            try
-            {
-                using (var log = new RollingLog(directory, baseName: "test-failed"))
-                {
-                    var directoryInfo = new System.IO.DirectoryInfo(directory);
-                    var directorySecurity = directoryInfo.GetAccessControl();
-                    directorySecurity.AddAccessRule(
-                        new System.Security.AccessControl.FileSystemAccessRule(
-                            "Everyone",
-                            System.Security.AccessControl.FileSystemRights.Write,
-                            System.Security.AccessControl.AccessControlType.Deny));
-                    directoryInfo.SetAccessControl(directorySecurity);
 
-                    service.SetLog(log);
-                }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Expected: we cannot modify directory security on some environments.
-            }
+            using var log = new RollingLog(filePath, baseName: "test-failed");
+            Assert.True(log.IsFailed, "RollingLog should latch a failure when the log directory is an existing file.");
+
+            service.SetLog(log);
+
+            Assert.Null(service.LogFilePath);
         }
         finally
         {
             try
             {
-                var directoryInfo = new System.IO.DirectoryInfo(directory);
-                directoryInfo.Delete(true);
+                File.Delete(filePath);
+                Directory.Delete(tempDir);
             }
 #pragma warning disable CA1031 // Cleanup is best-effort; surface nothing to the caller.
-            catch
-            {
-            }
+            catch { }
 #pragma warning restore CA1031
             DiagnosticsService.Reset();
         }
@@ -189,16 +175,17 @@ public class DiagnosticsServiceTests
         var written = new List<string>();
         var mockLog = new Mock<IRollingLog>();
         mockLog.Setup(l => l.IsFailed).Returns(false);
-        mockLog.Setup(l => l.LogFilePath).Returns(
-            Path.Combine(Path.GetTempPath(), "test-log.log"));
-        mockLog.Setup(l => l.Write(It.IsAny<string>()))
-            .Callback<string>(msg => written.Add(msg));
-        mockLog.Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
-            .Callback<string, object?[]>((fmt, args) =>
-            {
-                var message = string.Format(CultureInfo.InvariantCulture, fmt, args);
-                written.Add(message);
-            });
+        mockLog.Setup(l => l.LogFilePath).Returns(Path.Combine(Path.GetTempPath(), "test-log.log"));
+        mockLog.Setup(l => l.Write(It.IsAny<string>())).Callback<string>(msg => written.Add(msg));
+        mockLog
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) =>
+                {
+                    var message = string.Format(CultureInfo.InvariantCulture, fmt, args);
+                    written.Add(message);
+                }
+            );
         mockLog.Setup(l => l.Dispose()).Verifiable();
 
         var service = DiagnosticsService.Instance;
@@ -218,10 +205,9 @@ public class DiagnosticsServiceTests
 
             service.WriteDiagnosticRecord(identity);
             mockLog.Verify(
-                l => l.Write(
-                    It.Is<string>(m => m.Contains("Diagnostics:", StringComparison.Ordinal)),
-                    It.IsAny<object?[]>()),
-                Times.Once);
+                l => l.Write(It.Is<string>(m => m.Contains("Diagnostics:", StringComparison.Ordinal)), It.IsAny<object?[]>()),
+                Times.Once
+            );
         }
         finally
         {

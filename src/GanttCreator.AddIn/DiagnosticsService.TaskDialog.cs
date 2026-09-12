@@ -153,7 +153,7 @@ internal static partial class TaskDialogApi
 
         try
         {
-            var hresult = TaskDialogIndirect(ref config, out int buttonId, out _, out _);
+            var hresult = TaskDialogIndirect(ref config, out var buttonId, out _, out _);
             if (hresult < 0)
             {
                 // HRESULT failure -- the dialog did not display. Don't report

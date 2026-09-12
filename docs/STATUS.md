@@ -108,9 +108,10 @@ predates the current 12-step gate and is superseded by the measured
   with `onAction`; Core's `IRollingLog` extended with read-only `LogFilePath` property
   implemented by `RollingLog`; button label in `src/GanttCreator.AddIn/RibbonResources.resx`.
   Contract tests in `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`
-  (8 `[Fact]`s covering singleton lifetime, log path, identifier gathering, content
-  building, and log write). Commits pending. Gates: `dotnet test tests/GanttCreator.AddIn.Tests`
-  38/38 PASS; full non-office suite green; Release build 0 warnings; Office gate
+  (13 `[Fact]`s covering singleton lifetime, log path, failed-log path, identifier
+  gathering, content building, log write, and hyperlink handling). Commits pending.
+  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 43/43 PASS; full non-office
+  suite green; Release build 0 warnings; Office gate
   (F5, click Diagnostics, TaskDialog with clickable hyperlink, log written):
   **Not run by the agent** — requires Visual Studio against desktop Excel.
 
