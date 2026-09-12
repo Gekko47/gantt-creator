@@ -381,8 +381,15 @@ This is intentionally short. The code, tests, work item, and Git diff are the du
 Before declaring a work item done, run these tools and observe their output:
 
 1. `dotnet_test` on the targeted project — must PASS.
-2. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS.
-3. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
-4. `memra_add` — persist the evidence ledger rows for this session.
-5. `memra_add_decision` (if an irreversible decision was made) — persist it with context.
-6. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.
+2. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS (the every-commit
+   gate; run it with the work staged — it accepts staged changes).
+3. `pwsh_run` with `scripts/verify.ps1` — the branch-final gate, run once
+   after the LAST commit for the branch; requires a clean tree (its first
+   step fails in under a second otherwise). The agent never pushes and
+   never opens a pull request without explicit human instruction; the
+   human creates the PR after the CodeRabbit review stage (see
+   `docs/05-GIT-QUALITY.md`, "Branch and review policy").
+4. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
+5. `memra_add` — persist the evidence ledger rows for this session.
+6. `memra_add_decision` (if an irreversible decision was made) — persist it with context.
+7. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.

@@ -11,6 +11,9 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Added
 
+- **feat**: Add Excel-DNA entry point with AutoOpen/AutoClose logging (R1.1)
+- **test**: Serialize temp-fallback log tests to avoid concurrent file collisions
+- **build**: Fail verify.ps1 fast on a dirty working tree
 - **feat(skills)**: Hook the seven Cline skills to MCP tools
 - **feat(test)**: Add OfficeFixture harness for real-Excel integration tests
 - **feat**: Fail skill sync when the SKILL-SUMMARY block is missing
@@ -47,6 +50,9 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Changed
 
+- **docs**: Record two-gate sequence and human-gated branch lifecycle
+- **docs**: Update STATUS.md with R1.1 AddInLogFactory fix commit
+- **build**: Enhance Dependabot config to include NuGet updates
 - **refactor**: Single-source actionlint version + SHA-256 in ci.yml from tool-versions.psd1
 - **refactor**: Extract check-status path predicate to shared Get-RepoPathTokenStatus helper
 - **refactor**: Derive locked-restore harness sequence from the script AST
@@ -57,6 +63,11 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Fixed
 
+- **fix**: Update AddInLogFactory with IsFailed fallback and isolated temp test directories
+- **fix**: Update active work item status and enhance verification scripts
+- **fix**: Anchor verify.ps1 dirty-tree check to repo root with git -C
+- **fix**: Update test fakes and temp path isolation in AddInHostTests and AddInLogFactoryTests
+- **fix**: Suppress disposal exceptions in AutoClose and clear _log in nested finally
 - **fix**: Update lint-ci anti-drift assertions for delegation pattern
 - **fix**: Fix failing verify-office.Tests.ps1 and harden check-cline-skills.Tests.ps1
 - **fix**: Require hex letter in LongHexTokenPattern to avoid redacting decimal IDs

@@ -26,8 +26,8 @@ Explicitly out of scope. Anything not in this list is *not* part of this work it
 The exact commands the agent must run, in order, with the expected exit status.
 
 ```powershell
-pwsh ./scripts/verify-quick.ps1    # every commit — expect exit 0
-pwsh ./scripts/verify.ps1          # before PR — expect exit 0
+pwsh ./scripts/verify-quick.ps1    # every commit — accepts staged changes; expect exit 0
+pwsh ./scripts/verify.ps1          # branch-final, after the LAST commit — requires a clean tree
 # Office integration:
 pwsh ./scripts/verify-office.ps1   # on phase exit / release — expect exit 0
 ```
