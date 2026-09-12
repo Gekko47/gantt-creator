@@ -92,7 +92,7 @@ function Invoke-Step {
 # but verify.ps1's coverage/publish artifacts must correspond to the
 # committed tree, so staged-but-uncommitted work also counts as dirty.
 Invoke-Step 'working tree hygiene' {
-    $dirty = git status --short
+    $dirty = git -C (Split-Path -Parent $scriptRoot) status --short
     if ($dirty) {
         Add-Content -LiteralPath $report -Value "Dirty working tree:"
         $dirty | ForEach-Object { Add-Content -LiteralPath $report -Value "  $_" }
