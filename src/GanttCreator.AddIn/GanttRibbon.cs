@@ -41,24 +41,27 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>
     /// The RibbonX document, or null when the RibbonID is not the workbook.
     /// </returns>
-    public override string GetCustomUI(string RibbonID) =>
-        RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
+    public override string GetCustomUI(string RibbonID) => RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
 
     /// <summary>
     /// Called when the user clicks the Diagnostics button. Delegates to the
     /// project-wide <see cref="DiagnosticsService"/> singleton.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
+#pragma warning disable IDE0060 // control is required by the RibbonX onAction contract.
     public void OnDiagnosticsClick(IRibbonControl control)
+#pragma warning restore IDE0060 // control is required by the RibbonX onAction contract.
     {
         // CA1031: The ribbon callback must never propagate an exception into
         // Excel — an unhandled onAction exception surfaces as a host error.
         // Diagnostics failures degrade to a missing dialog rather than a crash.
+#pragma warning disable CA1031
         try
         {
             DiagnosticsService.Instance.ShowDiagnostics();
         }
         catch
+#pragma warning restore CA1031
         {
             // Intentionally empty: no propagation.
         }

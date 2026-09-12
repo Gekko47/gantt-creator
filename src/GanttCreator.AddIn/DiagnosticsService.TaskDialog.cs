@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace GanttCreator.AddIn;
 
@@ -15,24 +14,29 @@ namespace GanttCreator.AddIn;
 /// </remarks>
 internal static partial class TaskDialogApi
 {
-    private const string ComCtl32 = "comctl32.dll";
+    private const string _comCtl32 = "comctl32.dll";
 
     /// <summary>
     /// Indicates that the dialog content contains hyperlinks that the
     /// user can click. When a link is clicked, the TDN_HYPERLINK
     /// notification is sent to the callback.
     /// </summary>
-    private const int TDF_ENABLE_HYPERLINKS = 0x00000020;
+    private const int _tdfEnableHyperlinks = 0x00000020;
 
     /// <summary>
     /// Notification code for a hyperlink click within the dialog content.
     /// </summary>
-    private const int TDN_HYPERLINK = 0xFFFFFD9F;
+    private const int _tdnHyperlink = unchecked((int)0xFFFFFD9F);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int TaskDialogCallback(IntPtr hwndDlg, int msg, IntPtr wParam, IntPtr lParam, IntPtr referenceData);
 
-    [DllImport(ComCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    // IDE1006 does not apply to the native TaskDialog entry point: an unused
+    // private P/Invoke declaration still needs the exact native name.
+#pragma warning disable IDE1006
+    [DllImport(_comCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+#pragma warning disable SYSLIB1054 // Keep the explicit SetLastError/CharSet P/Invoke shape used by existing interop guards.
     private static extern int TaskDialog(
         IntPtr hwndOwner,
         IntPtr hInstance,
@@ -42,16 +46,22 @@ internal static partial class TaskDialogApi
         int flags,
         string? radioButton1,
         string? verificationText,
-        out int buttonId);
+        out int buttonId
+    );
+#pragma warning restore SYSLIB1054 // Keep the explicit SetLastError/CharSet P/Invoke shape used by existing interop guards.
+#pragma warning restore IDE1006
 
-    [DllImport(ComCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport(_comCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int TaskDialogIndirect(
         ref TASKDIALOGCONFIG config,
         out int buttonId,
         out int checkboxState,
-        out int verificationState);
+        out int verificationState
+    );
 
-    [DllImport(ComCtl32, SetLastError = true)]
+    [DllImport(_comCtl32, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern IntPtr GetDesktopWindow();
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -80,7 +90,7 @@ internal static partial class TaskDialogApi
 
     private sealed class CallbackHolder
     {
-        public TaskDialogCallback Callback;
+        public required TaskDialogCallback Callback { get; set; }
     }
 
     /// <summary>
@@ -94,29 +104,27 @@ internal static partial class TaskDialogApi
     /// <param name="content">Dialog content; may contain a hyperlink.</param>
     /// <param name="openFileAction">Action invoked with the hyperlink file path when the user clicks it.</param>
     /// <returns>The ID of the button the user clicked, or 0 on failure.</returns>
-    public static int ShowWithHyperlink(
-        string title,
-        string mainInstruction,
-        string content,
-        Action<string> openFileAction)
+    public static int ShowWithHyperlink(string title, string mainInstruction, string content, Action<string> openFileAction)
     {
-        IntPtr owner = GetDesktopWindow();
+        var owner = GetDesktopWindow();
 
         var callbackHolder = new CallbackHolder
         {
             Callback = (hwndDlg, msg, wParam, lParam, referenceData) =>
             {
-                if (msg == TDN_HYPERLINK)
+                if (msg == _tdnHyperlink)
                 {
                     // The hyperlink text is passed as lParam (pointer to string)
-                    string? linkText = Marshal.PtrToStringUni(lParam);
+                    var linkText = Marshal.PtrToStringUni(lParam);
                     if (!string.IsNullOrEmpty(linkText))
                     {
                         try
                         {
                             openFileAction(linkText);
                         }
+#pragma warning disable CA1031
                         catch
+#pragma warning restore CA1031
                         {
                             // Non-fatal: the dialog already displayed; a failed
                             // open attempt does not need to reach the user again.
@@ -124,14 +132,14 @@ internal static partial class TaskDialogApi
                     }
                 }
                 return 0;
-            }
+            },
         };
 
         var config = new TASKDIALOGCONFIG
         {
             cbSize = Marshal.SizeOf<TASKDIALOGCONFIG>(),
             hwndParent = owner,
-            dwFlags = TDF_ENABLE_HYPERLINKS,
+            dwFlags = _tdfEnableHyperlinks,
             pszWindowTitle = Marshal.StringToCoTaskMemUni(title),
             pszMainInstruction = Marshal.StringToCoTaskMemUni(mainInstruction),
             pszContent = Marshal.StringToCoTaskMemUni(content),
@@ -140,11 +148,7 @@ internal static partial class TaskDialogApi
 
         try
         {
-            int buttonId = TaskDialogIndirect(
-                ref config,
-                out _,
-                out _,
-                out _);
+            var buttonId = TaskDialogIndirect(ref config, out _, out _, out _);
 
             return buttonId;
         }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
-using System.Reflection;
+using System.Text;
 using ExcelDna.Integration;
+using GanttCreator.Core;
 using GanttCreator.Core.Logging;
 
 // Expose internals to the test project so contract tests can verify the
@@ -33,29 +34,21 @@ public sealed class DiagnosticsService
     {
         get
         {
-            if (_instance is null)
-            {
-                _instance = new DiagnosticsService();
-            }
+            _instance ??= new DiagnosticsService();
             return _instance;
         }
     }
 
     private IRollingLog? _log;
 
-    private DiagnosticsService()
-    {
-    }
+    private DiagnosticsService() { }
 
     /// <summary>
     /// Injects the rolling log reference. Called once per Excel session by
     /// <see cref="AddInHost"/> after the log is created.
     /// </summary>
     /// <param name="log">The rolling log.</param>
-    public void SetLog(IRollingLog log)
-    {
-        _log = log ?? throw new ArgumentNullException(nameof(log));
-    }
+    public void SetLog(IRollingLog log) => _log = log ?? throw new ArgumentNullException(nameof(log));
 
     /// <summary>
     /// Resets the singleton and clears the log reference, so the next Excel
@@ -81,7 +74,7 @@ public sealed class DiagnosticsService
     public void ShowDiagnostics()
     {
         // Gather identifiers for display and logging.
-        var identifiers = GatherIdentifiers();
+        AddInIdentity identifiers = GatherIdentifiers();
 
         // Write a diagnostic record to the log (non-fatal: if the log has
         // failed, this is a no-op via RollingLog's own guards).
@@ -89,44 +82,44 @@ public sealed class DiagnosticsService
 
         // Build the hyperlink-enabled content. The hyperlink is a file:// URI
         // so TaskDialog parses it as a clickable link.
-        string content = BuildContent(identifiers);
+        var content = BuildContent(identifiers, LogFilePath);
 
         // Show the dialog.
-        int buttonId = TaskDialogApi.ShowWithHyperlink(
+        var buttonId = TaskDialogApi.ShowWithHyperlink(
             title: "Gantt Creator Diagnostics",
             mainInstruction: "Add-in diagnostic information",
             content: content,
-            openFileAction: path => OpenLogFile(path));
+            openFileAction: OpenLogFile
+        );
 
         // Log which button was clicked (informational; non-fatal if log failed).
-        if (_log is not null)
-        {
-            _log.Write("Diagnostics dialog closed; button ID = {0}.", buttonId);
-        }
+        _log?.Write("Diagnostics dialog closed; button ID = {0}.", buttonId);
     }
 
     /// <summary>
     /// Gathers the four add-in identifiers used for diagnostics.
     /// </summary>
     /// <returns>The identifier set.</returns>
-    public AddInIdentity GatherIdentifiers()
+    public static AddInIdentity GatherIdentifiers()
     {
         var excelVersion = "unknown";
         var xllFileName = "unknown";
-        var xllPath = "unknown";
 
+#pragma warning disable CA1031
         try
         {
             excelVersion = ExcelDnaUtil.ExcelVersion.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
         }
         catch
+#pragma warning restore CA1031
         {
             // Intentionally empty: identifier degrades to "unknown".
         }
 
+#pragma warning disable CA1031
         try
         {
-            xllPath = ExcelDnaUtil.XllPath;
+            var xllPath = ExcelDnaUtil.XllPath;
             xllFileName = Path.GetFileName(xllPath);
             if (string.IsNullOrWhiteSpace(xllFileName))
             {
@@ -134,15 +127,12 @@ public sealed class DiagnosticsService
             }
         }
         catch
+#pragma warning restore CA1031
         {
             // Intentionally empty: identifier degrades to "unknown".
         }
 
-        return new AddInIdentity(
-            VersionInfo.SemanticVersion,
-            excelVersion,
-            Environment.Is64BitProcess ? "x64" : "x86",
-            xllFileName);
+        return new AddInIdentity(VersionInfo.SemanticVersion, excelVersion, Environment.Is64BitProcess ? "x64" : "x86", xllFileName);
     }
 
     /// <summary>
@@ -150,27 +140,30 @@ public sealed class DiagnosticsService
     /// clickable hyperlink to the active log file.
     /// </summary>
     /// <param name="identifiers">The add-in identifiers.</param>
+    /// <param name="logFilePath">The active log file path, or null when unavailable.</param>
     /// <returns>The content string with a file:// hyperlink.</returns>
-    public string BuildContent(AddInIdentity identifiers, string? logFilePath = null)
+    public static string BuildContent(AddInIdentity identifiers, string? logFilePath = null)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("Add-in Version: " + identifiers.AddInVersion);
-        sb.AppendLine("Excel Version:  " + identifiers.ExcelVersion);
-        sb.AppendLine("Process:        " + identifiers.ProcessBitness);
-        sb.AppendLine("XLL File:       " + identifiers.XllFileName);
+        ArgumentNullException.ThrowIfNull(identifiers);
+
+        StringBuilder sb = new();
+        _ = sb.AppendLine("Add-in Version: " + identifiers.AddInVersion);
+        _ = sb.AppendLine("Excel Version:  " + identifiers.ExcelVersion);
+        _ = sb.AppendLine("Process:        " + identifiers.ProcessBitness);
+        _ = sb.AppendLine("XLL File:       " + identifiers.XllFileName);
 
         if (!string.IsNullOrWhiteSpace(logFilePath))
         {
-            sb.AppendLine();
+            _ = sb.AppendLine();
             // Use a file:// URI so TaskDialog parses it as a hyperlink.
             // Normalize to use forward slashes and percent-encode spaces.
-            string uri = new Uri(logFilePath).AbsoluteUri;
-            sb.AppendLine("Log File: " + uri);
+            var uri = new Uri(logFilePath).AbsoluteUri;
+            _ = sb.AppendLine("Log File: " + uri);
         }
         else
         {
-            sb.AppendLine();
-            sb.AppendLine("Log File: not available");
+            _ = sb.AppendLine();
+            _ = sb.AppendLine("Log File: not available");
         }
 
         return sb.ToString();
@@ -182,16 +175,15 @@ public sealed class DiagnosticsService
     /// failure to open the file does not surface to the user.
     /// </summary>
     /// <param name="path">The log file path.</param>
-    public void OpenLogFile(string path)
+    public static void OpenLogFile(string path)
     {
+#pragma warning disable CA1031
         try
         {
-            Process.Start(new ProcessStartInfo(path)
-            {
-                UseShellExecute = true
-            });
+            _ = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         }
         catch
+#pragma warning restore CA1031
         {
             // Intentionally empty: non-fatal.
         }
@@ -202,18 +194,17 @@ public sealed class DiagnosticsService
     /// <see cref="ShowDiagnostics"/>. Public so contract tests can verify
     /// the log-writing path without invoking the TaskDialog UI.
     /// </summary>
+    /// <param name="identifiers">The add-in identifiers.</param>
     public void WriteDiagnosticRecord(AddInIdentity identifiers)
     {
-        if (_log is null)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(identifiers);
 
-        _log.Write(
+        _log?.Write(
             "Diagnostics: addin-version={0} excel-version={1} process={2} xll={3}",
             identifiers.AddInVersion,
             identifiers.ExcelVersion,
             identifiers.ProcessBitness,
-            identifiers.XllFileName);
+            identifiers.XllFileName
+        );
     }
 }

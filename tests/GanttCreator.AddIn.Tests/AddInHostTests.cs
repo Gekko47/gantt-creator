@@ -24,6 +24,8 @@ internal sealed class CapturingLog : IRollingLog
 
     public bool IsFailed => false;
 
+    public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "capturing.log");
+
     public void Write(string message) => Records.Add(message);
 
     public void Write(string format, params object?[] args) =>
@@ -175,6 +177,8 @@ public class AddInHostTests
 
         public bool IsFailed => false;
 
+        public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "throwing.log");
+
         private int _writeCount;
 
         public void Write(string message)
@@ -202,6 +206,8 @@ public class AddInHostTests
         public bool Disposed { get; private set; }
 
         public bool IsFailed => false;
+
+        public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "throwing-dispose.log");
 
         public int DisposeCalls { get; private set; }
 

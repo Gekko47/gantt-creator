@@ -36,6 +36,9 @@
     <PackageVersion Include="xunit.runner.visualstudio"        Version="3.1.4" />
     <PackageVersion Include="coverlet.collector"               Version="6.0.4" />
 
+    <!-- Moq. Used only by AddIn contract tests to fake IRollingLog without the filesystem. -->
+    <PackageVersion Include="Moq"                              Version="4.20.72" />
+
   </ItemGroup>
 
 </Project>
