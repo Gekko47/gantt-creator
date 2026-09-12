@@ -20,6 +20,13 @@ if "%VERIFY_OFFICE_STUB_BEHAVIOR%"=="hang" (
 )
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
+@'
+@if "%VERIFY_OFFICE_TASKKILL_EXIT%"=="1" (
+  exit /b 7
+)
+exit /b 0
+'@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'taskkill.cmd') -Encoding utf8NoBOM
+
     }
 
     AfterAll {
@@ -153,6 +160,8 @@ exit /b 0
                 '$dotnetExe = ''dotnet''',
                 '$dotnetExe = ''cmd'''
             )
+            $body = $body.Replace('$watchdogIntervalSeconds = 5', '$watchdogIntervalSeconds = 1')
+            $body = $body.Replace('$cleanupDeadlineSeconds = 30', '$cleanupDeadlineSeconds = 1')
             # Replace the entire $testArgs multi-line block with cmd /c <stub>.
             # Use a regex for the replacement since we need to match a
             # multi-line block. The pattern matches from $testArgs = @(
@@ -179,6 +188,23 @@ exit /b 0
                 -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'hang'; PATH = ($script:stubDir + $sep + $env:PATH) }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 124
+            $output | Should -Match 'TIMEOUT'
+        }
+
+        It 'reports cleanup failure when taskkill fails and the process tree remains active' {
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '2'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'hang'; VERIFY_OFFICE_TASKKILL_EXIT = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 124
+            $output | Should -Match 'taskkill failed to stop the dotnet-test process tree'
+            $output | Should -Match 'Cleanup failed: dotnet-test process tree.*still active'
             $output | Should -Match 'TIMEOUT'
         }
 

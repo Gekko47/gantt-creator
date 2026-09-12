@@ -37,6 +37,51 @@ $report = Join-Path $artifacts 'verify-office.txt'
 
 function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value $s }
 
+function Test-HarnessProcessTreeActive {
+    param(
+        [Parameter(Mandatory)][int]$RootProcessId,
+        [int[]]$KnownChildPids
+    )
+
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            [pscustomobject]@{
+                ProcessId     = [int]$_.ProcessId
+                ParentProcessId = [int]$_.ParentProcessId
+            }
+        })
+    if ($processes.Count -eq 0) { return $false }
+
+    # The launcher can exit before a child, and children can have grandchildren.
+    # Walk every known root and its descendants rather than checking only one
+    # generation or relying on the launcher object's HasExited property.
+    $activePids = @{}
+    $roots = @($RootProcessId) + @($KnownChildPids | Where-Object { $_ })
+    foreach ($rootPid in $roots) {
+        if ($activePids.ContainsKey($rootPid)) { continue }
+
+        $pending = @($rootPid)
+        $visited = @{}
+        $index = 0
+        while ($index -lt $pending.Count) {
+            $processId = $pending[$index]
+            $index++
+            if ($visited.ContainsKey($processId)) { continue }
+            $visited[$processId] = $true
+
+            $process = $processes | Where-Object { $_.ProcessId -eq $processId } | Select-Object -First 1
+            if (-not $process) { continue }
+
+            $activePids[$processId] = $true
+            $children = @($processes | Where-Object { $_.ParentProcessId -eq $processId } |
+                ForEach-Object { $_.ProcessId })
+            $pending += $children
+        }
+    }
+
+    return $activePids.Count -gt 0
+}
+
 
 function Remove-HarnessOwnedOfficeProcesses {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
@@ -188,7 +233,28 @@ if (-not $testProc.HasExited)
         $err = $_.Exception.Message
         Log "WARN: could not read owned-PID manifest ${ownedPidsPath}: $err"
     }
+
+    $cleanupDeadlineSeconds = 30
+    $cleanupWatchdog = [System.Diagnostics.Stopwatch]::StartNew()
     & taskkill /PID $testProc.Id /T /F 2>$null
+    $taskkillExitCode = $LASTEXITCODE
+    if ($taskkillExitCode -ne 0) {
+        Log "WARN: taskkill failed to stop the dotnet-test process tree (exit $taskkillExitCode)"
+    }
+
+    # Give the forced tree kill time to propagate to grandchildren. If the
+    # launcher or any known descendant is still present at the deadline, the
+    # timeout is not a clean shutdown and must be reported as a cleanup failure.
+    while ($cleanupWatchdog.Elapsed.TotalSeconds -lt $cleanupDeadlineSeconds) {
+        if (-not (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids)) {
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
+    if (Test-HarnessProcessTreeActive -RootProcessId $testProc.Id -KnownChildPids $ownedTreePids) {
+        Log "WARN: Cleanup failed: dotnet-test process tree for PID $testProc.Id is still active after ${cleanupDeadlineSeconds}s"
+    }
+
     # A genuine timeout means OfficeFixture.DisposeAsync never ran, so its
     # owned Excel can be orphaned outside the killed tree too -- re-run
     # this script's own sweep. Ownership is primary from the fixture's own
