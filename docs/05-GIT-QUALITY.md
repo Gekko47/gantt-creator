@@ -40,6 +40,15 @@ Do not get wrong:
   work item. Local PASSes alone are insufficient — the W-12 amendment
   was added after the PSSA blind-gate defect survived three QA rounds
   because CI had never been run on the branch.
+- **Push and pull requests are human-gated.** The agent never pushes
+  and never opens a pull request without explicit human instruction.
+  The branch lifecycle is: the agent commits (verify-quick green per
+  commit, pre-commit hook as the fast safety net); the agent runs
+  `verify.ps1` once after its last commit as the branch-final
+  self-certification; the branch is pushed for review on instruction;
+  the CodeRabbit review stage runs on the pushed branch; the human
+  creates the pull request once satisfied. CodeRabbit findings return
+  as normal fix commits through the same feature loop.
 
 ## Commit design
 
@@ -71,20 +80,35 @@ Keep the work item and status concise; they are control records, not diaries.
 
 ## Local gates
 
-During editing:
+Two gates with different tree-state contracts:
+
+- `verify-quick.ps1` — the every-commit gate. Run it after staging: it
+  accepts staged (uncommitted) changes because its skill-tree and
+  STATUS checks must validate exactly the content being committed
+  (the staged index), not the working tree.
+- `verify.ps1` — the branch-final gate. Run it once, after the last
+  commit for the branch. Its first step ("working tree hygiene")
+  requires a fully clean tree — including no staged changes — and
+  fails in under a second on a dirty tree, because the coverage and
+  publish artifacts it produces must certify the committed state.
+
+Feature loop (one roadmap row = one commit):
 
 ```powershell
-pwsh ./scripts/verify-quick.ps1
+git add -A                        # stage everything before the gates
+pwsh ./scripts/verify-quick.ps1   # every commit — expect exit 0
+git diff --cached --check
+git commit                        # the pre-commit hook runs here
+# after the LAST commit for the branch:
+pwsh ./scripts/verify.ps1         # branch-final — requires a clean tree
 ```
 
-Before every commit/PR:
+Before committing, review exactly what will be committed:
 
 ```powershell
-pwsh ./scripts/verify.ps1
-git diff --check
-git status --short
-git diff --stat
-git diff
+git diff --cached --check
+git diff --cached --stat
+git diff --cached
 ```
 
 ## Pre-flight checklist
