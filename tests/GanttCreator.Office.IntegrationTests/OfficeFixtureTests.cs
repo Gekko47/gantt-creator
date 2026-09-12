@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
@@ -153,5 +154,71 @@ public class OfficeFixtureTests
             $"One or more Excel processes survived five open/close " +
             $"cycles (orphans: {string.Join(", ", pids)}).");
         _output.WriteLine("All five Excel processes exited cleanly.");
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public void RecordOwnedProcessId_writes_the_owned_pid_to_the_manifest()
+    {
+        // Pure unit test of the fixture-to-shell handoff: no Excel, no COM.
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+
+            OfficeFixture.RecordOwnedProcessIdForTest(111);
+            OfficeFixture.RecordOwnedProcessIdForTest(222);
+
+            var lines = File.ReadAllLines(manifestPath);
+            Assert.Equal(2, lines.Length);
+            Assert.Contains("111", lines[0], StringComparison.Ordinal);
+            Assert.Contains("222", lines[1], StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public void RecordOwnedProcessId_is_a_noop_when_no_manifest_path_is_set()
+    {
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", null);
+            // Must not throw, and must not write anywhere.
+            OfficeFixture.RecordOwnedProcessIdForTest(333);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public void RecordOwnedProcessId_is_a_noop_for_zero_process_id()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+            OfficeFixture.RecordOwnedProcessIdForTest(0);
+            Assert.False(File.Exists(manifestPath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
+        }
     }
 }

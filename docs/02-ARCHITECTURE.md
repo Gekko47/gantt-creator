@@ -241,6 +241,15 @@ Use RibbonX, not Office.js or a task-pane web UI. The first release groups comma
 
 Every callback is a thin error boundary that invokes an application command. No callback contains parsing, geometry, shape-building, or PowerPoint logic. Dynamic Ribbon state getters must be fast and side-effect-free.
 
+The RibbonX document is data, not code. It lives in a `.resx` resource as a
+`ResXFileRef` to a sibling `.xml` file
+(`src/GanttCreator.AddIn/RibbonResources.resx` →
+`src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`), read through the committed
+`src/GanttCreator.AddIn/RibbonResources.Designer.cs` accessor (the Excel-DNA
+CSfull pattern). Never author RibbonX as a C# string literal: multiline string
+constants trip the in-build formatter (IDE0055) and are hard to diff. This
+applies to any future embedded XML/HTML/document text, not only the Ribbon.
+
 ## COM ownership and application state
 
 Interop is the highest-risk layer. Follow these rules:

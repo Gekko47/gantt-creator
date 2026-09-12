@@ -27,6 +27,24 @@ These are restated from the kit. Treat them as hard constraints.
 - **No loops**: two-attempt bounded retry. The third occurrence stops the agent and reports the diff, evidence, and one question.
 - **Offline only**: the built product must not need the network. No telemetry, web fonts, cloud API, online licence check, or hidden fallback.
 
+
+## Tool routing
+
+Use the highest-fidelity tool for the job. Per-skill tool lists live in each `SKILL.md`; this table is the always-on index for the most safety-critical routings:
+
+| When you need to… | Use |
+|---|---|
+| Get compiler type/symbol info | `vscode-mcp__get_symbol_lsp_info`, `vscode-mcp__get_diagnostics` |
+| Find an API's real signature | `context7__query-docs`, `microsoft-learn__microsoft_docs_search`, `ilspy_decompile` |
+| Run tests / check coverage | `dotnet_test`, `dotnet_build` |
+| Verify a NuGet package claim | `dotnet_packages` |
+| Verify green CI on a branch | `github__get_pull_request_status` |
+| Persist a decision or evidence across turns | `memra_add_decision`, `memra_add` |
+| Recall prior decisions at session start | `memra_bootstrap` |
+| Structure multi-step reasoning | `sequential-thinking__sequentialthinking` |
+| Check an architecture invariant | `roslyn_analyze`, `dotnet_test` on `*.Architecture.Tests` |
+| Find a pattern violation across the codebase | `ast_grep_search`, `semgrep_scan` |
+
 ## Workflow
 
 1. Read the active work item. Restate outcome, exclusions, acceptance tests, and unknowns.

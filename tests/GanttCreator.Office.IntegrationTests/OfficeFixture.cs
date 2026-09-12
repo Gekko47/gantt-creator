@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office.IntegrationTests;
@@ -96,6 +98,12 @@ internal sealed class OfficeFixture : IAsyncLifetime
         {
             _excelProcessId = after[0];
         }
+
+        // Report the owned PID to the verifying shell. On a genuine timeout
+        // DisposeAsync never runs and the test host is killed, so the shell
+        // needs a signal that outlives the process; the manifest file does.
+        // Best-effort: this must never affect test pass/fail.
+        RecordOwnedProcessId(_excelProcessId);
 
         return Task.CompletedTask;
     }
@@ -287,4 +295,52 @@ internal sealed class OfficeFixture : IAsyncLifetime
             await Task.Delay(100).ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// Appends the fixture's owned Excel process ID to the manifest file the
+    /// verifying shell reads on timeout. The path is supplied by the shell via
+    /// <c>$env:GANTTCREATOR_OWNED_PIDS_PATH</c>; when it is unset (for example
+    /// when the fixture is exercised directly rather than through
+    /// <c>verify-office.ps1</c>) this is a no-op.
+    /// </summary>
+    /// <param name="processId">The owned Excel process ID, or zero when it
+    /// could not be identified.</param>
+    private static void RecordOwnedProcessId(int processId)
+    {
+        if (processId == 0) return;
+
+        var path = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        if (string.IsNullOrEmpty(path)) return;
+
+        try
+        {
+            var entry = new OwnedProcessIdEntry { ProcessId = processId };
+            var json = JsonSerializer.Serialize(entry);
+            // Append, not overwrite: a run can launch more than one fixture
+            // before a timeout, and each owned PID must survive.
+            File.AppendAllText(path, json + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Best-effort: the manifest is a safety net for the timeout sweep,
+            // never a test gate. Swallow and move on.
+            _ = ex; // silence unused-variable warning under warnings-as-errors
+        }
+    }
+
+    /// <summary>
+    /// One owned-PID record as written to the manifest file.
+    /// </summary>
+    private sealed class OwnedProcessIdEntry
+    {
+        public int ProcessId { get; set; }
+    }
+
+    /// <summary>
+    /// Test-only entry point for <see cref="RecordOwnedProcessId"/>, which is
+    /// private. Kept internal (not public) so the production surface stays
+    /// narrow; the xUnit test in the same assembly calls this.
+    /// </summary>
+    internal static void RecordOwnedProcessIdForTest(int processId) =>
+        RecordOwnedProcessId(processId);
 }

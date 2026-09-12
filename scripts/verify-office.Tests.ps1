@@ -20,6 +20,13 @@ if "%VERIFY_OFFICE_STUB_BEHAVIOR%"=="hang" (
 )
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'dotnet.cmd') -Encoding utf8NoBOM
+@'
+@if "%VERIFY_OFFICE_TASKKILL_EXIT%"=="1" (
+  exit /b 7
+)
+exit /b 0
+'@ | Set-Content -LiteralPath (Join-Path $script:stubDir 'taskkill.cmd') -Encoding utf8NoBOM
+
     }
 
     AfterAll {
@@ -38,6 +45,84 @@ exit /b 0
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Not -Match 'blame-hang-timeout'
     }
+
+    It 'timeout path kills the dotnet-test process tree with taskkill /T' {
+        # The watchdog must kill the whole dotnet-test tree, not just the
+        # launcher. Strip full-line comments so a comment mentioning the
+        # command does not trip the match.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'taskkill /PID \$testProc\.Id /T /F'
+        $codeOnly | Should -Not -Match 'Stop-Process -InputObject \$testProc'
+    }
+
+    It 'timeout path sweeps harness-owned Office processes' {
+        # On timeout the sweep must run as a safety net for orphaned Office
+        # processes that were not in the before-snapshot, passing the owned
+        # tree and the fixture's own recorded PIDs.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses \$officeBeforeSnapshot \$ownedTreePids \$fixtureOwnedPids'
+    }
+
+    It 'sweep uses taskkill /T /F by PID, never Stop-Process' {
+        # The sweep must kill only processes positively identified as
+        # harness-owned, and it must use taskkill /T /F by PID rather than
+        # Stop-Process.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'taskkill /PID \$processId /T /F 2>\$null'
+        $codeOnly | Should -Not -Match 'Stop-Process -InputObject \$processId'
+    }
+
+    It 'sweep takes the fixture-owned PIDs as the primary ownership signal' {
+        # The fixture-to-shell handoff (owned-PID manifest) is the primary
+        # ownership test; parentage is only the fallback.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'FixtureOwnedPids'
+        $codeOnly | Should -Match 'GANTTCREATOR_OWNED_PIDS_PATH'
+        $codeOnly | Should -Match 'owned-office-pids.json'
+        $codeOnly | Should -Match 'recorded by OfficeFixture'
+        # The old "not present before test run = kill" inference must be gone.
+        $codeOnly | Should -Not -Match 'not present before test run'
+    }
+
+    It 'sweep refuses to kill when neither the fixture PID nor the parent is known' {
+        # The safe direction: an Office process that is neither recorded by
+        # the fixture nor a child of the owned tree is skipped, never killed.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Skipping Office process PID'
+    }
+
+    It 'the owned-PID manifest path is derived from the evidence directory, never committed' {
+        # The manifest must live under the ignored scripts/_artifacts/ tree
+        # and be deleted before the test run starts.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Join-Path \$evidence ''owned-office-pids.json'''
+        $codeOnly | Should -Match 'Remove-Item -LiteralPath \$ownedPidsPath'
+    }
+
+
+    It 'captures an Office process snapshot before starting dotnet test' {
+        # The sweep must distinguish harness-owned Office processes from
+        # user-owned ones by comparing against a before-snapshot.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match "Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue"
+        $codeOnly | Should -Match '\$officeBeforeSnapshot'
+    }
+
+    It 'positive control: the taskkill assertion fires on a flagged stub' {
+        # Ensure the negative assertion above can detect a regression where
+        # taskkill /T is removed from the timeout path.
+        $flagged = "if (-not `$testProc.HasExited) { Stop-Process -InputObject `$testProc -Force }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'taskkill /PID \$testProc\.Id /T /F'
+    }
+
 
     It 'positive control: the --blame-hang-timeout assertion fires on a flagged stub' {
         $flagged = "dotnet test --blame-hang-timeout 600`n"
@@ -75,6 +160,8 @@ exit /b 0
                 '$dotnetExe = ''dotnet''',
                 '$dotnetExe = ''cmd'''
             )
+            $body = $body.Replace('$watchdogIntervalSeconds = 5', '$watchdogIntervalSeconds = 1')
+            $body = $body.Replace('$cleanupDeadlineSeconds = 30', '$cleanupDeadlineSeconds = 1')
             # Replace the entire $testArgs multi-line block with cmd /c <stub>.
             # Use a regex for the replacement since we need to match a
             # multi-line block. The pattern matches from $testArgs = @(
@@ -101,6 +188,23 @@ exit /b 0
                 -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'hang'; PATH = ($script:stubDir + $sep + $env:PATH) }
             $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
             $proc.ExitCode | Should -Be 124
+            $output | Should -Match 'TIMEOUT'
+        }
+
+        It 'reports cleanup failure when taskkill fails and the process tree remains active' {
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '2'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'hang'; VERIFY_OFFICE_TASKKILL_EXIT = '1'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 124
+            $output | Should -Match 'taskkill failed to stop the dotnet-test process tree'
+            $output | Should -Match 'Cleanup failed: dotnet-test process tree.*still active'
             $output | Should -Match 'TIMEOUT'
         }
 
