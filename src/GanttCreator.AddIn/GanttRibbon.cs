@@ -18,23 +18,6 @@ namespace GanttCreator.AddIn;
 [ComVisible(true)]
 public class GanttRibbon : ExcelRibbon
 {
-    // The RibbonX document. The Office 2009/07 namespace targets Excel 2010+,
-    // the supported baseline.
-#pragma warning disable IDE0055
-    // IDE0055: dotnet format (the repo formatting gate) accepts this wrapping,
-    // but EnforceCodeStyleInBuild flags the multiline binary expression. The
-    // formatter and the in-build analyzer disagree here; suppressing for this
-    // declaration only so the documented XML content is not churned further.
-    private const string _ribbonXml =
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-        + "<customUI xmlns=\"http://schemas.microsoft.com/office/2009/07/customui\" onLoad=\"OnLoad\">"
-        + "<ribbon><tabs>"
-        + "<tab id=\"tabGanttCreator\" label=\"Gantt Creator\">"
-        + "<group id=\"grpPlaceholder\" label=\"Gantt Creator\"></group>"
-        + "</tab></tabs></ribbon>"
-        + "</customUI>";
-#pragma warning restore IDE0055
-
     /// <summary>
     /// Excel's onLoad callback. No-op: this add-in has no dynamic load-time
     /// ribbon state.
@@ -49,11 +32,15 @@ public class GanttRibbon : ExcelRibbon
 
     /// <summary>
     /// Returns the RibbonX document for the Excel workbook RibbonID, else null.
+    /// The document is stored in the RibbonResources.resx resource (a
+    /// ResXFileRef to <c>RibbonResources\Ribbon.xml</c>) and read through the
+    /// committed <c>RibbonResources.Designer.cs</c> accessor, so the XML never
+    /// appears as a C# string literal.
     /// </summary>
     /// <param name="RibbonID">The Ribbon identifier supplied by Excel.</param>
     /// <returns>
     /// The RibbonX document, or null when the RibbonID is not the workbook.
     /// </returns>
     public override string GetCustomUI(string RibbonID) =>
-        RibbonID != "Microsoft.Excel.Workbook" ? null! : _ribbonXml;
+        RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
 }
