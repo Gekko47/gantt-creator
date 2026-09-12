@@ -31,8 +31,17 @@ public static class AddInLogFactory
     /// is used instead.
     /// </summary>
     /// <returns>A rolling log ready for writes; write failures latch <see cref="IRollingLog.IsFailed"/> and never throw.</returns>
-    public static IRollingLog Create() =>
-        Create(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    public static IRollingLog Create()
+    {
+        var baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var log = Create(baseDirectory);
+        if (!string.IsNullOrWhiteSpace(baseDirectory) && log.IsFailed)
+        {
+            log.Dispose();
+            log = Create(Path.GetTempPath());
+        }
+        return log;
+    }
 
     /// <summary>
     /// Creates the add-in rolling log under the given base directory.

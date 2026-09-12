@@ -62,8 +62,8 @@ public class AddInLogFactoryTests
 }
 
 /// <summary>
-/// Temp-fallback log tests that share the same log file path
-/// under Path.GetTempPath(). They must run sequentially to avoid
+/// Temp-fallback log tests that use an isolated temporary root
+/// for each test instance. They must run sequentially to avoid
 /// concurrent file-write collisions.
 /// </summary>
 #pragma warning disable CA1515, CA1711
@@ -79,54 +79,56 @@ public class TempLogFallbackTests
     [Fact]
     public void Create_falls_back_to_temp_when_base_directory_is_missing()
     {
-        // Passing null selects the temp fallback inside AddInLogFactory.
-        var expectedLogFile = Path.Combine(
-            Path.GetTempPath(), "GanttCreator", "logs", "gantt-creator-addin.log");
+        // Each test instance owns an isolated temporary root so the
+        // shared Path.GetTempPath()/GanttCreator/logs directory is
+        // never touched by concurrent test runs.
+        var tempRoot = Directory.CreateTempSubdirectory("gantt-r11-").FullName;
+        var expectedLogFile = Path.Combine(tempRoot, "GanttCreator", "logs", "gantt-creator-addin.log");
         var expectedLogDir = Path.GetDirectoryName(expectedLogFile)!;
         if (File.Exists(expectedLogFile)) File.Delete(expectedLogFile);
         if (Directory.Exists(expectedLogDir)) Directory.Delete(expectedLogDir, recursive: true);
         try
         {
-            IRollingLog log = AddInLogFactory.Create(null);
+            IRollingLog log = AddInLogFactory.Create(tempRoot);
 
             log.Write("missing-dir probe");
             log.Dispose();
 
             Assert.True(File.Exists(expectedLogFile), $"Expected the log at '{expectedLogFile}'.");
-            Assert.True(expectedLogFile.StartsWith(Path.GetTempPath(), StringComparison.Ordinal), "The log must be created beneath the temp path.");
+            Assert.True(expectedLogFile.StartsWith(tempRoot, StringComparison.Ordinal), "The log must be created beneath the isolated temp root.");
             Assert.Contains("missing-dir probe", File.ReadAllText(expectedLogFile), StringComparison.Ordinal);
         }
         finally
         {
-            if (File.Exists(expectedLogFile)) File.Delete(expectedLogFile);
-            if (Directory.Exists(expectedLogDir)) Directory.Delete(expectedLogDir, recursive: true);
+            Directory.Delete(tempRoot, recursive: true);
         }
     }
 
     [Fact]
     public void Create_falls_back_to_temp_when_base_directory_is_whitespace()
     {
-        // Passing whitespace selects the temp fallback inside AddInLogFactory.
-        var expectedLogFile = Path.Combine(
-            Path.GetTempPath(), "GanttCreator", "logs", "gantt-creator-addin.log");
+        // Each test instance owns an isolated temporary root so the
+        // shared Path.GetTempPath()/GanttCreator/logs directory is
+        // never touched by concurrent test runs.
+        var tempRoot = Directory.CreateTempSubdirectory("gantt-r11-").FullName;
+        var expectedLogFile = Path.Combine(tempRoot, "GanttCreator", "logs", "gantt-creator-addin.log");
         var expectedLogDir = Path.GetDirectoryName(expectedLogFile)!;
         if (File.Exists(expectedLogFile)) File.Delete(expectedLogFile);
         if (Directory.Exists(expectedLogDir)) Directory.Delete(expectedLogDir, recursive: true);
         try
         {
-            IRollingLog log = AddInLogFactory.Create("   ");
+            IRollingLog log = AddInLogFactory.Create(tempRoot);
 
             log.Write("whitespace-dir probe");
             log.Dispose();
 
             Assert.True(File.Exists(expectedLogFile), $"Expected the log at '{expectedLogFile}'.");
-            Assert.True(expectedLogFile.StartsWith(Path.GetTempPath(), StringComparison.Ordinal), "The log must be created beneath the temp path.");
+            Assert.True(expectedLogFile.StartsWith(tempRoot, StringComparison.Ordinal), "The log must be created beneath the isolated temp root.");
             Assert.Contains("whitespace-dir probe", File.ReadAllText(expectedLogFile), StringComparison.Ordinal);
         }
         finally
         {
-            if (File.Exists(expectedLogFile)) File.Delete(expectedLogFile);
-            if (Directory.Exists(expectedLogDir)) Directory.Delete(expectedLogDir, recursive: true);
+            Directory.Delete(tempRoot, recursive: true);
         }
     }
 }
