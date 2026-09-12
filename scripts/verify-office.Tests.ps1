@@ -51,19 +51,51 @@ exit /b 0
 
     It 'timeout path sweeps harness-owned Office processes' {
         # On timeout the sweep must run as a safety net for orphaned Office
-        # processes that were not in the before-snapshot.
+        # processes that were not in the before-snapshot, passing the owned
+        # tree and the fixture's own recorded PIDs.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses \$officeBeforeSnapshot'
+        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses \$officeBeforeSnapshot \$ownedTreePids \$fixtureOwnedPids'
     }
 
     It 'sweep uses taskkill /T /F by PID, never Stop-Process' {
-        # The sweep must kill only processes not in the before-snapshot,
-        # and it must use taskkill /T /F by PID rather than Stop-Process.
+        # The sweep must kill only processes positively identified as
+        # harness-owned, and it must use taskkill /T /F by PID rather than
+        # Stop-Process.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match 'taskkill /PID \$processId /T /F 2>\$null'
         $codeOnly | Should -Not -Match 'Stop-Process -InputObject \$processId'
+    }
+
+    It 'sweep takes the fixture-owned PIDs as the primary ownership signal' {
+        # The fixture-to-shell handoff (owned-PID manifest) is the primary
+        # ownership test; parentage is only the fallback.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'FixtureOwnedPids'
+        $codeOnly | Should -Match 'GANTTCREATOR_OWNED_PIDS_PATH'
+        $codeOnly | Should -Match 'owned-office-pids.json'
+        $codeOnly | Should -Match 'recorded by OfficeFixture'
+        # The old "not present before test run = kill" inference must be gone.
+        $codeOnly | Should -Not -Match 'not present before test run'
+    }
+
+    It 'sweep refuses to kill when neither the fixture PID nor the parent is known' {
+        # The safe direction: an Office process that is neither recorded by
+        # the fixture nor a child of the owned tree is skipped, never killed.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Skipping Office process PID'
+    }
+
+    It 'the owned-PID manifest path is derived from the evidence directory, never committed' {
+        # The manifest must live under the ignored scripts/_artifacts/ tree
+        # and be deleted before the test run starts.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Join-Path \$evidence ''owned-office-pids.json'''
+        $codeOnly | Should -Match 'Remove-Item -LiteralPath \$ownedPidsPath'
     }
 
 

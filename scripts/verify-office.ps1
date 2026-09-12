@@ -11,7 +11,10 @@
       1. records the Office version, channel, bitness, locale, and display scale
       2. captures any existing EXCEL.EXE / POWERPNT.EXE processes (user-owned, not killed)
       3. runs the OfficeIntegration tests with a deadline
-      4. on timeout, kills the owned dotnet-test tree and any harness-owned Office processes that appeared during the run
+      4. on timeout, kills the owned dotnet-test tree and any harness-owned Office
+         processes: primarily those whose PID OfficeFixture recorded in the
+         owned-PID manifest, with Windows parentage as a fallback; never every
+         Office process that appeared during the run
       5. on failure, retains logs and a screenshot manifest under
          scripts/_artifacts/office-evidence/
 #>
@@ -37,10 +40,16 @@ function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value 
 
 function Remove-HarnessOwnedOfficeProcesses {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
-    param([int[]]$BeforeSnapshot)
+    param([int[]]$BeforeSnapshot, [int[]]$OwnedTreePids, [int[]]$FixtureOwnedPids)
 
     $beforeSet = @{}
     foreach ($processId in $BeforeSnapshot) { $beforeSet[$processId] = $true }
+
+    $ownedSet = @{}
+    foreach ($processId in $OwnedTreePids) { $ownedSet[$processId] = $true }
+
+    $fixtureSet = @{}
+    foreach ($processId in $FixtureOwnedPids) { $fixtureSet[$processId] = $true }
 
     $currentPids = @()
     try {
@@ -51,8 +60,13 @@ function Remove-HarnessOwnedOfficeProcesses {
     }
 
     foreach ($processId in $currentPids) {
-        if (-not $beforeSet.ContainsKey($processId)) {
-            Log "Killing harness-owned Office process PID $processId (not present before test run)"
+        if ($beforeSet.ContainsKey($processId)) { continue }
+
+        # Primary ownership test: the fixture's own recorded PID. This is the
+        # signal OfficeFixture wrote to the owned-PID manifest, so it does not
+        # depend on Excel being a child of the test host.
+        if ($fixtureSet.ContainsKey($processId)) {
+            Log "Killing harness-owned Office process PID $processId (recorded by OfficeFixture)"
             try {
                 if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
                     & taskkill /PID $processId /T /F 2>$null
@@ -63,6 +77,36 @@ function Remove-HarnessOwnedOfficeProcesses {
             } catch {
                 Log "WARN: taskkill threw for PID ${processId}: $($_.Exception.Message)"
             }
+            continue
+        }
+
+        # Fallback ownership test: Windows parentage. Only used when the
+        # fixture's own PID was not recorded; if the parent cannot be
+        # determined we refuse to assume ownership -- the safe direction is
+        # to leave an unrelated user-owned Office process alone.
+        $parentPid = $null
+        try {
+            $owner = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+            if ($owner) { $parentPid = $owner.ParentProcessId }
+        } catch {
+            $err = $_.Exception.Message
+            Log "WARN: Could not determine parent of Office process PID ${processId}: $err"
+        }
+        if ($null -eq $parentPid -or -not $ownedSet.ContainsKey($parentPid)) {
+            Log "Skipping Office process PID $processId (parent $parentPid is not in the owned dotnet-test tree)"
+            continue
+        }
+
+        Log "Killing harness-owned Office process PID $processId (child of owned PID $parentPid)"
+        try {
+            if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
+                & taskkill /PID $processId /T /F 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
+                }
+            }
+        } catch {
+            Log "WARN: taskkill threw for PID ${processId}: $($_.Exception.Message)"
         }
     }
 }
@@ -99,6 +143,15 @@ try {
     $officeBeforeSnapshot = @()
 }
 
+# Owned-PID manifest. OfficeFixture records the EXCEL.EXE process ID it
+# created into this file (via $env:GANTTCREATOR_OWNED_PIDS_PATH), so the
+# timeout sweep can positively identify the fixture's Excel even when it is
+# not a child of the test host. The file must not be committed; it lives
+# under the ignored scripts/_artifacts/ tree.
+$ownedPidsPath = Join-Path $evidence 'owned-office-pids.json'
+if (Test-Path -LiteralPath $ownedPidsPath) { Remove-Item -LiteralPath $ownedPidsPath -Force -ErrorAction SilentlyContinue }
+$env:GANTTCREATOR_OWNED_PIDS_PATH = $ownedPidsPath
+
 Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
 $testArgs = @(
     'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
@@ -119,12 +172,29 @@ if (-not $testProc.HasExited)
     # launcher -- Stop-Process alone leaves the actual test-host child,
     # and any Excel it owns, running as an orphan). taskkill /T reaches
     # the tree; by PID, never by Office process name.
+    # Capture the owned tree first: the sweep below needs the parent PIDs
+    # that were children of this launcher, and once taskkill runs they are
+    # gone. OfficeFixture launches Excel in-process, so the fixture's Excel
+    # is a child of the test host, which is a child of this launcher.
+    $ownedTreePids = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ParentProcessId -eq $testProc.Id } | ForEach-Object { $_.ProcessId })
+    # The owned-PID manifest outlives the killed test host, so read it now.
+    $fixtureOwnedPids = @()
+    try {
+        if (Test-Path -LiteralPath $ownedPidsPath) {
+            $fixtureOwnedPids = @((Get-Content -LiteralPath $ownedPidsPath -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue).ProcessId)
+        }
+    } catch {
+        $err = $_.Exception.Message
+        Log "WARN: could not read owned-PID manifest ${ownedPidsPath}: $err"
+    }
     & taskkill /PID $testProc.Id /T /F 2>$null
     # A genuine timeout means OfficeFixture.DisposeAsync never ran, so its
     # owned Excel can be orphaned outside the killed tree too -- re-run
-    # this script's own sweep (harness-owned processes only, never user-owned)
-    # as a safety net.
-    Remove-HarnessOwnedOfficeProcesses $officeBeforeSnapshot
+    # this script's own sweep. Ownership is primary from the fixture's own
+    # recorded PID, with parentage as a fallback; user-owned Office is never
+    # killed.
+    Remove-HarnessOwnedOfficeProcesses $officeBeforeSnapshot $ownedTreePids $fixtureOwnedPids
     Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
     exit 124
 }
