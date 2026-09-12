@@ -7,25 +7,9 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
-## Active work item
-
-- **R1.2 — Add minimal valid RibbonX resource with a Gantt Creator tab** (in progress, follow-up commit pending). `docs/work-items/R1.2-ribbon-shell.md` records outcome, scope, exclusions, and gates. New AddIn code: `GanttRibbon` (derives `ExcelDna.Integration.CustomUI.ExcelRibbon` — auto-registered by Excel-DNA via `AssemblyLoader.IsRibbonType`, no `.dna` file change), overrides `GetCustomUI` to return a minimal RibbonX document declaring one `tabGanttCreator` "Gantt Creator" tab with an `onLoad` callback. Contract tests in `tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs` (7 `[Fact]`s): reflection contract (public/ComVisible/ExcelRibbon-derived/parameterless ctor), `GetCustomUI` returns the XML for the workbook id and null otherwise, XML parses with the Office 2009/07 namespace, exactly one tab with the expected id and label, callback contract (every callback attribute resolves to a public method with a compatible signature), and a positive test proving the validator catches a deliberately broken document. Gates observed: `dotnet test -c Release tests/GanttCreator.AddIn.Tests` 30/30 PASS (119 ms); full non-office suite 176/176 PASS; Release build 0/0; packed-XLL publish embeds the new assembly. Office gate (F5, Excel shows one Gantt Creator tab without ribbon errors): Not run — requires Visual Studio against desktop Excel.
-
-  **Follow-up (this commit):** the RibbonX document is no longer an inline C#
-  string literal — an earlier in-line constant triggered a genuine `dotnet
-  format` vs `EnforceCodeStyleInBuild` disagreement (IDE0055) on multiline
-  string wrapping. The XML now lives in
-  `src/GanttCreator.AddIn/RibbonResources.resx` as a `ResXFileRef` to
-  `src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`, read through the committed
-  `src/GanttCreator.AddIn/RibbonResources.Designer.cs` accessor (the Excel-DNA
-  CSfull pattern). `src/GanttCreator.AddIn/GanttCreator.AddIn.csproj` carries
-  `NeutralLanguage` (CA1824) because the assembly embeds resources.
-  `docs/02-ARCHITECTURE.md` § Ribbon and commands now records this as the
-  standard for embedded XML/HTML/document text.
-
 ## Recently completed
 
-- **R1.2 — Add minimal valid RibbonX resource with a Gantt Creator tab** — `GanttRibbon : ExcelRibbon` added to `src/GanttCreator.AddIn/`; returns a minimal RibbonX document with one Gantt Creator tab and an `onLoad` callback. Excel-DNA auto-registers the class (verified by decompiling the installed 1.9.0 `ExcelDna.Integration` assembly: `IsRibbonType` + `GetExcelAddIns` + `LoadCustomUI`), so no `.dna` change. 7 contract tests in `tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs`. Commit `656ad13`. Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 30/30 PASS; non-office suite 176/176; Release build 0/0; `pwsh ./scripts/verify-quick.ps1` → PASS.
+- **R1.2 — Add minimal valid RibbonX resource with a Gantt Creator tab** — `GanttRibbon : ExcelRibbon` added to `src/GanttCreator.AddIn/`; returns a minimal RibbonX document with one Gantt Creator tab and an `onLoad` callback. Excel-DNA auto-registers the class (verified by decompiling the installed 1.9.0 `ExcelDna.Integration` assembly: `IsRibbonType` + `GetExcelAddIns` + `LoadCustomUI`), so no `.dna` change. The RibbonX document is stored in `src/GanttCreator.AddIn/RibbonResources.resx` as a `ResXFileRef` to `src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`, read through the committed `src/GanttCreator.AddIn/RibbonResources.Designer.cs` accessor; `src/GanttCreator.AddIn/GanttCreator.AddIn.csproj` declares `NeutralLanguage` and resource generator metadata, and `docs/02-ARCHITECTURE.md` records the embedded-resource standard. 7 contract tests in `tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs`. Commits `656ad13`, `3f6a6c5`. Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 30/30 PASS; full non-office suite 176/176 PASS; Release build 0/0; packed-XLL publish embeds the new assembly; `pwsh ./scripts/verify-quick.ps1` → PASS. Office gate (F5, Excel shows one Gantt Creator tab without ribbon errors): Not run — requires Visual Studio against desktop Excel.
 
 - **R1.1 — Excel-DNA 1.9 entry point with `AutoOpen`/`AutoClose` logging** — `AddInHost`, `AddInIdentity`, `AddInLifecycle`, `AddInLogFactory`; log location `%LOCALAPPDATA%\GanttCreator\logs` with temp fallback. Contract tests in `tests/GanttCreator.AddIn.Tests/`. Commits `1515b7b`, `9fadae4`, `82e80f5`, and earlier. Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 23/23 PASS; Architecture 19/19; `pwsh ./scripts/verify-quick.ps1` → PASS. Office gate (F5 x64 XLL, AutoOpen/AutoClose breakpoints): Not run — requires Visual Studio against desktop Excel.
 

@@ -55,9 +55,10 @@ public class GanttRibbonTests
         Type type = typeof(GanttRibbon);
 
         Assert.True(type.IsPublic, "Excel-DNA requires a public ribbon type.");
+        ComVisibleAttribute? ComVisibleAttribute =
+            type.GetCustomAttribute<ComVisibleAttribute>(inherit: true);
         Assert.True(
-            type.GetCustomAttributes(typeof(ComVisibleAttribute), inherit: true)
-                .Length > 0,
+            ComVisibleAttribute is not null && ComVisibleAttribute.Value == true,
             "The ribbon type must be [ComVisible(true)] for COM registration.");
         Assert.True(
             typeof(ExcelRibbon).IsAssignableFrom(type),
