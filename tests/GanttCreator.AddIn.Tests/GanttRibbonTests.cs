@@ -47,7 +47,7 @@ public class GanttRibbonTests
     ];
 
     private const string NamespaceCustomUI2010 =
-        "Http://schemas.microsoft.com/office/2009/07/customui";
+        "http://schemas.microsoft.com/office/2009/07/customui";
 
     [Fact]
     public void GanttRibbon_is_public_ComVisible_ExcelRibbon_derived_and_has_parameterless_ctor()
