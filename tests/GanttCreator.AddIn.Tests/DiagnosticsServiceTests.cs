@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Windows.Forms;
 using ExcelDna.Integration;
 using GanttCreator.Core;
 using GanttCreator.Core.Logging;
@@ -224,5 +225,104 @@ public class DiagnosticsServiceTests
 
         // No exception expected; the call is non-fatal.
         Assert.True(true);
+    }
+
+    // ------------------------------------------------------------------
+    // TaskDialog page contract (regression: the previous comctl32 P/Invoke
+    // threw EntryPointNotFoundException on every ribbon click; the managed
+    // WinForms TaskDialog page replaces it).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CreatePage_wires_caption_heading_text_links_and_close_button()
+    {
+        var page = TaskDialogApi.CreatePage("Title", "Heading", "Content", _ => { });
+
+        Assert.Equal("Title", page.Caption);
+        Assert.Equal("Heading", page.Heading);
+        Assert.Equal("Content", page.Text);
+        Assert.True(page.EnableLinks, "The content carries <a href> markup, so EnableLinks must be on.");
+        Assert.Contains(TaskDialogButton.Close, page.Buttons);
+    }
+
+    [Fact]
+    public void LinkClicked_handler_invokes_open_action_with_link_href()
+    {
+        // TaskDialogLinkClickedEventArgs(String) is the documented public
+        // constructor; this reproduces the event without showing a dialog.
+        var args = new TaskDialogLinkClickedEventArgs("file:///C:/Logs/test.log");
+
+        string? opened = null;
+        TaskDialogApi.HandleLinkClicked(args, link => opened = link);
+
+        Assert.Equal("file:///C:/Logs/test.log", opened);
+    }
+
+    [Fact]
+    public void HandleLinkClicked_rejects_null_args()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => TaskDialogApi.HandleLinkClicked(null!, _ => { }));
+    }
+
+    [Fact]
+    public void StripLinkMarkup_removes_anchor_markup_for_the_fallback_dialog()
+    {
+        const string content =
+            "Add-in Version: 1.0.0\r\n\r\nLog File: <a href=\"file:///C:/Logs/test log.log\">Open the log file</a>\r\n";
+
+        string plain = DiagnosticsService.StripLinkMarkup(content);
+
+        Assert.DoesNotContain("<a href=", plain, StringComparison.Ordinal);
+        Assert.DoesNotContain("</a>", plain, StringComparison.Ordinal);
+        Assert.Contains("Log File: Open the log file", plain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildContent_escapes_access_key_ampersands()
+    {
+        var identity = new AddInIdentity("1&0.0", "16&0", "x64", "test&file.xll");
+
+        string content = DiagnosticsService.BuildContent(identity, null);
+
+        Assert.Contains("Add-in Version: 1&&0.0", content, StringComparison.Ordinal);
+        Assert.Contains("test&&file.xll", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteDiagnosticsError_writes_the_failure_to_the_log()
+    {
+        var written = new List<string>();
+        var mockLog = new Mock<IRollingLog>();
+        mockLog.Setup(l => l.IsFailed).Returns(false);
+        mockLog.Setup(l => l.LogFilePath).Returns(Path.Combine(Path.GetTempPath(), "test-log.log"));
+        mockLog
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args))
+            );
+
+        var service = DiagnosticsService.Instance;
+        service.SetLog(mockLog.Object);
+
+        try
+        {
+            DiagnosticsService.WriteDiagnosticsError(new InvalidOperationException("simulated"));
+
+            Assert.Contains(written, m => m.Contains("OnDiagnosticsClick failed", StringComparison.Ordinal));
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+        }
+    }
+
+    [Fact]
+    public void WriteDiagnosticsError_never_throws_even_without_a_log()
+    {
+        DiagnosticsService.Reset();
+
+        // No log injected: the record degrades to nothing and must not throw.
+        DiagnosticsService.WriteDiagnosticsError(new InvalidOperationException("simulated"));
     }
 }

@@ -4,6 +4,12 @@
     <RootNamespace>GanttCreator.AddIn.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!--
+      Required so tests can construct and inspect System.Windows.Forms
+      TaskDialogPage instances produced by the AddIn's TaskDialogApi (the
+      AddIn project itself enables WinForms for the Diagnostics dialog).
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

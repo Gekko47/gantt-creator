@@ -62,20 +62,10 @@ public class GanttRibbon : ExcelRibbon
         }
         catch (Exception ex)
         {
-            // Capture the exception for diagnosis. The button is non-functional
-            // until this is resolved, so we need visibility into what's failing.
-            try
-            {
-                DiagnosticsService.WriteDiagnosticsError(ex);
-            }
-            catch (IOException)
-            {
-                // If we can't even write the error, there's nothing more to do.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // If we can't even write the error, there's nothing more to do.
-            }
+            // Capture the exception for diagnosis. WriteDiagnosticsError is
+            // failure-proof by contract (it never throws), so the callback
+            // still never propagates an exception into Excel.
+            DiagnosticsService.WriteDiagnosticsError(ex);
         }
 #pragma warning restore CA1031
     }

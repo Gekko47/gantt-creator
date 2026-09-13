@@ -12,6 +12,18 @@
     -->
     <NeutralLanguage>en-US</NeutralLanguage>
     <ExcelDnaPackageVersion>1.9.0</ExcelDnaPackageVersion>
+    <!--
+      The Diagnostics command shows a managed WinForms TaskDialog with a
+      hyperlink to the active log file (System.Windows.Forms.TaskDialog,
+      .NET 5+). UseWindowsForms is part of the net10.0-windows desktop
+      runtime already loaded by the Excel host — it imports the .NET Desktop
+      SDK and adds no NuGet dependency. The managed API replaces the previous
+      hand-rolled comctl32 P/Invoke, which failed with
+      EntryPointNotFoundException (GetDesktopWindow lives in user32.dll;
+      comctl32 v6 exports TaskDialogIndirect only by ordinal 121). See
+      docs/work-items/R1.3-diagnostics-command.md.
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ExcelDna.AddIn" />

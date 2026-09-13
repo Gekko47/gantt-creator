@@ -115,6 +115,33 @@ predates the current 12-step gate and is superseded by the measured
   (F5, click Diagnostics, TaskDialog with clickable hyperlink, log written):
   **Not run by the agent** — requires Visual Studio against desktop Excel.
 
+- **R1.3 fix — Diagnostics button did nothing in Office; task-dialog swapped to
+  managed WinForms API.** Evidence captured in a VS F5 session (one
+  `System.EntryPointNotFoundException` per click, first exception read from the
+  `.callback-error.txt` capture file next to the rolling log): the then hand-rolled
+  P/Invoke declared `GetDesktopWindow` with `DllImport("comctl32.dll")`, but the
+  entry point lives in user32.dll, so every click threw; comctl32 v6 exports
+  `TaskDialogIndirect`/`TaskDialog` only by ordinal (121/119), never by name, so the
+  same failure awaited after any by-name repair. Fix in
+  `src/GanttCreator.AddIn/DiagnosticsService.TaskDialog.cs` (rewritten to the managed
+  `System.Windows.Forms.TaskDialog` API: `TaskDialogPage`, `EnableLinks`, `LinkClicked`
+  with `TaskDialogLinkClickedEventArgs.LinkHref`), `DiagnosticsService.cs`
+  (MessageBox fallback with flattened link markup via `StripLinkMarkup`; `&`-escaping
+  via `EscapeAccessKeys` because `EnableLinks` treats `&` as an access-key prefix;
+  `WriteDiagnosticsError` now failure-proof through the rolling log), `GanttRibbon.cs`
+  (one-line catch — the recorder is failure-proof by contract), and
+  `<UseWindowsForms>true</UseWindowsForms>` in `GanttCreator.AddIn.csproj` and the test
+  project (imports the .NET Desktop SDK — no new NuGet package; empirically needs no
+  `TreatAsUsed`/analyzer tweak on `net10.0-windows` with `AnalysisMode=All` +
+  warnings-as-errors: Release build 0 warnings). Regression facts for the page wiring,
+  link delivery, markup stripping, `&`-escaping, and positive error-path coverage in
+  `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`. Commits pending.
+  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 50/50 PASS; full non-office
+  suite green; Release build 0 warnings; Office gate
+  (F5, click Diagnostics, TaskDialog appears, hyperlink opens the log file, and no
+  `EntryPointNotFoundException` in the VS Debug output): **Not run by the agent** —
+  requires Visual Studio against desktop Excel.
+
 ## Environment (recorded once, then referenced)
 
 - **Host OS**: Windows 11 25H2 (build 26200), x64, Professional. The registry `ProductName` may report "Windows 10 Pro" — trust the build number, not the string. See `docs/adr/0005-windows-host-build-number.md`.

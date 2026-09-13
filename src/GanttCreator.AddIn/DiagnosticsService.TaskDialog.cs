@@ -1,172 +1,106 @@
-using System.Runtime.InteropServices;
-
 namespace GanttCreator.AddIn;
 
 /// <summary>
-/// P/Invoke wrappers for the Windows TaskDialog API (comctl32.dll),
-/// used to display diagnostic information with a clickable hyperlink
-/// to the active log file.
+/// Managed wrapper for the Windows Task Dialog, used to display diagnostic
+/// information with a clickable hyperlink to the active log file.
 /// </summary>
 /// <remarks>
-/// TaskDialog is available on Windows Vista and later. The hyperlink
-/// flag (TDF_ENABLE_HYPERLINKS) enables the TDN_HYPERLINK notification
-/// when the user clicks a link in the dialog content.
+/// <para>
+/// Implemented with the WinForms <see cref="TaskDialog"/> API (.NET 5+) rather
+/// than hand-rolled comctl32 P/Invoke. Root cause (2026-09-13): the previous
+/// P/Invoke declared <c>GetDesktopWindow</c> against comctl32.dll (it is
+/// exported by user32.dll), and comctl32 v6 exports <c>TaskDialogIndirect</c>
+/// only by ordinal (121) — never by name — so every ribbon click threw
+/// <see cref="System.EntryPointNotFoundException"/> before any dialog could
+/// show. The managed API activates comctl32 v6 itself and removes both
+/// entry-point resolution problems.
+/// </para>
+/// <para>
+/// Callers must invoke <see cref="ShowWithHyperlink"/> on the Excel main STA
+/// thread (the RibbonX onAction thread). The wrapper never opens the dialog
+/// itself in tests; <see cref="CreatePage"/> is the testable seam.
+/// </para>
 /// </remarks>
-internal static partial class TaskDialogApi
+internal static class TaskDialogApi
 {
-    private const string _comCtl32 = "comctl32.dll";
-
     /// <summary>
-    /// Indicates that the dialog content contains hyperlinks that the
-    /// user can click. When a link is clicked, the TDN_HYPERLINK
-    /// notification is sent to the callback.
+    /// Builds the diagnostics task-dialog page: title, main instruction,
+    /// hyperlink-enabled content, and a Close button. The <paramref
+    /// name="openLinkAction"/> receives the clicked link's <c>href</c> value.
     /// </summary>
-    private const int _tdfEnableHyperlinks = 0x00000020;
-
-    /// <summary>
-    /// Notification code for a hyperlink click within the dialog content.
-    /// </summary>
-    private const int _tdnHyperlink = unchecked((int)0xFFFFFD9F);
-
-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private delegate int TaskDialogCallback(IntPtr hwndDlg, int msg, IntPtr wParam, IntPtr lParam, IntPtr referenceData);
-
-    // IDE1006 does not apply to the native TaskDialog entry point: an unused
-    // private P/Invoke declaration still needs the exact native name.
-#pragma warning disable IDE1006
-    [DllImport(_comCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-#pragma warning disable SYSLIB1054 // Keep the explicit SetLastError/CharSet P/Invoke shape used by existing interop guards.
-    private static extern int TaskDialog(
-        IntPtr hwndOwner,
-        IntPtr hInstance,
+    /// <param name="title">The dialog caption.</param>
+    /// <param name="mainInstruction">The main instruction heading.</param>
+    /// <param name="content">
+    /// The dialog content; may contain <c>&lt;a href="..."&gt;text&lt;/a&gt;</c>
+    /// link markup, which requires <see cref="TaskDialogPage.EnableLinks"/>.
+    /// </param>
+    /// <param name="openLinkAction">
+    /// Action invoked with the clicked link's href target.
+    /// </param>
+    /// <returns>The configured, unbound page.</returns>
+    internal static TaskDialogPage CreatePage(
         string title,
+        string mainInstruction,
         string content,
-        string? mainInstruction,
-        int flags,
-        string? radioButton1,
-        string? verificationText,
-        out int buttonId
-    );
-#pragma warning restore SYSLIB1054 // Keep the explicit SetLastError/CharSet P/Invoke shape used by existing interop guards.
-#pragma warning restore IDE1006
-
-    [DllImport(_comCtl32, SetLastError = true, CharSet = CharSet.Unicode)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    private static extern int TaskDialogIndirect(
-        ref TASKDIALOGCONFIG config,
-        out int buttonId,
-        out int checkboxState,
-        out int verificationState
-    );
-
-    [DllImport(_comCtl32, SetLastError = true)]
-    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-    private static extern IntPtr GetDesktopWindow();
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct TASKDIALOGCONFIG
+        Action<string> openLinkAction)
     {
-        public int cbSize;
-        public IntPtr hwndParent;
-        public IntPtr hInstance;
-        public int dwFlags;
-        public int dwCommonButtons;
-        public IntPtr pszWindowTitle;
-        public IntPtr pszMainIcon;
-        public IntPtr pszMainInstruction;
-        public IntPtr pszContent;
-        public uint cButtons;
-        public IntPtr pButtons;
-        public int nDefaultButton;
-        public uint cRadioButtons;
-        public IntPtr pRadioButtons;
-        public int nDefaultRadioButton;
-        public IntPtr pszVerificationText;
-        public IntPtr pszExpandedInformation;
-        public IntPtr pszExpandedControlText;
-        public IntPtr pszCollapsedControlText;
-        public IntPtr pszFooterIcon;
-        public IntPtr pszFooter;
-        public IntPtr pCallback;
-        public IntPtr lpCallbackData;
-        public uint cxWidth;
-    }
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(mainInstruction);
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(openLinkAction);
 
-    private sealed class CallbackHolder
-    {
-        public required TaskDialogCallback Callback { get; set; }
+        var page = new TaskDialogPage
+        {
+            Caption = title,
+            Heading = mainInstruction,
+            Text = content,
+            Icon = TaskDialogIcon.Information,
+            EnableLinks = true,
+        };
+        page.Buttons.Add(TaskDialogButton.Close);
+
+        // The Task Dialog never executes links itself; execution must be
+        // handled in the LinkClicked event. OpenLogFile is failure-proof by
+        // contract (it catches everything), so no additional guard is needed.
+        page.LinkClicked += (_, e) => HandleLinkClicked(e, openLinkAction);
+
+        return page;
     }
 
     /// <summary>
-    /// Shows a TaskDialog with the given title, main instruction, content,
-    /// and a clickable hyperlink. The hyperlink is detected by the callback
-    /// and the provided <paramref name="openFileAction"/> is invoked with
-    /// the hyperlink text (expected to be a file path).
+    /// Shows the diagnostics TaskDialog and returns a simple button result:
+    /// 1 when the user closed the dialog via the Close button, 0 otherwise.
     /// </summary>
-    /// <param name="title">Dialog title.</param>
-    /// <param name="mainInstruction">Main instruction text.</param>
-    /// <param name="content">Dialog content; may contain a hyperlink.</param>
-    /// <param name="openFileAction">Action invoked with the hyperlink file path when the user clicks it.</param>
-    /// <returns>The ID of the button the user clicked, or 0 on failure.</returns>
-    public static int ShowWithHyperlink(string title, string mainInstruction, string content, Action<string> openFileAction)
+    /// <param name="title">The dialog caption.</param>
+    /// <param name="mainInstruction">The main instruction heading.</param>
+    /// <param name="content">The dialog content; may contain link markup.</param>
+    /// <param name="openFileAction">
+    /// Action invoked with the clicked hyperlink target (the log file path).
+    /// </param>
+    /// <returns>1 when closed via the Close button; otherwise 0.</returns>
+    internal static int ShowWithHyperlink(
+        string title,
+        string mainInstruction,
+        string content,
+        Action<string> openFileAction)
     {
-        var owner = GetDesktopWindow();
+        TaskDialogPage page = CreatePage(title, mainInstruction, content, openFileAction);
 
-        var callbackHolder = new CallbackHolder
-        {
-            Callback = (hwndDlg, msg, wParam, lParam, referenceData) =>
-            {
-                if (msg == _tdnHyperlink)
-                {
-                    // The hyperlink text is passed as lParam (pointer to string)
-                    var linkText = Marshal.PtrToStringUni(lParam);
-                    if (!string.IsNullOrEmpty(linkText))
-                    {
-                        try
-                        {
-                            openFileAction(linkText);
-                        }
-#pragma warning disable CA1031
-                        catch
-#pragma warning restore CA1031
-                        {
-                            // Non-fatal: the dialog already displayed; a failed
-                            // open attempt does not need to reach the user again.
-                        }
-                    }
-                }
-                return 0;
-            },
-        };
+        TaskDialogButton button = TaskDialog.ShowDialog(page);
+        return ReferenceEquals(button, TaskDialogButton.Close) ? 1 : 0;
+    }
 
-        var config = new TASKDIALOGCONFIG
-        {
-            cbSize = Marshal.SizeOf<TASKDIALOGCONFIG>(),
-            hwndParent = owner,
-            dwFlags = _tdfEnableHyperlinks,
-            pszWindowTitle = Marshal.StringToCoTaskMemUni(title),
-            pszMainInstruction = Marshal.StringToCoTaskMemUni(mainInstruction),
-            pszContent = Marshal.StringToCoTaskMemUni(content),
-            pCallback = Marshal.GetFunctionPointerForDelegate(callbackHolder.Callback),
-        };
-
-        try
-        {
-            var hresult = TaskDialogIndirect(ref config, out var buttonId, out _, out _);
-            if (hresult < 0)
-            {
-                // HRESULT failure -- the dialog did not display. Don't report
-                // the HRESULT as a button ID.
-                return 0;
-            }
-            return buttonId;
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(config.pszWindowTitle);
-            Marshal.FreeCoTaskMem(config.pszMainInstruction);
-            Marshal.FreeCoTaskMem(config.pszContent);
-        }
+    /// <summary>
+    /// Delivers a link-click event to the open action. Split out from
+    /// <see cref="CreatePage"/> so the delivery contract can be tested
+    /// without showing a dialog.
+    /// </summary>
+    /// <param name="e">The link-click event data.</param>
+    /// <param name="openLinkAction">Action invoked with the link href.</param>
+    internal static void HandleLinkClicked(TaskDialogLinkClickedEventArgs e, Action<string> openLinkAction)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+        ArgumentNullException.ThrowIfNull(openLinkAction);
+        openLinkAction(e.LinkHref);
     }
 }

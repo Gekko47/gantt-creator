@@ -74,6 +74,9 @@ public sealed class DiagnosticsService
     /// </summary>
     public void ShowDiagnostics()
     {
+        const string Title = "Gantt Creator Diagnostics";
+        const string MainInstruction = "Add-in diagnostic information";
+
         // Gather identifiers for display and logging.
         AddInIdentity identifiers = GatherIdentifiers();
 
@@ -82,19 +85,100 @@ public sealed class DiagnosticsService
         WriteDiagnosticRecord(identifiers);
 
         // Build the hyperlink-enabled content. The hyperlink is a file:// URI
-        // so TaskDialog parses it as a clickable link.
-        var content = BuildContent(identifiers, LogFilePath);
+        // anchor (<a href="...">) so the TaskDialog renders it as a link.
+        string content = BuildContent(identifiers, LogFilePath);
 
-        // Show the dialog.
-        var buttonId = TaskDialogApi.ShowWithHyperlink(
-            title: "Gantt Creator Diagnostics",
-            mainInstruction: "Add-in diagnostic information",
-            content: content,
-            openFileAction: OpenLogFile
-        );
+        try
+        {
+            // Show the dialog.
+            var buttonId = TaskDialogApi.ShowWithHyperlink(
+                title: Title,
+                mainInstruction: MainInstruction,
+                content: content,
+                openFileAction: OpenLogFile
+            );
 
-        // Log which button was clicked (informational; non-fatal if log failed).
-        _log?.Write("Diagnostics dialog closed; button ID = {0}.", buttonId);
+            // Log which button was clicked (informational; non-fatal if log failed).
+            _log?.Write("Diagnostics dialog closed; button ID = {0}.", buttonId);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+        {
+            // CA1031: The diagnostics command must always show the user
+            // *some* dialog. The managed TaskDialog can fail outside the
+            // Excel main STA thread or on a malformed page configuration, so
+            // any failure falls back to a plain MessageBox carrying the same
+            // information, degrading visibility instead of hiding it.
+            try
+            {
+                _log?.Write("Task dialog failed; falling back to MessageBox: {0}", ex.Message);
+            }
+            catch
+            {
+                // Intentionally empty: the fallback dialog must still show.
+            }
+            ShowFallbackDialog(Title, content);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Fallback dialog used when the TaskDialog cannot be shown. Displays the
+    /// same information with the link markup flattened to plain text.
+    /// </summary>
+    /// <param name="title">The dialog title.</param>
+    /// <param name="content">The TaskDialog content with link markup.</param>
+    private static void ShowFallbackDialog(string title, string content)
+    {
+        _ = MessageBox.Show(
+            StripLinkMarkup(content),
+            title,
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// Flattens <c>&lt;a href="..."&gt;text&lt;/a&gt;</c> link markup to its
+    /// visible text. Used by the MessageBox fallback, which cannot render
+    /// link markup. Internal so the fallback contract is testable.
+    /// </summary>
+    /// <param name="content">Content that may contain anchor markup.</param>
+    /// <returns>Content with the anchor tags removed, link text preserved.</returns>
+    internal static string StripLinkMarkup(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+
+        // Remove each "<a href=\"...\">" start tag (up to and including the
+        // closing quote and bracket), then the matching end tags.
+        int start;
+        while ((start = content.IndexOf("<a href=\"", StringComparison.Ordinal)) >= 0)
+        {
+            int tagEnd = content.IndexOf("\">", start, StringComparison.Ordinal);
+            if (tagEnd < 0)
+            {
+                // Unterminated start tag: leave the rest untouched rather
+                // than guessing.
+                break;
+            }
+
+            content = content.Remove(start, tagEnd + 2 - start);
+        }
+
+        return content.Replace("</a>", string.Empty, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Doubles each <c>&amp;</c> so the string survives the TaskDialog's
+    /// access-key (mnemonic) interpretation, which applies when
+    /// <see cref="TaskDialogPage.EnableLinks"/> is on and at least one link
+    /// is present. Internal so the escaping contract is testable.
+    /// </summary>
+    /// <param name="text">Plain-text fragment to escape.</param>
+    /// <returns>The escaped fragment.</returns>
+    internal static string EscapeAccessKeys(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return text.Replace("&", "&&", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -148,18 +232,22 @@ public sealed class DiagnosticsService
         ArgumentNullException.ThrowIfNull(identifiers);
 
         StringBuilder sb = new();
-        _ = sb.AppendLine("Add-in Version: " + identifiers.AddInVersion);
-        _ = sb.AppendLine("Excel Version:  " + identifiers.ExcelVersion);
-        _ = sb.AppendLine("Process:        " + identifiers.ProcessBitness);
-        _ = sb.AppendLine("XLL File:       " + identifiers.XllFileName);
+        // EnableLinks turns '&' into an access-key (mnemonic) prefix once at
+        // least one link is present, so escape it in the plain-text lines.
+        _ = sb.AppendLine("Add-in Version: " + EscapeAccessKeys(identifiers.AddInVersion));
+        _ = sb.AppendLine("Excel Version:  " + EscapeAccessKeys(identifiers.ExcelVersion));
+        _ = sb.AppendLine("Process:        " + EscapeAccessKeys(identifiers.ProcessBitness));
+        _ = sb.AppendLine("XLL File:       " + EscapeAccessKeys(identifiers.XllFileName));
 
         if (!string.IsNullOrWhiteSpace(logFilePath))
         {
             _ = sb.AppendLine();
-            // Use a file:// URI so TaskDialog parses it as a hyperlink.
-            // Normalize to use forward slashes and percent-encode spaces.
+            // Render the file:// URI as an anchor so the TaskDialog shows it
+            // as a clickable hyperlink (requires TaskDialogPage.EnableLinks).
             var uri = new Uri(logFilePath).AbsoluteUri;
-            _ = sb.AppendLine("Log File: " + uri);
+            _ = sb.AppendLine(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"Log File: <a href=\"{uri}\">Open the log file</a>");
         }
         else
         {
@@ -191,35 +279,27 @@ public sealed class DiagnosticsService
     }
 
     /// <summary>
-    /// Writes a diagnostics callback error to the log file (if available) for
-    /// diagnosis. Non-fatal: failures here do not surface to the user.
+    /// Records a diagnostics callback failure through the rolling log (if
+    /// available) for diagnosis. Never throws: a log write failure degrades
+    /// to no record, which is the safe direction inside an exception handler.
     /// </summary>
     /// <param name="ex">The exception that was caught.</param>
     public static void WriteDiagnosticsError(Exception ex)
     {
         ArgumentNullException.ThrowIfNull(ex);
 
-        var logPath = Instance.LogFilePath;
-        if (string.IsNullOrWhiteSpace(logPath))
-        {
-            return;
-        }
-
+        // CA1031: This runs inside a ribbon callback that is already handling
+        // an exception; recording must never introduce a new failure path.
+#pragma warning disable CA1031
         try
         {
-            var errorFile = logPath + ".callback-error.txt";
-            File.AppendAllText(
-                errorFile,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] OnDiagnosticsClick failed: {ex}\n{ex.StackTrace}\n\n");
+            Instance._log?.Write("OnDiagnosticsClick failed: {0}", ex.ToString());
         }
-        catch (IOException)
+        catch
         {
-            // Non-fatal: if we can't write the error, there's nothing more to do.
+            // Intentionally empty: the record degrades to nothing.
         }
-        catch (UnauthorizedAccessException)
-        {
-            // Non-fatal: if we can't write the error, there's nothing more to do.
-        }
+#pragma warning restore CA1031
     }
 
     /// <summary>
