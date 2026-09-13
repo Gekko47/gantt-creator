@@ -33,7 +33,7 @@ internal static class CommandErrorTranslator
             {category}
             Operation: {operationId}
 
-            The action was cancelled and your workbook is unchanged.
+            The action was cancelled. Please inspect the workbook and try again.
             Technical details were written to the log file (see the Diagnostics button).
             """);
     }
