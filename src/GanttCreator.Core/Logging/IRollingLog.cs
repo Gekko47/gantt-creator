@@ -15,6 +15,13 @@ public interface IRollingLog : IDisposable
     bool IsFailed { get; }
 
     /// <summary>
+    /// The full path to the active log file, or null when the log has not been
+    /// initialized or has failed during initialization. This is an informational
+    /// property for diagnostics; it does not affect write behaviour.
+    /// </summary>
+    string? LogFilePath { get; }
+
+    /// <summary>
     /// Writes a message to the log. The message is automatically redacted.
     /// </summary>
     /// <param name="message">The log message.</param>

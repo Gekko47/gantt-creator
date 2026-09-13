@@ -11,6 +11,14 @@ using GanttCreator.Core.Logging;
 
 namespace GanttCreator.AddIn.Tests;
 
+// CA1515: xUnit requires collection definitions to be public.
+#pragma warning disable CA1515
+[CollectionDefinition("diagnostics-service")]
+public class DiagnosticsServiceCollectionDefinition
+{
+}
+#pragma warning restore CA1515
+
 /// <summary>
 /// Capturing fake for <see cref="IRollingLog"/>: records formatted messages
 /// with the invariant culture so lifecycle contracts can be asserted
@@ -23,6 +31,8 @@ internal sealed class CapturingLog : IRollingLog
     public bool Disposed { get; private set; }
 
     public bool IsFailed => false;
+
+    public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "capturing.log");
 
     public void Write(string message) => Records.Add(message);
 
@@ -37,6 +47,7 @@ internal sealed class CapturingLog : IRollingLog
 /// reflection contract, the one-record-per-call lifecycle contract, and the
 /// never-throw guarantees around the guarded sources.
 /// </summary>
+[Collection("diagnostics-service")]
 public class AddInHostTests
 {
     private static readonly AddInIdentity TestIdentity = new(
@@ -83,6 +94,52 @@ public class AddInHostTests
 
         Assert.Equal([ExpectedOpenRecord, "close"], log.Records);
         Assert.True(log.Disposed, "AutoClose must dispose the log it opened.");
+    }
+
+    [Fact]
+    public void AutoClose_resets_diagnostics_singleton_after_disposing_the_log()
+    {
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        DiagnosticsService.Reset();
+
+        try
+        {
+            host.AutoOpen();
+
+            var service = DiagnosticsService.Instance;
+            Assert.Same(service, DiagnosticsService.Instance);
+
+            host.AutoClose();
+
+            Assert.Null(service.LogFilePath);
+            Assert.NotSame(service, DiagnosticsService.Instance);
+            Assert.Null(DiagnosticsService.Instance.LogFilePath);
+            Assert.True(log.Disposed);
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoOpen_wires_the_log_into_the_diagnostics_service()
+    {
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        DiagnosticsService.Reset();
+
+        try
+        {
+            host.AutoOpen();
+
+            Assert.Equal(log.LogFilePath, DiagnosticsService.Instance.LogFilePath);
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+        }
     }
 
     [Fact]
@@ -175,6 +232,8 @@ public class AddInHostTests
 
         public bool IsFailed => false;
 
+        public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "throwing.log");
+
         private int _writeCount;
 
         public void Write(string message)
@@ -202,6 +261,8 @@ public class AddInHostTests
         public bool Disposed { get; private set; }
 
         public bool IsFailed => false;
+
+        public string? LogFilePath => Path.Combine(Path.GetTempPath(), "GanttCreatorTests", "throwing-dispose.log");
 
         public int DisposeCalls { get; private set; }
 

@@ -558,6 +558,46 @@ public sealed class RollingLogTests : IDisposable
     }
 
     [Fact]
+    public void LogFilePath_is_absolute_when_log_directory_is_relative()
+    {
+        // Regression: DiagnosticsService.BuildContent builds a file:// URI
+        // from LogFilePath (new Uri(path).AbsoluteUri), which throws on a
+        // relative path. Construction must normalize the directory so
+        // LogFilePath is absolute even when the caller passes a relative
+        // directory.
+        var fullDir = Path.Combine(
+            Path.GetTempPath(), $"gantt-creator-rel-{Guid.NewGuid():N}");
+        var relativeDir = Path.GetRelativePath(
+            Directory.GetCurrentDirectory(), fullDir);
+
+        try
+        {
+            using var log = new RollingLog(
+                relativeDir, _baseName, maxFileSizeBytes: 1024, maxFileCount: 3);
+
+            Assert.False(log.IsFailed);
+            Assert.NotNull(log.LogFilePath);
+            Assert.True(Path.IsPathRooted(log.LogFilePath));
+            Assert.True(
+                string.Equals(
+                    fullDir,
+                    Path.GetDirectoryName(log.LogFilePath),
+                    StringComparison.OrdinalIgnoreCase),
+                "LogFilePath must resolve the relative directory to its absolute path.");
+
+            log.Write("relative-directory probe");
+            Assert.True(File.Exists(log.LogFilePath));
+        }
+        finally
+        {
+            if (Directory.Exists(fullDir))
+            {
+                Directory.Delete(fullDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Write_format_overload_is_culture_invariant()
     {
         // Checklist A culture-roundtrip: the formatted overload must use the

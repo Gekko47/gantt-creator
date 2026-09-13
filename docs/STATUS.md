@@ -8,7 +8,32 @@
 > from `docs/03-ROADMAP.md`.
 
 ## Recently completed
+- **fix: enable Windows targeting on non-Windows restore (NETSDK1100)** — The external CI run that restored the solution on a non-Windows host failed because `net10.0-windows` projects lacked `EnableWindowsTargeting`; `GanttCreator.AddIn` and `GanttCreator.AddIn.Tests` were the first observed failures, and the same restore failure applies to the other five Windows-targeting projects. Added `<EnableWindowsTargeting>true</EnableWindowsTargeting>` to all seven `-windows` projects (`src/GanttCreator.AddIn`, `src/GanttCreator.Office`, `src/GanttCreator.Raster`, `tests/GanttCreator.AddIn.Tests`, `tests/GanttCreator.Office.ContractTests`, `tests/GanttCreator.Office.IntegrationTests`, `tests/GanttCreator.Raster.Tests`) with a NETSDK1100 comment. Added `tests/GanttCreator.Architecture.Tests/WindowsTargetingTests.cs`, a repo-pattern mirror of `NoWarnScopeTests`, that pins the discovered `-windows` project set and asserts each declares `EnableWindowsTargeting` exactly once. Gates: `dotnet build GanttCreator.slnx -c Release` 0 warnings/0 errors; `scripts/test-non-office.ps1` Architecture 20/20, Office.Contract 4/4, Raster 41/41, AddIn 53/53, Core 83/83 PASS; `dotnet format --verify-no-changes --exclude tests` exit 0; `git diff --check` clean. Committed as `abcb58d`.
 
+
+- **stage-inspect review-fix batch (`0f30d98`)** — four findings verified against
+  the tree before fixing. (1) The CRLF-hygiene entry's root cause is corrected:
+  `core.autocrlf` affects only paths whose attributes do not specify an eol
+  policy (the previously uncovered `*.resx` files); it does not override the
+  explicit `text eol=lf` rules — remediation and verification details preserved,
+  and the working copy of this file normalized to LF so the zero-`wcr` claim
+  holds locally. (2) `docs/work-items/R1.3-diagnostics-command.md` Scope,
+  Decision, Risk, and Notes no longer describe comctl32 P/Invoke,
+  `GetDesktopWindow`, or `TDN_HYPERLINK` as the active design — they document
+  the managed WinForms `System.Windows.Forms.TaskDialog` and its MessageBox
+  fallback (the addendum's historical evidence is preserved). (3)
+  `DiagnosticsService` no longer strips the anchor href out of the content for
+  the MessageBox fallback; it builds dedicated plain text via new
+  `BuildFallbackText` that includes `LogFilePath`, so the fallback shows the
+  actual log path (regression test updated to assert the path is present).
+  (4) `RollingLog` normalizes a relative log directory during construction and
+  reuses the stored full path, so `LogFilePath` is always absolute, which
+  `DiagnosticsService.BuildContent` requires for its `file://` URI (new
+  positive test). Gates: `dotnet test tests/GanttCreator.Core.Tests` 83/83
+  PASS; `dotnet test tests/GanttCreator.AddIn.Tests` 53/53 PASS; Architecture
+  19/19 PASS; `dotnet format --verify-no-changes --exclude tests` exit 0;
+  `git diff --check` clean. Committed as `0f30d98`.
+- **fix: CRLF line-ending hygiene — `core.autocrlf=true` affected only paths without an explicit eol policy** — The repo had `core.autocrlf=true` set at the local level while `.gitattributes` mandates `text eol=lf` for `*.cs` and friends. Autocrlf does not override those explicit eol rules; it affected only the paths whose attributes did not specify an eol policy, namely the previously uncovered `*.resx` files, which were checked out with CRLF in the working tree while the index stored LF: `git diff` (which normalises) showed empty, but `git status` flagged those files as modified. Fixed by setting `core.autocrlf=false` and `core.eol=lf` in the local config (`.gitattributes` is now authoritative going forward) and running `git add --renormalize .`, which re-staged `src/GanttCreator.AddIn/RibbonResources.resx` (67 lines, CRLF→LF). That file was the only one affected because `*.resx` was not covered by any attribute rule, so it had been left in raw CRLF; the rule `*.resx text eol=lf` was added to `.gitattributes` so the gap is closed. Verified: `git ls-files --eol` reports zero `wcr` entries across the whole tree, `git diff --check` is clean, `git status` shows only the staged `.gitattributes` change. Gates: `pwsh ./scripts/pre-commit.ps1` → PASS (skill tree in sync, status accuracy 68 hashes/67 paths/13 roadmap IDs, markdown link sanity 38 files). Commit pending.
 - **fix: verify-office sweep requires positive parentage, not mere absence from the pre-run snapshot** — `Remove-HarnessOwnedOfficeProcesses` in `scripts/verify-office.ps1` previously killed every `EXCEL`/`POWERPNT` PID that appeared during the run but was absent from the before-snapshot, which could kill a user-owned Office process the user started while the tests were running. It now takes a second `OwnedTreePids` array (the children of the owned `dotnet test` launcher, captured via `Get-CimInstance Win32_Process` before `taskkill` runs) and kills an Office process only if it is not in the before-snapshot **and** its `ParentProcessId` is in the owned tree; an Office process whose parent cannot be determined is skipped, never killed. `ShouldProcess` confirmation and `taskkill /PID /T /F` by PID are preserved. `.DESCRIPTION` step 4 updated; two new Pester cases (`sweep requires a positive parentage test`, `sweep refuses to kill when the parent cannot be identified`) added to `scripts/verify-office.Tests.ps1`. Gates: `scripts/verify-office.Tests.ps1` 13/13 PASS; PSSA 0 findings on all modified scripts; `git diff --check` clean; **live `pwsh ./scripts/verify-office.ps1 -DeadlineSeconds 600` → 8/8 PASS, exit 0, no orphan, and the pre-existing user-owned EXCEL.EXE (PID 25544, parent `explorer.exe`) was left running — the sweep logged `Skipping Office process PID 25544 (parent 13596 is not in the owned dotnet-test tree)` rather than killing it.** **`L13` in `docs/KNOWN-LIMITATIONS.md` is now closed by the fixture-to-shell PID handoff** (`OfficeFixture` records its owned Excel PID into `$env:GANTTCREATOR_OWNED_PIDS_PATH`, read by the sweep as the primary ownership signal; parentage is only the fallback). Residual parentage-fallback exposure recorded as `L14`. Commit pending.
 
 - **R1.2 — Add minimal valid RibbonX resource with a Gantt Creator tab** — `GanttRibbon : ExcelRibbon` added to `src/GanttCreator.AddIn/`; returns a minimal RibbonX document with one Gantt Creator tab and an `onLoad` callback. Excel-DNA auto-registers the class (verified by decompiling the installed 1.9.0 `ExcelDna.Integration` assembly: `IsRibbonType` + `GetExcelAddIns` + `LoadCustomUI`), so no `.dna` change. The RibbonX document is stored in `src/GanttCreator.AddIn/RibbonResources.resx` as a `ResXFileRef` to `src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`, read through the committed `src/GanttCreator.AddIn/RibbonResources.Designer.cs` accessor; `src/GanttCreator.AddIn/GanttCreator.AddIn.csproj` declares `NeutralLanguage` and resource generator metadata, and `docs/02-ARCHITECTURE.md` records the embedded-resource standard. 7 contract tests in `tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs`. Commits `656ad13`, `3f6a6c5`. Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 30/30 PASS; full non-office suite 176/176 PASS; Release build 0/0; packed-XLL publish embeds the new assembly; `pwsh ./scripts/verify-quick.ps1` → PASS. Office gate (Visual Studio/Excel, minimal ribbon visible, no ribbon errors): **Successful R1.2 implementation (user-reported verification)** — the implementation was edited in Visual Studio, the minimal ribbon was created and displayed in Excel, and no bugs were found. The exact edited filename and Visual Studio/Excel versions were not supplied.
@@ -96,6 +121,72 @@ predates the current 12-step gate and is superseded by the measured
 
 - **CI PSSA step delegates to Invoke-PssaGate (pending commit)** — `ci.yml` PSSA step still called `Invoke-ScriptAnalyzer ... -EnableExit` directly instead of routing through `Invoke-PssaGate` (the entry point verify-quick.ps1/verify.ps1 use, hardened in W13). Fixed by dot-sourcing verify-helpers.ps1 and calling Invoke-PssaGate; added a ci-parity.Tests.ps1 `Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)'` block asserting the step matches Invoke-PssaGate and (on code lines only, stripping full-line comments) does not match -EnableExit. Pester 13/13 ci-parity, 4/4 pssa-gate.
 
+
+## Active work item
+
+- **R1.3 — Add diagnostics command showing add-in/Office/bitness identifiers** —
+  `DiagnosticsService` singleton added to `src/GanttCreator.AddIn/` with
+  `DiagnosticsService.TaskDialog.cs` (managed WinForms TaskDialog:
+  `TaskDialogPage` + `EnableLinks`); `GanttRibbon` extended with `OnDiagnosticsClick`
+  callback; Ribbon button added in `src/GanttCreator.AddIn/RibbonResources/Ribbon.xml`
+  with `onAction`; Core's `IRollingLog` extended with read-only `LogFilePath` property
+  implemented by `RollingLog`; button label in `src/GanttCreator.AddIn/RibbonResources.resx`.
+  Contract tests in `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`
+  (13 `[Fact]`s covering singleton lifetime, log path, failed-log path, identifier
+  gathering, content building, log write, and hyperlink handling). Commits pending.
+  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 43/43 PASS; full non-office
+  suite green; Release build 0 warnings; Office gate
+  (F5, click Diagnostics, TaskDialog with clickable hyperlink, log written):
+  **Not run by the agent** — requires Visual Studio against desktop Excel.
+
+- **R1.3 fix — Diagnostics button did nothing in Office; task-dialog swapped to
+  managed WinForms API.** Evidence captured in a VS F5 session (one
+  `System.EntryPointNotFoundException` per click, first exception read from the
+  `.callback-error.txt` capture file next to the rolling log): the then hand-rolled
+  P/Invoke declared `GetDesktopWindow` with `DllImport("comctl32.dll")`, but the
+  entry point lives in user32.dll, so every click threw; comctl32 v6 exports
+  `TaskDialogIndirect`/`TaskDialog` only by ordinal (121/119), never by name, so the
+  same failure awaited after any by-name repair. Fix in
+  `src/GanttCreator.AddIn/DiagnosticsService.TaskDialog.cs` (rewritten to the managed
+  `System.Windows.Forms.TaskDialog` API: `TaskDialogPage`, `EnableLinks`, `LinkClicked`
+  with `TaskDialogLinkClickedEventArgs.LinkHref`), `DiagnosticsService.cs`
+  (MessageBox fallback with dedicated plain text carrying the log file path; `&`-escaping
+  via `EscapeAccessKeys` because `EnableLinks` treats `&` as an access-key prefix;
+  `WriteDiagnosticsError` now failure-proof through the rolling log), `GanttRibbon.cs`
+  (one-line catch — the recorder is failure-proof by contract), and
+  `<UseWindowsForms>true</UseWindowsForms>` in `GanttCreator.AddIn.csproj` and the test
+  project (imports the .NET Desktop SDK — no new NuGet package; empirically needs no
+  `TreatAsUsed`/analyzer tweak on `net10.0-windows` with `AnalysisMode=All` +
+  warnings-as-errors: Release build 0 warnings). Regression facts for the page wiring,
+  link delivery, fallback plain-text (log file path present), `&`-escaping, and positive error-path coverage in
+  `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`. Committed as
+  `9ca4188` (fix), `77e28f3` (LF normalization for the whitespace gate), and
+  `a92a583` (IDE0001/IDE0007 — note: the format gate is bare `dotnet format`,
+  which includes style/analyzers that do not fire as build warnings).
+  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 50/50 PASS;
+  **`pwsh ./scripts/verify.ps1` → PASS in 154.4 s (all 14 steps)**; Office gate
+  (F5, click Diagnostics, TaskDialog appears, hyperlink opens the log file, and no
+  `EntryPointNotFoundException` in the VS Debug output): **PASS — confirmed by the
+  human operator in VS 2026 F5 against desktop Excel (2026-09-13)**. Corroborating
+  evidence from the session rolling log (gantt-creator-addin.log in the
+  per-user log directory):
+  every pre-fix `Diagnostics:` record (22:31–23:32 on 2026-09-12) has no
+  `dialog closed` follow-up line (the throw happened between record and dialog),
+  while every post-fix click (from 2026-09-13 06:57:49, build of `a92a583`+) is
+  followed by `Diagnostics dialog closed; button ID = ...`, and the VS Debug output
+  shows zero exceptions where the pre-fix session showed one
+  `EntryPointNotFoundException` per click.
+
+- **R1.3 lifecycle cleanup fix (2026-09-13)** — `AddInHost.AutoClose` now calls
+  `DiagnosticsService.Reset()` in its disposal `finally`, so the singleton no
+  longer retains the disposed session log before the next `AutoOpen`; the focused
+  regression verifies the old singleton's `LogFilePath` is cleared and the
+  singleton is replaced. `AddInHostTests` and `DiagnosticsServiceTests` share a
+  serial diagnostics collection to isolate the process-wide singleton. Gates:
+  `dotnet test tests/GanttCreator.AddIn.Tests` 51/51 PASS;
+  **`pwsh ./scripts/verify-quick.ps1` → PASS in 149.7 s (all 12 steps)**;
+  `git diff --check` clean. Office gate remains the human-confirmed F5 result
+  recorded above.
 
 ## Environment (recorded once, then referenced)
 

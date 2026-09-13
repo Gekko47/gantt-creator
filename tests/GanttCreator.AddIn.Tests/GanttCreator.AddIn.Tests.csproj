@@ -1,15 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <!--
+      NETSDK1100: allow resolving the Windows targeting pack when building
+      on a non-Windows host (no-op on Windows builds).
+    -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RootNamespace>GanttCreator.AddIn.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!--
+      Required so tests can construct and inspect System.Windows.Forms
+      TaskDialogPage instances produced by the AddIn's TaskDialogApi (the
+      AddIn project itself enables WinForms for the Diagnostics dialog).
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Moq" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />

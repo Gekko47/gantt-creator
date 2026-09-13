@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <!--
+      NETSDK1100: allow resolving the Windows targeting pack when building
+      on a non-Windows host (no-op on Windows builds).
+    -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RootNamespace>GanttCreator.Office</RootNamespace>
     <AssemblyName>GanttCreator.Office</AssemblyName>
   </PropertyGroup>
