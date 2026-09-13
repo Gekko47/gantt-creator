@@ -267,16 +267,30 @@ public class DiagnosticsServiceTests
     }
 
     [Fact]
-    public void StripLinkMarkup_removes_anchor_markup_for_the_fallback_dialog()
+    public void BuildFallbackText_includes_the_log_file_path_as_plain_text()
     {
-        const string content =
-            "Add-in Version: 1.0.0\r\n\r\nLog File: <a href=\"file:///C:/Logs/test log.log\">Open the log file</a>\r\n";
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        const string path = "C:\\Logs\\test.log";
 
-        string plain = DiagnosticsService.StripLinkMarkup(content);
+        string text = DiagnosticsService.BuildFallbackText(identity, path);
 
-        Assert.DoesNotContain("<a href=", plain, StringComparison.Ordinal);
-        Assert.DoesNotContain("</a>", plain, StringComparison.Ordinal);
-        Assert.Contains("Log File: Open the log file", plain, StringComparison.Ordinal);
+        // The MessageBox cannot render <a href> markup, so the fallback must
+        // carry the actual path as dedicated plain text rather than the
+        // hyperlink's display label.
+        Assert.DoesNotContain("<a href=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("</a>", text, StringComparison.Ordinal);
+        Assert.Contains("Add-in Version: 1.0.0", text, StringComparison.Ordinal);
+        Assert.Contains("Log File: C:\\Logs\\test.log", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildFallbackText_handles_missing_log_path()
+    {
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+
+        string text = DiagnosticsService.BuildFallbackText(identity, null);
+
+        Assert.Contains("Log File: not available", text, StringComparison.Ordinal);
     }
 
     [Fact]

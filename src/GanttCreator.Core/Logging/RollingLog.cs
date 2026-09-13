@@ -55,24 +55,30 @@ public sealed class RollingLog : IRollingLog
         // Validate baseName BEFORE any file I/O so validation errors throw ArgumentException,
         // not IOException from the OS when attempting to create files with invalid names.
         _baseName = string.IsNullOrWhiteSpace(baseName) ? "gantt-creator" : ValidateBaseName(baseName);
-        _logDirectory = logDirectory;
         _maxFileSizeBytes = maxFileSizeBytes;
         _maxFileCount = maxFileCount;
         _redactor = redactor ?? new Redactor();
         _timeProvider = timeProvider ?? TimeProvider.System;
 
-        // CA1031: A logger must never propagate directory-creation failures
-        // (missing permissions, the path pointing at an existing file, ...)
-        // into product code. The failure is latched via MarkFailed so every
-        // subsequent write is discarded and IsFailed reports the condition.
+        // CA1031: A logger must never propagate directory-creation or path
+        // normalization failures (missing permissions, the path pointing at
+        // an existing file, an invalid path, ...) into product code. The
+        // failure is latched via MarkFailed so every subsequent write is
+        // discarded and IsFailed reports the condition.
         try
         {
+            // Normalize a relative log directory to a full absolute path so
+            // LogFilePath always yields an absolute path (DiagnosticsService
+            // turns it into a file:// URI for the hyperlink, which requires
+            // an absolute path).
+            _logDirectory = Path.GetFullPath(logDirectory);
             _ = Directory.CreateDirectory(_logDirectory);
         }
 #pragma warning disable CA1031
         catch
 #pragma warning restore CA1031
         {
+            _logDirectory = logDirectory;
             MarkFailed();
         }
         RotateIfNeeded();

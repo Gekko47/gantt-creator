@@ -117,54 +117,25 @@ public sealed class DiagnosticsService
             {
                 // Intentionally empty: the fallback dialog must still show.
             }
-            ShowFallbackDialog(Title, content);
+            ShowFallbackDialog(Title, BuildFallbackText(identifiers, LogFilePath));
         }
 #pragma warning restore CA1031
     }
 
     /// <summary>
     /// Fallback dialog used when the TaskDialog cannot be shown. Displays the
-    /// same information with the link markup flattened to plain text.
+    /// dedicated plain text built by <see cref="BuildFallbackText"/> (the four
+    /// identifiers plus the log file path).
     /// </summary>
     /// <param name="title">The dialog title.</param>
-    /// <param name="content">The TaskDialog content with link markup.</param>
-    private static void ShowFallbackDialog(string title, string content)
+    /// <param name="text">The plain fallback text.</param>
+    private static void ShowFallbackDialog(string title, string text)
     {
         _ = MessageBox.Show(
-            StripLinkMarkup(content),
+            text,
             title,
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
-    }
-
-    /// <summary>
-    /// Flattens <c>&lt;a href="..."&gt;text&lt;/a&gt;</c> link markup to its
-    /// visible text. Used by the MessageBox fallback, which cannot render
-    /// link markup. Internal so the fallback contract is testable.
-    /// </summary>
-    /// <param name="content">Content that may contain anchor markup.</param>
-    /// <returns>Content with the anchor tags removed, link text preserved.</returns>
-    internal static string StripLinkMarkup(string content)
-    {
-        ArgumentNullException.ThrowIfNull(content);
-
-        // Remove each "<a href=\"...\">" start tag (up to and including the
-        // closing quote and bracket), then the matching end tags.
-        int start;
-        while ((start = content.IndexOf("<a href=\"", StringComparison.Ordinal)) >= 0)
-        {
-            var tagEnd = content.IndexOf("\">", start, StringComparison.Ordinal);
-            if (tagEnd < 0)
-            {
-                // Unterminated start tag: leave the rest untouched rather
-                // than guessing.
-                break;
-            }
-
-            content = content.Remove(start, tagEnd + 2 - start);
-        }
-
-        return content.Replace("</a>", string.Empty, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -234,10 +205,7 @@ public sealed class DiagnosticsService
         StringBuilder sb = new();
         // EnableLinks turns '&' into an access-key (mnemonic) prefix once at
         // least one link is present, so escape it in the plain-text lines.
-        _ = sb.AppendLine("Add-in Version: " + EscapeAccessKeys(identifiers.AddInVersion));
-        _ = sb.AppendLine("Excel Version:  " + EscapeAccessKeys(identifiers.ExcelVersion));
-        _ = sb.AppendLine("Process:        " + EscapeAccessKeys(identifiers.ProcessBitness));
-        _ = sb.AppendLine("XLL File:       " + EscapeAccessKeys(identifiers.XllFileName));
+        AppendIdentifierLines(sb, identifiers, escapeAccessKeys: true);
 
         if (!string.IsNullOrWhiteSpace(logFilePath))
         {
@@ -256,6 +224,65 @@ public sealed class DiagnosticsService
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds the plain-text content for the MessageBox fallback: the four
+    /// identifier lines plus the log file path as dedicated plain text, with
+    /// no <c>&lt;a href&gt;</c> markup (a MessageBox cannot render links, so
+    /// the actual path is shown). Internal so the fallback contract is
+    /// testable.
+    /// </summary>
+    /// <param name="identifiers">The add-in identifiers.</param>
+    /// <param name="logFilePath">The active log file path, or null when unavailable.</param>
+    /// <returns>The plain-text fallback content.</returns>
+    internal static string BuildFallbackText(AddInIdentity identifiers, string? logFilePath = null)
+    {
+        ArgumentNullException.ThrowIfNull(identifiers);
+
+        StringBuilder sb = new();
+        // The MessageBox has no access-key interpretation, so the identifiers
+        // are written unescaped.
+        AppendIdentifierLines(sb, identifiers, escapeAccessKeys: false);
+
+        if (!string.IsNullOrWhiteSpace(logFilePath))
+        {
+            _ = sb.AppendLine();
+            _ = sb.AppendLine("Log File: " + logFilePath);
+        }
+        else
+        {
+            _ = sb.AppendLine();
+            _ = sb.AppendLine("Log File: not available");
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends the four identifier lines. <paramref name="escapeAccessKeys"/>
+    /// controls whether <c>&amp;</c> is doubled for the TaskDialog's access-key
+    /// interpretation (required on the hyperlink-enabled content, unnecessary
+    /// for the plain MessageBox fallback).
+    /// </summary>
+    /// <param name="sb">The builder to append to.</param>
+    /// <param name="identifiers">The add-in identifiers.</param>
+    /// <param name="escapeAccessKeys">
+    /// True to double <c>&amp;</c> (hyperlink-enabled TaskDialog content);
+    /// false for plain text (MessageBox fallback).
+    /// </param>
+    private static void AppendIdentifierLines(StringBuilder sb, AddInIdentity identifiers, bool escapeAccessKeys)
+    {
+        AddLine("Add-in Version: ", identifiers.AddInVersion);
+        AddLine("Excel Version:  ", identifiers.ExcelVersion);
+        AddLine("Process:        ", identifiers.ProcessBitness);
+        AddLine("XLL File:       ", identifiers.XllFileName);
+
+        void AddLine(string label, string value)
+        {
+            var text = escapeAccessKeys ? EscapeAccessKeys(value) : value;
+            _ = sb.AppendLine(label + text);
+        }
     }
 
     /// <summary>
