@@ -31,10 +31,10 @@
     <PackageVersion Include="ExcelDna.Interop"    Version="16.0.0" />
 
     <!-- xUnit. The unit / contract / addin test projects use these. -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="17.14.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk"           Version="18.10.0" />
     <PackageVersion Include="xunit"                            Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio"        Version="3.1.4" />
-    <PackageVersion Include="coverlet.collector"               Version="6.0.4" />
+    <PackageVersion Include="coverlet.collector"               Version="10.0.1" />
 
     <!-- Moq. Used only by AddIn contract tests to fake IRollingLog without the filesystem. -->
     <PackageVersion Include="Moq"                              Version="4.20.72" />
