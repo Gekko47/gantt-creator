@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -25,60 +29,89 @@ internal static partial class EnvVarGuardScanner
     // __MASKING__
     #region Masking
 
-    private static string MaskCommentsAndStrings(string s)
+    private static string MaskCommentsAndStrings(string source)
     {
-        int n = s.Length;
-        var output = s.ToCharArray();
+        // Parse source with Roslyn using CSharpParseOptions without DEBUG defined.
+        // This correctly handles all string literal forms including verbatim strings,
+        // interpolated strings, and nested string literals within interpolations.
+        var parseOptions = new CSharpParseOptions();
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var root = syntaxTree.GetRoot();
+
+        // Collect spans of all string literal tokens (regular, verbatim, interpolated).
+        // Roslyn handles escape sequences, interpolation holes, and triple-quoted strings
+        // correctly, unlike the hand-rolled parser.
+        var spansToMask = new List<TextSpan>();
+        foreach (var token in root.DescendantTokens())
+        {
+            if (token.IsKind(SyntaxKind.StringLiteralToken))
+            {
+                spansToMask.Add(new TextSpan(token.Span.Start, token.Span.Length));
+            }
+        }
+
+        // Mask char literals and comments with the hand-rolled approach (these are
+        // unambiguous and the hand-rolled parser handles them correctly).
+        var masked = source.ToCharArray();
+        int n = source.Length;
         int i = 0;
+
         while (i < n)
         {
-            char c = s[i];
+            char c = source[i];
 
+            // Char literal
             if (c == '\'')
             {
-                int end = CloseCharLiteral(s, i);
-                Mask(output, i, end);
+                int end = CloseCharLiteral(source, i);
+                MaskRange(masked, i, end);
                 i = end;
                 continue;
             }
 
-            if (c == '/' && i + 1 < n && s[i + 1] == '/')
+            // Line comment
+            if (c == '/' && i + 1 < n && source[i + 1] == '/')
             {
-                int nl = s.IndexOf('\n', i);
+                int nl = source.IndexOf('\n', i);
                 int end = nl == -1 ? n : nl;
-                Mask(output, i, end);
+                MaskRange(masked, i, end);
                 i = nl == -1 ? n : end;
                 continue;
             }
 
-            if (c == '/' && i + 1 < n && s[i + 1] == '*')
+            // Block comment
+            if (c == '/' && i + 1 < n && source[i + 1] == '*')
             {
-                output[i] = ' ';
-                output[i + 1] = ' ';
-                i = SkipBlockComment(s, i + 2, output);
-                continue;
-            }
-
-            if (TryReadStringLiteral(s, i, out int endAt))
-            {
-                Mask(output, i, endAt);
-                i = endAt;
+                masked[i] = ' ';
+                masked[i + 1] = ' ';
+                i = SkipBlockComment(source, i + 2, masked);
                 continue;
             }
 
             i++;
         }
 
-        return new string(output);
+        // Now mask string literal tokens using Roslyn-provided spans.
+        // Overlap/ordering: string literals are masked last so any preprocessor
+        // directives inside them don't confuse the #if/#endif analyzer. Roslyn
+        // already distinguished true string contents from code.
+        foreach (var span in spansToMask)
+        {
+            int start = span.Start;
+            int end = Math.Min(span.End, n);
+            MaskRange(masked, start, end);
+        }
+
+        return new string(masked);
     }
 
-    private static void Mask(char[] output, int start, int end)
+    private static void MaskRange(char[] masked, int start, int end)
     {
-        for (int k = start; k < end; k++)
+        for (int k = start; k < end && k < masked.Length; k++)
         {
-            if (output[k] != '\n')
+            if (masked[k] != '\n')
             {
-                output[k] = ' ';
+                masked[k] = ' ';
             }
         }
     }
@@ -126,108 +159,6 @@ internal static partial class EnvVarGuardScanner
         }
 
         return n;
-    }
-
-    private static bool TryReadStringLiteral(string s, int start, out int endAt)
-    {
-        int n = s.Length;
-        int p = start;
-        bool verbatim = false;
-
-        while (p < n && (s[p] == '@' || s[p] == '$'))
-        {
-            if (s[p] == '@')
-            {
-                verbatim = true;
-            }
-
-            p++;
-        }
-
-        if (p >= n || s[p] != '"')
-        {
-            endAt = start;
-            return false;
-        }
-
-        int quoteRun = 0;
-        int q = p;
-        while (q < n && s[q] == '"')
-        {
-            quoteRun++;
-            q++;
-        }
-
-        if (quoteRun >= 3)
-        {
-            int close = FindTripleQuote(s, q);
-            endAt = close == -1 ? n : close + 3;
-            return true;
-        }
-
-        endAt = verbatim ? CloseVerbatim(s, p) : CloseRegular(s, p);
-        return true;
-    }
-
-    private static int CloseRegular(string s, int openQuote)
-    {
-        int i = openQuote + 1;
-        int n = s.Length;
-        while (i < n)
-        {
-            char c = s[i];
-            if (c == '\\')
-            {
-                i += 2;
-                continue;
-            }
-
-            if (c == '"')
-            {
-                return i + 1;
-            }
-
-            i++;
-        }
-
-        return n;
-    }
-
-    private static int CloseVerbatim(string s, int openQuote)
-    {
-        int i = openQuote + 1;
-        int n = s.Length;
-        while (i < n)
-        {
-            if (s[i] == '"')
-            {
-                if (i + 1 < n && s[i + 1] == '"')
-                {
-                    i += 2;
-                    continue;
-                }
-
-                return i + 1;
-            }
-
-            i++;
-        }
-
-        return n;
-    }
-
-    private static int FindTripleQuote(string s, int start)
-    {
-        int n = s.Length;
-        for (int i = start; i + 2 < n; i++)
-        {
-            if (s[i] == '"' && s[i + 1] == '"' && s[i + 2] == '"')
-            {
-                return i;
-            }
-        }
-
-        return -1;
     }
 
     #endregion
