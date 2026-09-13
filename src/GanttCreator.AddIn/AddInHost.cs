@@ -66,19 +66,12 @@ public sealed class AddInHost(
             _log = log;
 
             // Wire the log into the diagnostics service so the ribbon's
-            // Diagnostics button can display the active log path.
-            try
-            {
-                DiagnosticsService.Instance.SetLog(log);
-            }
-            catch (InvalidOperationException)
-            {
-                // Non-fatal: the diagnostics button degrades gracefully.
-            }
-            catch (IOException)
-            {
-                // Non-fatal: the diagnostics button degrades gracefully.
-            }
+            // Diagnostics button can display the active log path. SetLog
+            // only stores the reference (its only throw is a null-argument
+            // guard, unreachable for the non-null local above); any other
+            // unforeseen failure is handled by the outer catch below, so
+            // AutoOpen stays never-throwing.
+            DiagnosticsService.Instance.SetLog(log);
         }
 #pragma warning disable CA1031
         catch

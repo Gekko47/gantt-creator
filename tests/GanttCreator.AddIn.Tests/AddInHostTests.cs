@@ -124,6 +124,25 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoOpen_wires_the_log_into_the_diagnostics_service()
+    {
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        DiagnosticsService.Reset();
+
+        try
+        {
+            host.AutoOpen();
+
+            Assert.Equal(log.LogFilePath, DiagnosticsService.Instance.LogFilePath);
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+        }
+    }
+
+    [Fact]
     public void AutoClose_without_AutoOpen_writes_nothing_and_does_not_throw()
     {
         var log = new CapturingLog();
