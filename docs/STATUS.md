@@ -142,8 +142,16 @@ predates the current 12-step gate and is superseded by the measured
   Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 50/50 PASS;
   **`pwsh ./scripts/verify.ps1` → PASS in 154.4 s (all 14 steps)**; Office gate
   (F5, click Diagnostics, TaskDialog appears, hyperlink opens the log file, and no
-  `EntryPointNotFoundException` in the VS Debug output): **Not run by the agent** —
-  requires Visual Studio against desktop Excel.
+  `EntryPointNotFoundException` in the VS Debug output): **PASS — confirmed by the
+  human operator in VS 2026 F5 against desktop Excel (2026-09-13)**. Corroborating
+  evidence from the session rolling log (gantt-creator-addin.log in the
+  per-user log directory):
+  every pre-fix `Diagnostics:` record (22:31–23:32 on 2026-09-12) has no
+  `dialog closed` follow-up line (the throw happened between record and dialog),
+  while every post-fix click (from 2026-09-13 06:57:49, build of `a92a583`+) is
+  followed by `Diagnostics dialog closed; button ID = ...`, and the VS Debug output
+  shows zero exceptions where the pre-fix session showed one
+  `EntryPointNotFoundException` per click.
 
 ## Environment (recorded once, then referenced)
 
