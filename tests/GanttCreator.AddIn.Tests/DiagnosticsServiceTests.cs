@@ -303,41 +303,4 @@ public class DiagnosticsServiceTests
         Assert.Contains("Add-in Version: 1&&0.0", content, StringComparison.Ordinal);
         Assert.Contains("test&&file.xll", content, StringComparison.Ordinal);
     }
-
-    [Fact]
-    public void WriteDiagnosticsError_writes_the_failure_to_the_log()
-    {
-        var written = new List<string>();
-        var mockLog = new Mock<IRollingLog>();
-        mockLog.Setup(l => l.IsFailed).Returns(false);
-        mockLog.Setup(l => l.LogFilePath).Returns(Path.Combine(Path.GetTempPath(), "test-log.log"));
-        mockLog
-            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
-            .Callback<string, object?[]>(
-                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args))
-            );
-
-        var service = DiagnosticsService.Instance;
-        service.SetLog(mockLog.Object);
-
-        try
-        {
-            DiagnosticsService.WriteDiagnosticsError(new InvalidOperationException("simulated"));
-
-            Assert.Contains(written, m => m.Contains("OnDiagnosticsClick failed", StringComparison.Ordinal));
-        }
-        finally
-        {
-            DiagnosticsService.Reset();
-        }
-    }
-
-    [Fact]
-    public void WriteDiagnosticsError_never_throws_even_without_a_log()
-    {
-        DiagnosticsService.Reset();
-
-        // No log injected: the record degrades to nothing and must not throw.
-        DiagnosticsService.WriteDiagnosticsError(new InvalidOperationException("simulated"));
-    }
 }

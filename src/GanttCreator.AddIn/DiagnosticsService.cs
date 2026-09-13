@@ -306,30 +306,6 @@ public sealed class DiagnosticsService
     }
 
     /// <summary>
-    /// Records a diagnostics callback failure through the rolling log (if
-    /// available) for diagnosis. Never throws: a log write failure degrades
-    /// to no record, which is the safe direction inside an exception handler.
-    /// </summary>
-    /// <param name="ex">The exception that was caught.</param>
-    public static void WriteDiagnosticsError(Exception ex)
-    {
-        ArgumentNullException.ThrowIfNull(ex);
-
-        // CA1031: This runs inside a ribbon callback that is already handling
-        // an exception; recording must never introduce a new failure path.
-#pragma warning disable CA1031
-        try
-        {
-            Instance._log?.Write("OnDiagnosticsClick failed: {0}", ex.ToString());
-        }
-        catch
-        {
-            // Intentionally empty: the record degrades to nothing.
-        }
-#pragma warning restore CA1031
-    }
-
-    /// <summary>
     /// Writes a diagnostic record to the log, using the same format as
     /// <see cref="ShowDiagnostics"/>. Public so contract tests can verify
     /// the log-writing path without invoking the TaskDialog UI.
