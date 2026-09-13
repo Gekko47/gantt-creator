@@ -86,7 +86,7 @@ public sealed class CommandBoundary
     /// Resets the singleton and clears the log reference, so the next Excel
     /// session starts fresh. Called by <see cref="AddInHost.AutoClose"/>.
     /// </summary>
-    public static void Reset()
+    internal static void Reset()
     {
         lock (_instanceGate)
         {
@@ -115,11 +115,6 @@ public sealed class CommandBoundary
 
         ArgumentNullException.ThrowIfNull(command);
 
-        // Debug-only force-failure hook (compiled out of Release). Lets the
-        // required Office gate demonstrate a forced callback failure without
-        // a throwaway spike. See docs/work-items/R1.4-command-error-boundary.md.
-        DebugForceFailure.ThrowIfRequested(commandName);
-
         // CA1031: the command boundary is the one place where a generic catch
         // is the product contract — an unexpected exception crossing the
         // boundary must be logged and translated, never propagated into Excel
@@ -128,6 +123,10 @@ public sealed class CommandBoundary
 #pragma warning disable CA1031
         try
         {
+            // Debug-only force-failure hook (compiled out of Release). Lets the
+            // required Office gate demonstrate a forced callback failure without
+            // a throwaway spike. See docs/work-items/R1.4-command-error-boundary.md.
+            DebugForceFailure.ThrowIfRequested(commandName);
             command();
         }
         catch (Exception ex)
