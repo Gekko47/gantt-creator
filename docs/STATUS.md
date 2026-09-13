@@ -135,9 +135,12 @@ predates the current 12-step gate and is superseded by the measured
   `TreatAsUsed`/analyzer tweak on `net10.0-windows` with `AnalysisMode=All` +
   warnings-as-errors: Release build 0 warnings). Regression facts for the page wiring,
   link delivery, markup stripping, `&`-escaping, and positive error-path coverage in
-  `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`. Commits pending.
-  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 50/50 PASS; full non-office
-  suite green; Release build 0 warnings; Office gate
+  `tests/GanttCreator.AddIn.Tests/DiagnosticsServiceTests.cs`. Committed as
+  `9ca4188` (fix), `77e28f3` (LF normalization for the whitespace gate), and
+  `a92a583` (IDE0001/IDE0007 — note: the format gate is bare `dotnet format`,
+  which includes style/analyzers that do not fire as build warnings).
+  Gates: `dotnet test tests/GanttCreator.AddIn.Tests` 50/50 PASS;
+  **`pwsh ./scripts/verify.ps1` → PASS in 154.4 s (all 14 steps)**; Office gate
   (F5, click Diagnostics, TaskDialog appears, hyperlink opens the log file, and no
   `EntryPointNotFoundException` in the VS Debug output): **Not run by the agent** —
   requires Visual Studio against desktop Excel.
