@@ -260,9 +260,10 @@ public class CommandBoundaryTests
         var written = new List<string>();
         var boundary = CreateBoundary(written);
 
-        boundary.Run(() => throw new InvalidOperationException("probe broken"), () => { }, "OnDiagnosticsClick");
+        boundary.Run(() => throw new InvalidOperationException("probe broken"), () => throw new InvalidOperationException("simulated"), "OnDiagnosticsClick");
 
-        Assert.Empty(written);
+        var record = Assert.Single(written);
+        Assert.Contains("command=OnDiagnosticsClick", record, StringComparison.Ordinal);
     }
 
     [Fact]
