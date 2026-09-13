@@ -136,10 +136,13 @@ public sealed class DebugHookGuardTests
     public void Scanner_accepts_call_mention_in_char_literal()
     {
         const string source = """
-            var c = 'E';
+            var c = '"';
+            var requested = Environment.GetEnvironmentVariable("X");
             """;
 
-        Assert.Empty(EnvVarGuardScanner.Scan(source));
+        var findings = EnvVarGuardScanner.Scan(source);
+        Assert.Single(findings);
+        Assert.Contains("Line 2", findings[0], StringComparison.Ordinal);
     }
 
     #endregion
