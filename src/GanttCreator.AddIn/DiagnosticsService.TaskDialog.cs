@@ -11,7 +11,7 @@ namespace GanttCreator.AddIn;
 /// P/Invoke declared <c>GetDesktopWindow</c> against comctl32.dll (it is
 /// exported by user32.dll), and comctl32 v6 exports <c>TaskDialogIndirect</c>
 /// only by ordinal (121) — never by name — so every ribbon click threw
-/// <see cref="System.EntryPointNotFoundException"/> before any dialog could
+/// <see cref="EntryPointNotFoundException"/> before any dialog could
 /// show. The managed API activates comctl32 v6 itself and removes both
 /// entry-point resolution problems.
 /// </para>

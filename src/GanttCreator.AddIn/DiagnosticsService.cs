@@ -86,7 +86,7 @@ public sealed class DiagnosticsService
 
         // Build the hyperlink-enabled content. The hyperlink is a file:// URI
         // anchor (<a href="...">) so the TaskDialog renders it as a link.
-        string content = BuildContent(identifiers, LogFilePath);
+        var content = BuildContent(identifiers, LogFilePath);
 
         try
         {
@@ -153,7 +153,7 @@ public sealed class DiagnosticsService
         int start;
         while ((start = content.IndexOf("<a href=\"", StringComparison.Ordinal)) >= 0)
         {
-            int tagEnd = content.IndexOf("\">", start, StringComparison.Ordinal);
+            var tagEnd = content.IndexOf("\">", start, StringComparison.Ordinal);
             if (tagEnd < 0)
             {
                 // Unterminated start tag: leave the rest untouched rather
