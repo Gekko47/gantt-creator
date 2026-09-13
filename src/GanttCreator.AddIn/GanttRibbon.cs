@@ -67,7 +67,7 @@ public class GanttRibbon : ExcelRibbon
     {
         ArgumentNullException.ThrowIfNull(boundary);
         ArgumentNullException.ThrowIfNull(command);
-        boundary.Run(ResolveCommandName(control), command);
+        boundary.Run(() => ResolveCommandName(control), command, nameof(OnDiagnosticsClick));
     }
 
     /// <summary>

@@ -144,6 +144,53 @@ public sealed class DebugHookGuardTests
 
     #endregion
 
+    // __ENVVAR__
+    #region Env-var call variants
+
+    [Fact]
+    public void Scanner_rejects_plural_env_var_read()
+    {
+        const string source = """
+            var all = Environment.GetEnvironmentVariables();
+            """;
+
+        Assert.NotEmpty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_rejects_expand_env_var_read()
+    {
+        const string source = """
+            var path = Environment.ExpandEnvironmentVariables("%PATH%");
+            """;
+
+        Assert.NotEmpty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_rejects_spaced_dot_env_var_read()
+    {
+        const string source = """
+            var requested = Environment . GetEnvironmentVariable("X");
+            """;
+
+        Assert.NotEmpty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_accepts_plural_read_inside_ifdef_debug()
+    {
+        const string source = """
+            #if DEBUG
+                    var all = Environment.GetEnvironmentVariables();
+            #endif
+            """;
+
+        Assert.Empty(EnvVarGuardScanner.Scan(source));
+    }
+
+    #endregion
+
     // __NEG__
     #region Negative controls
 

@@ -46,7 +46,7 @@ public class CommandBoundaryTests
             .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
             .Callback<string, object?[]>(
                 (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
-        var boundary = new CommandBoundary(clock, presenter);
+        var boundary = new CommandBoundary(clock, presenter ?? (_ => { }));
         boundary.SetLog(log.Object);
         return boundary;
     }
@@ -238,6 +238,67 @@ public class CommandBoundaryTests
         var boundary = CreateBoundary(written);
 
         Assert.Throws<ArgumentNullException>(() => boundary.Run(CommandName, null!));
+    }
+
+    [Fact]
+    public void Run_with_resolver_reports_command_failure_with_resolved_name()
+    {
+        var written = new List<string>();
+        var shown = new List<string>();
+        var boundary = CreateBoundary(written, presenter: shown.Add);
+
+        boundary.Run(() => "btnDiagnostics", () => throw new InvalidOperationException("simulated"), "OnDiagnosticsClick");
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=btnDiagnostics", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void Run_with_throwing_resolver_falls_back_to_fallback_name()
+    {
+        var written = new List<string>();
+        var boundary = CreateBoundary(written);
+
+        boundary.Run(() => throw new InvalidOperationException("probe broken"), () => { }, "OnDiagnosticsClick");
+
+        Assert.Empty(written);
+    }
+
+    [Fact]
+    public void Run_with_resolver_rejects_null_resolver()
+    {
+        var written = new List<string>();
+        var boundary = CreateBoundary(written);
+
+        Assert.Throws<ArgumentNullException>(() => boundary.Run((Func<string>)null!, () => { }, "OnDiagnosticsClick"));
+    }
+
+    [Fact]
+    public void Run_with_resolver_rejects_null_command()
+    {
+        var written = new List<string>();
+        var boundary = CreateBoundary(written);
+
+        Assert.Throws<ArgumentNullException>(() => boundary.Run(() => CommandName, null!, "OnDiagnosticsClick"));
+    }
+
+    [Fact]
+    public void Run_with_resolver_rejects_null_fallback()
+    {
+        var written = new List<string>();
+        var boundary = CreateBoundary(written);
+
+        Assert.Throws<ArgumentNullException>(() => boundary.Run(() => CommandName, () => { }, null!));
+    }
+
+    [Fact]
+    public void Run_with_resolver_rejects_blank_fallback()
+    {
+        var written = new List<string>();
+        var boundary = CreateBoundary(written);
+
+        Assert.Throws<ArgumentException>(() => boundary.Run(() => CommandName, () => { }, "   "));
     }
 
     [Fact]

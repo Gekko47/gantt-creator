@@ -11,6 +11,7 @@ public class DebugForceFailureTests
     [Fact]
     public void IsRequested_returns_false_when_the_environment_variable_is_unset()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, null);
         try
         {
@@ -18,7 +19,7 @@ public class DebugForceFailureTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 
@@ -31,6 +32,7 @@ public class DebugForceFailureTests
     [Fact]
     public void IsRequested_returns_true_for_the_matching_command_name()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         SetRequest(RequestedCommand);
         try
         {
@@ -39,13 +41,14 @@ public class DebugForceFailureTests
         }
         finally
         {
-            SetRequest(null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 
     [Fact]
     public void IsRequested_returns_false_for_a_different_command_name()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         SetRequest(RequestedCommand);
         try
         {
@@ -53,13 +56,14 @@ public class DebugForceFailureTests
         }
         finally
         {
-            SetRequest(null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 
     [Fact]
     public void IsRequested_returns_false_for_an_empty_value()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         SetRequest(string.Empty);
         try
         {
@@ -67,13 +71,14 @@ public class DebugForceFailureTests
         }
         finally
         {
-            SetRequest(null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 
     [Fact]
     public void ThrowIfRequested_throws_the_fixed_message_for_the_requested_command()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         SetRequest(RequestedCommand);
         try
         {
@@ -83,13 +88,14 @@ public class DebugForceFailureTests
         }
         finally
         {
-            SetRequest(null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 
     [Fact]
     public void ThrowIfRequested_does_nothing_for_a_different_command_name()
     {
+        var prior = Environment.GetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName);
         SetRequest(RequestedCommand);
         try
         {
@@ -97,7 +103,7 @@ public class DebugForceFailureTests
         }
         finally
         {
-            SetRequest(null);
+            Environment.SetEnvironmentVariable(DebugForceFailure.EnvironmentVariableName, prior);
         }
     }
 #endif

@@ -205,6 +205,28 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void OnDiagnosticsClick_probe_failure_uses_fallback_command_name()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Throws(new InvalidOperationException("probe broken"));
+
+        GanttRibbon.OnDiagnosticsClick(control.Object, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=OnDiagnosticsClick", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
     public void ResolveCommandName_uses_control_id_and_falls_back_to_method_name()
     {
         var control = new Mock<IRibbonControl>();

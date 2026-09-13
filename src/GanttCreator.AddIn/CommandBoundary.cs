@@ -23,7 +23,7 @@ namespace GanttCreator.AddIn;
 /// lifetime.
 /// </para>
 /// <para>
-/// CA1031: every failure path in <see cref="Run"/> is individually guarded — a
+/// CA1031: every failure path in <see cref="Run(string, Action)"/> is individually guarded — a
 /// log-write failure or a dialog-show failure degrades to "fewer
 /// notifications" instead of propagating into Excel. A ribbon callback that
 /// propagates an exception surfaces as a host error dialog, which is why the
@@ -114,15 +114,41 @@ public sealed class CommandBoundary
         }
 
         ArgumentNullException.ThrowIfNull(command);
+        Run(() => commandName, command, commandName);
+    }
+
+    /// <summary>
+    /// Runs one command across the boundary with deferred command-name
+    /// resolution. The resolver runs inside the boundary: a resolver failure
+    /// degrades to <paramref name="fallbackCommandName"/> so the failure
+    /// still produces one log record and one dialog.
+    /// </summary>
+    /// <param name="resolveCommandName">Resolves the stable command identifier (may probe COM state).</param>
+    /// <param name="command">The command delegate.</param>
+    /// <param name="fallbackCommandName">Used when the resolver throws or returns blank.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="resolveCommandName"/>, <paramref name="command"/>, or <paramref name="fallbackCommandName"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="fallbackCommandName"/> is empty or whitespace.</exception>
+    public void Run(Func<string> resolveCommandName, Action command, string fallbackCommandName)
+    {
+        ArgumentNullException.ThrowIfNull(resolveCommandName);
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(fallbackCommandName);
+        if (string.IsNullOrWhiteSpace(fallbackCommandName))
+        {
+            throw new ArgumentException("Command name must not be empty.", nameof(fallbackCommandName));
+        }
 
         // CA1031: the command boundary is the one place where a generic catch
         // is the product contract — an unexpected exception crossing the
         // boundary must be logged and translated, never propagated into Excel
         // (docs/02-ARCHITECTURE.md "Error handling"). Specific categories are
-        // handled inside the translator.
+        // handled inside the translator. The resolver runs inside the same
+        // try so a COM control-ID probe failure is reported, not thrown.
 #pragma warning disable CA1031
+        var commandName = fallbackCommandName;
         try
         {
+            commandName = SafeResolveCommandName(resolveCommandName, fallbackCommandName);
             // Debug-only force-failure hook (compiled out of Release). Lets the
             // required Office gate demonstrate a forced callback failure without
             // a throwaway spike. See docs/work-items/R1.4-command-error-boundary.md.
@@ -132,6 +158,28 @@ public sealed class CommandBoundary
         catch (Exception ex)
         {
             ReportFailure(commandName, ex);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Resolves the command name without throwing: a resolver failure or a
+    /// blank result degrades to <paramref name="fallbackCommandName"/>.
+    /// </summary>
+    /// <param name="resolveCommandName">Resolves the stable command identifier.</param>
+    /// <param name="fallbackCommandName">Used when the resolver throws or returns blank.</param>
+    private static string SafeResolveCommandName(Func<string> resolveCommandName, string fallbackCommandName)
+    {
+        // CA1031: intentional degradation — the probe may touch COM state.
+#pragma warning disable CA1031
+        try
+        {
+            var resolved = resolveCommandName();
+            return string.IsNullOrWhiteSpace(resolved) ? fallbackCommandName : resolved;
+        }
+        catch
+        {
+            return fallbackCommandName;
         }
 #pragma warning restore CA1031
     }

@@ -13,7 +13,8 @@ namespace GanttCreator.Architecture.Tests;
 // reported as findings. This file is test instrumentation only.
 internal static partial class EnvVarGuardScanner
 {
-    private const string Call = "Environment.GetEnvironmentVariable(";
+    [GeneratedRegex(@"\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|ExpandEnvironmentVariables)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex EnvVarCallRegex();
 
     [GeneratedRegex(@"^\s*#(if|elif|else|endif)\b(.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex DirectiveRegex();
@@ -258,7 +259,7 @@ internal static partial class EnvVarGuardScanner
                 continue;
             }
 
-            if (line.Contains(Call, StringComparison.Ordinal) &&
+            if (EnvVarCallRegex().IsMatch(line) &&
                 !IsUnsatisfiableWithDebugFalse(current))
             {
                 findings.Add(
