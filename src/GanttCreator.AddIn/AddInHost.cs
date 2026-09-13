@@ -130,6 +130,7 @@ public sealed class AddInHost(
             }
             finally
             {
+                DiagnosticsService.Reset();
                 _log = null;
             }
         }

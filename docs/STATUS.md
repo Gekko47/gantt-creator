@@ -153,6 +153,17 @@ predates the current 12-step gate and is superseded by the measured
   shows zero exceptions where the pre-fix session showed one
   `EntryPointNotFoundException` per click.
 
+- **R1.3 lifecycle cleanup fix (2026-09-13)** — `AddInHost.AutoClose` now calls
+  `DiagnosticsService.Reset()` in its disposal `finally`, so the singleton no
+  longer retains the disposed session log before the next `AutoOpen`; the focused
+  regression verifies the old singleton's `LogFilePath` is cleared and the
+  singleton is replaced. `AddInHostTests` and `DiagnosticsServiceTests` share a
+  serial diagnostics collection to isolate the process-wide singleton. Gates:
+  `dotnet test tests/GanttCreator.AddIn.Tests` 51/51 PASS;
+  **`pwsh ./scripts/verify-quick.ps1` → PASS in 149.7 s (all 12 steps)**;
+  `git diff --check` clean. Office gate remains the human-confirmed F5 result
+  recorded above.
+
 ## Environment (recorded once, then referenced)
 
 - **Host OS**: Windows 11 25H2 (build 26200), x64, Professional. The registry `ProductName` may report "Windows 10 Pro" — trust the build number, not the string. See `docs/adr/0005-windows-host-build-number.md`.

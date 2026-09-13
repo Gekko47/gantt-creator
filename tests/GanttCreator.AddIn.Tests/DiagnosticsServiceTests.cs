@@ -13,6 +13,7 @@ namespace GanttCreator.AddIn.Tests;
 /// identifier gathering, content building, log writing, and hyperlink handling.
 /// None of these require Excel.
 /// </summary>
+[Collection("diagnostics-service")]
 public class DiagnosticsServiceTests
 {
     [Fact]
