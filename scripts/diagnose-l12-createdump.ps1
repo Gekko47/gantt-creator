@@ -197,8 +197,9 @@ Log '=== Step 1: --blame-hang-dump-type none probe ==='
 Log 'Running the OfficeIntegration suite with blame hangs enabled but dump type none.'
 Log "This is the same command shape that crashed ~0.2s in with the default dump type."
 
+$solutionPath = if ([System.IO.Path]::IsPathRooted($Solution)) { $Solution } else { Join-Path $repoRoot $Solution }
 $step1Args = @(
-    'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
+    'test', $solutionPath, '-c', $Configuration, '--no-build', '--no-restore',
     '--blame-hang',
     '--blame-hang-timeout', "${Step1TimeoutSeconds}s",
     '--blame-hang-dump-type', 'none',
@@ -213,7 +214,6 @@ $step1Args = @(
 # Step 2 deadline is validated here too so a zero/negative value exits through
 # this validation path instead of letting Step 2 produce a misleading
 # timeout-killed result.
-$solutionPath = if ([System.IO.Path]::IsPathRooted($Solution)) { $Solution } else { Join-Path $repoRoot $Solution }
 if (-not (Test-Path -LiteralPath $solutionPath)) {
     Log "FAIL: Step 1 solution not found: $solutionPath. Pass -Solution with the path to GanttCreator.slnx."
     exit 2
