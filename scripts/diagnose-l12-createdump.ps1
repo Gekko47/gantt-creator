@@ -32,7 +32,8 @@ param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
     [int]$Step1TimeoutSeconds = 60,
-    [int]$Step1DeadlineSeconds = 120
+    [int]$Step1DeadlineSeconds = 120,
+    [int]$Step2DeadlineSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +52,7 @@ Log "Solution:      $Solution"
 Log "Configuration: $Configuration"
 Log "Step1 timeout: $Step1TimeoutSeconds s"
 Log "Step1 deadline:$Step1DeadlineSeconds s"
+Log "Step2 deadline:$Step2DeadlineSeconds s"
 
 # ------------------------------------------------------------------
 # Shared pre-flight: confirm Office and dotnet are present, as the real
@@ -121,7 +123,11 @@ while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $S
 
 if ($step1Proc.HasExited) {
     $step1ExitCode = $step1Proc.ExitCode
-    $age = $step1Watchdog.Elapsed.TotalSeconds
+    # Measure the real process lifetime from the process's own start/exit
+    # timestamps, not the watchdog stopwatch: the stopwatch includes this
+    # script's polling latency (up to the 1s sleep quantum), which could
+    # misclassify a rapid crash as a later exit.
+    $age = ($step1Proc.ExitTime - $step1Proc.StartTime).TotalSeconds
     if ($age -lt 1.0) {
         $step1Crashed = $true
         Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
@@ -175,7 +181,13 @@ $step2Result = @{
 if (-not $createdump) {
     Log 'Step 2: skipped (createdump not found).'
 } else {
-    # Spawn a trivial long-lived helper we can point createdump at.
+    # Spawn a trivial long-lived helper we control. The installed createdump
+    # cannot be pointed at an arbitrary PID (verified locally and in
+    # dotnet/runtime src/coreclr/debug/createdump/createdumpmain.cpp:
+    # "The pid argument is no longer supported"; createdump writes a dump of
+    # its parent process), so the debug-privilege probe runs against the
+    # diagnostic's own process. The helper stays as an owned long-lived
+    # process whose teardown discipline must hold on every path.
     $helperDir = Join-Path ([System.IO.Path]::GetTempPath()) ('l12-step2-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $helperDir -Force | Out-Null
     $helperScript = Join-Path $helperDir 'sleep.ps1'
@@ -186,60 +198,90 @@ Start-Sleep -Seconds 600
 Start-Sleep -Seconds 600
 '@ -Encoding utf8NoBOM
 
-    $helperProc = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $helperScript) -NoNewWindow -PassThru
-    Start-Sleep -Milliseconds 500
+    try {
+        $helperProc = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', $helperScript) -NoNewWindow -PassThru
+        Start-Sleep -Milliseconds 500
 
-    if (-not $helperProc.HasExited) {
-        $helperPid = $helperProc.Id
-        Log "Step 2: spawned helper PID $helperPid (pwsh sleeping 600s)."
+        if (-not $helperProc.HasExited) {
+            $helperPid = $helperProc.Id
+            Log "Step 2: spawned helper PID $helperPid (pwsh sleeping 600s)."
 
-        $dumpDir = Join-Path $evidence 'step2-dump'
-        if (-not (Test-Path -LiteralPath $dumpDir)) { New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null }
-        $dumpPath = Join-Path $dumpDir "pid-${helperPid}.dmp"
+            $dumpDir = Join-Path $evidence 'step2-dump'
+            if (-not (Test-Path -LiteralPath $dumpDir)) { New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null }
+            $dumpPath = Join-Path $dumpDir 'step2-parent.dmp'
 
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $proc = Start-Process -FilePath $createdump.FullName -ArgumentList @($helperPid, '-o', $dumpPath) -NoNewWindow -PassThru -Wait -RedirectStandardOutput $env:TEMP Step2-out.tmp -RedirectStandardError $env:TEMP Step2-err.tmp
-        $sw.Stop()
+            # One valid path value per redirect parameter: the previous form
+            # ('-RedirectStandardOutput $env:TEMP Step2-out.tmp') passed two
+            # tokens and aborted Start-Process parameter binding before
+            # createdump ever ran.
+            $outTmp = Join-Path $env:TEMP 'l12-step2-out.tmp'
+            $errTmp = Join-Path $env:TEMP 'l12-step2-err.tmp'
 
-        $step2Result.ExitCode = $proc.ExitCode
-        $step2Result.StdOut  = (Get-Content -LiteralPath "$env:TEMP Step2-out.tmp" -Raw -ErrorAction SilentlyContinue)
-        $step2Result.StdErr  = (Get-Content -LiteralPath "$env:TEMP Step2-err.tmp" -Raw -ErrorAction SilentlyContinue)
-        $step2Result.ElapsedSeconds = $sw.Elapsed.TotalSeconds
-        Remove-Item -LiteralPath "$env:TEMP Step2-out.tmp" -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath "$env:TEMP Step2-err.tmp" -Force -ErrorAction SilentlyContinue
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            # No -Wait: poll the returned process against a deadline so a hung
+            # createdump cannot wedge the script. -f/--name is createdump's
+            # supported dump-path option (there is no -o option); no PID
+            # argument (rejected with exit -1 by the installed tool).
+            $proc = Start-Process -FilePath $createdump.FullName -ArgumentList @('-f', $dumpPath) -NoNewWindow -PassThru -RedirectStandardOutput $outTmp -RedirectStandardError $errTmp
 
-        Log "Step 2: createdump exited ${sw.Elapsed.TotalSeconds}s with code $($proc.ExitCode)."
+            while (-not $proc.HasExited -and $sw.Elapsed.TotalSeconds -lt $Step2DeadlineSeconds) {
+                Start-Sleep -Seconds 1
+            }
 
-        if (Test-Path -LiteralPath $dumpPath) {
-            $dumpBytes = (Get-Item -LiteralPath $dumpPath).Length
-            Log "Step 2: dump written: $dumpPath ($([math]::Round($dumpBytes / 1MB, 2)) MB)."
-            $step2Result.Outcome = 'dump-written'
-        } elseif ($proc.ExitCode -ne 0) {
-            $err = $step2Result.StdErr
-            if ($err -match 'access denied|AccessDenied|STATUS_ACCESS_DENIED|debug privilege|SeDebug') {
-                Log 'Step 2: createdump failed with an access-denied / debug-privilege pattern.'
-                Log "  stderr: $err"
-                $step2Result.Outcome = 'access-denied'
+            $timedOut = -not $proc.HasExited
+            if ($timedOut) {
+                Log "Step 2: createdump did not exit within ${Step2DeadlineSeconds}s; terminating the owned process and continuing."
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                $null = $proc.WaitForExit(5000)
+            }
+            $sw.Stop()
+
+            $step2Result.ExitCode = if ($proc.HasExited) { $proc.ExitCode } else { $null }
+            $step2Result.StdOut = Get-Content -LiteralPath $outTmp -Raw -ErrorAction SilentlyContinue
+            $step2Result.StdErr = Get-Content -LiteralPath $errTmp -Raw -ErrorAction SilentlyContinue
+            $step2Result.ElapsedSeconds = $sw.Elapsed.TotalSeconds
+            Remove-Item -LiteralPath $outTmp -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $errTmp -Force -ErrorAction SilentlyContinue
+
+            Log "Step 2: createdump exited ${sw.Elapsed.TotalSeconds}s with code $($step2Result.ExitCode)."
+
+            if ($timedOut) {
+                Log 'Step 2: createdump hit the deadline and was terminated; the probe is inconclusive.'
+                $step2Result.Outcome = 'timeout-killed'
+            } elseif (Test-Path -LiteralPath $dumpPath) {
+                $dumpBytes = (Get-Item -LiteralPath $dumpPath).Length
+                Log "Step 2: dump written: $dumpPath ($([math]::Round($dumpBytes / 1MB, 2)) MB)."
+                $step2Result.Outcome = 'dump-written'
+            } elseif ($step2Result.ExitCode -ne 0) {
+                $err = $step2Result.StdErr
+                if ($err -match 'access denied|AccessDenied|STATUS_ACCESS_DENIED|debug privilege|SeDebug') {
+                    Log 'Step 2: createdump failed with an access-denied / debug-privilege pattern.'
+                    Log "  stderr: $err"
+                    $step2Result.Outcome = 'access-denied'
+                } else {
+                    Log "Step 2: createdump failed for another reason (exit $($step2Result.ExitCode))."
+                    Log "  stderr: $err"
+                    $step2Result.Outcome = 'other-failure'
+                }
             } else {
-                Log "Step 2: createdump failed for another reason (exit $($proc.ExitCode))."
-                Log "  stderr: $err"
-                $step2Result.Outcome = 'other-failure'
+                Log 'Step 2: createdump exited 0 but no dump appeared.'
+                $step2Result.Outcome = 'no-dump-exit-zero'
             }
         } else {
-            Log 'Step 2: createdump exited 0 but no dump appeared.'
-            $step2Result.Outcome = 'no-dump-exit-zero'
+            Log 'Step 2: helper process exited before createdump could run; skipped.'
+            $step2Result.Outcome = 'helper-exited-early'
         }
-    } else {
-        Log 'Step 2: helper process exited before createdump could run; skipped.'
-        $step2Result.Outcome = 'helper-exited-early'
     }
-
-    # Tear down the helper. taskkill /T is the safe choice here because the
-    # helper may itself have spawned child processes.
-    if ($helperProc -and -not $helperProc.HasExited) {
-        & taskkill /PID $helperProc.Id /T /F 2>$null | Out-Null
+    finally {
+        # Tear down the helper. taskkill /T is the safe choice here because the
+        # helper may itself have spawned child processes. The finally block
+        # runs on terminating failures from the dump probe too, so a throw
+        # from Start-Process or the classification never leaks the helper.
+        if ($helperProc -and -not $helperProc.HasExited) {
+            & taskkill /PID $helperProc.Id /T /F 2>$null | Out-Null
+        }
+        Remove-Item -LiteralPath $helperDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item -LiteralPath $helperDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # ------------------------------------------------------------------

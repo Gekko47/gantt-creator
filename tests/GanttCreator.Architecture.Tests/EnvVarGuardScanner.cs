@@ -45,8 +45,15 @@ internal static partial class EnvVarGuardScanner
         // too. The token spans from the trees are merged before the raw source is
         // masked so that the #if/#endif analyzer never sees contents of comments
         // or literals, including any preprocessor directives embedded in them.
-        var spansToMask = CollectMaskSpans(source, new CSharpParseOptions());
-        spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(preprocessorSymbols: DebugPreprocessorSymbols)));
+        // LanguageVersion is pinned explicitly to C# 14 (1400, the version the
+        // repo compiles with under the .NET 10 SDK) instead of Latest, so
+        // masking cannot drift when the parser package and the repo's language
+        // level move apart. The numeric literal is deliberate: the 4.14.0
+        // package's lib/net9.0 compile asset has no named CSharp14 member,
+        // while its lib/net8.0 asset defines CSharp14 = 1400 (verified by
+        // reflection on the installed package).
+        var spansToMask = CollectMaskSpans(source, new CSharpParseOptions(languageVersion: (LanguageVersion)1400));
+        spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: (LanguageVersion)1400, preprocessorSymbols: DebugPreprocessorSymbols)));
 
         // A region guarded by a symbol other than DEBUG (for example '#if FEATURE')
         // is inactive in the parses above, so Roslyn reports its contents as skipped
@@ -60,7 +67,7 @@ internal static partial class EnvVarGuardScanner
             var allSymbols = new List<string>(DebugPreprocessorSymbols.Length + referencedSymbols.Count);
             allSymbols.AddRange(DebugPreprocessorSymbols);
             allSymbols.AddRange(referencedSymbols);
-            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(preprocessorSymbols: allSymbols)));
+            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: (LanguageVersion)1400, preprocessorSymbols: allSymbols)));
         }
 
         // Mask the raw source with the merged Roslyn-provided spans. The hand-rolled

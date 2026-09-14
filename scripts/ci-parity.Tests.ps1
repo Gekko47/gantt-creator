@@ -201,8 +201,8 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             param([string]$ScriptText)
             $count = 0
             foreach ($line in (Join-LogicalLines -Text $ScriptText)) {
-                if ($line -notmatch '(?i)(?:^|[\s;|])dotnet\s+test\s') { continue }
-                $tail = $line -replace '(?i)^.*?dotnet\s+test\s', ''
+                if ($line -notmatch '(?i)(?:^|[\s;|])dotnet\s+test(?:\s|$)') { continue }
+                $tail = $line -replace '(?i)^.*?dotnet\s+test(?:\s+|$)', ''
                 $tail = ($tail -split '#')[0]
                 foreach ($token in ($tail -split '\s+' | Where-Object { $_ -ne '' })) {
                     if ($token -match '^-') { continue }
@@ -224,7 +224,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             Where-Object { $_.Name -notlike '*Tests.ps1' } |
             ForEach-Object {
                 $text = Get-Content -LiteralPath $_.FullName -Raw
-                if ($text -match '(?i)dotnet\s+test\s') {
+                if ($text -match '(?i)dotnet\s+test(?:\s|$)') {
                     $n = Get-DotnetTestProjectTokenCount -ScriptText $text
                     if ($n -ne 1) {
                         $violations += "$($_.Name): dotnet test has $n target token(s), expected exactly 1"
@@ -261,6 +261,11 @@ dotnet test $Solution -c $Configuration --no-build --no-restore `
         # the contract is exactly one, so 0 must also be detectable.
         $none = 'dotnet test -c Release --no-build --no-restore'
         Get-DotnetTestProjectTokenCount -ScriptText $none | Should -Be 0
+
+        # A bare `dotnet test` line (end-of-line, not whitespace, after the
+        # command) must also enter the validation guard and be counted;
+        # the exactly-one-target contract still flags it.
+        Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test' | Should -Be 0
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {

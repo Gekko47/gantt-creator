@@ -22,13 +22,19 @@ Describe 'diagnose-l12-createdump.ps1' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        # It must contain the paired flags.
-        $codeOnly | Should -Match '--blame-hang-dump-type\s+none' -Because 'Step 1 must constrain the dump type'
-        $codeOnly | Should -Match '--blame-hang' -Because 'Step 1 must enable hang collection'
+        # It must contain the paired flags. Step 1 passes them as a
+        # comma-separated PowerShell argument array, so the dump-type option
+        # and its 'none' value are separate quoted arguments, and the hang
+        # collector must be a standalone argument (a longer related flag such
+        # as --blame-hang-timeout must not satisfy this check).
+        $codeOnly | Should -Match '--blame-hang-dump-type''?,\s*''none' -Because 'Step 1 must constrain the dump type'
+        $codeOnly | Should -Match '--blame-hang''?,' -Because 'Step 1 must enable hang collection'
         $codeOnly | Should -Match '--blame-hang-timeout' -Because 'Step 1 must set a hang timeout'
 
         # The bare-without-dump-type pattern that caused L12 must not appear.
-        $barePattern = '--blame-hang-timeout\s+\d+e?...?(\s|$)'
+        # The numeric timeout may be followed immediately by whitespace or
+        # end-of-input (e.g. '... --blame-hang-timeout 600\n').
+        $barePattern = '--blame-hang-timeout\s+\d+e?(\s|$)'
         $codeOnly | Should -Not -Match $barePattern -Because 'a bare blame-hang-timeout without dump-type none is the L12 regression'
     }
 
@@ -75,7 +81,7 @@ Describe 'diagnose-l12-createdump.ps1' {
 dotnet test --blame-hang-timeout 600
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $barePattern = '--blame-hang-timeout\s+\d+e?...?(\s|$)'
+        $barePattern = '--blame-hang-timeout\s+\d+e?(\s|$)'
         $codeOnly | Should -Match $barePattern -Because 'the negative assertion must be able to detect a bare blame-hang-timeout'
         $codeOnly | Should -Not -Match '--blame-hang-dump-type\s+none' -Because 'this flagged stub deliberately omits the dump-type constraint'
     }
