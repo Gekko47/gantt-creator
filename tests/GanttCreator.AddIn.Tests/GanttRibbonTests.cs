@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core.Logging;
+using Moq;
 
 // CA2000: test fixtures are deliberately not disposed — the code under test
 // (GanttRibbon) does not own disposable resources, and these are plain strings
@@ -158,6 +161,82 @@ public class GanttRibbonTests
         List<string> unresolved = ValidateCallbacks(brokenXml, typeof(GanttRibbon));
 
         Assert.Contains("DoesNotExist", unresolved);
+    }
+
+    [Fact]
+    public void OnDiagnosticsClick_routes_through_the_command_boundary()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+
+        GanttRibbon.OnDiagnosticsClick(null, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("CommandError", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void OnDiagnosticsClick_success_runs_command_without_dialog()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var executed = false;
+
+        GanttRibbon.OnDiagnosticsClick(null, boundary, () => executed = true);
+
+        Assert.True(executed, "The command must run.");
+        Assert.Empty(written);
+        Assert.Empty(shown);
+    }
+
+    [Fact]
+    public void OnDiagnosticsClick_probe_failure_uses_fallback_command_name()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Throws(new InvalidOperationException("probe broken"));
+
+        GanttRibbon.OnDiagnosticsClick(control.Object, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=OnDiagnosticsClick", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void ResolveCommandName_uses_control_id_and_falls_back_to_method_name()
+    {
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns("btnDiagnostics");
+
+        Assert.Equal("btnDiagnostics", GanttRibbon.ResolveCommandName(control.Object));
+        Assert.Equal("OnDiagnosticsClick", GanttRibbon.ResolveCommandName(null));
+
+        control.SetupGet(c => c.Id).Returns(string.Empty);
+        Assert.Equal("OnDiagnosticsClick", GanttRibbon.ResolveCommandName(control.Object));
     }
 
     /// <summary>

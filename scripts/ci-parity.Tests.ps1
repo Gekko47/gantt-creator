@@ -161,6 +161,224 @@ steps:
     }
 }
 
+Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
+    # W14 (b54ccbd regression): scripts/test-non-office.ps1 passed five
+    # .csproj paths to `dotnet test`, which accepts exactly ONE project or
+    # solution argument; MSBuild failed with MSB1008 ("Only one project can
+    # be specified") and every CI run went red even though the workflow
+    # delegation itself was correct. The existing W8/W11/W13 tripwires only
+    # police ci.yml content -- this Describe extends the parity net to the
+    # scripts/*.ps1 entry points the workflow delegates to.
+
+    BeforeAll {
+        # Joins backtick line continuations so a logical command split over
+        # several physical lines is scanned as one string.
+        function Join-LogicalLines {
+            param([string]$Text)
+            $joined = New-Object System.Collections.Generic.List[string]
+            $pending = ''
+            foreach ($line in ($Text -split "`r?`n")) {
+                if ($pending -ne '') {
+                    $current = "$pending$line"
+                } else {
+                    $current = $line
+                }
+                if ($current -match '(?m)\x60$') {
+                    $pending = $current -replace '(?m)\x60$', ''
+                } else {
+                    $null = $joined.Add($current)
+                    $pending = ''
+                }
+            }
+            if ($pending -ne '') { $null = $joined.Add($pending) }
+            return $joined
+        }
+
+        # Returns one target-token count per `dotnet test` invocation, in
+        # source order. Target tokens are file
+        # references (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or
+        # Solution/Project-named PowerShell variables; options, option
+        # values, and filter literals are ignored. The healthy form is
+        # exactly 1 per invocation: an aggregate total can hide a
+        # zero-target invocation alongside a multi-target one, or flag two
+        # healthy invocations as one violation.
+        # Recursively finds all `dotnet test` command invocations in a
+        # PowerShell AST. Using the AST (rather than regex) preserves quoted
+        # separators, so a `;` or `|` inside a quoted string does not split
+        # one invocation into two, and arguments with spaces are kept intact.
+        function Find-DotnetTestCommands {
+            param([System.Management.Automation.Language.Ast]$Ast, [ref]$Results)
+            if (-not $Ast) { return }
+            foreach ($cmd in $Ast.FindAll({ $true }, $true)) {
+                if ($cmd -is [System.Management.Automation.Language.CommandAst] -and
+                    $cmd.CommandElements -and
+                    $cmd.CommandElements.Count -ge 2 -and
+                    $cmd.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $cmd.CommandElements[0].Value -ieq 'dotnet' -and
+                    $cmd.CommandElements[1] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $cmd.CommandElements[1].Value -ieq 'test') {
+                    $Results.Value += $cmd
+                }
+            }
+        }
+
+        function Get-DotnetTestProjectTokenCount {
+            param([string]$ScriptText)
+            # Strip PowerShell block comments (<# ... #>) first: the synopsis
+            # in test-non-office.ps1 mentions `dotnet test` in prose, which is
+            # not an invocation and must not be counted as a zero-target
+            # violation.
+            $noBlock = $ScriptText -replace '(?s)<#.*?#>', ''
+            $counts = @()
+            foreach ($line in (Join-LogicalLines -Text $noBlock)) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                # Use the PowerShell AST to identify command invocations and
+                # preserve quoted separators. The previous regex extracted one
+                # tail from the complete logical line, which could not see
+                # multiple dotnet test invocations on one line and split quoted
+                # arguments on whitespace. Comments are naturally excluded by
+                # the AST: they are not part of any CommandAst node.
+                $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$null)
+                if (-not $ast) { continue }
+                $commands = @()
+                Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
+                foreach ($cmd in $commands) {
+                    $count = 0
+                    $skipNext = $false
+                    $elements = $cmd.CommandElements
+                    # Skip element 0 (the `test` subcommand); process the rest.
+                    for ($i = 1; $i -lt $elements.Count; $i++) {
+                        $elem = $elements[$i]
+                        if ($skipNext) {
+                            $skipNext = $false
+                            continue
+                        }
+                        # Command parameters (options like -c, --diag) are not
+                        # positional targets. --diag takes a diagnostic file path
+                        # as its value; the next token is that value, not a
+                        # project/solution target.
+                        if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
+                            if ($elem.ParameterName -eq 'diag') {
+                                $skipNext = $true
+                            }
+                            continue
+                        }
+                        # Get the token text for target matching. String constants
+                        # (including quoted paths with spaces) and variables are
+                        # the forms that can be targets; other expression types
+                        # (splats, subexpressions, etc.) are not.
+                        $token = $null
+                        if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                            $token = $elem.Value
+                            # `--diag` is parsed as a string constant (not a
+                            # CommandParameterAst) in the `dotnet test` command
+                            # line; the next element is its value, not a target.
+                            if ($token -eq '--diag') {
+                                $skipNext = $true
+                            }
+                        } elseif ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                            # In this PowerShell runtime, VariableName omits '$';
+                            # Extent.Text preserves the parsed variable token.
+                            $token = $elem.Extent.Text
+                        } else {
+                            $token = $elem.Extent.Text
+                        }
+                        if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
+                            $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
+                            $count++
+                        }
+                    }
+                    $counts += $count
+                }
+            }
+            return $counts
+        }
+    }
+
+    It 'every scripts/*.ps1 dotnet test invocation passes exactly one project or solution' {
+        $violations = @()
+        # $PSScriptRoot inside this Pester file resolves to scripts/, the
+        # directory holding both the entry points and this test file.
+        Get-ChildItem -Path $PSScriptRoot -Filter '*.ps1' |
+            Where-Object { $_.Name -notlike '*Tests.ps1' } |
+            ForEach-Object {
+                $text = Get-Content -LiteralPath $_.FullName -Raw
+                if ($text -match '(?i)dotnet\s+test(?:\s|$)') {
+                    $index = 0
+                    foreach ($n in @(Get-DotnetTestProjectTokenCount -ScriptText $text)) {
+                        $index++
+                        if ($n -ne 1) {
+                            $violations += "$($_.Name) invocation ${index}: dotnet test has $n target token(s), expected exactly 1"
+                        }
+                    }
+                }
+            }
+        $violations | Should -BeNullOrEmpty
+    }
+
+    It 'tripwire fires on the multiple-project defect form (positive control, b54ccbd regression)' {
+        # The exact shape that shipped in b54ccbd and broke CI: several
+        # backtick-continued .csproj paths on one logical dotnet test line.
+        $broken = @'
+dotnet test `
+    tests/A.Tests/A.Tests.csproj `
+    tests/B.Tests/B.Tests.csproj `
+    tests/C.Tests/C.Tests.csproj `
+    -c $Configuration --no-build --no-restore `
+    --filter 'Category!=OfficeIntegration'
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $broken) | Should -Be @(3)
+    }
+
+    It 'tripwire accepts the single-solution form (negative control)' {
+        $healthy = @'
+dotnet test $Solution -c $Configuration --no-build --no-restore `
+    --filter 'Category!=OfficeIntegration'
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $healthy) | Should -Be @(1)
+    }
+
+    It 'tripwire flags a dotnet test invocation with no project/solution target' {
+        # Zero targets is equally ambiguous (repo-root default resolution);
+        # the contract is exactly one, so 0 must also be detectable.
+        $none = 'dotnet test -c Release --no-build --no-restore'
+        @(Get-DotnetTestProjectTokenCount -ScriptText $none) | Should -Be @(0)
+
+        # A bare `dotnet test` line (end-of-line, not whitespace, after the
+        # command) must also enter the validation guard and be counted;
+        # the exactly-one-target contract still flags it.
+        @(Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test') | Should -Be @(0)
+    }
+
+    It 'tripwire rejects a zero-target invocation alongside a valid one (positive control)' {
+        # Aggregate validation would see 0 + 1 = 1 and pass; per-invocation
+        # validation must flag the zero-target line independently.
+        $mixed = @'
+dotnet test -c Release --no-build --no-restore
+dotnet test $Solution -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $mixed) | Should -Be @(0, 1)
+    }
+
+    It 'tripwire accepts dotnet test --diag with a .sln-named diagnostic file and no target (positive control)' {
+        # Guards the --diag option-value consumption: a diagnostic file path
+        # following --diag must not be counted as a positional project/solution
+        # target, and the invocation has no other target.
+        $withDiag = @'
+dotnet test --diag diag.sln -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $withDiag) | Should -Be @(0)
+    }
+
+    It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {
+        # The entry point must stay parameterised so verify-quick.ps1 and
+        # ci.yml drive the same target; hardcoding project lists is what
+        # enabled the W14 drift.
+        $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-non-office.ps1') -Raw
+        $text | Should -Match '\[string\]\$Solution\s*='
+    }
+}
+
 Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)' {
     It 'Script analyzer step routes through Invoke-PssaGate, not -EnableExit' {
         # W13: -EnableExit's function-level `exit` is swallowed by the

@@ -25,6 +25,13 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+# dotnet test accepts exactly ONE project or solution argument. Passing
+# multiple project paths is rejected by MSBuild (MSB1008: Only one project
+# can be specified) -- the b54ccbd regression. Test the whole solution and
+# exclude the Office-hosted suite by its xUnit Category trait; every test
+# in Office.IntegrationTests is tagged [Trait("Category","OfficeIntegration")]
+# (tests/Directory.Build.props). W14 tripwire (scripts/ci-parity.Tests.ps1)
+# asserts every scripts/*.ps1 dotnet test line passes exactly one target.
 dotnet test $Solution -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 exit $LASTEXITCODE

@@ -44,29 +44,47 @@ public class GanttRibbon : ExcelRibbon
     public override string GetCustomUI(string RibbonID) => RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
 
     /// <summary>
-    /// Called when the user clicks the Diagnostics button. Delegates to the
-    /// project-wide <see cref="DiagnosticsService"/> singleton.
+    /// Called when the user clicks the Diagnostics button. The callback is a
+    /// thin error boundary: it resolves the command name and delegates to the
+    /// project-wide <see cref="CommandBoundary"/>, which invokes the
+    /// <see cref="DiagnosticsService"/> command and produces one log record
+    /// and one user-safe dialog on failure (docs/02-ARCHITECTURE.md
+    /// "Ribbon and commands": no callback contains command logic).
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-#pragma warning disable IDE0060 // control is required by the RibbonX onAction contract.
     public void OnDiagnosticsClick(IRibbonControl control)
-#pragma warning restore IDE0060 // control is required by the RibbonX onAction contract.
+        => OnDiagnosticsClick(control, CommandBoundary.Instance, RunDiagnostics);
+
+    /// <summary>
+    /// Runs the Diagnostics command across an injected boundary. Internal so
+    /// contract tests can verify the routing with a deterministic boundary
+    /// and a stub command instead of the singleton and the real dialog.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The diagnostics command delegate.</param>
+    internal static void OnDiagnosticsClick(IRibbonControl? control, CommandBoundary boundary, Action command)
     {
-        // CA1031: The ribbon callback must never propagate an exception into
-        // Excel — an unhandled onAction exception surfaces as a host error.
-        // Diagnostics failures degrade to a missing dialog rather than a crash.
-#pragma warning disable CA1031
-        try
-        {
-            DiagnosticsService.Instance.ShowDiagnostics();
-        }
-        catch (Exception ex)
-        {
-            // Capture the exception for diagnosis. WriteDiagnosticsError is
-            // failure-proof by contract (it never throws), so the callback
-            // still never propagates an exception into Excel.
-            DiagnosticsService.WriteDiagnosticsError(ex);
-        }
-#pragma warning restore CA1031
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control), command, nameof(OnDiagnosticsClick));
+    }
+
+    /// <summary>
+    /// The Diagnostics command: shows the diagnostics dialog via the
+    /// project-wide singleton.
+    /// </summary>
+    private static void RunDiagnostics() => DiagnosticsService.Instance.ShowDiagnostics();
+
+    /// <summary>
+    /// Resolves the stable command name for a Ribbon callback: the control's
+    /// ID when available, otherwise the callback method name.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <returns>The command name used in log records and the force-failure hook.</returns>
+    internal static string ResolveCommandName(IRibbonControl? control)
+    {
+        var id = control?.Id;
+        return string.IsNullOrWhiteSpace(id) ? "OnDiagnosticsClick" : id;
     }
 }
