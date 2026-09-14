@@ -161,6 +161,117 @@ steps:
     }
 }
 
+Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
+    # W14 (b54ccbd regression): scripts/test-non-office.ps1 passed five
+    # .csproj paths to `dotnet test`, which accepts exactly ONE project or
+    # solution argument; MSBuild failed with MSB1008 ("Only one project can
+    # be specified") and every CI run went red even though the workflow
+    # delegation itself was correct. The existing W8/W11/W13 tripwires only
+    # police ci.yml content -- this Describe extends the parity net to the
+    # scripts/*.ps1 entry points the workflow delegates to.
+
+    BeforeAll {
+        # Joins backtick line continuations so a logical command split over
+        # several physical lines is scanned as one string.
+        function Join-LogicalLines {
+            param([string]$Text)
+            $joined = New-Object System.Collections.Generic.List[string]
+            $pending = ''
+            foreach ($line in ($Text -split "`r?`n")) {
+                $current = if ($pending -ne '') { "$pending $line" } else { $line }
+                if ($current.TrimEnd() -match '\x60$') {
+                    $pending = $current.TrimEnd() -replace '\x60$', ''
+                }
+                else {
+                    $null = $joined.Add($current)
+                    $pending = ''
+                }
+            }
+            if ($pending -ne '') { $null = $joined.Add($pending) }
+            return $joined
+        }
+
+        # Counts project/solution target tokens across every `dotnet test`
+        # logical line in the given script text. Target tokens are file
+        # references (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or
+        # Solution/Project-named PowerShell variables; options, option
+        # values, and filter literals are ignored. The healthy form is
+        # exactly 1.
+        function Get-DotnetTestProjectTokenCount {
+            param([string]$ScriptText)
+            $count = 0
+            foreach ($line in (Join-LogicalLines -Text $ScriptText)) {
+                if ($line -notmatch '(?i)(?:^|[\s;|])dotnet\s+test\s') { continue }
+                $tail = $line -replace '(?i)^.*?dotnet\s+test\s', ''
+                $tail = ($tail -split '#')[0]
+                foreach ($token in ($tail -split '\s+' | Where-Object { $_ -ne '' })) {
+                    if ($token -match '^-') { continue }
+                    if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
+                        $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
+                        $count++
+                    }
+                }
+            }
+            return $count
+        }
+    }
+
+    It 'every scripts/*.ps1 dotnet test invocation passes exactly one project or solution' {
+        $violations = @()
+        # $PSScriptRoot inside this Pester file resolves to scripts/, the
+        # directory holding both the entry points and this test file.
+        Get-ChildItem -Path $PSScriptRoot -Filter '*.ps1' |
+            Where-Object { $_.Name -notlike '*Tests.ps1' } |
+            ForEach-Object {
+                $text = Get-Content -LiteralPath $_.FullName -Raw
+                if ($text -match '(?i)dotnet\s+test\s') {
+                    $n = Get-DotnetTestProjectTokenCount -ScriptText $text
+                    if ($n -ne 1) {
+                        $violations += "$($_.Name): dotnet test has $n target token(s), expected exactly 1"
+                    }
+                }
+            }
+        $violations | Should -BeNullOrEmpty
+    }
+
+    It 'tripwire fires on the multiple-project defect form (positive control, b54ccbd regression)' {
+        # The exact shape that shipped in b54ccbd and broke CI: several
+        # backtick-continued .csproj paths on one logical dotnet test line.
+        $broken = @'
+dotnet test `
+    tests/A.Tests/A.Tests.csproj `
+    tests/B.Tests/B.Tests.csproj `
+    tests/C.Tests/C.Tests.csproj `
+    -c $Configuration --no-build --no-restore `
+    --filter 'Category!=OfficeIntegration'
+'@
+        Get-DotnetTestProjectTokenCount -ScriptText $broken | Should -Be 3
+    }
+
+    It 'tripwire accepts the single-solution form (negative control)' {
+        $healthy = @'
+dotnet test $Solution -c $Configuration --no-build --no-restore `
+    --filter 'Category!=OfficeIntegration'
+'@
+        Get-DotnetTestProjectTokenCount -ScriptText $healthy | Should -Be 1
+    }
+
+    It 'tripwire flags a dotnet test invocation with no project/solution target' {
+        # Zero targets is equally ambiguous (repo-root default resolution);
+        # the contract is exactly one, so 0 must also be detectable.
+        $none = 'dotnet test -c Release --no-build --no-restore'
+        Get-DotnetTestProjectTokenCount -ScriptText $none | Should -Be 0
+    }
+
+    It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {
+        # The entry point must stay parameterised so verify-quick.ps1 and
+        # ci.yml drive the same target; hardcoding project lists is what
+        # enabled the W14 drift.
+        $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-non-office.ps1') -Raw
+        $text | Should -Match '\[string\]\$Solution\s*='
+    }
+}
+
 Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)' {
     It 'Script analyzer step routes through Invoke-PssaGate, not -EnableExit' {
         # W13: -EnableExit's function-level `exit` is swallowed by the
