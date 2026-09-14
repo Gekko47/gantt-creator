@@ -49,7 +49,7 @@
       formatter disagreement is possible.
     -->
     <EmbeddedResource Update="RibbonResources.resx">
-      <Generator>PublicResxFileCodeGenerator</Generator>
+      <Generator>ResxFileCodeGenerator</Generator>
       <LastGenOutput>RibbonResources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
     <Compile Update="RibbonResources.Designer.cs">
