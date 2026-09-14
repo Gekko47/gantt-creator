@@ -99,29 +99,86 @@ if ($step1TestHostCandidate) {
     $runtimeConfig = Join-Path (Split-Path -Parent $step1TestHostCandidate.FullName) 'GanttCreator.Office.IntegrationTests.runtimeconfig.json'
     if (Test-Path -LiteralPath $runtimeConfig) {
         $rc = Get-Content -LiteralPath $runtimeConfig -Raw | ConvertFrom-Json
-        $runtimeVersion = $rc.'Microsoft.NETCore.App.RuntimeVersion'
-        if ($runtimeVersion) {
-            Log "Step 0: testhost targets .NET $runtimeVersion"
-            # Find the dotnet root that hosts this runtime version
-            $sharedFramework = Join-Path $dotnetRoot "shared\Microsoft.NETCore.App\$runtimeVersion"
-            if (Test-Path -LiteralPath $sharedFramework) {
-                $createdump = Get-ChildItem -Path $sharedFramework -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-            }
-            if (-not $createdump) {
-                # Fallback: search under the dotnet root for a createdump
-                # whose runtime directory matches the version
-                $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue |
-                    Where-Object { $_.FullName -match [regex]::Escape("shared\Microsoft.NETCore.App\$runtimeVersion") } |
-                    Select-Object -First 1
+        # Requested runtime version: a framework-dependent runtimeconfig.json
+        # carries it in runtimeOptions.framework (single framework) or
+        # runtimeOptions.frameworks (multi-framework list). The previously
+        # read 'Microsoft.NETCore.App.RuntimeVersion' property is not part of
+        # the standard schema, so the old code silently fell through to an
+        # arbitrary recursive createdump match -- exactly what this step
+        # exists to avoid.
+        $frameworkEntry = $null
+        if ($rc.runtimeOptions.framework -and $rc.runtimeOptions.framework.version) {
+            $frameworkEntry = $rc.runtimeOptions.framework
+        } elseif ($rc.runtimeOptions.frameworks) {
+            $frameworkEntry = @($rc.runtimeOptions.frameworks) |
+                Where-Object { $_.version -and $_.name -eq 'Microsoft.NETCore.App' } |
+                Select-Object -First 1
+        }
+        if (-not $frameworkEntry) {
+            Log 'Step 0: runtimeconfig.json carries no framework/frameworks version entry; Step 2 skipped.'
+        } else {
+            $frameworkName = if ($frameworkEntry.name) { $frameworkEntry.name } else { 'Microsoft.NETCore.App' }
+            $requestedVersion = $null
+            if (-not [version]::TryParse([string]$frameworkEntry.version, [ref]$requestedVersion)) {
+                Log "Step 0: cannot parse requested framework version '$($frameworkEntry.version)'; Step 2 skipped."
+            } else {
+                Log "Step 0: testhost targets $frameworkName $($frameworkEntry.version)"
+                # Roll-forward resolution: the runtime selects the latest patch
+                # of the requested minor band when one is installed, otherwise
+                # the latest patch of the lowest higher minor band, within the
+                # same major version. Resolving before locating createdump
+                # keeps the probe pointed at the runtime the testhost actually
+                # uses.
+                $sharedRoot = Join-Path $dotnetRoot "shared\$frameworkName"
+                $resolvedVersion = $null
+                if (Test-Path -LiteralPath $sharedRoot) {
+                    $installed = @(Get-ChildItem -Path $sharedRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                        $v = $null
+                        if ([version]::TryParse($_.Name, [ref]$v)) { $v }
+                    })
+                    $sameBand = @($installed | Where-Object { $_.Major -eq $requestedVersion.Major -and $_.Minor -eq $requestedVersion.Minor } | Sort-Object)
+                    if ($sameBand.Count -gt 0) {
+                        $resolvedVersion = $sameBand[-1]
+                    } else {
+                        $higherBands = @($installed |
+                            Where-Object { $_.Major -gt $requestedVersion.Major -or ($_.Major -eq $requestedVersion.Major -and $_.Minor -gt $requestedVersion.Minor) } |
+                            Sort-Object)
+                        $lowestHigher = $higherBands | Select-Object -First 1
+                        if ($lowestHigher) {
+                            $resolvedVersion = $higherBands |
+                                Where-Object { $_.Major -eq $lowestHigher.Major -and $_.Minor -eq $lowestHigher.Minor } |
+                                Sort-Object | Select-Object -Last 1
+                        }
+                    }
+                }
+                if (-not $resolvedVersion) {
+                    Log "Step 0: no installed $frameworkName runtime roll-forward-matches $($frameworkEntry.version); Step 2 skipped."
+                } else {
+                    $runtimeVersion = $resolvedVersion.ToString()
+                    Log "Step 0: resolved installed runtime version $runtimeVersion"
+                    # Find the dotnet root that hosts this runtime version
+                    $sharedFramework = Join-Path $dotnetRoot "shared\$frameworkName\$runtimeVersion"
+                    if (Test-Path -LiteralPath $sharedFramework) {
+                        $createdump = Get-ChildItem -Path $sharedFramework -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    }
+                    if (-not $createdump) {
+                        # Fallback: search under the dotnet root for a createdump
+                        # whose runtime directory matches the resolved version
+                        $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue |
+                            Where-Object { $_.FullName -match [regex]::Escape("shared\$frameworkName\$runtimeVersion") } |
+                            Select-Object -First 1
+                    }
+                }
             }
         }
     }
 }
 if (-not $createdump) {
-    $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-}
-if (-not $createdump) {
-    Log 'WARN: createdump.exe not found under the dotnet root; Step 2 skipped.'
+    # No unconditional recursive pick: a createdump from a different runtime
+    # than the one the testhost actually runs on would make Step 2 measure
+    # the wrong binary. Framework parsing or version resolution failure
+    # means Step 2 is skipped.
+    Log 'WARN: createdump.exe for the testhost runtime not found; Step 2 skipped.'
 } else {
     Log "createdump: $($createdump.FullName)"
 }
@@ -175,6 +232,12 @@ Log "Step 1 test assembly: $($step1TestDll.FullName)"
 
 $step1OutTmp = Join-Path $env:TEMP 'l12-step1-out.tmp'
 $step1ErrTmp = Join-Path $env:TEMP 'l12-step1-err.tmp'
+# The launch, poll, and classification below run inside try/finally: on any
+# terminating error or interruption after launch, the finally block still
+# terminates the owned testhost process tree, instead of leaking it (the
+# normal path handles cleanup via the explicit deadline branch below).
+$step1Proc = $null
+try {
 $step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru -RedirectStandardOutput $step1OutTmp -RedirectStandardError $step1ErrTmp
 $step1Watchdog = [System.Diagnostics.Stopwatch]::StartNew()
 $step1ExitCode = $null
@@ -243,6 +306,18 @@ if ($step1Proc.HasExited) {
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
     $step1ExitCode = 124
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
+}
+}
+finally {
+    # Owned-process teardown on every path: normal exit, the timeout branch
+    # above, and any terminating error or interruption after launch. The
+    # timeout branch usually leaves the tree dead already; the HasExited
+    # guard makes a repeated kill a harmless no-op race.
+    if ($step1Proc -and -not $step1Proc.HasExited) {
+        Log 'Step 1: terminating the owned testhost process tree (error/interruption cleanup path).'
+        & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+        $null = $step1Proc.WaitForExit(5000)
+    }
 }
 
 Log "Step 1 result: exit=$step1ExitCode crashed=$step1Crashed outcome=$step1Outcome"
@@ -347,12 +422,18 @@ Start-Sleep -Seconds 600
             if ($timedOut) {
                 Log 'Step 2: createdump hit the deadline and was terminated; the probe is inconclusive.'
                 $step2Result.Outcome = 'timeout-killed'
-            } elseif (Test-Path -LiteralPath $dumpPath) {
+            } elseif ($step2Result.ExitCode -eq 0 -and (Test-Path -LiteralPath $dumpPath) -and (Get-Item -LiteralPath $dumpPath).Length -gt 0) {
+                # dump-written requires a zero createdump exit code AND a
+                # non-empty dump file: a failed createdump can leave a
+                # zero-byte or partial artifact that must not read as success.
                 $dumpBytes = (Get-Item -LiteralPath $dumpPath).Length
                 Log "Step 2: dump written: $dumpPath ($([math]::Round($dumpBytes / 1MB, 2)) MB)."
                 $step2Result.Outcome = 'dump-written'
             } elseif ($step2Result.ExitCode -ne 0) {
                 $err = $step2Result.StdErr
+                if (Test-Path -LiteralPath $dumpPath) {
+                    Log "Step 2: a partial dump artifact remains at $dumpPath; it is not counted as a dump."
+                }
                 if ($err -match 'access denied|AccessDenied|STATUS_ACCESS_DENIED|debug privilege|SeDebug') {
                     Log 'Step 2: createdump failed with an access-denied / debug-privilege pattern.'
                     Log "  stderr: $err"
@@ -363,7 +444,11 @@ Start-Sleep -Seconds 600
                     $step2Result.Outcome = 'other-failure'
                 }
             } else {
-                Log 'Step 2: createdump exited 0 but no dump appeared.'
+                if (Test-Path -LiteralPath $dumpPath) {
+                    Log 'Step 2: createdump exited 0 but only a zero-byte dump artifact appeared; not counted as a dump.'
+                } else {
+                    Log 'Step 2: createdump exited 0 but no dump appeared.'
+                }
                 $step2Result.Outcome = 'no-dump-exit-zero'
             }
         } else {

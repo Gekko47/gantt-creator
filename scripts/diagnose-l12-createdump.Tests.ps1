@@ -132,4 +132,70 @@ dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
         $codeOnly | Should -Match '--blame-hang-dump-type\s+none' -Because 'this stub passes Step 1''s constraints'
         $codeOnly | Should -Not -Match 'createdump' -Because 'this stub deliberately omits Step 2'
     }
+
+    It 'Step 1 launch, poll, and classification are wrapped in try/finally that kills the owned process tree' {
+        # A terminating error or interruption after launch must not leak the
+        # owned testhost process tree; the explicit deadline branch alone is
+        # not enough.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $codeOnly | Should -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{' -Because 'the process variable must be nulled before the guarded launch'
+        $codeOnly | Should -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F' -Because 'the finally block must terminate the owned testhost process tree'
+    }
+
+    It 'positive control: a stub without the Step 1 try/finally teardown fails the owned-process assertion' {
+        $flagged = @'
+$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
+while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 }
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{'
+        $codeOnly | Should -Not -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F'
+    }
+
+    It 'Step 0 resolves the runtime from runtimeOptions.framework/frameworks and never falls back to the first recursive createdump' {
+        # The old 'Microsoft.NETCore.App.RuntimeVersion' property read never
+        # matched the standard runtimeconfig schema, so Step 0 silently
+        # degraded to an arbitrary recursive createdump selection.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $codeOnly | Should -Match '\$rc\.runtimeOptions\.framework' -Because 'the requested version comes from the standard single-framework schema'
+        $codeOnly | Should -Match '\$rc\.runtimeOptions\.frameworks' -Because 'the multi-framework schema must be handled too'
+        $codeOnly | Should -Not -Match "'Microsoft\.NETCore\.App\.RuntimeVersion'" -Because 'that property is not part of the standard runtimeconfig schema'
+        $codeOnly | Should -Match 'roll-forward-matches' -Because 'framework parsing or version resolution failure must skip Step 2, not pick an arbitrary binary'
+        $bareRecursive = 'Get-ChildItem\s+-Path\s+\$dotnetRoot\s+-Recurse\s+-Filter\s+''createdump\.exe''\s+-ErrorAction\s+SilentlyContinue\s*\|\s*Select-Object\s+-First\s+1'
+        $codeOnly | Should -Not -Match $bareRecursive -Because 'the first recursive binary must never be selected when runtime resolution fails'
+    }
+
+    It 'positive control: a stub falling back to the first recursive createdump fails the runtime-selection assertion' {
+        $flagged = @'
+$createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $bareRecursive = 'Get-ChildItem\s+-Path\s+\$dotnetRoot\s+-Recurse\s+-Filter\s+''createdump\.exe''\s+-ErrorAction\s+SilentlyContinue\s*\|\s*Select-Object\s+-First\s+1'
+        $codeOnly | Should -Match $bareRecursive -Because 'this stub deliberately re-introduces the arbitrary recursive pick'
+    }
+
+    It 'Step 2 reports dump-written only on a zero exit code with a non-empty dump file' {
+        # A failed createdump can leave a zero-byte or partial artifact on
+        # disk; a file merely existing must not read as dump-written.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $codeOnly | Should -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s+-and\s+\(Get-Item\s+-LiteralPath\s+\$dumpPath\)\.Length\s+-gt\s+0' -Because 'dump-written requires a zero exit code and a non-empty dump'
+        $codeOnly | Should -Not -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'the old classification reported any on-disk artifact as dump-written'
+    }
+
+    It 'positive control: a stub classifying any on-disk dump artifact as dump-written fails the exit/size assertion' {
+        $flagged = @'
+} elseif (Test-Path -LiteralPath $dumpPath) {
+    $dumpBytes = (Get-Item -LiteralPath $dumpPath).Length
+    $step2Result.Outcome = 'dump-written'
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'this stub deliberately re-introduces the artifact-only classification'
+        $codeOnly | Should -Not -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)'
+    }
 }
