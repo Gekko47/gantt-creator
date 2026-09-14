@@ -122,11 +122,11 @@ public sealed class DebugHookGuardTests
     [Fact]
     public void Scanner_ignores_call_mention_in_string_literals()
     {
-        const string source = "var a = \"Environment.GetEnvironmentVariable\";\r\n"
-            + "var b = @\"Environment.GetEnvironmentVariable\";\r\n"
-            + "var c = $\"prefix {1} Environment.GetEnvironmentVariable\";\r\n"
+        const string source = "var a = \"Environment.GetEnvironmentVariable(\";\r\n"
+            + "var b = @\"Environment.GetEnvironmentVariable(\";\r\n"
+            + "var c = $\"prefix {1} Environment.GetEnvironmentVariable(\";\r\n"
             + "var raw = \"\"\"\r\n"
-            + "    Environment.GetEnvironmentVariable\r\n"
+            + "    Environment.GetEnvironmentVariable(\r\n"
             + "\"\"\";\r\n";
 
         Assert.Empty(EnvVarGuardScanner.Scan(source));

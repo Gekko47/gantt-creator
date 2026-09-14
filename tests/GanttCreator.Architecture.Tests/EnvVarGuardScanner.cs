@@ -23,6 +23,8 @@ internal static partial class EnvVarGuardScanner
     [GeneratedRegex(@"^\s*#(if|elif|else|endif)\b(.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex DirectiveRegex();
 
+    private static readonly string[] DebugPreprocessorSymbols = new[] { "DEBUG" };
+
     public static IReadOnlyList<string> Scan(string source) =>
         ScanMasked(MaskCommentsAndStrings(source));
 
@@ -31,70 +33,23 @@ internal static partial class EnvVarGuardScanner
 
     private static string MaskCommentsAndStrings(string source)
     {
-        // Parse source with Roslyn using CSharpParseOptions without DEBUG defined.
-        // This correctly handles all string literal forms including verbatim strings,
-        // interpolated strings, and nested string literals within interpolations.
-        var parseOptions = new CSharpParseOptions();
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
-        var root = syntaxTree.GetRoot();
+        // Parse source twice: once without DEBUG defined and once with DEBUG
+        // defined. Roslyn correctly handles all string literal forms — regular,
+        // verbatim, interpolated, raw, and UTF-8 — as well as character literals
+        // and both line and block comments. The token spans from both trees are
+        // merged before the raw source is masked so that the #if/#endif analyzer
+        // never sees contents of comments or literals, including any preprocessor
+        // directives embedded in them.
+        var spansToMask = CollectMaskSpans(source, new CSharpParseOptions());
+        spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(preprocessorSymbols: DebugPreprocessorSymbols)));
 
-        // Collect spans of all string literal tokens (regular, verbatim, interpolated).
-        // Roslyn handles escape sequences, interpolation holes, and triple-quoted strings
-        // correctly, unlike the hand-rolled parser.
-        var spansToMask = new List<TextSpan>();
-        foreach (var token in root.DescendantTokens())
-        {
-            if (token.IsKind(SyntaxKind.StringLiteralToken))
-            {
-                spansToMask.Add(new TextSpan(token.Span.Start, token.Span.Length));
-            }
-        }
-
-        // Mask char literals and comments with the hand-rolled approach (these are
-        // unambiguous and the hand-rolled parser handles them correctly).
+        // Mask the raw source with the merged Roslyn-provided spans. The hand-rolled
+        // scanners for //, /*, and ' are removed because Roslyn already correctly
+        // identifies comments and character literals; keeping a parallel hand-rolled
+        // pass could leave literal or comment contents unmasked and thereby mask real
+        // code.
         var masked = source.ToCharArray();
         int n = source.Length;
-        int i = 0;
-
-        while (i < n)
-        {
-            char c = source[i];
-
-            // Char literal
-            if (c == '\'')
-            {
-                int end = CloseCharLiteral(source, i);
-                MaskRange(masked, i, end);
-                i = end;
-                continue;
-            }
-
-            // Line comment
-            if (c == '/' && i + 1 < n && source[i + 1] == '/')
-            {
-                int nl = source.IndexOf('\n', i);
-                int end = nl == -1 ? n : nl;
-                MaskRange(masked, i, end);
-                i = nl == -1 ? n : end;
-                continue;
-            }
-
-            // Block comment
-            if (c == '/' && i + 1 < n && source[i + 1] == '*')
-            {
-                masked[i] = ' ';
-                masked[i + 1] = ' ';
-                i = SkipBlockComment(source, i + 2, masked);
-                continue;
-            }
-
-            i++;
-        }
-
-        // Now mask string literal tokens using Roslyn-provided spans.
-        // Overlap/ordering: string literals are masked last so any preprocessor
-        // directives inside them don't confuse the #if/#endif analyzer. Roslyn
-        // already distinguished true string contents from code.
         foreach (var span in spansToMask)
         {
             int start = span.Start;
@@ -103,6 +58,48 @@ internal static partial class EnvVarGuardScanner
         }
 
         return new string(masked);
+    }
+
+    private static List<TextSpan> CollectMaskSpans(string source, CSharpParseOptions parseOptions)
+    {
+        var spans = new List<TextSpan>();
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var root = syntaxTree.GetRoot();
+
+        foreach (var token in root.DescendantTokens())
+        {
+            foreach (var trivia in token.LeadingTrivia)
+            {
+                AddTriviaSpanIfComment(spans, trivia);
+            }
+
+            foreach (var trivia in token.TrailingTrivia)
+            {
+                AddTriviaSpanIfComment(spans, trivia);
+            }
+
+            if (token.IsKind(SyntaxKind.StringLiteralToken)
+                || token.IsKind(SyntaxKind.InterpolatedStringTextToken)
+                || token.IsKind(SyntaxKind.Utf8StringLiteralToken)
+                || token.IsKind(SyntaxKind.InterpolatedStringToken)
+                || token.IsKind(SyntaxKind.CharacterLiteralToken))
+            {
+                spans.Add(new TextSpan(token.Span.Start, token.Span.Length));
+            }
+        }
+
+        return spans;
+    }
+
+    private static void AddTriviaSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia)
+    {
+        if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
+        {
+            spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
+        }
     }
 
     private static void MaskRange(char[] masked, int start, int end)
@@ -114,51 +111,6 @@ internal static partial class EnvVarGuardScanner
                 masked[k] = ' ';
             }
         }
-    }
-
-    private static int CloseCharLiteral(string s, int open)
-    {
-        int i = open + 1;
-        int n = s.Length;
-        if (i < n && s[i] == '\\')
-        {
-            i += 2;
-        }
-        else if (i < n)
-        {
-            i++;
-        }
-
-        if (i < n && s[i] == '\'')
-        {
-            return i + 1;
-        }
-
-        return Math.Min(i, n);
-    }
-
-    private static int SkipBlockComment(string s, int start, char[] output)
-    {
-        int i = start;
-        int n = s.Length;
-        while (i < n)
-        {
-            if (s[i] == '*' && i + 1 < n && s[i + 1] == '/')
-            {
-                output[i] = ' ';
-                output[i + 1] = ' ';
-                return i + 2;
-            }
-
-            if (s[i] != '\n')
-            {
-                output[i] = ' ';
-            }
-
-            i++;
-        }
-
-        return n;
     }
 
     #endregion
