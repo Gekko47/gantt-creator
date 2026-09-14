@@ -44,7 +44,7 @@ Describe 'diagnose-l12-createdump.ps1' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        $codeOnly | Should -Match 'createdump' -Because 'Step 2 must invoke createdump directly'
+        $codeOnly | Should -Match 'Start-Process\s+-FilePath\s+\$createdump\.FullName' -Because 'Step 2 must invoke createdump directly via Start-Process -FilePath $createdump.FullName, not merely mention it in comments or log messages'
         $codeOnly | Should -Match 'Start-Sleep\s+-Seconds\s+600' -Because 'Step 2 needs a predictable long-lived helper process'
         $codeOnly | Should -Match 'parent-process dump smoke test' -Because 'Step 2 must be classified only as a dump smoke test, not a debug-privilege probe'
         $codeOnly | Should -Match '\$helperProc' -Because 'the helper-process guidance must name the runtime-triggered dump target'

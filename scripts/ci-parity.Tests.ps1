@@ -216,8 +216,23 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 if ($code -notmatch '(?i)(?:^|[\s;|])dotnet\s+test(?:\s|$)') { continue }
                 $tail = $code -replace '(?i)^.*?dotnet\s+test(?:\s+|$)', ''
                 $count = 0
-                foreach ($token in ($tail -split '\s+' | Where-Object { $_ -ne '' })) {
-                    if ($token -match '^-') { continue }
+                $tokens = $tail -split '\s+' | Where-Object { $_ -ne '' }
+                $skipNext = $false
+                foreach ($token in $tokens) {
+                    if ($skipNext) {
+                        # Consume the value following --diag as an option argument
+                        # instead of counting it as a positional target.
+                        $skipNext = $false
+                        continue
+                    }
+                    if ($token -match '^-') {
+                        # --diag takes a diagnostic file path as its value; the
+                        # next token is that value, not a project/solution target.
+                        if ($token -eq '--diag') {
+                            $skipNext = $true
+                        }
+                        continue
+                    }
                     if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
                         $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
                         $count++
@@ -292,6 +307,16 @@ dotnet test -c Release --no-build --no-restore
 dotnet test $Solution -c Release --no-build --no-restore
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $mixed) | Should -Be @(0, 1)
+    }
+
+    It 'tripwire accepts dotnet test --diag with a .sln-named diagnostic file and no target (positive control)' {
+        # Guards the --diag option-value consumption: a diagnostic file path
+        # following --diag must not be counted as a positional project/solution
+        # target, and the invocation has no other target.
+        $withDiag = @'
+dotnet test --diag diag.sln -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $withDiag) | Should -Be @(0)
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {

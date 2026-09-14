@@ -78,11 +78,47 @@ if (-not $dotnet) {
 }
 Log "dotnet: $($dotnet.Source) $($dotnet.Version)"
 
+# Resolve repo root early: Step 0 needs it to locate the testhost runtime
+# config, and Step 1's pre-flight uses it for solution and artifact paths.
+$scriptRoot = Split-Path -Parent $PSCommandPath
+$repoRoot = Split-Path -Parent $scriptRoot
+
 # ------------------------------------------------------------------
 # Step 0: locate createdump so Step 2 can invoke it by absolute path.
+#
+# Resolve the .NET runtime used by the OfficeIntegration testhost first,
+# then select the createdump.exe belonging to that runtime. Taking an
+# arbitrary recursive match under the dotnet root could pick a createdump
+# from a different runtime than the one the testhost actually runs on.
 # ------------------------------------------------------------------
 $dotnetRoot = Split-Path -Parent $dotnet.Source
-$createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+$createdump = $null
+$step1TestHostCandidate = Join-Path $repoRoot "tests\GanttCreator.Office.IntegrationTests\bin\$Configuration\GanttCreator.Office.IntegrationTests.dll"
+if (Test-Path -LiteralPath $step1TestHostCandidate) {
+    $runtimeConfig = Join-Path (Split-Path -Parent $step1TestHostCandidate) 'GanttCreator.Office.IntegrationTests.runtimeconfig.json'
+    if (Test-Path -LiteralPath $runtimeConfig) {
+        $rc = Get-Content -LiteralPath $runtimeConfig -Raw | ConvertFrom-Json
+        $runtimeVersion = $rc.'Microsoft.NETCore.App.RuntimeVersion'
+        if ($runtimeVersion) {
+            Log "Step 0: testhost targets .NET $runtimeVersion"
+            # Find the dotnet root that hosts this runtime version
+            $sharedFramework = Join-Path $dotnetRoot "shared\Microsoft.NETCore.App\$runtimeVersion"
+            if (Test-Path -LiteralPath $sharedFramework) {
+                $createdump = Get-ChildItem -Path $sharedFramework -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            if (-not $createdump) {
+                # Fallback: search under the dotnet root for a createdump
+                # whose runtime directory matches the version
+                $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match [regex]::Escape("shared\Microsoft.NETCore.App\$runtimeVersion") } |
+                    Select-Object -First 1
+            }
+        }
+    }
+}
+if (-not $createdump) {
+    $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+}
 if (-not $createdump) {
     Log 'WARN: createdump.exe not found under the dotnet root; Step 2 skipped.'
 } else {
@@ -116,14 +152,16 @@ $step1Args = @(
 # launching. Step 1 runs with --no-build --no-restore, so a missing solution,
 # non-positive timeout, or absent built test assembly would exit fast with a
 # non-zero code that must not be misclassified as a testhost abort below.
-$repoRoot = Split-Path -Parent $scriptRoot
+# Step 2 deadline is validated here too so a zero/negative value exits through
+# this validation path instead of letting Step 2 produce a misleading
+# timeout-killed result.
 $solutionPath = if ([System.IO.Path]::IsPathRooted($Solution)) { $Solution } else { Join-Path $repoRoot $Solution }
 if (-not (Test-Path -LiteralPath $solutionPath)) {
     Log "FAIL: Step 1 solution not found: $solutionPath. Pass -Solution with the path to GanttCreator.slnx."
     exit 2
 }
-if ($Step1TimeoutSeconds -le 0 -or $Step1DeadlineSeconds -le 0) {
-    Log 'FAIL: Step 1 timeout and deadline must be positive integers.'
+if ($Step1TimeoutSeconds -le 0 -or $Step1DeadlineSeconds -le 0 -or $Step2DeadlineSeconds -le 0) {
+    Log 'FAIL: Step 1 timeout, Step 1 deadline, and Step 2 deadline must be positive integers.'
     exit 2
 }
 $step1TestDll = Get-ChildItem -Path (Join-Path $repoRoot 'tests\GanttCreator.Office.IntegrationTests\bin') -Recurse -Filter 'GanttCreator.Office.IntegrationTests.dll' -ErrorAction SilentlyContinue |
@@ -203,7 +241,6 @@ if ($step1Proc.HasExited) {
     Log '  Killing the step-1 process tree and continuing to Step 2.'
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
     $step1ExitCode = 124
-    $step1Crashed = $true
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 }
 

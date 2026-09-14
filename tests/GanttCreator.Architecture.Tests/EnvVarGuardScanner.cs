@@ -65,16 +65,18 @@ internal static partial class EnvVarGuardScanner
         // A region guarded by a symbol other than DEBUG (for example '#if FEATURE')
         // is inactive in the parses above, so Roslyn reports its contents as skipped
         // tokens inside structured trivia. Extract every symbol referenced by the source's #if/#elif
-        // conditions and parse a third time with all of them (plus DEBUG) defined so
-        // those regions become active and their literal/comment spans are collected
-        // and merged as well.
+        // conditions and parse once per symbol with that symbol (plus DEBUG) defined so
+        // every #elif branch becomes active in at least one parse and its literal/comment
+        // spans are collected and merged. Defining all symbols in a single parse would
+        // make later #elif branches dead code (the first matching #if wins), leaving
+        // their contents unmasked.
         var referencedSymbols = CollectReferencedPreprocessorSymbols(source);
-        if (referencedSymbols.Count > 0)
+        foreach (var sym in referencedSymbols)
         {
-            var allSymbols = new List<string>(DebugPreprocessorSymbols.Length + referencedSymbols.Count);
-            allSymbols.AddRange(DebugPreprocessorSymbols);
-            allSymbols.AddRange(referencedSymbols);
-            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: allSymbols)));
+            var branchSymbols = new List<string>(DebugPreprocessorSymbols.Length + 1);
+            branchSymbols.AddRange(DebugPreprocessorSymbols);
+            branchSymbols.Add(sym);
+            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: branchSymbols)));
         }
 
         // Mask the raw source with the merged Roslyn-provided spans. The hand-rolled
