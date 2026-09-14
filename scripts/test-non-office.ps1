@@ -25,6 +25,12 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
-dotnet test $Solution -c $Configuration --no-build --no-restore `
+dotnet test `
+    tests/GanttCreator.AddIn.Tests/GanttCreator.AddIn.Tests.csproj `
+    tests/GanttCreator.Architecture.Tests/GanttCreator.Architecture.Tests.csproj `
+    tests/GanttCreator.Core.Tests/GanttCreator.Core.Tests.csproj `
+    tests/GanttCreator.Office.ContractTests/GanttCreator.Office.ContractTests.csproj `
+    tests/GanttCreator.Raster.Tests/GanttCreator.Raster.Tests.csproj `
+    -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 exit $LASTEXITCODE

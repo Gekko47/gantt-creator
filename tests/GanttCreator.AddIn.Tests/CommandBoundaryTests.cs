@@ -241,6 +241,24 @@ public class CommandBoundaryTests
     }
 
     [Fact]
+    public void Run_with_throwing_resolver_reports_failure_and_triggers_dialog_even_when_command_succeeds()
+    {
+        var written = new List<string>();
+        var shown = new List<string>();
+        var boundary = CreateBoundary(written, presenter: shown.Add);
+
+        // Resolver throws but command succeeds; the resolver exception propagates
+        // to the outer Run catch and is reported (not silently degraded to the
+        // fallback name as the old SafeResolveCommandName did).
+        boundary.Run(() => throw new InvalidOperationException("probe broken"), () => { }, "OnDiagnosticsClick");
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=OnDiagnosticsClick", record, StringComparison.Ordinal);
+        Assert.Contains("probe broken", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
     public void Run_with_resolver_reports_command_failure_with_resolved_name()
     {
         var written = new List<string>();

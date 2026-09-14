@@ -163,25 +163,18 @@ public sealed class CommandBoundary
     }
 
     /// <summary>
-    /// Resolves the command name without throwing: a resolver failure or a
-    /// blank result degrades to <paramref name="fallbackCommandName"/>.
+    /// Resolves the command name without swallowing resolver exceptions: a
+    /// blank result degrades to <paramref name="fallbackCommandName"/>, but a
+    /// resolver failure propagates to the outer <see cref="Run(Func{string},Action,string)"/>
+    /// catch so the failure is reported (not silently degraded). The outer catch
+    /// still produces one log record and one dialog under the resolved name.
     /// </summary>
     /// <param name="resolveCommandName">Resolves the stable command identifier.</param>
-    /// <param name="fallbackCommandName">Used when the resolver throws or returns blank.</param>
+    /// <param name="fallbackCommandName">Used when the resolver returns blank.</param>
     private static string SafeResolveCommandName(Func<string> resolveCommandName, string fallbackCommandName)
     {
-        // CA1031: intentional degradation — the probe may touch COM state.
-#pragma warning disable CA1031
-        try
-        {
-            var resolved = resolveCommandName();
-            return string.IsNullOrWhiteSpace(resolved) ? fallbackCommandName : resolved;
-        }
-        catch
-        {
-            return fallbackCommandName;
-        }
-#pragma warning restore CA1031
+        var resolved = resolveCommandName();
+        return string.IsNullOrWhiteSpace(resolved) ? fallbackCommandName : resolved;
     }
 
     /// <summary>

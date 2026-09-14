@@ -82,7 +82,11 @@ internal static partial class EnvVarGuardScanner
                 || token.IsKind(SyntaxKind.InterpolatedStringTextToken)
                 || token.IsKind(SyntaxKind.Utf8StringLiteralToken)
                 || token.IsKind(SyntaxKind.InterpolatedStringToken)
-                || token.IsKind(SyntaxKind.CharacterLiteralToken))
+                || token.IsKind(SyntaxKind.CharacterLiteralToken)
+                || token.IsKind(SyntaxKind.SingleLineRawStringLiteralToken)
+                || token.IsKind(SyntaxKind.MultiLineRawStringLiteralToken)
+                || token.IsKind(SyntaxKind.Utf8SingleLineRawStringLiteralToken)
+                || token.IsKind(SyntaxKind.Utf8MultiLineRawStringLiteralToken))
             {
                 spans.Add(new TextSpan(token.Span.Start, token.Span.Length));
             }
