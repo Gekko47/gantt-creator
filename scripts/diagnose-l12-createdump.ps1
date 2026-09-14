@@ -93,9 +93,10 @@ $repoRoot = Split-Path -Parent $scriptRoot
 # ------------------------------------------------------------------
 $dotnetRoot = Split-Path -Parent $dotnet.Source
 $createdump = $null
-$step1TestHostCandidate = Join-Path $repoRoot "tests\GanttCreator.Office.IntegrationTests\bin\$Configuration\GanttCreator.Office.IntegrationTests.dll"
-if (Test-Path -LiteralPath $step1TestHostCandidate) {
-    $runtimeConfig = Join-Path (Split-Path -Parent $step1TestHostCandidate) 'GanttCreator.Office.IntegrationTests.runtimeconfig.json'
+$step1TestHostCandidate = Get-ChildItem -Path (Join-Path $repoRoot "tests\GanttCreator.Office.IntegrationTests\bin") -Recurse -Filter "GanttCreator.Office.IntegrationTests.dll" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match [regex]::Escape($Configuration) } | Select-Object -First 1
+if ($step1TestHostCandidate) {
+    $runtimeConfig = Join-Path (Split-Path -Parent $step1TestHostCandidate.FullName) 'GanttCreator.Office.IntegrationTests.runtimeconfig.json'
     if (Test-Path -LiteralPath $runtimeConfig) {
         $rc = Get-Content -LiteralPath $runtimeConfig -Raw | ConvertFrom-Json
         $runtimeVersion = $rc.'Microsoft.NETCore.App.RuntimeVersion'
@@ -344,7 +345,7 @@ Start-Sleep -Seconds 600
             Remove-Item -LiteralPath $outTmp -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $errTmp -Force -ErrorAction SilentlyContinue
 
-            Log "Step 2: createdump exited ${sw.Elapsed.TotalSeconds}s with code $($step2Result.ExitCode)."
+            Log "Step 2: createdump exited $($sw.Elapsed.TotalSeconds)s with code $($step2Result.ExitCode)."
 
             if ($timedOut) {
                 Log 'Step 2: createdump hit the deadline and was terminated; the probe is inconclusive.'

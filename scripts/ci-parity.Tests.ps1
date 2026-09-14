@@ -178,11 +178,14 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             $joined = New-Object System.Collections.Generic.List[string]
             $pending = ''
             foreach ($line in ($Text -split "`r?`n")) {
-                $current = if ($pending -ne '') { "$pending $line" } else { $line }
-                if ($current.TrimEnd() -match '\x60$') {
-                    $pending = $current.TrimEnd() -replace '\x60$', ''
+                if ($pending -ne '') {
+                    $current = "$pending$line"
+                } else {
+                    $current = $line
                 }
-                else {
+                if ($current -match '(?m)\x60$') {
+                    $pending = $current -replace '(?m)\x60$', ''
+                } else {
                     $null = $joined.Add($current)
                     $pending = ''
                 }
@@ -199,6 +202,26 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
         # exactly 1 per invocation: an aggregate total can hide a
         # zero-target invocation alongside a multi-target one, or flag two
         # healthy invocations as one violation.
+        # Recursively finds all `dotnet test` command invocations in a
+        # PowerShell AST. Using the AST (rather than regex) preserves quoted
+        # separators, so a `;` or `|` inside a quoted string does not split
+        # one invocation into two, and arguments with spaces are kept intact.
+        function Find-DotnetTestCommands {
+            param([System.Management.Automation.Language.Ast]$Ast, [ref]$Results)
+            if (-not $Ast) { return }
+            foreach ($cmd in $Ast.FindAll({ $true }, $true)) {
+                if ($cmd -is [System.Management.Automation.Language.CommandAst] -and
+                    $cmd.CommandElements -and
+                    $cmd.CommandElements.Count -ge 2 -and
+                    $cmd.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $cmd.CommandElements[0].Value -ieq 'dotnet' -and
+                    $cmd.CommandElements[1] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $cmd.CommandElements[1].Value -ieq 'test') {
+                    $Results.Value += $cmd
+                }
+            }
+        }
+
         function Get-DotnetTestProjectTokenCount {
             param([string]$ScriptText)
             # Strip PowerShell block comments (<# ... #>) first: the synopsis
@@ -208,37 +231,65 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             $noBlock = $ScriptText -replace '(?s)<#.*?#>', ''
             $counts = @()
             foreach ($line in (Join-LogicalLines -Text $noBlock)) {
-                # Strip PowerShell comments before matching: full-line and
-                # trailing `#` comments mentioning `dotnet test` (e.g. the
-                # contract comment in test-non-office.ps1) are not invocations
-                # and must not be counted as zero-target violations.
-                $code = ($line -split '#')[0]
-                if ($code -notmatch '(?i)(?:^|[\s;|])dotnet\s+test(?:\s|$)') { continue }
-                $tail = $code -replace '(?i)^.*?dotnet\s+test(?:\s+|$)', ''
-                $count = 0
-                $tokens = $tail -split '\s+' | Where-Object { $_ -ne '' }
-                $skipNext = $false
-                foreach ($token in $tokens) {
-                    if ($skipNext) {
-                        # Consume the value following --diag as an option argument
-                        # instead of counting it as a positional target.
-                        $skipNext = $false
-                        continue
-                    }
-                    if ($token -match '^-') {
-                        # --diag takes a diagnostic file path as its value; the
-                        # next token is that value, not a project/solution target.
-                        if ($token -eq '--diag') {
-                            $skipNext = $true
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                # Use the PowerShell AST to identify command invocations and
+                # preserve quoted separators. The previous regex extracted one
+                # tail from the complete logical line, which could not see
+                # multiple dotnet test invocations on one line and split quoted
+                # arguments on whitespace. Comments are naturally excluded by
+                # the AST: they are not part of any CommandAst node.
+                $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$null)
+                if (-not $ast) { continue }
+                $commands = @()
+                Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
+                foreach ($cmd in $commands) {
+                    $count = 0
+                    $skipNext = $false
+                    $elements = $cmd.CommandElements
+                    # Skip element 0 (the `test` subcommand); process the rest.
+                    for ($i = 1; $i -lt $elements.Count; $i++) {
+                        $elem = $elements[$i]
+                        if ($skipNext) {
+                            $skipNext = $false
+                            continue
                         }
-                        continue
+                        # Command parameters (options like -c, --diag) are not
+                        # positional targets. --diag takes a diagnostic file path
+                        # as its value; the next token is that value, not a
+                        # project/solution target.
+                        if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
+                            if ($elem.ParameterName -eq 'diag') {
+                                $skipNext = $true
+                            }
+                            continue
+                        }
+                        # Get the token text for target matching. String constants
+                        # (including quoted paths with spaces) and variables are
+                        # the forms that can be targets; other expression types
+                        # (splats, subexpressions, etc.) are not.
+                        $token = $null
+                        if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                            $token = $elem.Value
+                            # `--diag` is parsed as a string constant (not a
+                            # CommandParameterAst) in the `dotnet test` command
+                            # line; the next element is its value, not a target.
+                            if ($token -eq '--diag') {
+                                $skipNext = $true
+                            }
+                        } elseif ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                            # In this PowerShell runtime, VariableName omits '$';
+                            # Extent.Text preserves the parsed variable token.
+                            $token = $elem.Extent.Text
+                        } else {
+                            $token = $elem.Extent.Text
+                        }
+                        if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
+                            $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
+                            $count++
+                        }
                     }
-                    if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
-                        $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
-                        $count++
-                    }
+                    $counts += $count
                 }
-                $counts += $count
             }
             return $counts
         }
