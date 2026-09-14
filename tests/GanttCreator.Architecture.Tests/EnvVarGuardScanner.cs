@@ -45,38 +45,72 @@ internal static partial class EnvVarGuardScanner
 
     private static string MaskCommentsAndStrings(string source)
     {
-        // Parse source multiple times: once without DEBUG defined and once with DEBUG
-        // defined. Roslyn correctly handles all string literal forms — regular,
+        // Parse source multiple times so that the comments and string/character
+        // literals inside every #if/#elif branch are masked, including branches
+        // that are only active when a non-DEBUG symbol or a conjunction of symbols
+        // is defined. Roslyn correctly handles all string literal forms — regular,
         // verbatim, interpolated, raw, and UTF-8 — as well as character literals
         // and both line and block comments. Token enumeration descends into
         // structured trivia (descendIntoTrivia: true) so comments and literals on
         // directive lines (e.g. a trailing comment after '#if DEBUG') are masked
-        // too. The token spans from the trees are merged before the raw source is
+        // too. The token spans from every tree are merged before the raw source is
         // masked so that the #if/#endif analyzer never sees contents of comments
         // or literals, including any preprocessor directives embedded in them.
-        // LanguageVersion is pinned explicitly to C# 14 (the version the repo compiles
-        // with under the .NET 10 SDK) instead of Latest, so masking cannot drift
-        // when the parser package and the repo's language level move apart. The
-        // value lives on the shared ScannerLanguageVersion constant so all three
-        // parses use the same language level.
-        var spansToMask = CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion));
+        // LanguageVersion is pinned explicitly to C# 14 (the version the repo
+        // compiles with under the .NET 10 SDK) instead of Latest, so masking
+        // cannot drift when the parser package and the repo's language level move
+        // apart. The value lives on the shared ScannerLanguageVersion constant so
+        // every parse uses the same language level.
+        var spansToMask = new List<TextSpan>();
+
+        // Baseline parses: DEBUG undefined and DEBUG defined. These two cover the
+        // common DEBUG-only guards; every other region is inactive in both, so
+        // Roslyn reports its contents as skipped tokens inside structured trivia.
+        spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion)));
         spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: DebugPreprocessorSymbols)));
 
-        // A region guarded by a symbol other than DEBUG (for example '#if FEATURE')
-        // is inactive in the parses above, so Roslyn reports its contents as skipped
-        // tokens inside structured trivia. Extract every symbol referenced by the source's #if/#elif
-        // conditions and parse once per symbol with that symbol (plus DEBUG) defined so
-        // every #elif branch becomes active in at least one parse and its literal/comment
-        // spans are collected and merged. Defining all symbols in a single parse would
-        // make later #elif branches dead code (the first matching #if wins), leaving
-        // their contents unmasked.
+        // Extract every symbol referenced by the source's #if/#elif conditions and
+        // parse once per symbol so each branch becomes active in at least one parse
+        // and its literal/comment spans are collected through the normal token
+        // path rather than only through skipped-trivia extraction. DEBUG is filtered
+        // out of the DEBUG-excluded parses below (defining DEBUG without DEBUG is
+        // contradictory) but retained in the DEBUG-inclusive parses.
         var referencedSymbols = CollectReferencedPreprocessorSymbols(source);
+        var nonDebugSymbols = new List<string>(referencedSymbols.Count);
+        foreach (var sym in referencedSymbols)
+        {
+            if (!sym.Equals("DEBUG", StringComparison.Ordinal))
+            {
+                nonDebugSymbols.Add(sym);
+            }
+        }
+
+        // DEBUG-inclusive per-symbol parses (preserved): each referenced symbol is
+        // toggled on together with DEBUG, which activates conjunctions that involve
+        // DEBUG, such as '#if DEBUG && FEATURE'.
         foreach (var sym in referencedSymbols)
         {
             var branchSymbols = new List<string>(DebugPreprocessorSymbols.Length + 1);
             branchSymbols.AddRange(DebugPreprocessorSymbols);
             branchSymbols.Add(sym);
             spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: branchSymbols)));
+        }
+
+        // DEBUG-excluded per-symbol parses: each non-DEBUG symbol is toggled on alone,
+        // which activates #elif branches whose #if is DEBUG, e.g.
+        // '#if DEBUG ... #elif FEATURE' (the elif branch needs DEBUG undefined).
+        foreach (var sym in nonDebugSymbols)
+        {
+            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: new[] { sym })));
+        }
+
+        // All-symbols parse: every non-DEBUG symbol defined at once activates
+        // conjunctions of non-DEBUG symbols, such as '#if A && B' or
+        // '#elif A && B' under a false preceding #if, which no single-symbol parse
+        // can satisfy. DEBUG is left undefined so !DEBUG-gated branches stay reachable.
+        if (nonDebugSymbols.Count > 0)
+        {
+            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(languageVersion: ScannerLanguageVersion, preprocessorSymbols: nonDebugSymbols)));
         }
 
         // Mask the raw source with the merged Roslyn-provided spans. The hand-rolled
