@@ -17,7 +17,7 @@ namespace GanttCreator.Architecture.Tests;
 // reported as findings. This file is test instrumentation only.
 internal static partial class EnvVarGuardScanner
 {
-    [GeneratedRegex(@"\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|ExpandEnvironmentVariables)\s*\(", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b(?:Environment\s*\.\s*)?(?:GetEnvironmentVariable|GetEnvironmentVariables|ExpandEnvironmentVariables)\s*\(", RegexOptions.CultureInvariant)]
     private static partial Regex EnvVarCallRegex();
 
     [GeneratedRegex(@"^\s*#(if|elif|else|endif)\b(.*)$", RegexOptions.CultureInvariant)]
@@ -169,12 +169,34 @@ internal static partial class EnvVarGuardScanner
     private static List<string> ScanMasked(string masked)
     {
         var findings = new List<string>();
+
+        // Process preprocessor directives line-by-line so the branch stack is
+        // modeled correctly and directive line numbers remain accurate. Multiline
+        // Environment.* calls are detected against the full masked source (with
+        // newlines preserved) and then mapped back to the source line of the call's
+        // start index.
         var lines = masked.Split('\n');
         var stack = new Stack<Frame>();
         Expr current = new Lit(true);
 
+        // Scanner index -> source line number (1-based). Computed from the fully
+        // masked text so multiline matches report against the line where the call
+        // begins.
+        var lineOfIndex = LineNumberMap(masked);
+
+        // Pre-compute condition state at the start of each source line so env-var
+        // calls can be attributed to the correct enclosing directive regardless of
+        // where on the line they appear.
+        var exprAtLineStart = new Expr[lines.Length];
+        exprAtLineStart[0] = current;
+
         for (int idx = 0; idx < lines.Length; idx++)
         {
+            if (idx > 0)
+            {
+                exprAtLineStart[idx] = exprAtLineStart[idx - 1];
+            }
+
             string line = lines[idx];
             int lineNo = idx + 1;
             Match m = DirectiveRegex().Match(line);
@@ -187,15 +209,28 @@ internal static partial class EnvVarGuardScanner
                     lineNo,
                     findings,
                     ref current);
+                exprAtLineStart[idx] = current;
                 continue;
             }
+        }
 
-            if (EnvVarCallRegex().IsMatch(line) &&
-                !IsUnsatisfiableWithDebugFalse(current))
+        foreach (Match envCall in EnvVarCallRegex().Matches(masked))
+        {
+            int lineNo = lineOfIndex[envCall.Index];
+            if (lineNo < 1 || lineNo > lines.Length)
+            {
+                // Defensive: a match outside the mapped range should not happen
+                // after masking preserves newlines, but treat it as unguarded
+                // rather than failing the scan.
+                lineNo = lines.Length;
+            }
+
+            Expr exprAtCall = exprAtLineStart[lineNo - 1];
+            if (!IsUnsatisfiableWithDebugFalse(exprAtCall))
             {
                 findings.Add(
                     $"Line {lineNo}: Environment.GetEnvironmentVariable read is not " +
-                    $"guaranteed compiled out of Release builds (active guard: {Describe(current)}).");
+                    $"guaranteed compiled out of Release builds (active guard: {Describe(exprAtCall)}).");
             }
         }
 
@@ -205,6 +240,24 @@ internal static partial class EnvVarGuardScanner
         }
 
         return findings;
+    }
+
+    private static int[] LineNumberMap(string text)
+    {
+        int length = text.Length;
+        int[] map = new int[length];
+        int line = 1;
+
+        for (int i = 0; i < length; i++)
+        {
+            map[i] = line;
+            if (text[i] == '\n')
+            {
+                line++;
+            }
+        }
+
+        return map;
     }
 
     private static void HandleDirective(

@@ -192,6 +192,122 @@ public sealed class DebugHookGuardTests
         Assert.Empty(EnvVarGuardScanner.Scan(source));
     }
 
+    // __MULTILINE__
+    #region Multiline env-var call detection
+
+    [Fact]
+    public void Scanner_rejects_multiline_unguarded_read_on_correct_line()
+    {
+        const string source = """
+            var requested =
+                Environment.GetEnvironmentVariable(
+                    "X");
+            """;
+
+        var findings = EnvVarGuardScanner.Scan(source);
+        Assert.Contains(findings, f => f.Contains("Line 2", StringComparison.Ordinal)
+            && f.Contains("active guard: True", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Scanner_accepts_multiline_read_inside_ifdef_debug()
+    {
+        const string source = """
+            #if DEBUG
+                var requested =
+                    Environment.GetEnvironmentVariable(
+                        "X");
+            #endif
+            """;
+
+        Assert.Empty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_rejects_multiline_call_just_because_it_is_multiline()
+    {
+        const string source = """
+            #if DEBUG || FEATURE
+                var requested =
+                    Environment.GetEnvironmentVariable(
+                        "X");
+            #endif
+            """;
+
+        Assert.NotEmpty(EnvVarGuardScanner.Scan(source));
+    }
+
+    #endregion
+
+    // __BARE__
+    #region Bare GetEnvironmentVariable detection
+
+    [Fact]
+    public void Scanner_rejects_bare_get_env_var_read()
+    {
+        const string source = """
+            var requested = GetEnvironmentVariable("X");
+            """;
+
+        var findings = EnvVarGuardScanner.Scan(source);
+        Assert.Contains(findings, f => f.Contains("Line 1", StringComparison.Ordinal)
+            && f.Contains("active guard: True", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Scanner_accepts_bare_read_inside_ifdef_debug()
+    {
+        const string source = """
+            #if DEBUG
+                var requested = GetEnvironmentVariable("X");
+            #endif
+            """;
+
+        Assert.Empty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_accepts_bare_read_with_optional_environment_prefix_and_whitespace()
+    {
+        const string source = """
+            #if DEBUG
+                var requested = Environment   .   GetEnvironmentVariable("X");
+            #endif
+            """;
+
+        Assert.Empty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
+    public void Scanner_rejects_bare_read_in_else_branch()
+    {
+        const string source = """
+            #if DEBUG
+                return false;
+            #else
+                var requested = GetEnvironmentVariable("X");
+            #endif
+            """;
+
+        Assert.Contains(
+            EnvVarGuardScanner.Scan(source),
+            f => f.Contains("active guard", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Scanner_rejects_bare_read_when_condition_is_debug_or_something()
+    {
+        const string source = """
+            #if DEBUG || FEATURE
+                var requested = GetEnvironmentVariable("X");
+            #endif
+            """;
+
+        Assert.NotEmpty(EnvVarGuardScanner.Scan(source));
+    }
+
+    #endregion
+
     #endregion
 
     // __NEG__
