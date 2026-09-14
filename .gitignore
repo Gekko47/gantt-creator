@@ -454,4 +454,7 @@ coverage/
 
 # Build outputs (defence in depth; .NET SDK already excludes via the standard VS gitignore above)
 [Bb]in/
+# L12 createdump diagnostic scripts (run on-demand on the exhibiting host; output is gitignored under scripts/_artifacts/l12-diagnostic/)
+scripts/diagnose-l12-createdump.ps1
+scripts/diagnose-l12-createdump.Tests.ps1
 [Oo]bj/
