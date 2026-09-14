@@ -289,9 +289,6 @@ if (-not $createdump) {
     $helperDir = Join-Path ([System.IO.Path]::GetTempPath()) ('l12-step2-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $helperDir -Force | Out-Null
     $helperScript = Join-Path $helperDir 'sleep.ps1'
-    @'
-Start-Sleep -Seconds 600
-'@
     Set-Content -LiteralPath $helperScript -Value @'
 Start-Sleep -Seconds 600
 '@ -Encoding utf8NoBOM
