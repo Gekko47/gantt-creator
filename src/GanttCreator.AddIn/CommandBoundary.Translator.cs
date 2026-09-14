@@ -34,7 +34,7 @@ internal static class CommandErrorTranslator
             Operation: {operationId}
 
             Please inspect the workbook and try again.
-            Technical details were written to the log file (see the Diagnostics button).
+            Technical details, when available, are recorded in the diagnostics log (see the Diagnostics button).
             """);
     }
 

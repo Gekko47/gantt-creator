@@ -107,6 +107,22 @@ public sealed class DebugHookGuardTests
     }
 
     [Fact]
+    public void Scanner_ignores_call_mention_in_trailing_comment_on_if_directive()
+    {
+        // A trailing comment on a directive line lives in structured trivia; the
+        // scanner must mask it (DescendantTokens(descendIntoTrivia: true)) or the
+        // comment text would feed DirectiveRegex unmasked and produce a spurious
+        // "malformed preprocessor expression" finding.
+        const string source = """
+            #if DEBUG // note: Environment.GetEnvironmentVariable("X") mention here
+                var requested = Environment.GetEnvironmentVariable("X");
+            #endif
+            """;
+
+        Assert.Empty(EnvVarGuardScanner.Scan(source));
+    }
+
+    [Fact]
     public void Scanner_ignores_call_mention_in_block_comment()
     {
         const string source = """
@@ -143,6 +159,47 @@ public sealed class DebugHookGuardTests
         var findings = EnvVarGuardScanner.Scan(source);
         Assert.Single(findings);
         Assert.Contains("Line 2", findings[0], StringComparison.Ordinal);
+    }
+
+    #endregion
+    // __INACTIVEREGION__
+    #region Inactive-region masking
+
+    // A region guarded by a symbol other than DEBUG (for example '#if FEATURE') is
+    // inactive in both scanner parses (no symbols / DEBUG defined), so its contents
+    // must still be masked via the third parse that defines every referenced symbol.
+
+    [Fact]
+    public void Scanner_ignores_call_mention_in_comment_inside_region_inactive_in_both_parses()
+    {
+        const string source = """
+            #if FEATURE
+            // Environment.GetEnvironmentVariable("X")
+            #endif
+            var requested = Environment.GetEnvironmentVariable("X");
+            """;
+
+        var findings = EnvVarGuardScanner.Scan(source);
+        Assert.Single(findings);
+        Assert.Contains("Line 4", findings[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Scanner_ignores_directive_lookalike_inside_string_in_region_inactive_in_both_parses()
+    {
+        const string source = """"
+            #if FEATURE
+            var text = """
+            #if !DEBUG
+            """;
+            #endif
+            var requested = Environment.GetEnvironmentVariable("X");
+            """";
+
+        var findings = EnvVarGuardScanner.Scan(source);
+        Assert.Single(findings);
+        Assert.Contains("Line 6", findings[0], StringComparison.Ordinal);
+        Assert.DoesNotContain(findings, f => f.Contains("unterminated", StringComparison.Ordinal));
     }
 
     #endregion

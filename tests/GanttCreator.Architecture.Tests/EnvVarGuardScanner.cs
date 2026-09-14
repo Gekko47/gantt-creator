@@ -23,6 +23,9 @@ internal static partial class EnvVarGuardScanner
     [GeneratedRegex(@"^\s*#(if|elif|else|endif)\b(.*)$", RegexOptions.CultureInvariant)]
     private static partial Regex DirectiveRegex();
 
+    [GeneratedRegex(@"[A-Za-z_][A-Za-z0-9_]*", RegexOptions.CultureInvariant)]
+    private static partial Regex IdentifierRegex();
+
     private static readonly string[] DebugPreprocessorSymbols = new[] { "DEBUG" };
 
     public static IReadOnlyList<string> Scan(string source) =>
@@ -33,15 +36,32 @@ internal static partial class EnvVarGuardScanner
 
     private static string MaskCommentsAndStrings(string source)
     {
-        // Parse source twice: once without DEBUG defined and once with DEBUG
+        // Parse source multiple times: once without DEBUG defined and once with DEBUG
         // defined. Roslyn correctly handles all string literal forms — regular,
         // verbatim, interpolated, raw, and UTF-8 — as well as character literals
-        // and both line and block comments. The token spans from both trees are
-        // merged before the raw source is masked so that the #if/#endif analyzer
-        // never sees contents of comments or literals, including any preprocessor
-        // directives embedded in them.
+        // and both line and block comments. Token enumeration descends into
+        // structured trivia (descendIntoTrivia: true) so comments and literals on
+        // directive lines (e.g. a trailing comment after '#if DEBUG') are masked
+        // too. The token spans from the trees are merged before the raw source is
+        // masked so that the #if/#endif analyzer never sees contents of comments
+        // or literals, including any preprocessor directives embedded in them.
         var spansToMask = CollectMaskSpans(source, new CSharpParseOptions());
         spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(preprocessorSymbols: DebugPreprocessorSymbols)));
+
+        // A region guarded by a symbol other than DEBUG (for example '#if FEATURE')
+        // is inactive in the parses above, so Roslyn reports its contents as skipped
+        // tokens inside structured trivia. Extract every symbol referenced by the source's #if/#elif
+        // conditions and parse a third time with all of them (plus DEBUG) defined so
+        // those regions become active and their literal/comment spans are collected
+        // and merged as well.
+        var referencedSymbols = CollectReferencedPreprocessorSymbols(source);
+        if (referencedSymbols.Count > 0)
+        {
+            var allSymbols = new List<string>(DebugPreprocessorSymbols.Length + referencedSymbols.Count);
+            allSymbols.AddRange(DebugPreprocessorSymbols);
+            allSymbols.AddRange(referencedSymbols);
+            spansToMask.AddRange(CollectMaskSpans(source, new CSharpParseOptions(preprocessorSymbols: allSymbols)));
+        }
 
         // Mask the raw source with the merged Roslyn-provided spans. The hand-rolled
         // scanners for //, /*, and ' are removed because Roslyn already correctly
@@ -66,7 +86,7 @@ internal static partial class EnvVarGuardScanner
         var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
         var root = syntaxTree.GetRoot();
 
-        foreach (var token in root.DescendantTokens())
+        foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
         {
             foreach (var trivia in token.LeadingTrivia)
             {
@@ -93,6 +113,38 @@ internal static partial class EnvVarGuardScanner
         }
 
         return spans;
+    }
+
+    private static List<string> CollectReferencedPreprocessorSymbols(string source)
+    {
+        var symbols = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var line in source.Split('\n'))
+        {
+            Match directive = DirectiveRegex().Match(line);
+            if (!directive.Success)
+            {
+                continue;
+            }
+
+            var keyword = directive.Groups[1].Value;
+            if (keyword is not ("if" or "elif"))
+            {
+                continue;
+            }
+
+            foreach (Match identifier in IdentifierRegex().Matches(directive.Groups[2].Value))
+            {
+                var name = identifier.Value;
+                if (!name.Equals("defined", StringComparison.Ordinal)
+                    && !name.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    && !name.Equals("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    symbols.Add(name);
+                }
+            }
+        }
+
+        return new List<string>(symbols);
     }
 
     private static void AddTriviaSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia)
