@@ -13,11 +13,14 @@
        If the testhost survives, the original failure was the dump-writing path
        (createdump), not the hang signalling itself.
 
-    2. Antivirus / EDR debug-privilege check: run createdump against a
-       long-lived test process and observe whether it can obtain the debug
-       privilege required to write a dump. If the dump fails with an
-       access-denied pattern while the same binary works on a clean host, the
-       failure is EDR blocking.
+    2. Parent-process dump smoke test: run createdump directly (it dumps its
+       parent process) and observe whether a dump is written. The helper
+       process below is an owned long-lived companion whose teardown
+       discipline must hold on every path; it is not the dump target.
+       If validating EDR blocking of privileged access is required,
+       reproduce the actual runtime-triggered createdump path targeting a
+       different process such as $helperProc instead of relying on this
+       smoke test.
 
     The script exits 0 when both steps complete without throwing. Step results
     are written to the report file and to the console; a human must interpret
@@ -109,17 +112,51 @@ $step1Args = @(
     '--logger', 'trx;LogFileName=office-step1.trx'
 )
 
-$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
+# Step 1 pre-flight: validate inputs and required build artifacts before
+# launching. Step 1 runs with --no-build --no-restore, so a missing solution,
+# non-positive timeout, or absent built test assembly would exit fast with a
+# non-zero code that must not be misclassified as a testhost abort below.
+$repoRoot = Split-Path -Parent $scriptRoot
+$solutionPath = if ([System.IO.Path]::IsPathRooted($Solution)) { $Solution } else { Join-Path $repoRoot $Solution }
+if (-not (Test-Path -LiteralPath $solutionPath)) {
+    Log "FAIL: Step 1 solution not found: $solutionPath. Pass -Solution with the path to GanttCreator.slnx."
+    exit 2
+}
+if ($Step1TimeoutSeconds -le 0 -or $Step1DeadlineSeconds -le 0) {
+    Log 'FAIL: Step 1 timeout and deadline must be positive integers.'
+    exit 2
+}
+$step1TestDll = Get-ChildItem -Path (Join-Path $repoRoot 'tests\GanttCreator.Office.IntegrationTests\bin') -Recurse -Filter 'GanttCreator.Office.IntegrationTests.dll' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match [regex]::Escape($Configuration) } | Select-Object -First 1
+if (-not $step1TestDll) {
+    Log "FAIL: Step 1 requires built $Configuration test artifacts (--no-build --no-restore). Build the solution first."
+    exit 2
+}
+Log "Step 1 test assembly: $($step1TestDll.FullName)"
+
+$step1OutTmp = Join-Path $env:TEMP 'l12-step1-out.tmp'
+$step1ErrTmp = Join-Path $env:TEMP 'l12-step1-err.tmp'
+$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru -RedirectStandardOutput $step1OutTmp -RedirectStandardError $step1ErrTmp
 $step1Watchdog = [System.Diagnostics.Stopwatch]::StartNew()
 $step1ExitCode = $null
 $step1Crashed = $false
+$step1Outcome = ''
 
-# Poll the process. If it dies in under 1s we treat that as the crash pattern
-# rather than a normal early exit, because a healthy OfficeIntegration run
-# does not complete that fast on this host.
+# Poll the process. A fast exit alone is not a crash: missing inputs,
+# invalid arguments, and no-build/no-restore failures also exit fast. The
+# classification below captures command output and the exit status and only
+# sets $step1Crashed when those results identify a testhost abort; missing
+# inputs and invalid arguments keep distinct handling via the pre-flight
+# exits above and the invalid-args outcome below.
 while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $Step1DeadlineSeconds) {
     Start-Sleep -Seconds 1
 }
+
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+$step1StdErr = Get-Content -LiteralPath $step1ErrTmp -Raw -ErrorAction SilentlyContinue
+$step1Output = "$step1StdOut`n$step1StdErr"
+Remove-Item -LiteralPath $step1OutTmp -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $step1ErrTmp -Force -ErrorAction SilentlyContinue
 
 if ($step1Proc.HasExited) {
     $step1ExitCode = $step1Proc.ExitCode
@@ -128,11 +165,30 @@ if ($step1Proc.HasExited) {
     # script's polling latency (up to the 1s sleep quantum), which could
     # misclassify a rapid crash as a later exit.
     $age = ($step1Proc.ExitTime - $step1Proc.StartTime).TotalSeconds
-    if ($age -lt 1.0) {
+    $abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+    $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
+    if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
+        $step1Outcome = 'invalid-args'
+        Log "Step 1: exited ${age}s after start with exit code $step1ExitCode and invalid-argument output."
+        Log '  Interpretation: invalid arguments or missing inputs; not classified as a testhost crash. Fix the invocation and re-run.'
+        Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+    } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
         $step1Crashed = $true
+        $step1Outcome = 'testhost-abort'
         Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
-        Log '  Interpretation: crash pattern (under 1s). The dump-type-none probe did NOT avoid the failure.'
+        Log '  Interpretation: crash pattern (under 1s with testhost-abort output). The dump-type-none probe did NOT avoid the failure.'
+        Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+    } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0) {
+        $step1Outcome = 'fast-exit-unclassified'
+        Log "Step 1: exited ${age}s after start with exit code $step1ExitCode but no testhost-abort signature in output."
+        Log '  Interpretation: fast exit without abort evidence; not classified as a testhost crash. Inspect the output excerpt below.'
+        Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+    } elseif ($age -lt 1.0) {
+        $step1Outcome = 'fast-exit-zero'
+        Log "Step 1: exited ${age}s after start with exit code $step1ExitCode."
+        Log '  Interpretation: fast zero exit; not a testhost abort pattern.'
     } else {
+        $step1Outcome = 'survived'
         Log "Step 1: testhost exited after ${age}s with exit code $step1ExitCode."
         if ($step1ExitCode -eq 0) {
             Log '  Interpretation: PASS. The blame hang signalling survived, only the dump write was failing.'
@@ -142,6 +198,7 @@ if ($step1Proc.HasExited) {
         }
     }
 } else {
+    $step1Outcome = 'timeout'
     Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
     Log '  Killing the step-1 process tree and continuing to Step 2.'
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
@@ -150,24 +207,26 @@ if ($step1Proc.HasExited) {
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 }
 
-Log "Step 1 result: exit=$step1ExitCode crashed=$step1Crashed"
+Log "Step 1 result: exit=$step1ExitCode crashed=$step1Crashed outcome=$step1Outcome"
 
 # ------------------------------------------------------------------
-# Step 2: createdump debug-privilege check.
+# Step 2: createdump parent-process dump smoke test.
 #
-# createdump needs SeDebugPrivilege to open a remote process and write its
-# memory. If an antivirus / EDR block is in force, createdump will fail fast
-# with an access-denied pattern even against a process it owns. We spawn a
-# trivial long-lived process we control, point createdump at it, and inspect
-# the outcome.
+# The installed createdump writes a dump of its parent process (it does not
+# accept an arbitrary PID target), so this step only establishes whether a
+# direct createdump invocation can write a dump on this host. It is not a
+# debug-privilege probe against a remote process: the spawned helper below
+# is an owned long-lived companion whose teardown discipline must hold on
+# every path, not the dump target.
 #
 # This is a host-configuration probe, not a code gate. A host where Step 1
 # passes and Step 2 also passes is not the L12 host. A host where Step 1
-# crashes and Step 2 fails with an access-denied pattern is consistent with
-# EDR blocking createdump's debug privilege.
+# crashes and Step 2 also fails still needs the runtime-triggered
+# createdump path (targeting a different process such as $helperProc) to
+# validate any EDR-blocking hypothesis.
 # ------------------------------------------------------------------
 Log ''
-Log '=== Step 2: createdump debug-privilege probe ==='
+Log '=== Step 2: createdump parent-process dump smoke test ==='
 
 $step2Result = @{
     CreatedumpFound = [bool]$createdump
@@ -185,9 +244,10 @@ if (-not $createdump) {
     # cannot be pointed at an arbitrary PID (verified locally and in
     # dotnet/runtime src/coreclr/debug/createdump/createdumpmain.cpp:
     # "The pid argument is no longer supported"; createdump writes a dump of
-    # its parent process), so the debug-privilege probe runs against the
-    # diagnostic's own process. The helper stays as an owned long-lived
-    # process whose teardown discipline must hold on every path.
+    # its parent process), so this step is a diagnostic parent-process dump
+    # smoke test, not a debug-privilege probe. The helper stays as an owned
+    # long-lived companion process whose teardown discipline must hold on
+    # every path.
     $helperDir = Join-Path ([System.IO.Path]::GetTempPath()) ('l12-step2-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $helperDir -Force | Out-Null
     $helperScript = Join-Path $helperDir 'sleep.ps1'
@@ -209,6 +269,10 @@ Start-Sleep -Seconds 600
             $dumpDir = Join-Path $evidence 'step2-dump'
             if (-not (Test-Path -LiteralPath $dumpDir)) { New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null }
             $dumpPath = Join-Path $dumpDir 'step2-parent.dmp'
+            # Never reuse a stale dump: a leftover step2-parent.dmp from a
+            # previous run would make a fresh failure report dump-written.
+            # Remove it up front so Test-Path below only sees this run's dump.
+            Remove-Item -LiteralPath $dumpPath -Force -ErrorAction SilentlyContinue
 
             # One valid path value per redirect parameter: the previous form
             # ('-RedirectStandardOutput $env:TEMP Step2-out.tmp') passed two
@@ -290,14 +354,16 @@ Start-Sleep -Seconds 600
 Log ''
 Log '=== L12 createdump diagnostic summary ==='
 Log "Step 1 (--blame-hang-dump-type none): exited=$step1ExitCode crashed=$step1Crashed"
-Log "Step 2 (createdump debug-privilege): $(if ($createdump) { $step2Result.Outcome } else { 'skipped (createdump not found)' })"
+Log "Step 2 (createdump parent-process dump smoke test): $(if ($createdump) { $step2Result.Outcome } else { 'skipped (createdump not found)' })"
 Log ''
 Log 'Human interpretation:'
 Log '  - If Step 1 PASS (exit 0, survived past 0.2s) and Step 2 PASS (dump written):'
 Log '      the original L12 failure was the createdump dump-write path, not hang signalling.'
 Log '      The --blame-hang-dump-type none alternative is viable on this host.'
-Log '  - If Step 1 crashed (under 1s) AND Step 2 access-denied:'
-Log '      consistent with antivirus / EDR blocking createdump''s SeDebugPrivilege.'
+Log '  - If Step 1 crashed (under 1s) AND Step 2 failed:'
+Log '      the smoke test alone cannot identify EDR blocking of privileged access;'
+Log '      reproduce the runtime-triggered createdump path targeting a different'
+Log '      process such as $helperProc before attributing the failure to SeDebugPrivilege.'
 Log '      The cheaper native-flag alternative did not help; the next hang-detection'
 Log '      implementation should treat the native blame collector as unsupported here.'
 Log '  - If Step 1 crashed but Step 2 passed:'

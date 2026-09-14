@@ -32,19 +32,23 @@ Describe 'diagnose-l12-createdump.ps1' {
         $codeOnly | Should -Match '--blame-hang-timeout' -Because 'Step 1 must set a hang timeout'
 
         # The bare-without-dump-type pattern that caused L12 must not appear.
-        # The numeric timeout may be followed immediately by whitespace or
-        # end-of-input (e.g. '... --blame-hang-timeout 600\n').
-        $barePattern = '--blame-hang-timeout\s+\d+e?(\s|$)'
+        # The numeric timeout may carry a duration suffix (the script itself
+        # passes "${Step1TimeoutSeconds}s", e.g. '60s') or be followed
+        # immediately by whitespace or end-of-input
+        # (e.g. '... --blame-hang-timeout 600\n').
+        $barePattern = '--blame-hang-timeout\s+''?\d+(ms|s|m|h)?e?''?(\s|$|,)'
         $codeOnly | Should -Not -Match $barePattern -Because 'a bare blame-hang-timeout without dump-type none is the L12 regression'
     }
 
-    It 'Step 2 probes createdump debug privilege, not the testhost' {
+    It 'Step 2 is a parent-process dump smoke test, not a debug-privilege probe' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match 'createdump' -Because 'Step 2 must invoke createdump directly'
         $codeOnly | Should -Match 'Start-Sleep\s+-Seconds\s+600' -Because 'Step 2 needs a predictable long-lived helper process'
-        $codeOnly | Should -Match 'SeDebugPrivilege|debug.*privilege|access denied|AccessDenied|STATUS_ACCESS_DENIED' -Because 'Step 2 must classify the failure mode, not just report an exit code'
+        $codeOnly | Should -Match 'parent-process dump smoke test' -Because 'Step 2 must be classified only as a dump smoke test, not a debug-privilege probe'
+        $codeOnly | Should -Match '\$helperProc' -Because 'the helper-process guidance must name the runtime-triggered dump target'
+        $codeOnly | Should -Not -Match 'debug-privilege probe' -Because 'Step 2 must not claim to probe remote-process debug privilege'
     }
 
     It 'does not kill user-owned Office processes' {
@@ -81,9 +85,43 @@ Describe 'diagnose-l12-createdump.ps1' {
 dotnet test --blame-hang-timeout 600
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $barePattern = '--blame-hang-timeout\s+\d+e?(\s|$)'
+        $barePattern = '--blame-hang-timeout\s+''?\d+(ms|s|m|h)?e?''?(\s|$|,)'
         $codeOnly | Should -Match $barePattern -Because 'the negative assertion must be able to detect a bare blame-hang-timeout'
         $codeOnly | Should -Not -Match '--blame-hang-dump-type\s+none' -Because 'this flagged stub deliberately omits the dump-type constraint'
+    }
+
+    It 'positive control: a suffixed bare --blame-hang-timeout 60s also fails the paired-flags assertion' {
+        # The script passes "${Step1TimeoutSeconds}s" so a bare 60s timeout
+        # must also trip the detector; otherwise the negative assertion has
+        # a suffix blind spot.
+        $flagged = @'
+dotnet test --blame-hang-timeout 60s
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $barePattern = '--blame-hang-timeout\s+''?\d+(ms|s|m|h)?e?''?(\s|$|,)'
+        $codeOnly | Should -Match $barePattern -Because 'the negative assertion must detect a bare suffixed blame-hang-timeout'
+        $codeOnly | Should -Not -Match '--blame-hang-dump-type\s+none' -Because 'this flagged stub deliberately omits the dump-type constraint'
+    }
+
+    It 'Step 1 validates inputs and build artifacts before launching' {
+        # Step 1 runs with --no-build --no-restore, so missing inputs must
+        # fail distinctly instead of being misclassified as a testhost abort.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $codeOnly | Should -Match 'solution not found' -Because 'a missing solution must fail distinctly before launch'
+        $codeOnly | Should -Match 'built .* test artifacts' -Because 'absent no-build artifacts must fail distinctly before launch'
+        $codeOnly | Should -Match 'invalid-args' -Because 'invalid arguments must keep distinct handling from a testhost abort'
+        $codeOnly | Should -Match 'RedirectStandardOutput' -Because 'classification must capture command output, not just timing'
+        $codeOnly | Should -Match '\$step1Crashed' -Because 'the crash flag must remain the abort signal'
+    }
+
+    It 'Step 2 never reuses a stale dump from a previous run' {
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $codeOnly | Should -Match 'step2-parent\.dmp' -Because 'Step 2 writes its dump to a stable evidence path'
+        $codeOnly | Should -Match 'Remove-Item\s+-LiteralPath\s+\$dumpPath' -Because 'a stale dump must be removed before createdump runs so failure cannot read as dump-written'
     }
 
     It 'positive control: a flagged stub that lacks createdump lacks the Step 2 probes' {

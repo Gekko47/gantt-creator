@@ -191,19 +191,31 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             return $joined
         }
 
-        # Counts project/solution target tokens across every `dotnet test`
-        # logical line in the given script text. Target tokens are file
+        # Returns one target-token count per `dotnet test` invocation, in
+        # source order. Target tokens are file
         # references (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or
         # Solution/Project-named PowerShell variables; options, option
         # values, and filter literals are ignored. The healthy form is
-        # exactly 1.
+        # exactly 1 per invocation: an aggregate total can hide a
+        # zero-target invocation alongside a multi-target one, or flag two
+        # healthy invocations as one violation.
         function Get-DotnetTestProjectTokenCount {
             param([string]$ScriptText)
-            $count = 0
-            foreach ($line in (Join-LogicalLines -Text $ScriptText)) {
-                if ($line -notmatch '(?i)(?:^|[\s;|])dotnet\s+test(?:\s|$)') { continue }
-                $tail = $line -replace '(?i)^.*?dotnet\s+test(?:\s+|$)', ''
-                $tail = ($tail -split '#')[0]
+            # Strip PowerShell block comments (<# ... #>) first: the synopsis
+            # in test-non-office.ps1 mentions `dotnet test` in prose, which is
+            # not an invocation and must not be counted as a zero-target
+            # violation.
+            $noBlock = $ScriptText -replace '(?s)<#.*?#>', ''
+            $counts = @()
+            foreach ($line in (Join-LogicalLines -Text $noBlock)) {
+                # Strip PowerShell comments before matching: full-line and
+                # trailing `#` comments mentioning `dotnet test` (e.g. the
+                # contract comment in test-non-office.ps1) are not invocations
+                # and must not be counted as zero-target violations.
+                $code = ($line -split '#')[0]
+                if ($code -notmatch '(?i)(?:^|[\s;|])dotnet\s+test(?:\s|$)') { continue }
+                $tail = $code -replace '(?i)^.*?dotnet\s+test(?:\s+|$)', ''
+                $count = 0
                 foreach ($token in ($tail -split '\s+' | Where-Object { $_ -ne '' })) {
                     if ($token -match '^-') { continue }
                     if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
@@ -211,8 +223,9 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         $count++
                     }
                 }
+                $counts += $count
             }
-            return $count
+            return $counts
         }
     }
 
@@ -225,9 +238,12 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             ForEach-Object {
                 $text = Get-Content -LiteralPath $_.FullName -Raw
                 if ($text -match '(?i)dotnet\s+test(?:\s|$)') {
-                    $n = Get-DotnetTestProjectTokenCount -ScriptText $text
-                    if ($n -ne 1) {
-                        $violations += "$($_.Name): dotnet test has $n target token(s), expected exactly 1"
+                    $index = 0
+                    foreach ($n in @(Get-DotnetTestProjectTokenCount -ScriptText $text)) {
+                        $index++
+                        if ($n -ne 1) {
+                            $violations += "$($_.Name) invocation ${index}: dotnet test has $n target token(s), expected exactly 1"
+                        }
                     }
                 }
             }
@@ -245,7 +261,7 @@ dotnet test `
     -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 '@
-        Get-DotnetTestProjectTokenCount -ScriptText $broken | Should -Be 3
+        @(Get-DotnetTestProjectTokenCount -ScriptText $broken) | Should -Be @(3)
     }
 
     It 'tripwire accepts the single-solution form (negative control)' {
@@ -253,19 +269,29 @@ dotnet test `
 dotnet test $Solution -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 '@
-        Get-DotnetTestProjectTokenCount -ScriptText $healthy | Should -Be 1
+        @(Get-DotnetTestProjectTokenCount -ScriptText $healthy) | Should -Be @(1)
     }
 
     It 'tripwire flags a dotnet test invocation with no project/solution target' {
         # Zero targets is equally ambiguous (repo-root default resolution);
         # the contract is exactly one, so 0 must also be detectable.
         $none = 'dotnet test -c Release --no-build --no-restore'
-        Get-DotnetTestProjectTokenCount -ScriptText $none | Should -Be 0
+        @(Get-DotnetTestProjectTokenCount -ScriptText $none) | Should -Be @(0)
 
         # A bare `dotnet test` line (end-of-line, not whitespace, after the
         # command) must also enter the validation guard and be counted;
         # the exactly-one-target contract still flags it.
-        Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test' | Should -Be 0
+        @(Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test') | Should -Be @(0)
+    }
+
+    It 'tripwire rejects a zero-target invocation alongside a valid one (positive control)' {
+        # Aggregate validation would see 0 + 1 = 1 and pass; per-invocation
+        # validation must flag the zero-target line independently.
+        $mixed = @'
+dotnet test -c Release --no-build --no-restore
+dotnet test $Solution -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $mixed) | Should -Be @(0, 1)
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {
