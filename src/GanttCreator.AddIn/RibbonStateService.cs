@@ -212,7 +212,7 @@ internal class RibbonStateService
     {
         DisposeWorkbookStateSubscription();
 
-        var adapter = _applicationAdapter;
+        IExcelApplicationAdapter? adapter = _applicationAdapter;
         if (adapter is null)
         {
             return;
@@ -243,7 +243,7 @@ internal class RibbonStateService
     /// </summary>
     private void DisposeWorkbookStateSubscription()
     {
-        var subscription = _workbookStateSubscription;
+        IDisposable? subscription = _workbookStateSubscription;
         _workbookStateSubscription = null;
         if (subscription is null)
         {
@@ -271,7 +271,7 @@ internal class RibbonStateService
     /// <param name="action">The ribbon operation to perform.</param>
     private void InvokeRibbon(Action<IRibbonUI> action)
     {
-        var ribbon = _ribbon;
+        IRibbonUI? ribbon = _ribbon;
         if (ribbon is null)
         {
             return;

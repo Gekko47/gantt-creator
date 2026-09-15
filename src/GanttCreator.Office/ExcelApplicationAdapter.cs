@@ -41,7 +41,7 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     /// <inheritdoc />
     public bool? HasActiveWorkbook()
     {
-        var application = _application;
+        Excel.Application? application = _application;
         if (application is null)
         {
             return null;
@@ -54,7 +54,7 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
 #pragma warning disable CA1031
         try
         {
-            var workbook = application.ActiveWorkbook;
+            Excel.Workbook? workbook = application.ActiveWorkbook;
             return workbook is not null;
         }
         catch
@@ -69,7 +69,7 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     {
         ArgumentNullException.ThrowIfNull(handler);
 
-        var events = _events;
+        Excel.AppEvents_Event? events = _events;
         if (events is null)
         {
             return InertSubscription.Instance;
