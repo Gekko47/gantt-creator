@@ -2,6 +2,7 @@ using System.Globalization;
 using ExcelDna.Integration;
 using GanttCreator.Core;
 using GanttCreator.Core.Logging;
+using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
 
@@ -74,6 +75,19 @@ public sealed class AddInHost(
             // below, so AutoOpen stays never-throwing.
             DiagnosticsService.Instance.SetLog(log);
             CommandBoundary.Instance.SetLog(log);
+
+            // Arm the Ribbon state service: publish the Excel application
+            // adapter (workbook fact + workbook-state events) and the log
+            // availability source, then take the first snapshot and invalidate.
+            // ExcelDnaUtil.Application returns null outside a live Excel host,
+            // so the adapter reports "not determinable" (which keeps the
+            // previous value) instead of throwing; the state service never
+            // writes a log record, so the one-record contract above holds.
+            RibbonStateService.Instance.SetApplicationAdapter(
+                new ExcelApplicationAdapter(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetLogAvailabilitySource(
+                () => DiagnosticsService.Instance.LogFilePath is not null);
+            RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031
         catch
@@ -127,6 +141,7 @@ public sealed class AddInHost(
             {
                 DiagnosticsService.Reset();
                 CommandBoundary.Reset();
+                RibbonStateService.Reset();
                 _log = null;
             }
         }

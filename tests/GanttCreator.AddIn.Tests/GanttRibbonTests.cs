@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core.Logging;
+using GanttCreator.Office;
 using Moq;
 
 // CA2000: test fixtures are deliberately not disposed — the code under test
@@ -237,6 +238,152 @@ public class GanttRibbonTests
 
         control.SetupGet(c => c.Id).Returns(string.Empty);
         Assert.Equal("OnDiagnosticsClick", GanttRibbon.ResolveCommandName(control.Object));
+
+        control.SetupGet(c => c.Id).Returns("   ");
+        Assert.Equal("OnOpenLogClick", GanttRibbon.ResolveCommandName(control.Object, "OnOpenLogClick"));
+    }
+
+    [Fact]
+    public void OnLoad_publishes_the_ribbon_handle_and_invalidates_once()
+    {
+        var stateService = new RibbonStateService();
+        var ribbon = new Mock<IRibbonUI>();
+
+        GanttRibbon.OnLoad(ribbon.Object, stateService);
+
+        Assert.Same(ribbon.Object, stateService.GetRibbon());
+        Assert.Equal(
+            1,
+            ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
+    }
+
+    [Fact]
+    public void OnLoad_with_a_null_handle_never_throws_and_publishes_null()
+    {
+        var stateService = new RibbonStateService();
+
+        var exception = Record.Exception(() => GanttRibbon.OnLoad(null, stateService));
+
+        Assert.Null(exception);
+        Assert.Null(stateService.GetRibbon());
+    }
+
+    [Fact]
+    public void GetEnabled_routes_through_the_state_service()
+    {
+        var adapter = new Mock<IExcelApplicationAdapter>();
+        adapter.Setup(a => a.HasActiveWorkbook()).Returns(true);
+        var stateService = new RibbonStateService();
+        stateService.SetApplicationAdapter(adapter.Object);
+        stateService.SetLogAvailabilitySource(() => true);
+        stateService.Refresh();
+
+        var diagnostics = new Mock<IRibbonControl>();
+        diagnostics.SetupGet(c => c.Id).Returns(RibbonControlIds.Diagnostics);
+        var openLog = new Mock<IRibbonControl>();
+        openLog.SetupGet(c => c.Id).Returns(RibbonControlIds.OpenLog);
+
+        Assert.True(GanttRibbon.GetEnabled(diagnostics.Object, stateService));
+        Assert.True(GanttRibbon.GetEnabled(openLog.Object, stateService));
+
+        // The getter must be a pure snapshot read: no second probe of the
+        // state source beyond the refresh capture.
+        adapter.Verify(a => a.HasActiveWorkbook(), Times.Once);
+    }
+
+    [Fact]
+    public void GetEnabled_stays_enabled_when_the_control_id_probe_fails()
+    {
+        // Both facts false: only the fail-open probe path can return true.
+        var stateService = new RibbonStateService();
+        stateService.SetApplicationAdapter(new Mock<IExcelApplicationAdapter>().Object);
+        stateService.SetLogAvailabilitySource(() => false);
+        stateService.Refresh();
+
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Throws(new InvalidOperationException("probe failed"));
+
+        Assert.True(GanttRibbon.GetEnabled(control.Object, stateService));
+    }
+
+    [Fact]
+    public void Ribbon_declares_getEnabled_on_exactly_the_two_gated_controls()
+    {
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        var gatedIds = doc.Descendants(ns + "button")
+            .Where(button => button.Attribute("getEnabled") is not null)
+            .Select(button => button.Attribute("id")?.Value)
+            .ToList();
+
+        Assert.Equal(
+            [RibbonControlIds.Diagnostics, RibbonControlIds.OpenLog],
+            gatedIds);
+    }
+
+    [Fact]
+    public void OnOpenLogClick_routes_through_the_command_boundary()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var executed = false;
+
+        GanttRibbon.OnOpenLogClick(null, boundary, () => executed = true);
+
+        Assert.True(executed, "The command must run.");
+        Assert.Empty(written);
+        Assert.Empty(shown);
+    }
+
+    [Fact]
+    public void OnOpenLogClick_failure_produces_one_record_one_dialog_and_the_fallback_name()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+
+        GanttRibbon.OnOpenLogClick(null, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("CommandError", record, StringComparison.Ordinal);
+        Assert.Contains("command=OnOpenLogClick", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void Every_ribbon_command_refreshes_the_ribbon_state_after_the_boundary_run()
+    {
+        // Work item R1.5 decision D3: every command run through the ribbon's
+        // boundary ends with a ribbon-state refresh — once on success and once
+        // when the command throws (the boundary absorbs the failure).
+        var diagnosticsRefreshes = 0;
+        var openLogRefreshes = 0;
+        var boundary = new CommandBoundary(presenter: _ => { });
+
+        GanttRibbon.OnDiagnosticsClick(null, boundary, () => { }, () => diagnosticsRefreshes++);
+        GanttRibbon.OnDiagnosticsClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"), () => diagnosticsRefreshes++);
+        GanttRibbon.OnOpenLogClick(null, boundary, () => { }, () => openLogRefreshes++);
+        GanttRibbon.OnOpenLogClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"), () => openLogRefreshes++);
+
+        Assert.Equal(2, diagnosticsRefreshes);
+        Assert.Equal(2, openLogRefreshes);
     }
 
     /// <summary>

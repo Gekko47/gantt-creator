@@ -15,6 +15,13 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
+    <!--
+      Moq. Used to proxy Microsoft.Office.Interop.Excel.Application (an
+      interface in the Office PIA) and its AppEvents_Event event interface, so
+      the Excel application adapter's workbook fact and its exactly-once event
+      subscribe/detach bookkeeping are proven without a live Excel host.
+    -->
+    <PackageReference Include="Moq" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
