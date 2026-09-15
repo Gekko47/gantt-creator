@@ -198,4 +198,73 @@ $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' 
         $codeOnly | Should -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'this stub deliberately re-introduces the artifact-only classification'
         $codeOnly | Should -Not -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)'
     }
+
+    It 'Step 1 timeout terminates and waits for the owned tree, preserves both streams before deleting the temp files, and reports the output' {
+        # The redirected temp files are held open by the child until it
+        # exits: reading or deleting them before the kill-and-wait captures
+        # partial output and can silently fail the deletes. The timeout
+        # branch is the only path where the process is still alive when the
+        # streams are read, so the deadline kill must be waited on first.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $timeoutIdx = $codeOnly.IndexOf("'timeout'")
+        $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
+        $waitIdx = $codeOnly.IndexOf('$step1Proc.WaitForExit')
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $deleteIdx = $codeOnly.IndexOf('Remove-Item -LiteralPath $step1OutTmp')
+        $excerptIdx = $codeOnly.IndexOf('Output excerpt')
+
+        $timeoutIdx | Should -BeGreaterThan -1 -Because 'the deadline branch must be classified as timeout'
+        $killIdx | Should -BeGreaterThan -1 -Because 'the deadline branch must terminate the owned process tree'
+        $waitIdx | Should -BeGreaterThan -1 -Because 'the deadline kill must be followed by a wait on the owned tree'
+        $readIdx | Should -BeGreaterThan $killIdx -Because 'both streams must be read only after the process has been terminated and awaited'
+        $waitIdx | Should -BeLessThan $readIdx -Because 'the wait must happen before the stream reads, not only in the error/cleanup finally block'
+        $deleteIdx | Should -BeGreaterThan $readIdx -Because 'the temp files must be deleted only after their content is preserved'
+        $excerptIdx | Should -BeGreaterThan $timeoutIdx -Because 'the timeout failure report must include the captured $step1Output excerpt'
+    }
+
+    It 'positive control: a stub reading and deleting the streams before the deadline kill fails the timeout ordering' {
+        $flagged = @'
+$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
+while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $Step1DeadlineSeconds) { Start-Sleep -Seconds 1 }
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+$step1Output = "$step1StdOut`n$step1StdErr"
+Remove-Item -LiteralPath $step1OutTmp -Force -ErrorAction SilentlyContinue
+if ($step1Proc.HasExited) { } else {
+    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    $step1ExitCode = 124
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $killIdx | Should -BeGreaterThan -1
+        $readIdx | Should -BeLessThan $killIdx -Because 'this stub deliberately reads the streams before the deadline kill'
+    }
+
+    It 'Step 1 recognizes testhost-abort signatures at or after one second, and the summary no longer limits crashes to under 1s' {
+        # A nonzero exit whose output matches the abort pattern must classify
+        # as testhost-abort even when the process survived past the 1s mark;
+        # the branch must not be guarded by the sub-second fast-exit test.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $codeOnly | Should -Match $anyAgeAbort -Because 'abort signatures at/after 1s must classify as testhost-abort, not as a mere test-run failure'
+        $codeOnly | Should -Not -Match 'crashed \(under 1s\)' -Because 'crash classification is no longer limited to sub-second exits'
+        $codeOnly | Should -Match 'If Step 1 crashed' -Because 'the summary keeps the crash guidance branch'
+    }
+
+    It 'positive control: a stub classifying aborts only under one second fails the any-age assertion' {
+        $flagged = @'
+if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    $step1Crashed = $true
+    $step1Outcome = 'testhost-abort'
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $codeOnly | Should -Not -Match $anyAgeAbort -Because 'this stub deliberately limits abort classification to sub-second exits'
+    }
 }

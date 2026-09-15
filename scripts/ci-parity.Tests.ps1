@@ -171,41 +171,15 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
     # scripts/*.ps1 entry points the workflow delegates to.
 
     BeforeAll {
-        # Joins backtick line continuations so a logical command split over
-        # several physical lines is scanned as one string.
-        function Join-LogicalLines {
-            param([string]$Text)
-            $joined = New-Object System.Collections.Generic.List[string]
-            $pending = ''
-            foreach ($line in ($Text -split "`r?`n")) {
-                if ($pending -ne '') {
-                    $current = "$pending$line"
-                } else {
-                    $current = $line
-                }
-                if ($current -match '(?m)\x60$') {
-                    $pending = $current -replace '(?m)\x60$', ''
-                } else {
-                    $null = $joined.Add($current)
-                    $pending = ''
-                }
-            }
-            if ($pending -ne '') { $null = $joined.Add($pending) }
-            return $joined
-        }
-
-        # Returns one target-token count per `dotnet test` invocation, in
-        # source order. Target tokens are file
-        # references (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or
-        # Solution/Project-named PowerShell variables; options, option
-        # values, and filter literals are ignored. The healthy form is
-        # exactly 1 per invocation: an aggregate total can hide a
-        # zero-target invocation alongside a multi-target one, or flag two
-        # healthy invocations as one violation.
         # Recursively finds all `dotnet test` command invocations in a
         # PowerShell AST. Using the AST (rather than regex) preserves quoted
         # separators, so a `;` or `|` inside a quoted string does not split
         # one invocation into two, and arguments with spaces are kept intact.
+        # The input AST is produced by a single ParseInput call over the
+        # complete script text, so backtick continuations are already
+        # resolved and here-string prose and comments are naturally excluded:
+        # a here-string is a string literal (never a CommandAst) and comments
+        # belong to no AST node at all.
         function Find-DotnetTestCommands {
             param([System.Management.Automation.Language.Ast]$Ast, [ref]$Results)
             if (-not $Ast) { return }
@@ -222,74 +196,106 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             }
         }
 
+        # Returns one target-token count per `dotnet test` invocation, in
+        # source order. Target tokens are literal project/solution paths
+        # (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or a Solution/Project-named
+        # PowerShell variable that the same script proves is a scalar string
+        # (a [string]-constrained parameter or a [string] cast assignment).
+        # Splatted variables, sub-expressions, and unverifiable variables are
+        # rejected: dotnet test accepts exactly ONE positional project or
+        # solution, and a collection or splat delivers many values (or none),
+        # never one target. The healthy form is exactly 1 per invocation: an
+        # aggregate total can hide a zero-target invocation alongside a
+        # multi-target one, or flag two healthy invocations as one violation.
         function Get-DotnetTestProjectTokenCount {
             param([string]$ScriptText)
-            # Strip PowerShell block comments (<# ... #>) first: the synopsis
-            # in test-non-office.ps1 mentions `dotnet test` in prose, which is
-            # not an invocation and must not be counted as a zero-target
-            # violation.
-            $noBlock = $ScriptText -replace '(?s)<#.*?#>', ''
             $counts = @()
-            foreach ($line in (Join-LogicalLines -Text $noBlock)) {
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-                # Use the PowerShell AST to identify command invocations and
-                # preserve quoted separators. The previous regex extracted one
-                # tail from the complete logical line, which could not see
-                # multiple dotnet test invocations on one line and split quoted
-                # arguments on whitespace. Comments are naturally excluded by
-                # the AST: they are not part of any CommandAst node.
-                $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$null)
-                if (-not $ast) { continue }
-                $commands = @()
-                Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
-                foreach ($cmd in $commands) {
-                    $count = 0
-                    $skipNext = $false
-                    $elements = $cmd.CommandElements
-                    # Skip element 0 (the `test` subcommand); process the rest.
-                    for ($i = 1; $i -lt $elements.Count; $i++) {
-                        $elem = $elements[$i]
-                        if ($skipNext) {
-                            $skipNext = $false
-                            continue
-                        }
-                        # Command parameters (options like -c, --diag) are not
-                        # positional targets. --diag takes a diagnostic file path
-                        # as its value; the next token is that value, not a
-                        # project/solution target.
-                        if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
-                            if ($elem.ParameterName -eq 'diag') {
-                                $skipNext = $true
-                            }
-                            continue
-                        }
-                        # Get the token text for target matching. String constants
-                        # (including quoted paths with spaces) and variables are
-                        # the forms that can be targets; other expression types
-                        # (splats, subexpressions, etc.) are not.
-                        $token = $null
-                        if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
-                            $token = $elem.Value
-                            # `--diag` is parsed as a string constant (not a
-                            # CommandParameterAst) in the `dotnet test` command
-                            # line; the next element is its value, not a target.
-                            if ($token -eq '--diag') {
-                                $skipNext = $true
-                            }
-                        } elseif ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                            # In this PowerShell runtime, VariableName omits '$';
-                            # Extent.Text preserves the parsed variable token.
-                            $token = $elem.Extent.Text
-                        } else {
-                            $token = $elem.Extent.Text
-                        }
-                        if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
-                            $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
-                            $count++
+            # Parse the complete script text ONCE. The AST resolves line
+            # continuations, quoted separators, here-strings, and comments
+            # natively; the replaced per-line Join-LogicalLines pass parsed
+            # each physical line separately, so here-string content was read
+            # as executable code and counted as phantom invocations.
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($ScriptText, [ref]$tokens, [ref]$parseErrors)
+            if (-not $ast) { return $counts }
+
+            # A variable reference counts as a target only when the script
+            # itself proves the variable is a scalar string: a [string]-typed
+            # parameter (param([string]$Solution = ...)) or a [string] cast
+            # assignment ([string]$Solution = ...). Anything else ($Projects
+            # collections, splats, unresolved names) must not pass as one
+            # positional target.
+            $scalarVars = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
+                $typeName = $typeConstraint.TypeName.FullName -replace '^System\.', ''
+                if ($typeName -ieq 'string') {
+                    $parent = $typeConstraint.Parent
+                    if ($parent -is [System.Management.Automation.Language.ParameterAst]) {
+                        $null = $scalarVars.Add($parent.Name.VariablePath.UserPath)
+                    } elseif ($parent -is [System.Management.Automation.Language.ConvertExpressionAst]) {
+                        # For a [string] cast assignment ([string]$Solution = ...)
+                        # the cast's operand variable is exposed as Child (the
+                        # Expression property is null on an assignment LHS).
+                        $operand = $parent.Child
+                        if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                            $null = $scalarVars.Add($operand.VariablePath.UserPath)
                         }
                     }
-                    $counts += $count
                 }
+            }
+
+            $commands = @()
+            Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
+            foreach ($cmd in $commands) {
+                $count = 0
+                $skipNext = $false
+                $elements = $cmd.CommandElements
+                # Skip element 0 (the `test` subcommand); process the rest.
+                for ($i = 1; $i -lt $elements.Count; $i++) {
+                    $elem = $elements[$i]
+                    if ($skipNext) {
+                        $skipNext = $false
+                        continue
+                    }
+                    # Command parameters (options like -c, --diag) are not
+                    # positional targets. --diag takes a diagnostic file path
+                    # as its value; the next token is that value, not a
+                    # project/solution target.
+                    if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
+                        if ($elem.ParameterName -eq 'diag') {
+                            $skipNext = $true
+                        }
+                        continue
+                    }
+                    if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                        # `--diag` is parsed as a string constant (not a
+                        # CommandParameterAst) in the `dotnet test` command
+                        # line; the next element is its value, not a target.
+                        if ($elem.Value -eq '--diag') {
+                            $skipNext = $true
+                        } elseif ($elem.Value -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$') {
+                            $count++
+                        }
+                        continue
+                    }
+                    if ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                        # In this PowerShell runtime, VariablePath.UserPath
+                        # omits '$'; a splatted variable (@Splat) is never one
+                        # positional target.
+                        if (-not $elem.Splatted) {
+                            $name = $elem.VariablePath.UserPath
+                            if ($name -match '(?i)(Solution|Project)' -and $scalarVars.Contains($name)) {
+                                $count++
+                            }
+                        }
+                        continue
+                    }
+                    # Any other expression type (sub-expressions, casts, nested
+                    # commands) cannot be verified as a single positional
+                    # project/solution target; it is never counted.
+                }
+                $counts += $count
             }
             return $counts
         }
@@ -331,7 +337,11 @@ dotnet test `
     }
 
     It 'tripwire accepts the single-solution form (negative control)' {
+        # Only a verified-scalar [string] Solution/Project variable counts as
+        # a target, so the healthy fragment declares it the way the real
+        # entry points do (test-non-office.ps1: param([string]$Solution = ...)).
         $healthy = @'
+param([string]$Solution = 'GanttCreator.slnx', [string]$Configuration = 'Release')
 dotnet test $Solution -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 '@
@@ -354,6 +364,7 @@ dotnet test $Solution -c $Configuration --no-build --no-restore `
         # Aggregate validation would see 0 + 1 = 1 and pass; per-invocation
         # validation must flag the zero-target line independently.
         $mixed = @'
+param([string]$Solution = 'GanttCreator.slnx')
 dotnet test -c Release --no-build --no-restore
 dotnet test $Solution -c Release --no-build --no-restore
 '@
@@ -368,6 +379,47 @@ dotnet test $Solution -c Release --no-build --no-restore
 dotnet test --diag diag.sln -c Release --no-build --no-restore
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $withDiag) | Should -Be @(0)
+    }
+
+    It 'tripwire ignores dotnet test prose inside a here-string (positive control)' {
+        # The counter parses the complete script text ONCE. A here-string is
+        # a string literal, so its prose can never be a CommandAst; the
+        # replaced per-line parser read that content as executable code and
+        # counted a phantom invocation next to the real one.
+        $prose = @"
+param([string]`$Solution = 'GanttCreator.slnx')
+`$notes = @'
+dotnet test A.Tests/A.Tests.csproj -c Release
+'@
+dotnet test `$Solution -c Release --no-build --no-restore
+"@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $prose) | Should -Be @(1)
+    }
+
+    It 'tripwire rejects a collection variable target that is not a verified scalar string' {
+        # $Projects matched the old name-only regex and was misread as one
+        # positional target. A variable the script does not prove to be a
+        # scalar [string] must count as zero so the invocation is flagged.
+        $collection = @'
+dotnet test $Projects
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $collection) | Should -Be @(0)
+    }
+
+    It 'tripwire accepts a [string]-cast-assigned variable target (positive control)' {
+        # [string]$Solution = ... proves the variable is a scalar string even
+        # outside a param block; the verified variable counts as one target.
+        $assigned = @'
+[string]$Solution = 'GanttCreator.slnx'
+dotnet test $Solution -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $assigned) | Should -Be @(1)
+    }
+
+    It 'tripwire rejects a splatted variable target (pinning control)' {
+        # A splat can deliver many or zero values; it is never one positional
+        # project/solution target.
+        @(Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test @SolutionArgs') | Should -Be @(0)
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {

@@ -254,14 +254,36 @@ while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $S
     Start-Sleep -Seconds 1
 }
 
+if (-not $step1Proc.HasExited) {
+    # Deadline reached: terminate the owned tree and WAIT for it before
+    # touching the redirected streams. The child keeps its stdout/stderr
+    # temp files open until it exits, so reading or deleting before the
+    # kill can capture a partial stream and can silently fail the deletes
+    # (leaking the temp files in TEMP).
+    $step1Outcome = 'timeout'
+    Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
+    Log '  Killing the step-1 process tree and continuing to Step 2.'
+    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    $null = $step1Proc.WaitForExit(5000)
+    $step1ExitCode = 124
+    Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
+} else {
+    $step1ExitCode = $step1Proc.ExitCode
+}
+
+# Read and preserve both redirected streams BEFORE deleting their temp
+# files: once the files are gone this content is the only evidence of what
+# the process printed, and both the classification below and the timeout
+# failure report include it.
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
 $step1StdErr = Get-Content -LiteralPath $step1ErrTmp -Raw -ErrorAction SilentlyContinue
 $step1Output = "$step1StdOut`n$step1StdErr"
 Remove-Item -LiteralPath $step1OutTmp -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $step1ErrTmp -Force -ErrorAction SilentlyContinue
 
-if ($step1Proc.HasExited) {
-    $step1ExitCode = $step1Proc.ExitCode
+if ($step1Outcome -eq 'timeout') {
+    Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+} elseif ($step1Proc.HasExited) {
     # Measure the real process lifetime from the process's own start/exit
     # timestamps, not the watchdog stopwatch: the stopwatch includes this
     # script's polling latency (up to the 1s sleep quantum), which could
@@ -280,6 +302,15 @@ if ($step1Proc.HasExited) {
         Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
         Log '  Interpretation: crash pattern (under 1s with testhost-abort output). The dump-type-none probe did NOT avoid the failure.'
         Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+    } elseif ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+        # Abort signature at or after one second: the canonical ~0.2s L12
+        # crash is the dominant form, but a slower abort must not be read as
+        # a mere test-run failure just because it survived the first second.
+        $step1Crashed = $true
+        $step1Outcome = 'testhost-abort'
+        Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
+        Log '  Interpretation: crash pattern (testhost-abort output at/after 1s). The dump-type-none probe did NOT avoid the failure.'
+        Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
     } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0) {
         $step1Outcome = 'fast-exit-unclassified'
         Log "Step 1: exited ${age}s after start with exit code $step1ExitCode but no testhost-abort signature in output."
@@ -295,17 +326,10 @@ if ($step1Proc.HasExited) {
         if ($step1ExitCode -eq 0) {
             Log '  Interpretation: PASS. The blame hang signalling survived, only the dump write was failing.'
         } else {
-            Log '  Interpretation: testhost survived the dump path but the test run itself failed (exit non-zero).'
+            Log '  Interpretation: testhost survived the dump path and the test run itself failed (exit non-zero, no abort signature).'
             Log '  Distinguish from the original L12 failure: this is a test result, not a testhost abort.'
         }
     }
-} else {
-    $step1Outcome = 'timeout'
-    Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
-    Log '  Killing the step-1 process tree and continuing to Step 2.'
-    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-    $step1ExitCode = 124
-    Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 }
 }
 finally {
@@ -480,7 +504,7 @@ Log 'Human interpretation:'
 Log '  - If Step 1 PASS (exit 0, survived past 0.2s) and Step 2 PASS (dump written):'
 Log '      the original L12 failure was the createdump dump-write path, not hang signalling.'
 Log '      The --blame-hang-dump-type none alternative is viable on this host.'
-Log '  - If Step 1 crashed (under 1s) AND Step 2 failed:'
+Log '  - If Step 1 crashed (abort signature at any age) AND Step 2 failed:'
 Log '      the smoke test alone cannot identify EDR blocking of privileged access;'
 Log '      reproduce the runtime-triggered createdump path targeting a different'
 Log '      process such as $helperProc before attributing the failure to SeDebugPrivilege.'
