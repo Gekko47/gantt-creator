@@ -99,7 +99,7 @@ public sealed class AddInHost(
             RibbonStateService.Instance.SetApplicationAdapter(
                 new ExcelApplicationAdapter(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetLogAvailabilitySource(
-                () => DiagnosticsService.Instance.LogFilePath is not null);
+                () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031

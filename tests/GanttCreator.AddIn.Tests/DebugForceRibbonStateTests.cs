@@ -9,6 +9,7 @@ namespace GanttCreator.AddIn.Tests;
 /// Release builds; the always-on test asserts the Release contract (no mutation)
 /// in both configurations.
 /// </summary>
+[Collection("diagnostics-service")]
 public class DebugForceRibbonStateTests
 {
     [Fact]

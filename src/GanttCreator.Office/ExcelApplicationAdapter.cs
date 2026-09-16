@@ -130,6 +130,11 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
         /// </summary>
         private void Invoke()
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             // CA1031: see the attach rationale above — the notification degrades
             // to none rather than surfacing as a host error dialog.
 #pragma warning disable CA1031
@@ -156,6 +161,8 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
 
             // CA1031: teardown runs from AutoClose and must never throw into
             // Excel; a failed detach degrades to a retained event connection.
+            // Each removal is guarded separately so a failure on one event
+            // does not prevent the remaining removals from running.
 #pragma warning disable CA1031
             try
             {
@@ -163,12 +170,26 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
                 {
                     events.WorkbookActivate -= _onWorkbookActivate;
                 }
+            }
+            catch
+            {
+                // Intentionally empty: see the teardown rationale above.
+            }
 
+            try
+            {
                 if (_onWorkbookDeactivate is not null)
                 {
                     events.WorkbookDeactivate -= _onWorkbookDeactivate;
                 }
+            }
+            catch
+            {
+                // Intentionally empty: see the teardown rationale above.
+            }
 
+            try
+            {
                 if (_onNewWorkbook is not null)
                 {
                     events.NewWorkbook -= _onNewWorkbook;
