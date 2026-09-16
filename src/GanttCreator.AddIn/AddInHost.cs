@@ -71,18 +71,31 @@ public sealed class AddInHost(
             // active log path and the boundary can write its error records.
             // SetLog only stores the reference (its only throw is a
             // null-argument guard, unreachable for the non-null local above);
-            // any other unforeseen failure is handled by the outer catch
-            // below, so AutoOpen stays never-throwing.
+            // any other unforeseen failure is handled by the catch below,
+            // so AutoOpen stays never-throwing.
             DiagnosticsService.Instance.SetLog(log);
             CommandBoundary.Instance.SetLog(log);
+        }
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            // Intentionally empty: no log record, no propagation. See the
+            // justification comment above. The candidate log is disposed on
+            // the failure path so AutoClose cannot emit an unmatched close
+            // record; _log is only assigned after LogOpen succeeds.
+        }
 
-            // Arm the Ribbon state service: publish the Excel application
-            // adapter (workbook fact + workbook-state events) and the log
-            // availability source, then take the first snapshot and invalidate.
-            // ExcelDnaUtil.Application returns null outside a live Excel host,
-            // so the adapter reports "not determinable" (which keeps the
-            // previous value) instead of throwing; the state service never
-            // writes a log record, so the one-record contract above holds.
+        // Arm the Ribbon state service in a separate guarded step so that
+        // this runs even when log creation, LogOpen, or SetLog failed above.
+        // ExcelDnaUtil.Application returns null outside a live Excel host, so
+        // the adapter reports "not determinable" (which keeps the previous
+        // value) instead of throwing; the state service never writes a log
+        // record, so the one-record contract above holds. Any failure from
+        // ExcelDnaUtil.Application or RibbonStateService is swallowed here so
+        // it never escapes AutoOpen.
+        try
+        {
             RibbonStateService.Instance.SetApplicationAdapter(
                 new ExcelApplicationAdapter(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetLogAvailabilitySource(
@@ -93,10 +106,7 @@ public sealed class AddInHost(
         catch
 #pragma warning restore CA1031
         {
-            // Intentionally empty: no log record, no propagation. See the
-            // justification comment above. The candidate log is disposed on
-            // the failure path so AutoClose cannot emit an unmatched close
-            // record; _log is only assigned after LogOpen succeeds.
+            // Intentionally empty: state-service arming degrades silently.
         }
     }
 
