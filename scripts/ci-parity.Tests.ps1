@@ -171,41 +171,15 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
     # scripts/*.ps1 entry points the workflow delegates to.
 
     BeforeAll {
-        # Joins backtick line continuations so a logical command split over
-        # several physical lines is scanned as one string.
-        function Join-LogicalLines {
-            param([string]$Text)
-            $joined = New-Object System.Collections.Generic.List[string]
-            $pending = ''
-            foreach ($line in ($Text -split "`r?`n")) {
-                if ($pending -ne '') {
-                    $current = "$pending$line"
-                } else {
-                    $current = $line
-                }
-                if ($current -match '(?m)\x60$') {
-                    $pending = $current -replace '(?m)\x60$', ''
-                } else {
-                    $null = $joined.Add($current)
-                    $pending = ''
-                }
-            }
-            if ($pending -ne '') { $null = $joined.Add($pending) }
-            return $joined
-        }
-
-        # Returns one target-token count per `dotnet test` invocation, in
-        # source order. Target tokens are file
-        # references (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or
-        # Solution/Project-named PowerShell variables; options, option
-        # values, and filter literals are ignored. The healthy form is
-        # exactly 1 per invocation: an aggregate total can hide a
-        # zero-target invocation alongside a multi-target one, or flag two
-        # healthy invocations as one violation.
         # Recursively finds all `dotnet test` command invocations in a
         # PowerShell AST. Using the AST (rather than regex) preserves quoted
         # separators, so a `;` or `|` inside a quoted string does not split
         # one invocation into two, and arguments with spaces are kept intact.
+        # The input AST is produced by a single ParseInput call over the
+        # complete script text, so backtick continuations are already
+        # resolved and here-string prose and comments are naturally excluded:
+        # a here-string is a string literal (never a CommandAst) and comments
+        # belong to no AST node at all.
         function Find-DotnetTestCommands {
             param([System.Management.Automation.Language.Ast]$Ast, [ref]$Results)
             if (-not $Ast) { return }
@@ -222,74 +196,193 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             }
         }
 
+        # Returns one target-token count per `dotnet test` invocation, in
+        # source order. Target tokens are literal project/solution paths
+        # (.csproj/.vbproj/.fsproj/.slnx/.slnf/.sln) or a Solution/Project-named
+        # PowerShell variable that the same script proves is a scalar string
+        # (a [string]-constrained parameter or a [string] cast assignment).
+        # Splatted variables, sub-expressions, and unverifiable variables are
+        # rejected: dotnet test accepts exactly ONE positional project or
+        # solution, and a collection or splat delivers many values (or none),
+        # never one target. The healthy form is exactly 1 per invocation: an
+        # aggregate total can hide a zero-target invocation alongside a
+        # multi-target one, or flag two healthy invocations as one violation.
         function Get-DotnetTestProjectTokenCount {
             param([string]$ScriptText)
-            # Strip PowerShell block comments (<# ... #>) first: the synopsis
-            # in test-non-office.ps1 mentions `dotnet test` in prose, which is
-            # not an invocation and must not be counted as a zero-target
-            # violation.
-            $noBlock = $ScriptText -replace '(?s)<#.*?#>', ''
             $counts = @()
-            foreach ($line in (Join-LogicalLines -Text $noBlock)) {
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-                # Use the PowerShell AST to identify command invocations and
-                # preserve quoted separators. The previous regex extracted one
-                # tail from the complete logical line, which could not see
-                # multiple dotnet test invocations on one line and split quoted
-                # arguments on whitespace. Comments are naturally excluded by
-                # the AST: they are not part of any CommandAst node.
-                $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$null, [ref]$null)
-                if (-not $ast) { continue }
-                $commands = @()
-                Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
-                foreach ($cmd in $commands) {
-                    $count = 0
-                    $skipNext = $false
-                    $elements = $cmd.CommandElements
-                    # Skip element 0 (the `test` subcommand); process the rest.
-                    for ($i = 1; $i -lt $elements.Count; $i++) {
-                        $elem = $elements[$i]
-                        if ($skipNext) {
-                            $skipNext = $false
-                            continue
-                        }
-                        # Command parameters (options like -c, --diag) are not
-                        # positional targets. --diag takes a diagnostic file path
-                        # as its value; the next token is that value, not a
-                        # project/solution target.
-                        if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
-                            if ($elem.ParameterName -eq 'diag') {
-                                $skipNext = $true
+            # Parse the complete script text ONCE. The AST resolves line
+            # continuations, quoted separators, here-strings, and comments
+            # natively; the replaced per-line Join-LogicalLines pass parsed
+            # each physical line separately, so here-string content was read
+            # as executable code and counted as phantom invocations.
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($ScriptText, [ref]$tokens, [ref]$parseErrors)
+            # A missing AST or any parse error is a hard failure: unparseable
+            # script text must not return an empty count list and silently
+            # bypass the W14 validation loop. Returning an empty array here
+            # would be indistinguishable from "zero dotnet test invocations",
+            # so the caller's foreach would simply not iterate and the
+            # exactly-one-target check would never fire. Throwing forces the
+            # violation surface instead of masking it.
+            if (-not $ast -or $parseErrors.Count -gt 0) {
+                throw "Get-DotnetTestProjectTokenCount: script text failed to parse (parse errors: $($parseErrors.Count)). Unparseable input cannot be validated; treat as a W14 violation."
+            }
+
+            # A variable reference counts as a target only when the script
+            # itself proves the variable is a scalar string: a [string]-typed
+            # parameter (param([string]$Solution = ...)) or a [string] cast
+            # assignment ([string]$Solution = ...). Anything else ($Projects
+            # collections, splats, unresolved names) must not pass as one
+            # positional target.
+            #
+            # The declaration is keyed by BOTH variable name and enclosing
+            # lexical scope. A bare name-only key would treat every same-named
+            # variable as one declaration: a [string]$Solution in function foo
+            # would also vouch for a collection $Solution in function bar, or
+            # for a script-scope $Projects collection named $Solution. Resolving
+            # each command variable against its own enclosing scope before
+            # applying scalar validation keeps same-named variables in
+            # different functions or script scope independent.
+            $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.HashSet[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            function Add-ScalarVar {
+                param([System.Management.Automation.Language.Ast]$Node, [string]$VarName)
+                $scope = Get-EnclosingScopeName -Node $Node
+                if (-not $scalarVars.ContainsKey($scope)) {
+                    $scalarVars[$scope] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                }
+                $null = $scalarVars[$scope].Add($VarName)
+            }
+            function Get-EnclosingScopeName {
+                param([System.Management.Automation.Language.Ast]$Node)
+                # The nearest FunctionDefinitionAst is the lexical scope; if
+                # there is none the declaration lives in script scope. This
+                # mirrors PowerShell's name resolution: a command inside a
+                # function first looks at that function's parameters and
+                # locals before falling back to script/global scope.
+                $ancestor = $Node
+                while ($ancestor) {
+                    if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        return $ancestor.Name
+                    }
+                    $ancestor = $ancestor.Parent
+                }
+                return '__ScriptScope__'
+            }
+            function Get-EnclosingScopeChain {
+                param([System.Management.Automation.Language.Ast]$Node)
+                # Returns the ordered chain of enclosing scope names, from
+                # the innermost lexical scope out to script scope. A variable
+                # declared in any enclosing scope (a function's parameter, a
+                # variable in a parent function, or a script-scope variable)
+                # is visible to the command, so scalar validation must walk
+                # the full chain rather than checking only the immediate
+                # function name.
+                $chain = [System.Collections.Generic.List[string]]::new()
+                $ancestor = $Node
+                while ($ancestor) {
+                    if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        $chain.Add($ancestor.Name)
+                    }
+                    $ancestor = $ancestor.Parent
+                }
+                # Always include script scope as the outermost scope.
+                $chain.Add('__ScriptScope__')
+                return $chain
+            }
+            foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
+                $typeName = $typeConstraint.TypeName.FullName -replace '^System\.', ''
+                if ($typeName -ieq 'string') {
+                    $parent = $typeConstraint.Parent
+                    if ($parent -is [System.Management.Automation.Language.ParameterAst]) {
+                        # param([string]$Solution = ...): the parameter's own
+                        # scope is its enclosing function (or script scope for
+                        # a script-level param block).
+                        Add-ScalarVar -Node $parent -VarName $parent.Name.VariablePath.UserPath
+                    } elseif ($parent -is [System.Management.Automation.Language.ConvertExpressionAst]) {
+                        # For a [string] cast assignment ([string]$Solution = ...)
+                        # the cast's operand variable is exposed as Child (the
+                        # Expression property is null on an assignment LHS).
+                        # Only record the operand variable when the cast is the
+                        # LEFT side of an AssignmentStatementAst; a bare cast
+                        # used as a value expression (e.g. [string]$x in a
+                        # command argument) must not register its operand as a
+                        # scalar variable.
+                        if ($parent.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
+                            $operand = $parent.Child
+                            if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                                Add-ScalarVar -Node $parent -VarName $operand.VariablePath.UserPath
                             }
-                            continue
-                        }
-                        # Get the token text for target matching. String constants
-                        # (including quoted paths with spaces) and variables are
-                        # the forms that can be targets; other expression types
-                        # (splats, subexpressions, etc.) are not.
-                        $token = $null
-                        if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
-                            $token = $elem.Value
-                            # `--diag` is parsed as a string constant (not a
-                            # CommandParameterAst) in the `dotnet test` command
-                            # line; the next element is its value, not a target.
-                            if ($token -eq '--diag') {
-                                $skipNext = $true
-                            }
-                        } elseif ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                            # In this PowerShell runtime, VariableName omits '$';
-                            # Extent.Text preserves the parsed variable token.
-                            $token = $elem.Extent.Text
-                        } else {
-                            $token = $elem.Extent.Text
-                        }
-                        if ($token -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$' -or
-                            $token -match '(?i)^\$\w*(Solution|Project)\w*$') {
-                            $count++
                         }
                     }
-                    $counts += $count
                 }
+            }
+
+            $commands = @()
+            Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
+            foreach ($cmd in $commands) {
+                $count = 0
+                $skipNext = $false
+                $elements = $cmd.CommandElements
+                # Skip element 0 (the `test` subcommand); process the rest.
+                for ($i = 1; $i -lt $elements.Count; $i++) {
+                    $elem = $elements[$i]
+                    if ($skipNext) {
+                        $skipNext = $false
+                        continue
+                    }
+                    # Command parameters (options like -c, --diag) are not
+                    # positional targets. --diag takes a diagnostic file path
+                    # as its value; the next token is that value, not a
+                    # project/solution target.
+                    if ($elem -is [System.Management.Automation.Language.CommandParameterAst]) {
+                        if ($elem.ParameterName -eq 'diag') {
+                            $skipNext = $true
+                        }
+                        continue
+                    }
+                    if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                        # `--diag` is parsed as a string constant (not a
+                        # CommandParameterAst) in the `dotnet test` command
+                        # line; the next element is its value, not a target.
+                        if ($elem.Value -eq '--diag') {
+                            $skipNext = $true
+                        } elseif ($elem.Value -match '(?i)\.(csproj|vbproj|fsproj|slnx|slnf|sln)$') {
+                            $count++
+                        }
+                        continue
+                    }
+                    if ($elem -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                        # In this PowerShell runtime, VariablePath.UserPath
+                        # omits '$'; a splatted variable (@Splat) is never one
+                        # positional target.
+                        if (-not $elem.Splatted) {
+                            $name = $elem.VariablePath.UserPath
+                            if ($name -match '(?i)(Solution|Project)') {
+                                # Resolve the variable against its enclosing scope chain
+                                # before applying scalar validation, so a
+                                # [string]$Solution declared in function foo does
+                                # not vouch for a same-named collection in
+                                # function bar or script scope. Walk the full
+                                # chain (innermost function out to script
+                                # scope) so a variable declared in any parent
+                                # scope counts, not just the immediate scope.
+                                $scopeChain = Get-EnclosingScopeChain -Node $elem
+                                foreach ($scope in $scopeChain) {
+                                    if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].Contains($name)) {
+                                        $count++
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                        continue
+                    }
+                    # Any other expression type (sub-expressions, casts, nested
+                    # commands) cannot be verified as a single positional
+                    # project/solution target; it is never counted.
+                }
+                $counts += $count
             }
             return $counts
         }
@@ -331,7 +424,11 @@ dotnet test `
     }
 
     It 'tripwire accepts the single-solution form (negative control)' {
+        # Only a verified-scalar [string] Solution/Project variable counts as
+        # a target, so the healthy fragment declares it the way the real
+        # entry points do (test-non-office.ps1: param([string]$Solution = ...)).
         $healthy = @'
+param([string]$Solution = 'GanttCreator.slnx', [string]$Configuration = 'Release')
 dotnet test $Solution -c $Configuration --no-build --no-restore `
     --filter 'Category!=OfficeIntegration'
 '@
@@ -354,6 +451,7 @@ dotnet test $Solution -c $Configuration --no-build --no-restore `
         # Aggregate validation would see 0 + 1 = 1 and pass; per-invocation
         # validation must flag the zero-target line independently.
         $mixed = @'
+param([string]$Solution = 'GanttCreator.slnx')
 dotnet test -c Release --no-build --no-restore
 dotnet test $Solution -c Release --no-build --no-restore
 '@
@@ -368,6 +466,93 @@ dotnet test $Solution -c Release --no-build --no-restore
 dotnet test --diag diag.sln -c Release --no-build --no-restore
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $withDiag) | Should -Be @(0)
+    }
+
+    It 'tripwire ignores dotnet test prose inside a here-string (positive control)' {
+        # The counter parses the complete script text ONCE. A here-string is
+        # a string literal, so its prose can never be a CommandAst; the
+        # replaced per-line parser read that content as executable code and
+        # counted a phantom invocation next to the real one.
+        $prose = @"
+param([string]`$Solution = 'GanttCreator.slnx')
+`$notes = @'
+dotnet test A.Tests/A.Tests.csproj -c Release
+'@
+dotnet test `$Solution -c Release --no-build --no-restore
+"@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $prose) | Should -Be @(1)
+    }
+
+    It 'tripwire rejects a collection variable target that is not a verified scalar string' {
+        # $Projects matched the old name-only regex and was misread as one
+        # positional target. A variable the script does not prove to be a
+        # scalar [string] must count as zero so the invocation is flagged.
+        $collection = @'
+dotnet test $Projects
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $collection) | Should -Be @(0)
+    }
+
+    It 'tripwire accepts a [string]-cast-assigned variable target (positive control)' {
+        # [string]$Solution = ... proves the variable is a scalar string even
+        # outside a param block; the verified variable counts as one target.
+        $assigned = @'
+[string]$Solution = 'GanttCreator.slnx'
+dotnet test $Solution -c Release --no-build --no-restore
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $assigned) | Should -Be @(1)
+    }
+
+    It 'tripwire rejects a splatted variable target (pinning control)' {
+        # A splat can deliver many or zero values; it is never one positional
+        # project/solution target.
+        @(Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test @SolutionArgs') | Should -Be @(0)
+    }
+
+    It 'same-named variables in different lexical scopes remain independent (parity fixture)' {
+        # The name-only scalar tracking defect treated every same-named
+        # variable as one declaration: a [string]$Solution declared in one
+        # function would vouch for a same-named collection in another, or for
+        # a script-scope $Projects collection that happened to be named
+        # $Solution. The fixture proves the scope-aware fix:
+        #   - the function-scoped [string]$Solution counts as one target;
+        #   - the same-named collection in a sibling function counts as zero;
+        #   - the script-scope collection named $Solution counts as zero.
+        $fixture = @'
+function Use-Solution {
+    param([string]$Solution = 'a.slnx')
+    dotnet test $Solution
+}
+function Use-Collection {
+    $Solution = @('x.csproj', 'y.csproj')
+    dotnet test $Solution
+}
+$Solution = @('p.csproj', 'q.csproj')
+dotnet test $Solution
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+    }
+
+    It 'tripwire throws on unparseable script text (positive control for parse-error hard failure)' {
+        # The W14 validation loop iterates over whatever
+        # Get-DotnetTestProjectTokenCount returns. If that function returned
+        # an empty array on parse errors (instead of throwing), the caller's
+        # foreach would simply not iterate and the exactly-one-target check
+        # would silently pass. The parse-error branch now throws so that an
+        # unparseable script is a visible W14 violation rather than a masked
+        # empty result. This positive control proves the throw branch fires
+        # when Parser.ParseInput produces parse errors, and guards against a
+        # future edit that silently weakens the guard back to a soft return.
+        #
+        # `"dotnet test @"` is syntactically invalid: the `@` at statement
+        # end is not a valid token start, so Parser.ParseInput reports a
+        # parse error while still returning a non-null AST (the parser can
+        # recover enough to produce a partial tree). Because the text still
+        # contains `dotnet test` it reaches the counter via the caller's
+        # regex filter, so the throw branch is the only way to surface the
+        # unparseable input as a W14 violation.
+        $unparseable = 'dotnet test @'
+        { Get-DotnetTestProjectTokenCount -ScriptText $unparseable } | Should -Throw
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {

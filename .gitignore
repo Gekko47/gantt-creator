@@ -24,6 +24,10 @@
 # qodo
 .qodo/*
 
+# Local Microsoft reference material (e.g. the Office imageMso icons gallery
+# workbook) — large, proprietary, and needed only for offline icon lookup.
+.microsoft/
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

@@ -6,7 +6,8 @@
         <group id="grpPlaceholder" label="Gantt Creator">
         </group>
         <group id="grpDiagnostics" label="Diagnostics">
-          <button id="btnDiagnostics" label="Diagnostics" imageMso="Information" onAction="OnDiagnosticsClick"/>
+          <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
+          <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
         </group>
       </tab>
     </tabs>

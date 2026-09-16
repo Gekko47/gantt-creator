@@ -13,10 +13,23 @@ public sealed class DebugHookGuardTests
 {
     private const string HookRelativePath = "src/GanttCreator.AddIn/DebugForceFailure.cs";
 
+    // R1.5 force-ribbon-state hook: same DEBUG-only contract, pinned the same
+    // way (the repo-wide scan also covers it; the targeted fact is the R1.4
+    // precedent's positive control).
+    private const string RibbonStateHookRelativePath = "src/GanttCreator.AddIn/DebugForceRibbonState.cs";
+
     [Fact]
     public void DebugForceFailure_hook_keeps_the_env_var_read_inside_ifdef_debug()
     {
         var findings = EnvVarGuardScanner.Scan(File.ReadAllText(LocateRepoFile(HookRelativePath)));
+
+        Assert.Empty(findings);
+    }
+
+    [Fact]
+    public void DebugForceRibbonState_hook_keeps_the_env_var_read_inside_ifdef_debug()
+    {
+        var findings = EnvVarGuardScanner.Scan(File.ReadAllText(LocateRepoFile(RibbonStateHookRelativePath)));
 
         Assert.Empty(findings);
     }

@@ -6,7 +6,7 @@ namespace GanttCreator.AddIn;
 /// workbook content — the logging content rule in
 /// <c>docs/01-ENVIRONMENT.md</c> permits identifiers and counts only.
 /// </summary>
-/// <param name="AddInVersion">The product version string, from Core's <see cref="Core.VersionInfo"/> informational version.</param>
+/// <param name="AddInVersion">The product version string. The <c>open</c> record carries Core's <see cref="Core.VersionInfo"/> informational version (with build metadata); the <c>Diagnostics:</c> record carries the semantic version (metadata stripped).</param>
 /// <param name="ExcelVersion">Excel major.minor formatted with the invariant culture, or <c>"unknown"</c>.</param>
 /// <param name="ProcessBitness"><c>"x64"</c> or <c>"x86"</c>, or <c>"unknown"</c>.</param>
 /// <param name="XllFileName">File name (never a full path) of the loaded XLL, or <c>"unknown"</c>.</param>

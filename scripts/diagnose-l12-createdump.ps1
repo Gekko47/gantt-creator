@@ -254,20 +254,76 @@ while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $S
     Start-Sleep -Seconds 1
 }
 
+if (-not $step1Proc.HasExited) {
+    # Deadline reached: terminate the owned tree and WAIT for it before
+    # touching the redirected streams. The child keeps its stdout/stderr
+    # temp files open until it exits, so reading or deleting before the
+    # kill can capture a partial stream and can silently fail the deletes
+    # (leaking the temp files in TEMP).
+    #
+    # WaitForExit(5000) returns $true only when the process has actually
+    # terminated. If it returns $false the tree is still alive and still
+    # holds the redirected streams open; in that case the diagnostic is
+    # stopped before reading or deleting those streams, so stream access
+    # is preserved only after confirmed process termination. The streams
+    # are left untouched on the abort path rather than risked to a partial
+    # read or a silently-failed delete.
+    $step1Outcome = 'timeout'
+    Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
+    Log '  Killing the step-1 process tree and waiting for it to exit.'
+    # Capture taskkill's own result rather than discarding it: taskkill /T /F
+    # returns 0 only when it successfully signaled the whole tree, so a
+    # non-zero exit here (process not found, access denied, a child refused
+    # the signal) is itself evidence that termination was not confirmed.
+    # WaitForExit(5000) alone would only tell us whether the root process
+    # eventually went away, not whether the kill signal reached the tree.
+    & taskkill /PID $step1Proc.Id /T /F
+    $step1TaskkillExit = $LASTEXITCODE
+    $step1TreeExited = $step1Proc.WaitForExit(5000)
+    if ($step1TaskkillExit -ne 0 -or -not $step1TreeExited) {
+        Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, WaitForExit=$step1TreeExited)."
+        Log '  The redirected streams are left untouched (the process still has them open);'
+        Log '  the diagnostic is stopping here rather than reading or deleting them.'
+        exit 3
+    }
+    $step1ExitCode = 124
+    Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
+} else {
+    $step1ExitCode = $step1Proc.ExitCode
+}
+
+# Read and preserve both redirected streams BEFORE deleting their temp
+# files: once the files are gone this content is the only evidence of what
+# the process printed, and both the classification below and the timeout
+# failure report include it.
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
 $step1StdErr = Get-Content -LiteralPath $step1ErrTmp -Raw -ErrorAction SilentlyContinue
 $step1Output = "$step1StdOut`n$step1StdErr"
 Remove-Item -LiteralPath $step1OutTmp -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $step1ErrTmp -Force -ErrorAction SilentlyContinue
 
-if ($step1Proc.HasExited) {
-    $step1ExitCode = $step1Proc.ExitCode
+if ($step1Outcome -eq 'timeout') {
+    Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+} elseif ($step1Proc.HasExited) {
     # Measure the real process lifetime from the process's own start/exit
     # timestamps, not the watchdog stopwatch: the stopwatch includes this
     # script's polling latency (up to the 1s sleep quantum), which could
     # misclassify a rapid crash as a later exit.
     $age = ($step1Proc.ExitTime - $step1Proc.StartTime).TotalSeconds
-    $abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+    # The abort signature must be the unambiguous native abort signal only.
+    # The .NET CRT prints exactly "Aborted." to stderr on SIGABRT, and
+    # Environment.FailFast emits "The process was aborted."; both terminate
+    # the testhost and both contain the token "Aborted." (with the trailing
+    # period). Matching that single token -- rather than broad terms such as
+    # testhost, dump, createdump, access denied, or 0x800 -- keeps normal
+    # failure handling (test results, invalid arguments, missing inputs) on
+    # its own branches and sets $step1Crashed only for a genuine native
+    # blame-collector abort. A bare "aborted" without the period is not used:
+    # it would also match ordinary words in test names and log lines.
+    # Anchor at line start/end so messages such as "Operation was aborted."
+    # do not match: the accepted signatures are "Aborted." and "was aborted."
+    # as complete output lines.
+    $abortPattern = 'Aborted\.'
     $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
     if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
         $step1Outcome = 'invalid-args'
@@ -279,6 +335,15 @@ if ($step1Proc.HasExited) {
         $step1Outcome = 'testhost-abort'
         Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
         Log '  Interpretation: crash pattern (under 1s with testhost-abort output). The dump-type-none probe did NOT avoid the failure.'
+        Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
+    } elseif ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+        # Abort signature at or after one second: the canonical ~0.2s L12
+        # crash is the dominant form, but a slower abort must not be read as
+        # a mere test-run failure just because it survived the first second.
+        $step1Crashed = $true
+        $step1Outcome = 'testhost-abort'
+        Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
+        Log '  Interpretation: crash pattern (testhost-abort output at/after 1s). The dump-type-none probe did NOT avoid the failure.'
         Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
     } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0) {
         $step1Outcome = 'fast-exit-unclassified'
@@ -295,17 +360,10 @@ if ($step1Proc.HasExited) {
         if ($step1ExitCode -eq 0) {
             Log '  Interpretation: PASS. The blame hang signalling survived, only the dump write was failing.'
         } else {
-            Log '  Interpretation: testhost survived the dump path but the test run itself failed (exit non-zero).'
+            Log '  Interpretation: testhost survived the dump path and the test run itself failed (exit non-zero, no abort signature).'
             Log '  Distinguish from the original L12 failure: this is a test result, not a testhost abort.'
         }
     }
-} else {
-    $step1Outcome = 'timeout'
-    Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
-    Log '  Killing the step-1 process tree and continuing to Step 2.'
-    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-    $step1ExitCode = 124
-    Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 }
 }
 finally {
@@ -480,7 +538,7 @@ Log 'Human interpretation:'
 Log '  - If Step 1 PASS (exit 0, survived past 0.2s) and Step 2 PASS (dump written):'
 Log '      the original L12 failure was the createdump dump-write path, not hang signalling.'
 Log '      The --blame-hang-dump-type none alternative is viable on this host.'
-Log '  - If Step 1 crashed (under 1s) AND Step 2 failed:'
+Log '  - If Step 1 crashed (abort signature at any age) AND Step 2 failed:'
 Log '      the smoke test alone cannot identify EDR blocking of privileged access;'
 Log '      reproduce the runtime-triggered createdump path targeting a different'
 Log '      process such as $helperProc before attributing the failure to SeDebugPrivilege.'

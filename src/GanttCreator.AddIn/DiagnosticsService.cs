@@ -7,6 +7,7 @@ using GanttCreator.Core.Logging;
 // Expose internals to the test project so contract tests can verify the
 // log-writing path without requiring the TaskDialog UI.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("GanttCreator.AddIn.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DynamicProxyGenAssembly2")]
 
 namespace GanttCreator.AddIn;
 

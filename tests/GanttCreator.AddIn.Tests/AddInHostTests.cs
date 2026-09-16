@@ -97,6 +97,50 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoOpen_arms_the_ribbon_state_service_without_changing_the_one_record_contract()
+    {
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+
+        try
+        {
+            host.AutoOpen();
+
+            var service = RibbonStateService.Instance;
+            // Outside a live Excel host the workbook fact is not determinable,
+            // so the Diagnostics gate keeps its initial false value; the
+            // capturing log exposes a path, so the Open-log gate is enabled.
+            Assert.False(service.GetEnabled(RibbonControlIds.Diagnostics));
+            Assert.True(service.GetEnabled(RibbonControlIds.OpenLog));
+            Assert.Null(service.GetRibbon());
+
+            // The state service writes no log record (work item R1.5): the
+            // one-record contract is untouched.
+            Assert.Equal([ExpectedOpenRecord], log.Records);
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoClose_resets_the_ribbon_state_service()
+    {
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        host.AutoOpen();
+
+        host.AutoClose();
+
+        // Reset restores the initial snapshot: the fresh session service knows
+        // no facts and holds no ribbon handle, so nothing from the closed
+        // session leaks into the next one.
+        Assert.False(RibbonStateService.Instance.GetEnabled(RibbonControlIds.OpenLog));
+        Assert.Null(RibbonStateService.Instance.GetRibbon());
+    }
+
+    [Fact]
     public void AutoClose_resets_diagnostics_singleton_after_disposing_the_log()
     {
         var log = new CapturingLog();

@@ -2,6 +2,7 @@ using System.Globalization;
 using ExcelDna.Integration;
 using GanttCreator.Core;
 using GanttCreator.Core.Logging;
+using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
 
@@ -70,8 +71,8 @@ public sealed class AddInHost(
             // active log path and the boundary can write its error records.
             // SetLog only stores the reference (its only throw is a
             // null-argument guard, unreachable for the non-null local above);
-            // any other unforeseen failure is handled by the outer catch
-            // below, so AutoOpen stays never-throwing.
+            // any other unforeseen failure is handled by the catch below,
+            // so AutoOpen stays never-throwing.
             DiagnosticsService.Instance.SetLog(log);
             CommandBoundary.Instance.SetLog(log);
         }
@@ -83,6 +84,29 @@ public sealed class AddInHost(
             // justification comment above. The candidate log is disposed on
             // the failure path so AutoClose cannot emit an unmatched close
             // record; _log is only assigned after LogOpen succeeds.
+        }
+
+        // Arm the Ribbon state service in a separate guarded step so that
+        // this runs even when log creation, LogOpen, or SetLog failed above.
+        // ExcelDnaUtil.Application returns null outside a live Excel host, so
+        // the adapter reports "not determinable" (which keeps the previous
+        // value) instead of throwing; the state service never writes a log
+        // record, so the one-record contract above holds. Any failure from
+        // ExcelDnaUtil.Application or RibbonStateService is swallowed here so
+        // it never escapes AutoOpen.
+        try
+        {
+            RibbonStateService.Instance.SetApplicationAdapter(
+                new ExcelApplicationAdapter(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetLogAvailabilitySource(
+                () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
+            RibbonStateService.Instance.Activate();
+        }
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            // Intentionally empty: state-service arming degrades silently.
         }
     }
 
@@ -127,6 +151,7 @@ public sealed class AddInHost(
             {
                 DiagnosticsService.Reset();
                 CommandBoundary.Reset();
+                RibbonStateService.Reset();
                 _log = null;
             }
         }

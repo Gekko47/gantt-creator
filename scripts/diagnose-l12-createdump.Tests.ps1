@@ -198,4 +198,167 @@ $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' 
         $codeOnly | Should -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'this stub deliberately re-introduces the artifact-only classification'
         $codeOnly | Should -Not -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)'
     }
+
+    It 'Step 1 timeout terminates and waits for the owned tree, preserves both streams before deleting the temp files, and reports the output' {
+        # The redirected temp files are held open by the child until it
+        # exits: reading or deleting them before the kill-and-wait captures
+        # partial output and can silently fail the deletes. The timeout
+        # branch is the only path where the process is still alive when the
+        # streams are read, so the deadline kill must be waited on first.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $timeoutIdx = $codeOnly.IndexOf("'timeout'")
+        $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
+        $waitIdx = $codeOnly.IndexOf('$step1Proc.WaitForExit')
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $deleteIdx = $codeOnly.IndexOf('Remove-Item -LiteralPath $step1OutTmp')
+        $excerptIdx = $codeOnly.IndexOf('Output excerpt')
+
+        $timeoutIdx | Should -BeGreaterThan -1 -Because 'the deadline branch must be classified as timeout'
+        $killIdx | Should -BeGreaterThan -1 -Because 'the deadline branch must terminate the owned process tree'
+        $waitIdx | Should -BeGreaterThan -1 -Because 'the deadline kill must be followed by a wait on the owned tree'
+        $waitIdx | Should -BeGreaterThan $killIdx -Because 'the wait must occur after the deadline kill, not before it'
+        $readIdx | Should -BeGreaterThan $killIdx -Because 'both streams must be read only after the process has been terminated and awaited'
+        $waitIdx | Should -BeLessThan $readIdx -Because 'the wait must happen before the stream reads, not only in the error/cleanup finally block'
+        $deleteIdx | Should -BeGreaterThan $readIdx -Because 'the temp files must be deleted only after their content is preserved'
+        $excerptIdx | Should -BeGreaterThan $timeoutIdx -Because 'the timeout failure report must include the captured $step1Output excerpt'
+    }
+
+    It 'positive control: a stub reading and deleting the streams before the deadline kill fails the timeout ordering' {
+        $flagged = @'
+$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
+while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $Step1DeadlineSeconds) { Start-Sleep -Seconds 1 }
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+$step1Output = "$step1StdOut`n$step1StdErr"
+Remove-Item -LiteralPath $step1OutTmp -Force -ErrorAction SilentlyContinue
+if ($step1Proc.HasExited) { } else {
+    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    $step1ExitCode = 124
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $killIdx | Should -BeGreaterThan -1
+        $readIdx | Should -BeLessThan $killIdx -Because 'this stub deliberately reads the streams before the deadline kill'
+    }
+
+    It 'the deadline kill awaits the owned tree and aborts the diagnostic if it does not exit' {
+        # The WaitForExit(5000) call after the deadline kill must return its
+        # bool to a variable (not be discarded with `$null =`), and a False
+        # result must stop the diagnostic before the redirected streams are
+        # read or deleted. Stream access is preserved only after confirmed
+        # process termination.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        # Scope the ordering checks to the deadline branch only: the script
+        # legitimately discards a WaitForExit bool in the separate
+        # error/cleanup finally block, so a whole-script negative match would
+        # be a false positive. The branch starts at the timeout classification
+        # and ends where the stream reads begin.
+        $timeoutIdx = $codeOnly.IndexOf("'timeout'")
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $timeoutIdx | Should -BeGreaterThan -1
+        $readIdx | Should -BeGreaterThan $timeoutIdx
+        $branch = $codeOnly.Substring($timeoutIdx, $readIdx - $timeoutIdx)
+
+        $waitAssign = $branch.IndexOf('$step1TreeExited = $step1Proc.WaitForExit')
+        $waitAssign | Should -BeGreaterThan -1 -Because 'the deadline kill must capture the WaitForExit bool instead of discarding it'
+
+        $abortIdx = $branch.IndexOf('exit 3')
+        $abortIdx | Should -BeGreaterThan $waitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
+
+        $abortIdx | Should -BeLessThan $branch.Length -Because 'the abort must occur within the deadline branch before the stream reads'
+
+        $discardIdx = $branch.IndexOf('$null = $step1Proc.WaitForExit')
+        $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard the WaitForExit bool with `$null =` (that form lives only in the separate cleanup finally block)'
+    }
+
+    It 'positive control: a stub discarding the WaitForExit bool fails the capture assertion' {
+        # The previous form (`$null = $step1Proc.WaitForExit(5000)`) threw away
+        # whether the tree actually exited, so a stub using it must not
+        # satisfy the new capture assertion.
+        $flagged = @'
+if (-not $step1Proc.HasExited) {
+    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    $null = $step1Proc.WaitForExit(5000)
+    $step1ExitCode = 124
+}
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=\s*\$step1Proc\.WaitForExit' -Because 'this stub deliberately discards the WaitForExit bool'
+    }
+
+    It 'Step 1 recognizes testhost-abort signatures at or after one second, and the summary no longer limits crashes to under 1s' {
+        # A nonzero exit whose output matches the abort pattern must classify
+        # as testhost-abort even when the process survived past the 1s mark;
+        # the branch must not be guarded by the sub-second fast-exit test.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $codeOnly | Should -Match $anyAgeAbort -Because 'abort signatures at/after 1s must classify as testhost-abort, not as a mere test-run failure'
+        $codeOnly | Should -Not -Match 'crashed \(under 1s\)' -Because 'crash classification is no longer limited to sub-second exits'
+        $codeOnly | Should -Match 'If Step 1 crashed' -Because 'the summary keeps the crash guidance branch'
+    }
+
+    It 'positive control: a stub classifying aborts only under one second fails the any-age assertion' {
+        $flagged = @'
+if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    $step1Crashed = $true
+    $step1Outcome = 'testhost-abort'
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $codeOnly | Should -Not -Match $anyAgeAbort -Because 'this stub deliberately limits abort classification to sub-second exits'
+    }
+
+    It 'the abort pattern matches only the unambiguous native abort signal Aborted.' {
+        # The .NET CRT prints exactly "Aborted." on SIGABRT and
+        # Environment.FailFast emits "The process was aborted."; both
+        # terminate the testhost and both contain the token "Aborted." with
+        # its trailing period. The pattern must match that token and nothing
+        # broader.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\\\.[''"]'
+        $codeOnly | Should -Match $abortPatternAssignment -Because 'the abort pattern must be the single unambiguous token "Aborted."'
+
+        # The old broad terms must no longer appear anywhere in the pattern.
+        # Scope the assertions to the assignment line only: the words
+        # "access denied", "dump", and "crash" legitimately appear elsewhere
+        # in the script (Step 2's access-denied outcome branch, the dump
+        # smoke test, the crash-pattern log lines), so a whole-script
+        # negative match would be a false positive.
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match $abortPatternAssignment } | Select-Object -First 1
+        $abortPatternLine | Should -Not -Be $null -Because 'the assignment line must be locatable'
+        $abortPatternLine | Should -Not -Match 'testhost' -Because 'the process name must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'createdump' -Because 'createdump must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'crash' -Because 'crash must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'fault' -Because 'fault must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match '0x800' -Because '0x800 matches many unrelated error codes'
+    }
+
+    It 'positive control: the old broad pattern would misclassify normal failures and fails the tightened assertion' {
+        # The previous pattern matched testhost, dump, createdump, access
+        # denied, and 0x800 -- all of which appear in ordinary failure
+        # output. A stub using that pattern must not satisfy the tightened
+        # "Aborted." assertion, proving the detector has a blind spot for
+        # false positives.
+        $flagged = @'
+$abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    $step1Crashed = $true
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\.[''"]'
+        $codeOnly | Should -Not -Match $abortPatternAssignment -Because 'this stub deliberately uses the old broad pattern, not the tightened "Aborted." token'
+    }
 }
