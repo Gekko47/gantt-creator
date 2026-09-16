@@ -260,6 +260,28 @@ public class DiagnosticsServiceTests
     }
 
     [Fact]
+    public void MapDialogResult_returns_1_for_the_close_button()
+    {
+        // TaskDialogButton.Close is a static getter returning a new equal
+        // instance per access (verified on the installed WindowsDesktop
+        // 10.0.12 runtime: ReferenceEquals is false, == is true), so the
+        // production mapping must use value equality. F5 evidence
+        // 2026-09-15: a Close-click logged "button ID = 0".
+        TaskDialogButton close = TaskDialogButton.Close;
+
+        Assert.Equal(1, TaskDialogApi.MapDialogResult(close));
+    }
+
+    [Fact]
+    public void MapDialogResult_returns_0_for_a_non_close_button_or_null()
+    {
+        var custom = new TaskDialogButton("Custom");
+
+        Assert.Equal(0, TaskDialogApi.MapDialogResult(custom));
+        Assert.Equal(0, TaskDialogApi.MapDialogResult(null));
+    }
+
+    [Fact]
     public void HandleLinkClicked_rejects_null_args()
     {
         Assert.Throws<ArgumentNullException>(

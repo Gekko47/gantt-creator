@@ -71,6 +71,14 @@ internal static class TaskDialogApi
     /// Shows the diagnostics TaskDialog and returns a simple button result:
     /// 1 when the user closed the dialog via the Close button, 0 otherwise.
     /// </summary>
+    /// <remarks>
+    /// The comparison uses value equality (<c>==</c>), not
+    /// <see cref="object.ReferenceEquals(object, object?)"/>:
+    /// <see cref="TaskDialogButton.Close"/> is a static getter returning a new
+    /// equal instance per access, and the bound button collection holds another
+    /// copy, so reference equality never matches (F5 evidence 2026-09-15:
+    /// Close-click logged <c>button ID = 0</c>).
+    /// </remarks>
     /// <param name="title">The dialog caption.</param>
     /// <param name="mainInstruction">The main instruction heading.</param>
     /// <param name="content">The dialog content; may contain link markup.</param>
@@ -87,8 +95,22 @@ internal static class TaskDialogApi
         TaskDialogPage page = CreatePage(title, mainInstruction, content, openFileAction);
 
         TaskDialogButton button = TaskDialog.ShowDialog(page);
-        return ReferenceEquals(button, TaskDialogButton.Close) ? 1 : 0;
+        return MapDialogResult(button);
     }
+
+    /// <summary>
+    /// Maps a dialog result to the logged button ID: 1 when the user closed
+    /// via the Close button, 0 otherwise. Split out from
+    /// <see cref="ShowWithHyperlink"/> so the mapping contract is testable
+    /// without showing a dialog. Uses value equality: <see
+    /// cref="TaskDialogButton.Close"/> returns a new equal instance per
+    /// access, so <see cref="object.ReferenceEquals(object, object?)"/>
+    /// never matches.
+    /// </summary>
+    /// <param name="button">The button returned by showing the dialog.</param>
+    /// <returns>1 when <paramref name="button"/> equals <see cref="TaskDialogButton.Close"/>; otherwise 0.</returns>
+    internal static int MapDialogResult(TaskDialogButton? button) =>
+        button == TaskDialogButton.Close ? 1 : 0;
 
     /// <summary>
     /// Delivers a link-click event to the open action. Split out from

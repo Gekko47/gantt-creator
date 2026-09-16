@@ -324,6 +324,33 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void Ribbon_buttons_use_gallery_verified_imageMso_ids()
+    {
+        // imageMso fails silently on unknown IDs (no error, no log): the
+        // Diagnostics button showed no icon with imageMso="Information",
+        // which is absent from the Office 2010 Icons Gallery workbook
+        // (customUI14.xml: 7344 unique IDs, no "Information"). Pin
+        // gallery-verified IDs so a typo regresses to a failing test
+        // instead of a silently missing icon. Both IDs are additionally
+        // present in the Excel 2007 idMso table of [MS-CUSTOMUI]-250218
+        // (`.microsoft/` reference, git-ignored): FileOpen renders in
+        // Excel, Help is the diagnostics fallback after OfficeDiagnostics
+        // (valid gallery ID, but absent from the Excel idMso table and
+        // not rendered by Excel on the ribbon in F5) also failed.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        string? ImageMso(string id) =>
+            doc.Descendants(ns + "button")
+                .First(b => b.Attribute("id")?.Value == id)
+                .Attribute("imageMso")?.Value;
+
+        Assert.Equal("Help", ImageMso(RibbonControlIds.Diagnostics));
+        Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
+    }
+
+    [Fact]
     public void OnOpenLogClick_routes_through_the_command_boundary()
     {
         var shown = new List<string>();
