@@ -16,16 +16,29 @@ namespace GanttCreator.AddIn;
 /// </summary>
 /// <param name="identitySource">Supplies the load-session identity.</param>
 /// <param name="logSource">Supplies the rolling log.</param>
+/// <param name="applicationAdapterSource">
+/// Supplies the Excel application adapter during <see cref="AutoOpen"/>.
+/// Defaults to the production <c>ExcelDnaUtil.Application</c> probe;
+/// injectable so the <see cref="AutoClose"/> teardown order is
+/// contract-testable outside Excel (work item R1.6).
+/// </param>
 /// <exception cref="ArgumentNullException">A source is <see langword="null"/>.</exception>
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
-    Func<IRollingLog> logSource) : IExcelAddIn
+    Func<IRollingLog> logSource,
+    Func<IExcelApplicationAdapter>? applicationAdapterSource = null) : IExcelAddIn
 {
     private readonly Func<AddInIdentity> _identitySource =
         identitySource ?? throw new ArgumentNullException(nameof(identitySource));
 
     private readonly Func<IRollingLog> _logSource =
         logSource ?? throw new ArgumentNullException(nameof(logSource));
+
+    // Defaults to the production ExcelDnaUtil.Application probe; injectable
+    // so the AutoClose teardown order is contract-testable outside Excel
+    // (work item R1.6).
+    private readonly Func<IExcelApplicationAdapter> _applicationAdapterSource =
+        applicationAdapterSource ?? DefaultApplicationAdapterSource;
 
     private IRollingLog? _log;
 
@@ -97,7 +110,7 @@ public sealed class AddInHost(
         try
         {
             RibbonStateService.Instance.SetApplicationAdapter(
-                new ExcelApplicationAdapter(ExcelDnaUtil.Application));
+                _applicationAdapterSource());
             RibbonStateService.Instance.SetLogAvailabilitySource(
                 () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
             RibbonStateService.Instance.Activate();
@@ -111,31 +124,61 @@ public sealed class AddInHost(
     }
 
     /// <summary>
-    /// Excel-DNA entry point invoked when the XLL unloads. Writes exactly
-    /// one close record and disposes the log; failures degrade instead of
-    /// propagating into Excel.
+    /// Excel-DNA entry point invoked when the XLL unloads. Tears down in one
+    /// deterministic order (work item R1.6): the owned COM event connection
+    /// is detached first, then one close record is written, then every
+    /// session singleton drops its log reference, and the log is disposed
+    /// last. Failures degrade instead of propagating into Excel.
     /// </summary>
     public void AutoClose()
     {
         // CA1031: Teardown must never propagate into Excel — an exception
-        // from AutoClose surfaces as a host error during unload. The write
-        // failure degrades to a missing close record.
+        // from AutoClose surfaces as a host error during unload. Every step
+        // is individually guarded so one failure cannot block the remaining
+        // steps; a failure degrades to "that step not done".
         try
         {
-            if (_log is not null)
+            // Step 1 (work item R1.6): detach the one owned COM resource —
+            // the workbook-state event connection — before anything else, so
+            // a workbook-state event can no longer fire into services
+            // mid-teardown. Reset never throws: every detach failure is
+            // guarded inside the subscription itself.
+            RibbonStateService.Reset();
+
+            // Step 2: exactly one close record. A write failure degrades to
+            // a missing close record.
+            try
             {
-                new AddInLifecycle(_log).LogClose();
+                if (_log is not null)
+                {
+                    new AddInLifecycle(_log).LogClose();
+                }
             }
+#pragma warning disable CA1031
+            catch
+#pragma warning restore CA1031
+            {
+                // Intentionally empty: teardown degrades silently. See the
+                // justification comment above.
+            }
+
+            // Step 3: drop every session singleton's log reference BEFORE the
+            // log is disposed, so no service can hold (or write through) a
+            // disposed log. Both resets only clear references under a lock.
+            CommandBoundary.Reset();
+            DiagnosticsService.Reset();
         }
 #pragma warning disable CA1031
         catch
 #pragma warning restore CA1031
         {
-            // Intentionally empty: teardown degrades silently. See the
-            // justification comment above.
+            // Intentionally empty: teardown must never propagate into Excel.
         }
         finally
         {
+            // Step 4: the log is disposed last, when no other component holds
+            // it. Disposal exceptions are suppressed so AutoClose never
+            // propagates into Excel.
             try
             {
                 _log?.Dispose();
@@ -144,18 +187,24 @@ public sealed class AddInHost(
             catch
 #pragma warning restore CA1031
             {
-                // Suppress disposal exceptions so AutoClose never
-                // propagates into Excel.
+                // Intentionally empty: see the disposal rationale above.
             }
             finally
             {
-                DiagnosticsService.Reset();
-                CommandBoundary.Reset();
-                RibbonStateService.Reset();
                 _log = null;
             }
         }
     }
+
+    /// <summary>
+    /// The production application-adapter source: the Excel application
+    /// object supplied by the Excel-DNA host. Outside a live Excel host the
+    /// probe returns null, so the adapter reports "not determinable" and
+    /// subscribes no events.
+    /// </summary>
+    /// <returns>The live application adapter for this Excel session.</returns>
+    private static IExcelApplicationAdapter DefaultApplicationAdapterSource() =>
+        new ExcelApplicationAdapter(ExcelDnaUtil.Application);
 
     private static AddInIdentity DefaultIdentitySource()
     {

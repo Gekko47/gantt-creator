@@ -1,6 +1,7 @@
 using System.Globalization;
 using ExcelDna.Integration;
 using GanttCreator.Core.Logging;
+using GanttCreator.Office;
 
 // CA2000: The fake logs are deliberately not disposed in the test body —
 // the code under test (AddInHost.AutoClose) owns disposal and the tests
@@ -321,6 +322,83 @@ public class AddInHostTests
         }
     }
 
+    /// <summary>
+    /// A log that appends one token per IRollingLog call to a shared event
+    /// list so the R1.6 teardown-order contract can assert the exact
+    /// sequence: the formatted write is recorded as its first token
+    /// (<c>open</c>), the plain write as its message (<c>close</c>), and
+    /// disposal as <c>dispose</c>.
+    /// </summary>
+    private sealed class SequencedLog(List<string> events) : IRollingLog
+    {
+        public bool Disposed { get; private set; }
+
+        public bool IsFailed => false;
+
+        public string? LogFilePath => null;
+
+        public void Write(string message) => events.Add(message);
+
+        public void Write(string format, params object?[] args) =>
+            events.Add(format.Split(' ')[0]);
+
+        public void Dispose()
+        {
+            Disposed = true;
+            events.Add("dispose");
+        }
+    }
+
+    /// <summary>
+    /// An adapter that records its subscription lifecycle into a shared
+    /// event list (<c>subscribe</c> on subscribe, <c>detach</c> on dispose)
+    /// and counts handler invocations so the dead-subscription contract can
+    /// be asserted.
+    /// </summary>
+    private sealed class RecordingAdapter : IExcelApplicationAdapter
+    {
+        private readonly List<string> _events;
+        private Action? _handler;
+
+        public RecordingAdapter(List<string> events) => _events = events;
+
+        public int HandlerInvocations { get; private set; }
+
+        public bool? HasActiveWorkbook() => null;
+
+        public IDisposable SubscribeWorkbookStateChanged(Action handler)
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            _events.Add("subscribe");
+            _handler = () =>
+            {
+                HandlerInvocations++;
+                handler();
+            };
+            return new Subscription(this);
+        }
+
+        /// <summary>Simulates one workbook-state event from Excel.</summary>
+        internal void RaiseWorkbookStateChanged() => _handler?.Invoke();
+
+        private sealed class Subscription(RecordingAdapter owner) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                owner._events.Add("detach");
+                owner._handler = null;
+            }
+        }
+    }
+
     private static T? ReadPrivateField<T>(object obj, string fieldName)
     {
         var field = typeof(AddInHost).GetField(fieldName,
@@ -341,5 +419,177 @@ public class AddInHostTests
         Assert.Null(ReadPrivateField<IRollingLog?>(host, "_log"));
         Assert.False(log.Disposed);
         Assert.Equal(1, log.DisposeCalls);
+    }
+
+    // ---- Work item R1.6: deterministic shutdown and owned-resource cleanup ----
+
+    [Fact]
+    public void AutoClose_detaches_the_workbook_state_subscription_before_writing_the_close_record()
+    {
+        var events = new List<string>();
+        var log = new SequencedLog(events);
+        var adapter = new RecordingAdapter(events);
+        RibbonStateService.Reset();
+        var host = new AddInHost(() => TestIdentity, () => log, () => adapter);
+
+        try
+        {
+            host.AutoOpen();
+            host.AutoClose();
+
+            // The deterministic teardown order (work item R1.6 D1): the owned
+            // COM event connection is detached before the close record is
+            // written, and the log is disposed last.
+            Assert.Equal(
+                ["open", "subscribe", "detach", "close", "dispose"],
+                events);
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoClose_leaves_a_dead_subscription_that_delivers_no_events()
+    {
+        var events = new List<string>();
+        var log = new SequencedLog(events);
+        var adapter = new RecordingAdapter(events);
+        RibbonStateService.Reset();
+        var host = new AddInHost(() => TestIdentity, () => log, () => adapter);
+
+        try
+        {
+            host.AutoOpen();
+            host.AutoClose();
+
+            adapter.RaiseWorkbookStateChanged();
+
+            // After teardown the event connection is dead: no handler runs
+            // and the raised event writes nothing anywhere.
+            Assert.Equal(0, adapter.HandlerInvocations);
+            Assert.Equal(
+                ["open", "subscribe", "detach", "close", "dispose"],
+                events);
+        }
+        finally
+        {
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoClose_drops_every_service_log_reference_before_disposing_the_log()
+    {
+        var log = new CapturingLog();
+        DiagnosticsService.Reset();
+        CommandBoundary.Reset();
+        RibbonStateService.Reset();
+        var host = new AddInHost(() => TestIdentity, () => log);
+
+        try
+        {
+            host.AutoOpen();
+
+            Assert.NotNull(CommandBoundary.Instance.GetLog());
+            Assert.Equal(log.LogFilePath, DiagnosticsService.Instance.LogFilePath);
+
+            host.AutoClose();
+
+            // Both singletons dropped their log reference before the log was
+            // disposed (work item R1.6 D1): no service observes a disposed log.
+            Assert.Null(CommandBoundary.Instance.GetLog());
+            Assert.Null(DiagnosticsService.Instance.LogFilePath);
+            Assert.True(log.Disposed);
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+            CommandBoundary.Reset();
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoOpen_after_AutoClose_reopens_deterministically()
+    {
+        var log = new CapturingLog();
+        DiagnosticsService.Reset();
+        CommandBoundary.Reset();
+        RibbonStateService.Reset();
+        var host = new AddInHost(() => TestIdentity, () => log);
+
+        try
+        {
+            host.AutoOpen();
+            host.AutoClose();
+
+            // Excel-DNA can load/unload/reload an XLL in one Excel session
+            // (work item R1.6 D2): the reload must re-arm everything and
+            // produce exactly one open/close pair per load cycle.
+            host.AutoOpen();
+            host.AutoClose();
+
+            Assert.Equal(
+                [ExpectedOpenRecord, "close", ExpectedOpenRecord, "close"],
+                log.Records);
+            Assert.True(log.Disposed);
+            Assert.Null(CommandBoundary.Instance.GetLog());
+            Assert.Null(DiagnosticsService.Instance.LogFilePath);
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+            CommandBoundary.Reset();
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
+    public void AutoClose_releases_the_real_log_file_handle()
+    {
+        var dir = Directory.CreateTempSubdirectory();
+        try
+        {
+            var log = new RollingLog(dir.FullName, "r16-handle-release");
+            DiagnosticsService.Reset();
+            CommandBoundary.Reset();
+            RibbonStateService.Reset();
+            var host = new AddInHost(() => TestIdentity, () => log);
+
+            try
+            {
+                host.AutoOpen();
+                host.AutoClose();
+
+                // The Windows-observable proof that the owned file handle was
+                // released: the active log file is deletable after AutoClose
+                // (File.Delete throws IOException while any handle is open).
+                var activeLogPath = Path.Combine(dir.FullName, "r16-handle-release.log");
+                Assert.True(
+                    File.Exists(activeLogPath),
+                    "the open record must have created the active log file");
+                File.Delete(activeLogPath);
+                Assert.False(File.Exists(activeLogPath));
+            }
+            finally
+            {
+                DiagnosticsService.Reset();
+                CommandBoundary.Reset();
+                RibbonStateService.Reset();
+            }
+        }
+        finally
+        {
+            try
+            {
+                dir.Delete(recursive: true);
+            }
+            catch (IOException)
+            {
+                // Intentionally empty: temp-directory cleanup is best-effort.
+            }
+        }
     }
 }
