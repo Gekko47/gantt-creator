@@ -260,6 +260,27 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 }
                 return '__ScriptScope__'
             }
+            function Get-EnclosingScopeChain {
+                param([System.Management.Automation.Language.Ast]$Node)
+                # Returns the ordered chain of enclosing scope names, from
+                # the innermost lexical scope out to script scope. A variable
+                # declared in any enclosing scope (a function's parameter, a
+                # variable in a parent function, or a script-scope variable)
+                # is visible to the command, so scalar validation must walk
+                # the full chain rather than checking only the immediate
+                # function name.
+                $chain = [System.Collections.Generic.List[string]]::new()
+                $ancestor = $Node
+                while ($ancestor) {
+                    if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        $chain.Add($ancestor.Name)
+                    }
+                    $ancestor = $ancestor.Parent
+                }
+                # Always include script scope as the outermost scope.
+                $chain.Add('__ScriptScope__')
+                return $chain
+            }
             foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
                 $typeName = $typeConstraint.TypeName.FullName -replace '^System\.', ''
                 if ($typeName -ieq 'string') {
@@ -273,9 +294,16 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         # For a [string] cast assignment ([string]$Solution = ...)
                         # the cast's operand variable is exposed as Child (the
                         # Expression property is null on an assignment LHS).
-                        $operand = $parent.Child
-                        if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                            Add-ScalarVar -Node $parent -VarName $operand.VariablePath.UserPath
+                        # Only record the operand variable when the cast is the
+                        # LEFT side of an AssignmentStatementAst; a bare cast
+                        # used as a value expression (e.g. [string]$x in a
+                        # command argument) must not register its operand as a
+                        # scalar variable.
+                        if ($parent.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
+                            $operand = $parent.Child
+                            if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                                Add-ScalarVar -Node $parent -VarName $operand.VariablePath.UserPath
+                            }
                         }
                     }
                 }
@@ -322,14 +350,20 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         if (-not $elem.Splatted) {
                             $name = $elem.VariablePath.UserPath
                             if ($name -match '(?i)(Solution|Project)') {
-                                # Resolve the variable against its OWN enclosing
-                                # scope before applying scalar validation, so a
+                                # Resolve the variable against its enclosing scope chain
+                                # before applying scalar validation, so a
                                 # [string]$Solution declared in function foo does
                                 # not vouch for a same-named collection in
-                                # function bar or script scope.
-                                $scope = Get-EnclosingScopeName -Node $elem
-                                if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].Contains($name)) {
-                                    $count++
+                                # function bar or script scope. Walk the full
+                                # chain (innermost function out to script
+                                # scope) so a variable declared in any parent
+                                # scope counts, not just the immediate scope.
+                                $scopeChain = Get-EnclosingScopeChain -Node $elem
+                                foreach ($scope in $scopeChain) {
+                                    if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].Contains($name)) {
+                                        $count++
+                                        break
+                                    }
                                 }
                             }
                         }
