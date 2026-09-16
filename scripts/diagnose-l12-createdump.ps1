@@ -336,8 +336,8 @@ $step1ErrTmp = Join-Path $env:TEMP 'l12-step1-err.tmp'
 # Snapshot of the owned tree (root + descendants), taken immediately before a
 # kill so the wait after the kill can confirm the WHOLE tree exited.
 $step1KnownChildPids = @()
-$step1Proc = $null
 $step1KnownTreePids = @()
+$step1Proc = $null
 try {
 $step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru -RedirectStandardOutput $step1OutTmp -RedirectStandardError $step1ErrTmp
 $step1Watchdog = [System.Diagnostics.Stopwatch]::StartNew()

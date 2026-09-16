@@ -338,8 +338,12 @@ if ($step1Proc.HasExited) { } else {
         $treeWaitAssign = $branch.IndexOf('$step1TreeExited = $step1RootExited -and (Wait-HarnessProcessTreeExit')
         $treeWaitAssign | Should -BeGreaterThan $rootWaitAssign -Because 'the root wait must be followed by the complete-tree wait'
 
-        $completeTreeCheckIdx = $branch.IndexOf('$step1TreeExited = -not (Test-HarnessProcessTreeActive')
-        $completeTreeCheckIdx | Should -BeGreaterThan -1
+        # The complete-tree confirmation must be backed by the named polling
+        # helper (Wait-HarnessProcessTreeExit, which itself polls
+        # Test-HarnessProcessTreeActive): a one-shot active-check shape would
+        # also be acceptable, but the branch must not confirm exit by the
+        # root's WaitForExit alone.
+        $branch | Should -Match 'Wait-HarnessProcessTreeExit' -Because 'the deadline kill must confirm the complete owned tree, not just the root'
         $abortIdx = $branch.IndexOf('exit 3')
         $abortIdx | Should -BeGreaterThan $treeWaitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
 
@@ -353,14 +357,14 @@ if ($step1Proc.HasExited) { } else {
         $flagged = @'
 if (-not $step1Proc.HasExited) {
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-    $step1TreeExited = $step1Proc.WaitForExit(5000)
+    $step1RootExited = $step1Proc.WaitForExit(5000)
     $step1ExitCode = 124
 }
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Not -Match 'Wait-HarnessProcessTreeExit' -Because 'this stub deliberately omits the complete-tree wait'
-        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=' -Because 'this stub never captures a tree-exit result'
+        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=' -Because 'this stub captures only the root exit, never the complete-tree result'
     }
 
     It 'Step 1 recognizes testhost-abort signatures at or after one second, and the summary no longer limits crashes to under 1s' {
