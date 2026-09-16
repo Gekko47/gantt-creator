@@ -133,7 +133,7 @@ dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
         $codeOnly | Should -Not -Match 'createdump' -Because 'this stub deliberately omits Step 2'
     }
 
-    It 'Step 1 launch, poll, and classification are wrapped in try/finally that kills the owned process tree' {
+    It 'Step 1 launch, poll, and classification are wrapped in try/finally that checks and kills the complete owned process tree' {
         # A terminating error or interruption after launch must not leak the
         # owned testhost process tree; the explicit deadline branch alone is
         # not enough.
@@ -313,20 +313,14 @@ if ($step1Proc.HasExited) { } else {
         $readIdx | Should -BeLessThan $killIdx -Because 'this stub deliberately reads the streams before the deadline kill'
     }
 
-    It 'the deadline kill awaits the owned tree and aborts the diagnostic if it does not exit' {
-        # The WaitForExit(5000) call after the deadline kill must return its
-        # bool to a variable (not be discarded with `$null =`), and a False
-        # result must stop the diagnostic before the redirected streams are
-        # read or deleted. Stream access is preserved only after confirmed
-        # process termination.
+    It 'Step 1 captures descendants and confirms the complete tree before reading redirected streams' {
+        # WaitForExit confirms only the launcher. The script must preserve the
+        # descendant PIDs before taskkill breaks parentage, then poll the same
+        # complete-tree predicate before stream reads/deletes.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        # Scope the ordering checks to the deadline branch only: the script
-        # legitimately discards a WaitForExit bool in the separate
-        # error/cleanup finally block, so a whole-script negative match would
-        # be a false positive. The branch starts at the timeout classification
-        # and ends where the stream reads begin.
+        # Scope ordering checks from timeout classification to stream reads.
         $timeoutIdx = $codeOnly.IndexOf("'timeout'")
         $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
         $timeoutIdx | Should -BeGreaterThan -1
@@ -344,6 +338,8 @@ if ($step1Proc.HasExited) { } else {
         $treeWaitAssign = $branch.IndexOf('$step1TreeExited = $step1RootExited -and (Wait-HarnessProcessTreeExit')
         $treeWaitAssign | Should -BeGreaterThan $rootWaitAssign -Because 'the root wait must be followed by the complete-tree wait'
 
+        $completeTreeCheckIdx = $branch.IndexOf('$step1TreeExited = -not (Test-HarnessProcessTreeActive')
+        $completeTreeCheckIdx | Should -BeGreaterThan -1
         $abortIdx = $branch.IndexOf('exit 3')
         $abortIdx | Should -BeGreaterThan $treeWaitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
 
@@ -353,14 +349,11 @@ if ($step1Proc.HasExited) { } else {
         $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard a WaitForExit bool with `$null =`'
     }
 
-    It 'positive control: a stub discarding the WaitForExit bool fails the capture assertion' {
-        # The previous form (`$null = $step1Proc.WaitForExit(5000)`) threw away
-        # whether the tree actually exited, so a stub using it must not
-        # satisfy the new capture assertion.
+    It 'positive control: root-only WaitForExit lacks complete-tree shutdown confirmation' {
         $flagged = @'
 if (-not $step1Proc.HasExited) {
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-    $null = $step1Proc.WaitForExit(5000)
+    $step1TreeExited = $step1Proc.WaitForExit(5000)
     $step1ExitCode = 124
 }
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue

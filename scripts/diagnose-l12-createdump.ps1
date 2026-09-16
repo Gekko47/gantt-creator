@@ -337,6 +337,7 @@ $step1ErrTmp = Join-Path $env:TEMP 'l12-step1-err.tmp'
 # kill so the wait after the kill can confirm the WHOLE tree exited.
 $step1KnownChildPids = @()
 $step1Proc = $null
+$step1KnownTreePids = @()
 try {
 $step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru -RedirectStandardOutput $step1OutTmp -RedirectStandardError $step1ErrTmp
 $step1Watchdog = [System.Diagnostics.Stopwatch]::StartNew()
@@ -351,8 +352,12 @@ $step1Outcome = ''
 # inputs and invalid arguments keep distinct handling via the pre-flight
 # exits above and the invalid-args outcome below.
 while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $Step1DeadlineSeconds) {
+    $step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownTreePids) |
+        Sort-Object -Unique)
     Start-Sleep -Seconds 1
 }
+$step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownTreePids) |
+    Sort-Object -Unique)
 
 if (-not $step1Proc.HasExited) {
     # Deadline reached: terminate the owned tree and WAIT for the COMPLETE tree

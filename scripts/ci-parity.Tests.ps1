@@ -308,14 +308,52 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 }
                 while ($ancestor) {
                     if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-                        return $ancestor.Name
+                        # The source offset distinguishes same-named nested or
+                        # sibling functions without relying on their labels.
+                        return "__FunctionScope_$($ancestor.Extent.StartOffset)__"
                     }
                     $ancestor = $ancestor.Parent
                 }
                 return '__ScriptScope__'
             }
+            function Get-DeclarationScopeName {
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.VariablePath]$VariablePath
+                )
+                if ($VariablePath.IsScript) { return '__ScriptScope__' }
+                if ($VariablePath.IsGlobal) { return '__GlobalScope__' }
+                # Explicit local/private and unqualified assignments belong to
+                # the nearest lexical scope. At script level that is script.
+                return Get-EnclosingScopeName -Node $Node
+            }
+            function Add-VariableDeclaration {
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.Language.VariableExpressionAst]$Variable,
+                    [bool]$IsScalarString
+                )
+                $scope = Get-DeclarationScopeName -Node $Node -VariablePath $Variable.VariablePath
+                $name = Get-VariableName -VariablePath $Variable.VariablePath
+                if (-not $variableDeclarations.ContainsKey($scope)) {
+                    $variableDeclarations[$scope] = @{}
+                }
+                # A type-constrained parameter/variable remains constrained
+                # when subsequently assigned without repeating the cast.
+                if ($IsScalarString -or -not $variableDeclarations[$scope].ContainsKey($name)) {
+                    $variableDeclarations[$scope][$name] = $IsScalarString
+                }
+            }
             function Get-EnclosingScopeChain {
-                param([System.Management.Automation.Language.Ast]$Node)
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.VariablePath]$VariablePath
+                )
+                if ($VariablePath.IsScript) { return @('__ScriptScope__') }
+                if ($VariablePath.IsGlobal) { return @('__GlobalScope__') }
+                if ($VariablePath.IsLocal -or $VariablePath.IsPrivate) {
+                    return @(Get-EnclosingScopeName -Node $Node)
+                }
                 # Returns the ordered chain of enclosing scope names, from
                 # the innermost lexical scope out to script scope. A variable
                 # declared in any enclosing scope (a function's parameter, a
@@ -336,7 +374,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 }
                 while ($ancestor) {
                     if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-                        $chain.Add($ancestor.Name)
+                        $chain.Add("__FunctionScope_$($ancestor.Extent.StartOffset)__")
                     }
                     $ancestor = $ancestor.Parent
                 }
@@ -372,6 +410,9 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                             }
                         }
                     }
+                }
+                if ($variable) {
+                    Add-VariableDeclaration -Node $assignment -Variable $variable -IsScalarString $isScalarString
                 }
             }
 
