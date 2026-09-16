@@ -20,7 +20,7 @@ Describe 'diagnose-l12-createdump.ps1' {
         # and must not ship a bare --blame-hang-timeout the way the old
         # verify-office.ps1 did before L12.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         # It must contain the paired flags. Step 1 passes them as a
         # comma-separated PowerShell argument array, so the dump-type option
@@ -42,7 +42,7 @@ Describe 'diagnose-l12-createdump.ps1' {
 
     It 'Step 2 is a parent-process dump smoke test, not a debug-privilege probe' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match 'Start-Process\s+-FilePath\s+\$createdump\.FullName' -Because 'Step 2 must invoke createdump directly via Start-Process -FilePath $createdump.FullName, not merely mention it in comments or log messages'
         $codeOnly | Should -Match 'Start-Sleep\s+-Seconds\s+600' -Because 'Step 2 needs a predictable long-lived helper process'
@@ -56,14 +56,14 @@ Describe 'diagnose-l12-createdump.ps1' {
         # the same ownership discipline as verify-office.ps1 must apply: never
         # kill by Office process name.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Not -Match 'taskkill\s.*[\/]F.*EXCEL' -Because 'the diagnostic must not kill user-owned Excel even when it runs the real suite'
     }
 
     It 'writes a report under the ignored _artifacts tree' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match '(?s)_artifacts.*?l12-diagnostic' -Because 'evidence must land under the ignored artifacts tree, never committed'
         $codeOnly | Should -Match 'l12-diagnostic-report\.txt' -Because 'the report file name is stable for retrieval'
@@ -74,7 +74,7 @@ Describe 'diagnose-l12-createdump.ps1' {
         # success based on a non-throwing run. This mirrors the L12 discipline
         # that a non-throwing COM / Office call does not prove the gate passed.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match 'Human interpretation' -Because 'the script must hand off interpretation to a human'
         $codeOnly | Should -Not -Match 'exit 0.*root cause' -Because 'a zero exit must not be conflated with a solved root cause'
@@ -84,7 +84,7 @@ Describe 'diagnose-l12-createdump.ps1' {
         $flagged = @'
 dotnet test --blame-hang-timeout 600
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $barePattern = '--blame-hang-timeout\s+''?\d+(ms|s|m|h)?e?''?(\s|$|,)'
         $codeOnly | Should -Match $barePattern -Because 'the negative assertion must be able to detect a bare blame-hang-timeout'
         $codeOnly | Should -Not -Match '--blame-hang-dump-type\s+none' -Because 'this flagged stub deliberately omits the dump-type constraint'
@@ -97,7 +97,7 @@ dotnet test --blame-hang-timeout 600
         $flagged = @'
 dotnet test --blame-hang-timeout 60s
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $barePattern = '--blame-hang-timeout\s+''?\d+(ms|s|m|h)?e?''?(\s|$|,)'
         $codeOnly | Should -Match $barePattern -Because 'the negative assertion must detect a bare suffixed blame-hang-timeout'
         $codeOnly | Should -Not -Match '--blame-hang-dump-type\s+none' -Because 'this flagged stub deliberately omits the dump-type constraint'
@@ -107,7 +107,7 @@ dotnet test --blame-hang-timeout 60s
         # Step 1 runs with --no-build --no-restore, so missing inputs must
         # fail distinctly instead of being misclassified as a testhost abort.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match 'solution not found' -Because 'a missing solution must fail distinctly before launch'
         $codeOnly | Should -Match 'built .* test artifacts' -Because 'absent no-build artifacts must fail distinctly before launch'
@@ -118,7 +118,7 @@ dotnet test --blame-hang-timeout 60s
 
     It 'Step 2 never reuses a stale dump from a previous run' {
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match 'step2-parent\.dmp' -Because 'Step 2 writes its dump to a stable evidence path'
         $codeOnly | Should -Match 'Remove-Item\s+-LiteralPath\s+\$dumpPath' -Because 'a stale dump must be removed before createdump runs so failure cannot read as dump-written'
@@ -128,7 +128,7 @@ dotnet test --blame-hang-timeout 60s
         $flagged = @'
 dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match '--blame-hang-dump-type\s+none' -Because 'this stub passes Step 1''s constraints'
         $codeOnly | Should -Not -Match 'createdump' -Because 'this stub deliberately omits Step 2'
     }
@@ -138,7 +138,7 @@ dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
         # owned testhost process tree; the explicit deadline branch alone is
         # not enough.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{' -Because 'the process variable must be nulled before the guarded launch'
         $codeOnly | Should -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F' -Because 'the finally block must terminate the owned testhost process tree'
@@ -149,7 +149,7 @@ dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
 $step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
 while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 }
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Not -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{'
         $codeOnly | Should -Not -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F'
     }
@@ -159,7 +159,7 @@ while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 }
         # matched the standard runtimeconfig schema, so Step 0 silently
         # degraded to an arbitrary recursive createdump selection.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match '\$rc\.runtimeOptions\.framework' -Because 'the requested version comes from the standard single-framework schema'
         $codeOnly | Should -Match '\$rc\.runtimeOptions\.frameworks' -Because 'the multi-framework schema must be handled too'
@@ -173,7 +173,7 @@ while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 }
         $flagged = @'
 $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $bareRecursive = 'Get-ChildItem\s+-Path\s+\$dotnetRoot\s+-Recurse\s+-Filter\s+''createdump\.exe''\s+-ErrorAction\s+SilentlyContinue\s*\|\s*Select-Object\s+-First\s+1'
         $codeOnly | Should -Match $bareRecursive -Because 'this stub deliberately re-introduces the arbitrary recursive pick'
     }
@@ -182,7 +182,7 @@ $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' 
         # A failed createdump can leave a zero-byte or partial artifact on
         # disk; a file merely existing must not read as dump-written.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s+-and\s+\(Get-Item\s+-LiteralPath\s+\$dumpPath\)\.Length\s+-gt\s+0' -Because 'dump-written requires a zero exit code and a non-empty dump'
         $codeOnly | Should -Not -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'the old classification reported any on-disk artifact as dump-written'
@@ -194,7 +194,7 @@ $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' 
     $dumpBytes = (Get-Item -LiteralPath $dumpPath).Length
     $step2Result.Outcome = 'dump-written'
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match '\}\s*elseif\s*\(Test-Path\s+-LiteralPath\s+\$dumpPath\)\s*\{' -Because 'this stub deliberately re-introduces the artifact-only classification'
         $codeOnly | Should -Not -Match '\$step2Result\.ExitCode\s+-eq\s+0\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$dumpPath\)'
     }
@@ -206,7 +206,7 @@ $createdump = Get-ChildItem -Path $dotnetRoot -Recurse -Filter 'createdump.exe' 
         # branch is the only path where the process is still alive when the
         # streams are read, so the deadline kill must be waited on first.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $timeoutIdx = $codeOnly.IndexOf("'timeout'")
         $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
@@ -237,7 +237,7 @@ if ($step1Proc.HasExited) { } else {
     $step1ExitCode = 124
 }
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $killIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F')
         $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
         $killIdx | Should -BeGreaterThan -1
@@ -251,7 +251,7 @@ if ($step1Proc.HasExited) { } else {
         # read or deleted. Stream access is preserved only after confirmed
         # process termination.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         # Scope the ordering checks to the deadline branch only: the script
         # legitimately discards a WaitForExit bool in the separate
@@ -288,7 +288,7 @@ if (-not $step1Proc.HasExited) {
 }
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Not -Match '\$step1TreeExited\s*=\s*\$step1Proc\.WaitForExit' -Because 'this stub deliberately discards the WaitForExit bool'
     }
 
@@ -297,7 +297,7 @@ $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyC
         # as testhost-abort even when the process survived past the 1s mark;
         # the branch must not be guarded by the sub-second fast-exit test.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
         $codeOnly | Should -Match $anyAgeAbort -Because 'abort signatures at/after 1s must classify as testhost-abort, not as a mere test-run failure'
@@ -312,7 +312,7 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
     $step1Outcome = 'testhost-abort'
 }
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
         $codeOnly | Should -Not -Match $anyAgeAbort -Because 'this stub deliberately limits abort classification to sub-second exits'
     }
@@ -324,13 +324,10 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         # its trailing period. The pattern must match that token and nothing
         # broader.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
-        $codeOnly = $raw -replace '(?m)^\\s*#.*$', ''
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        # Shared escaped assertion regex for the production abort-pattern
-        # assignment text. The production script assigns the anchored form
-        # '^Aborted\.$' (a complete output line that is exactly "Aborted.").
-        $abortPatternAssignment = '\\$abortPattern\\s*=\\s*[''"]\\^Aborted\\\\\\.\\$[''"]'
-        $codeOnly | Should -Match $abortPatternAssignment -Because 'the abort pattern must be the single unambiguous token "^Aborted.$"'
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\\\.[''"]'
+        $codeOnly | Should -Match $abortPatternAssignment -Because 'the abort pattern must be the single unambiguous token "Aborted."'
 
         # The old broad terms must no longer appear anywhere in the pattern.
         # Scope the assertions to the assignment line only: the words
@@ -352,7 +349,7 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         # The previous pattern matched testhost, dump, createdump, access
         # denied, and 0x800 -- all of which appear in ordinary failure
         # output. A stub using that pattern must not satisfy the tightened
-        # "^Aborted.$" assertion, proving the detector has a blind spot for
+        # "Aborted." assertion, proving the detector has a blind spot for
         # false positives.
         $flagged = @'
 $abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
@@ -360,9 +357,8 @@ if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
     $step1Crashed = $true
 }
 '@
-        $codeOnly = $flagged -replace '(?m)^\\s*#.*$', ''
-        # Reuse the shared anchored-pattern assertion; this stub must NOT
-        # match it because it deliberately uses the old broad pattern.
-        $codeOnly | Should -Not -Match $abortPatternAssignment -Because 'this stub deliberately uses the old broad pattern, not the tightened "^Aborted.$" token'
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\.[''"]'
+        $codeOnly | Should -Not -Match $abortPatternAssignment -Because 'this stub deliberately uses the old broad pattern, not the tightened "Aborted." token'
     }
 }

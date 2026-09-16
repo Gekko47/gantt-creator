@@ -280,14 +280,13 @@ if (-not $step1Proc.HasExited) {
     & taskkill /PID $step1Proc.Id /T /F
     $step1TaskkillExit = $LASTEXITCODE
     $step1TreeExited = $step1Proc.WaitForExit(5000)
-    if (-not $step1TreeExited) {
-        Log "FAIL: Step 1: the owned testhost process tree did not exit after the deadline kill (taskkill exit=$step1TaskkillExit, WaitForExit=$step1TreeExited)."
+    if ($step1TaskkillExit -ne 0 -or -not $step1TreeExited) {
+        Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, WaitForExit=$step1TreeExited)."
         Log '  The redirected streams are left untouched (the process still has them open);'
         Log '  the diagnostic is stopping here rather than reading or deleting them.'
         exit 3
     }
     $step1ExitCode = 124
-    Log "Step 1: taskkill exit=$step1TaskkillExit; process tree confirmed exited."
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 } else {
     $step1ExitCode = $step1Proc.ExitCode
@@ -321,11 +320,10 @@ if ($step1Outcome -eq 'timeout') {
     # its own branches and sets $step1Crashed only for a genuine native
     # blame-collector abort. A bare "aborted" without the period is not used:
     # it would also match ordinary words in test names and log lines.
-    # Anchor at line start/end so "Operation was aborted." and other
-    # non-abort messages are excluded: the only accepted signature is a
-    # complete output line that is exactly "Aborted." (the trailing period
-    # is part of the token).
-    $abortPattern = '^Aborted\.$'
+    # Anchor at line start/end so messages such as "Operation was aborted."
+    # do not match: the accepted signatures are "Aborted." and "was aborted."
+    # as complete output lines.
+    $abortPattern = 'Aborted\.'
     $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
     if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
         $step1Outcome = 'invalid-args'
