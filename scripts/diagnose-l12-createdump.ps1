@@ -50,6 +50,102 @@ $report = Join-Path $evidence 'l12-diagnostic-report.txt'
 
 function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value $s }
 
+function Get-HarnessProcessTreePids {
+    param([Parameter(Mandatory)][int]$RootProcessId)
+
+    # Snapshot the live descendants of an owned process tree (root included) by
+    # walking Win32_Process parentage, so grandchildren are covered too.
+    # ParentProcessId keeps the creating process id even after that parent has
+    # exited, so a launcher that is already gone still yields its surviving
+    # children. The same ownership model is used by verify-office.ps1.
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            [pscustomobject]@{
+                ProcessId       = [int]$_.ProcessId
+                ParentProcessId = [int]$_.ParentProcessId
+            }
+        })
+
+    $seen = @{}
+    $pending = @($RootProcessId)
+    $index = 0
+    while ($index -lt $pending.Count) {
+        $candidateId = $pending[$index]
+        $index++
+        if ($seen.ContainsKey($candidateId)) { continue }
+        $seen[$candidateId] = $true
+        $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+    }
+
+    return @($seen.Keys)
+}
+
+function Test-HarnessProcessTreeActive {
+    param(
+        [Parameter(Mandatory)][int]$RootProcessId,
+        [int[]]$KnownChildPids
+    )
+
+    # True while the owned root or ANY known descendant (or their descendants)
+    # is still running. This is the complete-tree check: the launcher can exit
+    # before its children, so the root object's HasExited alone is not evidence
+    # that the tree is gone. Mirrors verify-office.ps1's ownership probe.
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            [pscustomobject]@{
+                ProcessId       = [int]$_.ProcessId
+                ParentProcessId = [int]$_.ParentProcessId
+            }
+        })
+    if ($processes.Count -eq 0) { return $false }
+
+    $activePids = @{}
+    $roots = @($RootProcessId) + @($KnownChildPids | Where-Object { $_ })
+    foreach ($ownedRootId in $roots) {
+        if ($activePids.ContainsKey($ownedRootId)) { continue }
+
+        $pending = @($ownedRootId)
+        $visited = @{}
+        $index = 0
+        while ($index -lt $pending.Count) {
+            $candidateId = $pending[$index]
+            $index++
+            if ($visited.ContainsKey($candidateId)) { continue }
+            $visited[$candidateId] = $true
+
+            $process = $processes | Where-Object { $_.ProcessId -eq $candidateId } | Select-Object -First 1
+            if (-not $process) { continue }
+
+            $activePids[$candidateId] = $true
+            $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+        }
+    }
+
+    return $activePids.Count -gt 0
+}
+
+function Wait-HarnessProcessTreeExit {
+    param(
+        [Parameter(Mandatory)][int]$RootProcessId,
+        [int[]]$KnownChildPids,
+        [int]$TimeoutSeconds = 5
+    )
+
+    # Poll the named observable condition (the owned tree is gone) against a
+    # deadline instead of sleeping a fixed interval and assuming exit. Returns
+    # $true only when the complete tree has been observed inactive.
+    $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ($true) {
+        if (-not (Test-HarnessProcessTreeActive -RootProcessId $RootProcessId -KnownChildPids $KnownChildPids)) {
+            return $true
+        }
+        if ([datetime]::UtcNow -ge $deadline) {
+            return $false
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 Log "L12 createdump diagnostic started $(Get-Date -Format 'o')"
 Log "Solution:      $Solution"
 Log "Configuration: $Configuration"
@@ -235,7 +331,11 @@ $step1ErrTmp = Join-Path $env:TEMP 'l12-step1-err.tmp'
 # The launch, poll, and classification below run inside try/finally: on any
 # terminating error or interruption after launch, the finally block still
 # terminates the owned testhost process tree, instead of leaking it (the
-# normal path handles cleanup via the explicit deadline branch below).
+# normal path additionally confirms the complete tree exited before it reads
+# the redirected streams).
+# Snapshot of the owned tree (root + descendants), taken immediately before a
+# kill so the wait after the kill can confirm the WHOLE tree exited.
+$step1KnownChildPids = @()
 $step1Proc = $null
 try {
 $step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru -RedirectStandardOutput $step1OutTmp -RedirectStandardError $step1ErrTmp
@@ -255,33 +355,43 @@ while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $S
 }
 
 if (-not $step1Proc.HasExited) {
-    # Deadline reached: terminate the owned tree and WAIT for it before
-    # touching the redirected streams. The child keeps its stdout/stderr
-    # temp files open until it exits, so reading or deleting before the
-    # kill can capture a partial stream and can silently fail the deletes
-    # (leaking the temp files in TEMP).
+    # Deadline reached: terminate the owned tree and WAIT for the COMPLETE tree
+    # before touching the redirected streams. The child keeps its stdout/stderr
+    # temp files open until it exits, so reading or deleting before the kill can
+    # capture a partial stream and can silently fail the deletes (leaking the
+    # temp files in TEMP).
     #
-    # WaitForExit(5000) returns $true only when the process has actually
-    # terminated. If it returns $false the tree is still alive and still
-    # holds the redirected streams open; in that case the diagnostic is
-    # stopped before reading or deleting those streams, so stream access
-    # is preserved only after confirmed process termination. The streams
-    # are left untouched on the abort path rather than risked to a partial
-    # read or a silently-failed delete.
+    # The wait is two-part: WaitForExit(5000) covers the root (the process that
+    # owns the redirected streams), then Wait-HarnessProcessTreeExit polls the
+    # snapshotted tree until every descendant is gone. If either step fails the
+    # tree is still alive and still holds the redirected streams open; in that
+    # case the diagnostic is stopped before reading or deleting those streams,
+    # so stream access is preserved only after confirmed process termination.
+    # The streams are left untouched on the abort path rather than risked to a
+    # partial read or a silently-failed delete.
     $step1Outcome = 'timeout'
     Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
-    Log '  Killing the step-1 process tree and waiting for it to exit.'
+    Log '  Killing the step-1 process tree and waiting for the complete tree to exit.'
+    # Snapshot root + descendants BEFORE the kill so the wait below can confirm
+    # the WHOLE tree exited: a descendant that refuses the signal, or a
+    # grandchild spawned in the window, would otherwise hold the redirected
+    # stdout/stderr temp files open while the diagnostic reads or deletes them.
+    $step1KnownChildPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+    Log "  Owned tree before the kill: $($step1KnownChildPids.Count) live process(es) (root + descendants)."
     # Capture taskkill's own result rather than discarding it: taskkill /T /F
     # returns 0 only when it successfully signaled the whole tree, so a
     # non-zero exit here (process not found, access denied, a child refused
     # the signal) is itself evidence that termination was not confirmed.
-    # WaitForExit(5000) alone would only tell us whether the root process
-    # eventually went away, not whether the kill signal reached the tree.
     & taskkill /PID $step1Proc.Id /T /F
     $step1TaskkillExit = $LASTEXITCODE
-    $step1TreeExited = $step1Proc.WaitForExit(5000)
+    # Wait on the root first (it owns the redirected streams), then poll until
+    # the complete owned tree -- root plus every snapshotted descendant -- has
+    # exited. WaitForExit on the root alone would only tell us whether the root
+    # went away, not whether the kill reached (or spawned) descendants.
+    $step1RootExited = $step1Proc.WaitForExit(5000)
+    $step1TreeExited = $step1RootExited -and (Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids -TimeoutSeconds 5)
     if ($step1TaskkillExit -ne 0 -or -not $step1TreeExited) {
-        Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, WaitForExit=$step1TreeExited)."
+        Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, rootExited=$step1RootExited, treeExited=$step1TreeExited)."
         Log '  The redirected streams are left untouched (the process still has them open);'
         Log '  the diagnostic is stopping here rather than reading or deleting them.'
         exit 3
@@ -290,6 +400,20 @@ if (-not $step1Proc.HasExited) {
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 } else {
     $step1ExitCode = $step1Proc.ExitCode
+}
+
+# The launcher can exit while its testhost worker and createdump helpers keep
+# running and keep the redirected stdout/stderr temp files open. Confirm the
+# COMPLETE owned tree has exited before the streams are read or deleted: the
+# root's own exit is not sufficient evidence. On the timeout path the tree was
+# already confirmed gone above, so this check returns immediately.
+$step1KnownChildPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+if (Test-HarnessProcessTreeActive -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids) {
+    Log 'Step 1: descendant process(es) of the owned tree outlived the launcher; waiting up to 5s for the complete tree to exit before touching the redirected streams.'
+    if (-not (Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids -TimeoutSeconds 5)) {
+        Log 'FAIL: Step 1: the owned testhost process tree is still active; the redirected streams are left untouched rather than read or deleted while a descendant may still hold them open.'
+        exit 3
+    }
 }
 
 # Read and preserve both redirected streams BEFORE deleting their temp
@@ -313,30 +437,32 @@ if ($step1Outcome -eq 'timeout') {
     # The abort signature must be the unambiguous native abort signal only.
     # The .NET CRT prints exactly "Aborted." to stderr on SIGABRT, and
     # Environment.FailFast emits "The process was aborted."; both terminate
-    # the testhost and both contain the token "Aborted." (with the trailing
-    # period). Matching that single token -- rather than broad terms such as
-    # testhost, dump, createdump, access denied, or 0x800 -- keeps normal
-    # failure handling (test results, invalid arguments, missing inputs) on
-    # its own branches and sets $step1Crashed only for a genuine native
-    # blame-collector abort. A bare "aborted" without the period is not used:
-    # it would also match ordinary words in test names and log lines.
-    # Anchor at line start/end so messages such as "Operation was aborted."
-    # do not match: the accepted signatures are "Aborted." and "was aborted."
-    # as complete output lines.
-    $abortPattern = 'Aborted\.'
+    # the testhost and both are accepted as complete output lines. The
+    # pattern matches those two exact lines only -- rather than broad terms
+    # such as testhost, dump, createdump, access denied, or 0x800 -- and
+    # keeps normal failure handling (test results, invalid arguments, missing
+    # inputs) on its own branches, setting $step1Crashed only for a genuine
+    # native blame-collector abort. A bare "aborted" without the period is
+    # not used: it would also match ordinary words in test names and log
+    # lines. The pattern is line-anchored (^(?:...|...)$) and matched with
+    # (?im), so it matches only complete lines equal to "Aborted." or "The
+    # process was aborted."; multi-line output is scanned line by line, and
+    # other lines such as "Operation was aborted." are not classified as abort
+    # signatures.
+    $abortPattern = '^(?:Aborted\.|The process was aborted\.)$'
     $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
     if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
         $step1Outcome = 'invalid-args'
         Log "Step 1: exited ${age}s after start with exit code $step1ExitCode and invalid-argument output."
         Log '  Interpretation: invalid arguments or missing inputs; not classified as a testhost crash. Fix the invocation and re-run.'
         Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
-    } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    } elseif ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?im)$abortPattern") {
         $step1Crashed = $true
         $step1Outcome = 'testhost-abort'
         Log "Step 1: testhost exited ${age}s after start with exit code $step1ExitCode."
         Log '  Interpretation: crash pattern (under 1s with testhost-abort output). The dump-type-none probe did NOT avoid the failure.'
         Log "  Output excerpt: $($step1Output.Substring(0, [Math]::Min(500, $step1Output.Length)))"
-    } elseif ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    } elseif ($step1ExitCode -ne 0 -and $step1Output -match "(?im)$abortPattern") {
         # Abort signature at or after one second: the canonical ~0.2s L12
         # crash is the dominant form, but a slower abort must not be read as
         # a mere test-run failure just because it survived the first second.
@@ -368,13 +494,16 @@ if ($step1Outcome -eq 'timeout') {
 }
 finally {
     # Owned-process teardown on every path: normal exit, the timeout branch
-    # above, and any terminating error or interruption after launch. The
-    # timeout branch usually leaves the tree dead already; the HasExited
-    # guard makes a repeated kill a harmless no-op race.
-    if ($step1Proc -and -not $step1Proc.HasExited) {
-        Log 'Step 1: terminating the owned testhost process tree (error/interruption cleanup path).'
-        & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-        $null = $step1Proc.WaitForExit(5000)
+    # above, and any terminating error or interruption after launch.
+    if ($step1Proc) {
+        $step1CleanupPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+        if (Test-HarnessProcessTreeActive -RootProcessId $step1Proc.Id -KnownChildPids $step1CleanupPids) {
+            Log 'Step 1: terminating the owned testhost process tree (error/interruption cleanup path).'
+            & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+            if (-not (Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id -KnownChildPids $step1CleanupPids -TimeoutSeconds 5)) {
+                Log 'Step 1: WARN: the owned testhost process tree was still active 5s after the cleanup kill; check the host for orphaned testhost or createdump processes.'
+            }
+        }
     }
 }
 

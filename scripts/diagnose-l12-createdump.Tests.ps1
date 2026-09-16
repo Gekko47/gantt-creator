@@ -141,7 +141,21 @@ dotnet test --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
         $codeOnly | Should -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{' -Because 'the process variable must be nulled before the guarded launch'
-        $codeOnly | Should -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F' -Because 'the finally block must terminate the owned testhost process tree'
+        # The window is generous enough for the complete-tree check that now
+        # precedes the kill inside the finally block, while still requiring the
+        # kill itself to live in that block.
+        $codeOnly | Should -Match '(?s)finally\s*\{.{0,900}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F' -Because 'the finally block must terminate the owned testhost process tree'
+
+        # Cleanup must decide with the complete-tree check: a root that exited
+        # can leave a testhost worker behind, so HasExited alone must not skip
+        # the kill. The ordering is scoped to the finally body.
+        $finallyIdx = $codeOnly.IndexOf('finally {')
+        $finallyKillIdx = $codeOnly.IndexOf('taskkill /PID $step1Proc.Id /T /F', $finallyIdx)
+        $finallyIdx | Should -BeGreaterThan -1 -Because 'the Step 1 finally block must be locatable'
+        $finallyKillIdx | Should -BeGreaterThan $finallyIdx -Because 'the kill must live inside the finally block'
+        $finallyBody = $codeOnly.Substring($finallyIdx, $finallyKillIdx - $finallyIdx)
+        $finallyBody | Should -Match 'Test-HarnessProcessTreeActive' -Because 'cleanup must use the complete-tree check before killing'
+        $finallyBody | Should -Not -Match '\$step1Proc\.HasExited' -Because 'the root HasExited property alone must not gate cleanup'
     }
 
     It 'positive control: a stub without the Step 1 try/finally teardown fails the owned-process assertion' {
@@ -151,7 +165,62 @@ while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 }
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Not -Match '\$step1Proc\s*=\s*\$null\s*\r?\ntry\s*\{'
-        $codeOnly | Should -Not -Match '(?s)finally\s*\{.{0,500}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F'
+        $codeOnly | Should -Not -Match '(?s)finally\s*\{.{0,900}?taskkill\s+/PID\s+\$step1Proc\.Id\s+/T\s+/F'
+    }
+
+    It 'Step 1 confirms the complete owned process tree exited before touching the redirected streams' {
+        # A launcher can exit while its testhost worker (and createdump helpers)
+        # keep running and hold the redirected stdout/stderr temp files open.
+        # The script must snapshot the descendant tree, wait for the WHOLE tree,
+        # and only then read or delete those files; the cleanup finally must use
+        # the same complete-tree check instead of the root's HasExited alone.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        # Ownership is resolved by walking Win32_Process parentage, so
+        # grandchildren are covered and a launcher that already exited still
+        # yields its live children.
+        $codeOnly | Should -Match 'Get-CimInstance\s+-ClassName\s+Win32_Process' -Because 'the tree walk must use process parentage, not one generation of children'
+        $codeOnly | Should -Match 'function\s+Test-HarnessProcessTreeActive' -Because 'the complete-tree check must be a named, testable helper'
+        $codeOnly | Should -Match 'function\s+Wait-HarnessProcessTreeExit' -Because 'the wait must poll a named observable condition'
+
+        $snapshotIdx = $codeOnly.IndexOf('Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id')
+        $treeWaitIdx = $codeOnly.IndexOf('Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id')
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $deleteIdx = $codeOnly.IndexOf('Remove-Item -LiteralPath $step1OutTmp')
+        $snapshotIdx | Should -BeGreaterThan -1 -Because 'the owned tree must be snapshotted before the streams are touched'
+        $treeWaitIdx | Should -BeGreaterThan -1 -Because 'the complete-tree wait must run before the streams are touched'
+        $snapshotIdx | Should -BeLessThan $readIdx -Because 'the snapshot must precede the stream reads'
+        $treeWaitIdx | Should -BeLessThan $readIdx -Because 'the wait must precede the stream reads'
+        $deleteIdx | Should -BeGreaterThan $treeWaitIdx -Because 'the temp files must be deleted only after the tree is gone'
+
+        $finallyIdx = $codeOnly.IndexOf('finally {')
+        $resultIdx = $codeOnly.IndexOf('Log "Step 1 result')
+        $finallyIdx | Should -BeGreaterThan -1 -Because 'the Step 1 finally block must be locatable'
+        $resultIdx | Should -BeGreaterThan $finallyIdx
+        $finallyBody = $codeOnly.Substring($finallyIdx, $resultIdx - $finallyIdx)
+        $finallyBody | Should -Match 'Test-HarnessProcessTreeActive' -Because 'cleanup must not be skipped while descendants remain active'
+        $finallyBody | Should -Not -Match '\$step1Proc\.HasExited' -Because 'a root that exited can still leave descendants behind'
+    }
+
+    It 'positive control: a root-only teardown stub fails the complete-tree assertion' {
+        # The previous teardown gated cleanup on the root's HasExited property
+        # and waited only for the root; a stub in that shape must not satisfy
+        # the complete-tree assertions.
+        $flagged = @'
+$step1Proc = Start-Process -FilePath 'dotnet' -ArgumentList $step1Args -NoNewWindow -PassThru
+try { while (-not $step1Proc.HasExited) { Start-Sleep -Seconds 1 } }
+finally {
+    if ($step1Proc -and -not $step1Proc.HasExited) {
+        & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+        $null = $step1Proc.WaitForExit(5000)
+    }
+}
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'Test-HarnessProcessTreeActive' -Because 'this stub decides cleanup from the root HasExited property only'
+        $codeOnly | Should -Not -Match 'Wait-HarnessProcessTreeExit' -Because 'this stub never waits for descendants'
     }
 
     It 'Step 0 resolves the runtime from runtimeOptions.framework/frameworks and never falls back to the first recursive createdump' {
@@ -264,16 +333,24 @@ if ($step1Proc.HasExited) { } else {
         $readIdx | Should -BeGreaterThan $timeoutIdx
         $branch = $codeOnly.Substring($timeoutIdx, $readIdx - $timeoutIdx)
 
-        $waitAssign = $branch.IndexOf('$step1TreeExited = $step1Proc.WaitForExit')
-        $waitAssign | Should -BeGreaterThan -1 -Because 'the deadline kill must capture the WaitForExit bool instead of discarding it'
+        # The kill must be followed by a captured root wait AND a captured
+        # complete-tree wait, and a False result must abort before the stream
+        # reads. Neither wait may be discarded with `$null =`.
+        $branch | Should -Match 'Get-HarnessProcessTreePids' -Because 'the tree must be snapshotted before the kill so the wait can confirm every descendant exited'
+
+        $rootWaitAssign = $branch.IndexOf('$step1RootExited = $step1Proc.WaitForExit')
+        $rootWaitAssign | Should -BeGreaterThan -1 -Because 'the deadline kill must capture the root WaitForExit bool instead of discarding it'
+
+        $treeWaitAssign = $branch.IndexOf('$step1TreeExited = $step1RootExited -and (Wait-HarnessProcessTreeExit')
+        $treeWaitAssign | Should -BeGreaterThan $rootWaitAssign -Because 'the root wait must be followed by the complete-tree wait'
 
         $abortIdx = $branch.IndexOf('exit 3')
-        $abortIdx | Should -BeGreaterThan $waitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
+        $abortIdx | Should -BeGreaterThan $treeWaitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
 
         $abortIdx | Should -BeLessThan $branch.Length -Because 'the abort must occur within the deadline branch before the stream reads'
 
         $discardIdx = $branch.IndexOf('$null = $step1Proc.WaitForExit')
-        $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard the WaitForExit bool with `$null =` (that form lives only in the separate cleanup finally block)'
+        $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard a WaitForExit bool with `$null =`'
     }
 
     It 'positive control: a stub discarding the WaitForExit bool fails the capture assertion' {
@@ -289,7 +366,8 @@ if (-not $step1Proc.HasExited) {
 $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=\s*\$step1Proc\.WaitForExit' -Because 'this stub deliberately discards the WaitForExit bool'
+        $codeOnly | Should -Not -Match 'Wait-HarnessProcessTreeExit' -Because 'this stub deliberately omits the complete-tree wait'
+        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=' -Because 'this stub never captures a tree-exit result'
     }
 
     It 'Step 1 recognizes testhost-abort signatures at or after one second, and the summary no longer limits crashes to under 1s' {
@@ -299,7 +377,7 @@ $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyC
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?im\)\$abortPattern"\s*\)'
         $codeOnly | Should -Match $anyAgeAbort -Because 'abort signatures at/after 1s must classify as testhost-abort, not as a mere test-run failure'
         $codeOnly | Should -Not -Match 'crashed \(under 1s\)' -Because 'crash classification is no longer limited to sub-second exits'
         $codeOnly | Should -Match 'If Step 1 crashed' -Because 'the summary keeps the crash guidance branch'
@@ -313,21 +391,45 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
 }
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
+        $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?im\)\$abortPattern"\s*\)'
         $codeOnly | Should -Not -Match $anyAgeAbort -Because 'this stub deliberately limits abort classification to sub-second exits'
     }
 
-    It 'the abort pattern matches only the unambiguous native abort signal Aborted.' {
+    It 'the abort pattern matches only the two unambiguous native abort signatures and rejects suffix and embedded variants' {
         # The .NET CRT prints exactly "Aborted." on SIGABRT and
-        # Environment.FailFast emits "The process was aborted."; both
-        # terminate the testhost and both contain the token "Aborted." with
-        # its trailing period. The pattern must match that token and nothing
-        # broader.
+        # Environment.FailFast emits "The process was aborted."; both terminate
+        # the testhost and both are accepted as complete output lines. The
+        # pattern must match those two exact lines only -- not suffix variants
+        # ("Aborted.X"), embedded variants ("aAborted.b"), or other lines that
+        # merely contain the token ("Operation was aborted.").
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
 
-        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\\\.[''"]'
-        $codeOnly | Should -Match $abortPatternAssignment -Because 'the abort pattern must be the single unambiguous token "Aborted."'
+        # Extract the pattern the script actually uses and assert its behaviour,
+        # so neither the quoting style nor the anchor spelling can make this
+        # check vacuous.
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
+        $abortPatternLine | Should -Not -Be $null -Because 'the abort pattern assignment must be locatable'
+        $abortPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
+        $abortPattern | Should -Be '^(?:Aborted\.|The process was aborted\.)$' -Because 'the pattern must be the two-signature line-anchored form'
+
+        'Aborted.' | Should -Match $abortPattern -Because '"Aborted." is an accepted native abort signature'
+        'The process was aborted.' | Should -Match $abortPattern -Because '"The process was aborted." is an accepted native abort signature'
+        'Aborted.X' | Should -Not -Match $abortPattern -Because 'a suffix variant must not be classified as an abort'
+        'aAborted.b' | Should -Not -Match $abortPattern -Because 'an embedded variant must not be classified as an abort'
+        'Operation was aborted.' | Should -Not -Match $abortPattern -Because '"Operation was aborted." must not be classified as an abort'
+        'The process was aborted. See logs.' | Should -Not -Match $abortPattern -Because 'a signature embedded in a longer line is not a complete signature line'
+
+        # Multi-line capture: only the complete signature line is classified,
+        # which requires the match site to run in multiline mode.
+        $capture = "MSBuild output:`nThe process was aborted.`nMSBuild output:`nOperation was aborted."
+        @($capture -split "`n" | Where-Object { $_ -match "(?im)$abortPattern" }) |
+            Should -Be @('The process was aborted.') -Because 'only the complete accepted signature line may be classified in multi-line output'
+
+        # The match site must run in multiline mode for the anchors to apply per
+        # line rather than to the whole capture.
+        $codeOnly | Should -Match '-\s*and\s+\$step1Output\s+-match\s*"\(\?im\)\$abortPattern"' -Because 'the anchored pattern must be matched with multiline mode'
 
         # The old broad terms must no longer appear anywhere in the pattern.
         # Scope the assertions to the assignment line only: the words
@@ -335,9 +437,6 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         # in the script (Step 2's access-denied outcome branch, the dump
         # smoke test, the crash-pattern log lines), so a whole-script
         # negative match would be a false positive.
-        $abortPatternLine = ($codeOnly -split "`r?`n") |
-            Where-Object { $_ -match $abortPatternAssignment } | Select-Object -First 1
-        $abortPatternLine | Should -Not -Be $null -Because 'the assignment line must be locatable'
         $abortPatternLine | Should -Not -Match 'testhost' -Because 'the process name must not be part of the abort pattern'
         $abortPatternLine | Should -Not -Match 'createdump' -Because 'createdump must not be part of the abort pattern'
         $abortPatternLine | Should -Not -Match 'crash' -Because 'crash must not be part of the abort pattern'
@@ -345,11 +444,30 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         $abortPatternLine | Should -Not -Match '0x800' -Because '0x800 matches many unrelated error codes'
     }
 
+    It 'positive control: the superseded single-token pattern misclassifies the rejected variants' {
+        # The defect this tightening removes: the bare "Aborted\." token matched
+        # any line containing it, so an unrelated "Operation was aborted." or a
+        # fragment such as "aAborted.b" was read as a native abort signature. A
+        # pattern that still behaves that way must not be the pattern the script
+        # now ships.
+        $supersededPattern = 'Aborted\.'
+        'Operation was aborted.' | Should -Match $supersededPattern -Because 'the superseded token pattern matched unrelated abort messages'
+        'aAborted.b' | Should -Match $supersededPattern -Because 'the superseded token pattern matched embedded fragments'
+
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
+        $shippedPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
+        $shippedPattern | Should -Not -Be $supersededPattern -Because 'the shipped pattern must not be the superseded single-token form'
+        'Operation was aborted.' | Should -Not -Match $shippedPattern -Because 'the shipped pattern must reject the variant the superseded pattern accepted'
+    }
+
     It 'positive control: the old broad pattern would misclassify normal failures and fails the tightened assertion' {
         # The previous pattern matched testhost, dump, createdump, access
         # denied, and 0x800 -- all of which appear in ordinary failure
         # output. A stub using that pattern must not satisfy the tightened
-        # "Aborted." assertion, proving the detector has a blind spot for
+        # two-signature assertion, proving the detector has a blind spot for
         # false positives.
         $flagged = @'
 $abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
@@ -358,7 +476,12 @@ if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
 }
 '@
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
-        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\.[''"]'
-        $codeOnly | Should -Not -Match $abortPatternAssignment -Because 'this stub deliberately uses the old broad pattern, not the tightened "Aborted." token'
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
+        $abortPatternLine | Should -Not -Be $null
+        $flaggedPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
+        $flaggedPattern | Should -Not -Be '^(?:Aborted\.|The process was aborted\.)$' -Because 'this stub deliberately uses the old broad pattern'
+        $flaggedPattern | Should -Match 'createdump' -Because 'the flagged stub keeps the broad terms the tightened pattern removed'
+        $codeOnly | Should -Not -Match '\(\?im\)' -Because 'this stub does not use multiline matching'
     }
 }
