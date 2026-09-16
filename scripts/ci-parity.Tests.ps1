@@ -226,20 +226,56 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             # assignment ([string]$Solution = ...). Anything else ($Projects
             # collections, splats, unresolved names) must not pass as one
             # positional target.
-            $scalarVars = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            #
+            # The declaration is keyed by BOTH variable name and enclosing
+            # lexical scope. A bare name-only key would treat every same-named
+            # variable as one declaration: a [string]$Solution in function foo
+            # would also vouch for a collection $Solution in function bar, or
+            # for a script-scope $Projects collection named $Solution. Resolving
+            # each command variable against its own enclosing scope before
+            # applying scalar validation keeps same-named variables in
+            # different functions or script scope independent.
+            $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.HashSet[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            function Add-ScalarVar {
+                param([System.Management.Automation.Language.Ast]$Node, [string]$VarName)
+                $scope = Get-EnclosingScopeName -Node $Node
+                if (-not $scalarVars.ContainsKey($scope)) {
+                    $scalarVars[$scope] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                }
+                $null = $scalarVars[$scope].Add($VarName)
+            }
+            function Get-EnclosingScopeName {
+                param([System.Management.Automation.Language.Ast]$Node)
+                # The nearest FunctionDefinitionAst is the lexical scope; if
+                # there is none the declaration lives in script scope. This
+                # mirrors PowerShell's name resolution: a command inside a
+                # function first looks at that function's parameters and
+                # locals before falling back to script/global scope.
+                $ancestor = $Node
+                while ($ancestor) {
+                    if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        return $ancestor.Name
+                    }
+                    $ancestor = $ancestor.Parent
+                }
+                return '__ScriptScope__'
+            }
             foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
                 $typeName = $typeConstraint.TypeName.FullName -replace '^System\.', ''
                 if ($typeName -ieq 'string') {
                     $parent = $typeConstraint.Parent
                     if ($parent -is [System.Management.Automation.Language.ParameterAst]) {
-                        $null = $scalarVars.Add($parent.Name.VariablePath.UserPath)
+                        # param([string]$Solution = ...): the parameter's own
+                        # scope is its enclosing function (or script scope for
+                        # a script-level param block).
+                        Add-ScalarVar -Node $parent -VarName $parent.Name.VariablePath.UserPath
                     } elseif ($parent -is [System.Management.Automation.Language.ConvertExpressionAst]) {
                         # For a [string] cast assignment ([string]$Solution = ...)
                         # the cast's operand variable is exposed as Child (the
                         # Expression property is null on an assignment LHS).
                         $operand = $parent.Child
                         if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                            $null = $scalarVars.Add($operand.VariablePath.UserPath)
+                            Add-ScalarVar -Node $parent -VarName $operand.VariablePath.UserPath
                         }
                     }
                 }
@@ -285,8 +321,16 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         # positional target.
                         if (-not $elem.Splatted) {
                             $name = $elem.VariablePath.UserPath
-                            if ($name -match '(?i)(Solution|Project)' -and $scalarVars.Contains($name)) {
-                                $count++
+                            if ($name -match '(?i)(Solution|Project)') {
+                                # Resolve the variable against its OWN enclosing
+                                # scope before applying scalar validation, so a
+                                # [string]$Solution declared in function foo does
+                                # not vouch for a same-named collection in
+                                # function bar or script scope.
+                                $scope = Get-EnclosingScopeName -Node $elem
+                                if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].Contains($name)) {
+                                    $count++
+                                }
                             }
                         }
                         continue
@@ -420,6 +464,30 @@ dotnet test $Solution -c Release --no-build --no-restore
         # A splat can deliver many or zero values; it is never one positional
         # project/solution target.
         @(Get-DotnetTestProjectTokenCount -ScriptText 'dotnet test @SolutionArgs') | Should -Be @(0)
+    }
+
+    It 'same-named variables in different lexical scopes remain independent (parity fixture)' {
+        # The name-only scalar tracking defect treated every same-named
+        # variable as one declaration: a [string]$Solution declared in one
+        # function would vouch for a same-named collection in another, or for
+        # a script-scope $Projects collection that happened to be named
+        # $Solution. The fixture proves the scope-aware fix:
+        #   - the function-scoped [string]$Solution counts as one target;
+        #   - the same-named collection in a sibling function counts as zero;
+        #   - the script-scope collection named $Solution counts as zero.
+        $fixture = @'
+function Use-Solution {
+    param([string]$Solution = 'a.slnx')
+    dotnet test $Solution
+}
+function Use-Collection {
+    $Solution = @('x.csproj', 'y.csproj')
+    dotnet test $Solution
+}
+$Solution = @('p.csproj', 'q.csproj')
+dotnet test $Solution
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {
