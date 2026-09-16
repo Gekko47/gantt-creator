@@ -218,7 +218,16 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             $tokens = $null
             $parseErrors = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseInput($ScriptText, [ref]$tokens, [ref]$parseErrors)
-            if (-not $ast) { return $counts }
+            # A missing AST or any parse error is a hard failure: unparseable
+            # script text must not return an empty count list and silently
+            # bypass the W14 validation loop. Returning an empty array here
+            # would be indistinguishable from "zero dotnet test invocations",
+            # so the caller's foreach would simply not iterate and the
+            # exactly-one-target check would never fire. Throwing forces the
+            # violation surface instead of masking it.
+            if (-not $ast -or $parseErrors.Count -gt 0) {
+                throw "Get-DotnetTestProjectTokenCount: script text failed to parse (parse errors: $($parseErrors.Count)). Unparseable input cannot be validated; treat as a W14 violation."
+            }
 
             # A variable reference counts as a target only when the script
             # itself proves the variable is a scalar string: a [string]-typed
@@ -522,6 +531,28 @@ $Solution = @('p.csproj', 'q.csproj')
 dotnet test $Solution
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+    }
+
+    It 'tripwire throws on unparseable script text (positive control for parse-error hard failure)' {
+        # The W14 validation loop iterates over whatever
+        # Get-DotnetTestProjectTokenCount returns. If that function returned
+        # an empty array on parse errors (instead of throwing), the caller's
+        # foreach would simply not iterate and the exactly-one-target check
+        # would silently pass. The parse-error branch now throws so that an
+        # unparseable script is a visible W14 violation rather than a masked
+        # empty result. This positive control proves the throw branch fires
+        # when Parser.ParseInput produces parse errors, and guards against a
+        # future edit that silently weakens the guard back to a soft return.
+        #
+        # `"dotnet test @"` is syntactically invalid: the `@` at statement
+        # end is not a valid token start, so Parser.ParseInput reports a
+        # parse error while still returning a non-null AST (the parser can
+        # recover enough to produce a partial tree). Because the text still
+        # contains `dotnet test` it reaches the counter via the caller's
+        # regex filter, so the throw branch is the only way to surface the
+        # unparseable input as a W14 violation.
+        $unparseable = 'dotnet test @'
+        { Get-DotnetTestProjectTokenCount -ScriptText $unparseable } | Should -Throw
     }
 
     It 'test-non-office.ps1 keeps the -Solution parameter (verify-quick parity)' {
