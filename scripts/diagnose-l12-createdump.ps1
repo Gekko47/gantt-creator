@@ -271,10 +271,16 @@ if (-not $step1Proc.HasExited) {
     $step1Outcome = 'timeout'
     Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
     Log '  Killing the step-1 process tree and waiting for it to exit.'
-    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    # Capture taskkill's own result rather than discarding it: taskkill /T /F
+    # returns 0 only when it successfully signaled the whole tree, so a
+    # non-zero exit here (process not found, access denied, a child refused
+    # the signal) is itself evidence that termination was not confirmed.
+    # WaitForExit(5000) alone would only tell us whether the root process
+    # eventually went away, not whether the kill signal reached the tree.
+    $step1TaskkillExit = (Start-Process -FilePath 'taskkill' -ArgumentList @('/PID', $step1Proc.Id, '/T', '/F') -NoNewWindow -Wait -PassThru -RedirectStandardOutput $null -RedirectStandardError $null).ExitCode
     $step1TreeExited = $step1Proc.WaitForExit(5000)
-    if (-not $step1TreeExited) {
-        Log 'FAIL: Step 1: the owned testhost process tree did not exit within 5s of the kill signal.'
+    if ($step1TaskkillExit -ne 0 -or -not $step1TreeExited) {
+        Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, WaitForExit=$step1TreeExited)."
         Log '  The redirected streams are left untouched (the process still has them open);'
         Log '  the diagnostic is stopping here rather than reading or deleting them.'
         exit 3
