@@ -236,22 +236,15 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             # collections, splats, unresolved names) must not pass as one
             # positional target.
             #
-            # The declaration is keyed by BOTH variable name and enclosing
-            # lexical scope. A bare name-only key would treat every same-named
-            # variable as one declaration: a [string]$Solution in function foo
-            # would also vouch for a collection $Solution in function bar, or
-            # for a script-scope $Projects collection named $Solution. Resolving
-            # each command variable against its own enclosing scope before
-            # applying scalar validation keeps same-named variables in
-            # different functions or script scope independent.
-            $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.HashSet[string]]]::new([System.StringComparer]::OrdinalIgnoreCase)
-            function Add-ScalarVar {
-                param([System.Management.Automation.Language.Ast]$Node, [string]$VarName)
-                $scope = Get-EnclosingScopeName -Node $Node
-                if (-not $scalarVars.ContainsKey($scope)) {
-                    $scalarVars[$scope] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                }
-                $null = $scalarVars[$scope].Add($VarName)
+            # Record BOTH scalar and non-scalar declarations by variable name
+            # and lexical scope. Resolution must stop at the nearest scope that
+            # declares the name even when that declaration is non-scalar;
+            # otherwise a local collection assignment can fall through and be
+            # incorrectly vouched for by an outer [string] declaration.
+            $variableDeclarations = @{}
+            function Get-VariableName {
+                param([System.Management.Automation.VariablePath]$VariablePath)
+                return $VariablePath.UserPath -replace '^(?i:global|local|private|script):', ''
             }
             function Get-EnclosingScopeName {
                 param([System.Management.Automation.Language.Ast]$Node)
@@ -263,14 +256,52 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 $ancestor = $Node
                 while ($ancestor) {
                     if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-                        return $ancestor.Name
+                        # The source offset distinguishes same-named nested or
+                        # sibling functions without relying on their labels.
+                        return "__FunctionScope_$($ancestor.Extent.StartOffset)__"
                     }
                     $ancestor = $ancestor.Parent
                 }
                 return '__ScriptScope__'
             }
+            function Get-DeclarationScopeName {
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.VariablePath]$VariablePath
+                )
+                if ($VariablePath.IsScript) { return '__ScriptScope__' }
+                if ($VariablePath.IsGlobal) { return '__GlobalScope__' }
+                # Explicit local/private and unqualified assignments belong to
+                # the nearest lexical scope. At script level that is script.
+                return Get-EnclosingScopeName -Node $Node
+            }
+            function Add-VariableDeclaration {
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.Language.VariableExpressionAst]$Variable,
+                    [bool]$IsScalarString
+                )
+                $scope = Get-DeclarationScopeName -Node $Node -VariablePath $Variable.VariablePath
+                $name = Get-VariableName -VariablePath $Variable.VariablePath
+                if (-not $variableDeclarations.ContainsKey($scope)) {
+                    $variableDeclarations[$scope] = @{}
+                }
+                # A type-constrained parameter/variable remains constrained
+                # when subsequently assigned without repeating the cast.
+                if ($IsScalarString -or -not $variableDeclarations[$scope].ContainsKey($name)) {
+                    $variableDeclarations[$scope][$name] = $IsScalarString
+                }
+            }
             function Get-EnclosingScopeChain {
-                param([System.Management.Automation.Language.Ast]$Node)
+                param(
+                    [System.Management.Automation.Language.Ast]$Node,
+                    [System.Management.Automation.VariablePath]$VariablePath
+                )
+                if ($VariablePath.IsScript) { return @('__ScriptScope__') }
+                if ($VariablePath.IsGlobal) { return @('__GlobalScope__') }
+                if ($VariablePath.IsLocal -or $VariablePath.IsPrivate) {
+                    return @(Get-EnclosingScopeName -Node $Node)
+                }
                 # Returns the ordered chain of enclosing scope names, from
                 # the innermost lexical scope out to script scope. A variable
                 # declared in any enclosing scope (a function's parameter, a
@@ -282,7 +313,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 $ancestor = $Node
                 while ($ancestor) {
                     if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
-                        $chain.Add($ancestor.Name)
+                        $chain.Add("__FunctionScope_$($ancestor.Extent.StartOffset)__")
                     }
                     $ancestor = $ancestor.Parent
                 }
@@ -290,31 +321,28 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 $chain.Add('__ScriptScope__')
                 return $chain
             }
-            foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
-                $typeName = $typeConstraint.TypeName.FullName -replace '^System\.', ''
-                if ($typeName -ieq 'string') {
-                    $parent = $typeConstraint.Parent
-                    if ($parent -is [System.Management.Automation.Language.ParameterAst]) {
-                        # param([string]$Solution = ...): the parameter's own
-                        # scope is its enclosing function (or script scope for
-                        # a script-level param block).
-                        Add-ScalarVar -Node $parent -VarName $parent.Name.VariablePath.UserPath
-                    } elseif ($parent -is [System.Management.Automation.Language.ConvertExpressionAst]) {
-                        # For a [string] cast assignment ([string]$Solution = ...)
-                        # the cast's operand variable is exposed as Child (the
-                        # Expression property is null on an assignment LHS).
-                        # Only record the operand variable when the cast is the
-                        # LEFT side of an AssignmentStatementAst; a bare cast
-                        # used as a value expression (e.g. [string]$x in a
-                        # command argument) must not register its operand as a
-                        # scalar variable.
-                        if ($parent.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
-                            $operand = $parent.Child
-                            if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                                Add-ScalarVar -Node $parent -VarName $operand.VariablePath.UserPath
-                            }
-                        }
+            foreach ($parameter in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
+                $isScalarString = @($parameter.Attributes | Where-Object {
+                    $_ -is [System.Management.Automation.Language.TypeConstraintAst] -and
+                    ($_.TypeName.FullName -replace '^System\.', '') -ieq 'string'
+                }).Count -gt 0
+                Add-VariableDeclaration -Node $parameter -Variable $parameter.Name -IsScalarString $isScalarString
+            }
+            foreach ($assignment in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+                $variable = $null
+                $isScalarString = $false
+                if ($assignment.Left -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    $variable = $assignment.Left
+                } elseif ($assignment.Left -is [System.Management.Automation.Language.ConvertExpressionAst]) {
+                    $operand = $assignment.Left.Child
+                    if ($operand -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                        $variable = $operand
+                        $typeName = $assignment.Left.Type.TypeName.FullName -replace '^System\.', ''
+                        $isScalarString = $typeName -ieq 'string'
                     }
+                }
+                if ($variable) {
+                    Add-VariableDeclaration -Node $assignment -Variable $variable -IsScalarString $isScalarString
                 }
             }
 
@@ -357,7 +385,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         # omits '$'; a splatted variable (@Splat) is never one
                         # positional target.
                         if (-not $elem.Splatted) {
-                            $name = $elem.VariablePath.UserPath
+                            $name = Get-VariableName -VariablePath $elem.VariablePath
                             if ($name -match '(?i)(Solution|Project)') {
                                 # Resolve the variable against its enclosing scope chain
                                 # before applying scalar validation, so a
@@ -367,10 +395,14 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                 # chain (innermost function out to script
                                 # scope) so a variable declared in any parent
                                 # scope counts, not just the immediate scope.
-                                $scopeChain = Get-EnclosingScopeChain -Node $elem
+                                $scopeChain = Get-EnclosingScopeChain -Node $elem -VariablePath $elem.VariablePath
                                 foreach ($scope in $scopeChain) {
-                                    if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].Contains($name)) {
-                                        $count++
+                                    if ($variableDeclarations.ContainsKey($scope) -and $variableDeclarations[$scope].ContainsKey($name)) {
+                                        if ($variableDeclarations[$scope][$name]) {
+                                            $count++
+                                        }
+                                        # Stop at the nearest declaration even
+                                        # when it is not a scalar string.
                                         break
                                     }
                                 }
@@ -531,6 +563,21 @@ $Solution = @('p.csproj', 'q.csproj')
 dotnet test $Solution
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+    }
+
+    It 'nearer non-scalar declarations shadow outer scalars while explicit script references still resolve' {
+        # The local unqualified collection must stop resolution before the
+        # script-scope [string] declaration. An explicit script: reference,
+        # however, bypasses the local declaration and remains one target.
+        $fixture = @'
+[string]$script:Solution = 'outer.slnx'
+function Use-NearestDeclaration {
+    $Solution = @('x.csproj', 'y.csproj')
+    dotnet test $Solution
+    dotnet test $script:Solution
+}
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(0, 1)
     }
 
     It 'tripwire throws on unparseable script text (positive control for parse-error hard failure)' {
