@@ -260,11 +260,25 @@ if (-not $step1Proc.HasExited) {
     # temp files open until it exits, so reading or deleting before the
     # kill can capture a partial stream and can silently fail the deletes
     # (leaking the temp files in TEMP).
+    #
+    # WaitForExit(5000) returns $true only when the process has actually
+    # terminated. If it returns $false the tree is still alive and still
+    # holds the redirected streams open; in that case the diagnostic is
+    # stopped before reading or deleting those streams, so stream access
+    # is preserved only after confirmed process termination. The streams
+    # are left untouched on the abort path rather than risked to a partial
+    # read or a silently-failed delete.
     $step1Outcome = 'timeout'
     Log "Step 1: deadline (${Step1DeadlineSeconds}s) reached; testhost still running."
-    Log '  Killing the step-1 process tree and continuing to Step 2.'
+    Log '  Killing the step-1 process tree and waiting for it to exit.'
     & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
-    $null = $step1Proc.WaitForExit(5000)
+    $step1TreeExited = $step1Proc.WaitForExit(5000)
+    if (-not $step1TreeExited) {
+        Log 'FAIL: Step 1: the owned testhost process tree did not exit within 5s of the kill signal.'
+        Log '  The redirected streams are left untouched (the process still has them open);'
+        Log '  the diagnostic is stopping here rather than reading or deleting them.'
+        exit 3
+    }
     $step1ExitCode = 124
     Log '  Interpretation: timed out rather than crashed. The dump-type-none probe may have changed behaviour (the process is still alive past 0.2s).'
 } else {

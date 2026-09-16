@@ -243,6 +243,54 @@ if ($step1Proc.HasExited) { } else {
         $readIdx | Should -BeLessThan $killIdx -Because 'this stub deliberately reads the streams before the deadline kill'
     }
 
+    It 'the deadline kill awaits the owned tree and aborts the diagnostic if it does not exit' {
+        # The WaitForExit(5000) call after the deadline kill must return its
+        # bool to a variable (not be discarded with `$null =`), and a False
+        # result must stop the diagnostic before the redirected streams are
+        # read or deleted. Stream access is preserved only after confirmed
+        # process termination.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        # Scope the ordering checks to the deadline branch only: the script
+        # legitimately discards a WaitForExit bool in the separate
+        # error/cleanup finally block, so a whole-script negative match would
+        # be a false positive. The branch starts at the timeout classification
+        # and ends where the stream reads begin.
+        $timeoutIdx = $codeOnly.IndexOf("'timeout'")
+        $readIdx = $codeOnly.IndexOf('$step1StdOut = Get-Content')
+        $timeoutIdx | Should -BeGreaterThan -1
+        $readIdx | Should -BeGreaterThan $timeoutIdx
+        $branch = $codeOnly.Substring($timeoutIdx, $readIdx - $timeoutIdx)
+
+        $waitAssign = $branch.IndexOf('$step1TreeExited = $step1Proc.WaitForExit')
+        $waitAssign | Should -BeGreaterThan -1 -Because 'the deadline kill must capture the WaitForExit bool instead of discarding it'
+
+        $abortIdx = $branch.IndexOf('exit 3')
+        $abortIdx | Should -BeGreaterThan $waitAssign -Because 'a non-exiting tree must abort the diagnostic (exit 3) rather than fall through to the stream reads'
+
+        $abortIdx | Should -BeLessThan $branch.Length -Because 'the abort must occur within the deadline branch before the stream reads'
+
+        $discardIdx = $branch.IndexOf('$null = $step1Proc.WaitForExit')
+        $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard the WaitForExit bool with `$null =` (that form lives only in the separate cleanup finally block)'
+    }
+
+    It 'positive control: a stub discarding the WaitForExit bool fails the capture assertion' {
+        # The previous form (`$null = $step1Proc.WaitForExit(5000)`) threw away
+        # whether the tree actually exited, so a stub using it must not
+        # satisfy the new capture assertion.
+        $flagged = @'
+if (-not $step1Proc.HasExited) {
+    & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
+    $null = $step1Proc.WaitForExit(5000)
+    $step1ExitCode = 124
+}
+$step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyContinue
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match '\$step1TreeExited\s*=\s*\$step1Proc\.WaitForExit' -Because 'this stub deliberately discards the WaitForExit bool'
+    }
+
     It 'Step 1 recognizes testhost-abort signatures at or after one second, and the summary no longer limits crashes to under 1s' {
         # A nonzero exit whose output matches the abort pattern must classify
         # as testhost-abort even when the process survived past the 1s mark;
