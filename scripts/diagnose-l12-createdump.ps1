@@ -289,7 +289,17 @@ if ($step1Outcome -eq 'timeout') {
     # script's polling latency (up to the 1s sleep quantum), which could
     # misclassify a rapid crash as a later exit.
     $age = ($step1Proc.ExitTime - $step1Proc.StartTime).TotalSeconds
-    $abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+    # The abort signature must be the unambiguous native abort signal only.
+    # The .NET CRT prints exactly "Aborted." to stderr on SIGABRT, and
+    # Environment.FailFast emits "The process was aborted."; both terminate
+    # the testhost and both contain the token "Aborted." (with the trailing
+    # period). Matching that single token -- rather than broad terms such as
+    # testhost, dump, createdump, access denied, or 0x800 -- keeps normal
+    # failure handling (test results, invalid arguments, missing inputs) on
+    # its own branches and sets $step1Crashed only for a genuine native
+    # blame-collector abort. A bare "aborted" without the period is not used:
+    # it would also match ordinary words in test names and log lines.
+    $abortPattern = 'Aborted\.'
     $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
     if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
         $step1Outcome = 'invalid-args'

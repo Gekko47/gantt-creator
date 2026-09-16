@@ -267,4 +267,49 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         $anyAgeAbort = '\}\s*elseif\s*\(\$step1ExitCode\s+-ne\s+0\s+-and\s+\$step1Output\s+-match\s*"\(\?i\)\$abortPattern"\s*\)'
         $codeOnly | Should -Not -Match $anyAgeAbort -Because 'this stub deliberately limits abort classification to sub-second exits'
     }
+
+    It 'the abort pattern matches only the unambiguous native abort signal Aborted.' {
+        # The .NET CRT prints exactly "Aborted." on SIGABRT and
+        # Environment.FailFast emits "The process was aborted."; both
+        # terminate the testhost and both contain the token "Aborted." with
+        # its trailing period. The pattern must match that token and nothing
+        # broader.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\\\.[''"]'
+        $codeOnly | Should -Match $abortPatternAssignment -Because 'the abort pattern must be the single unambiguous token "Aborted."'
+
+        # The old broad terms must no longer appear anywhere in the pattern.
+        # Scope the assertions to the assignment line only: the words
+        # "access denied", "dump", and "crash" legitimately appear elsewhere
+        # in the script (Step 2's access-denied outcome branch, the dump
+        # smoke test, the crash-pattern log lines), so a whole-script
+        # negative match would be a false positive.
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match $abortPatternAssignment } | Select-Object -First 1
+        $abortPatternLine | Should -Not -Be $null -Because 'the assignment line must be locatable'
+        $abortPatternLine | Should -Not -Match 'testhost' -Because 'the process name must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'createdump' -Because 'createdump must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'crash' -Because 'crash must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match 'fault' -Because 'fault must not be part of the abort pattern'
+        $abortPatternLine | Should -Not -Match '0x800' -Because '0x800 matches many unrelated error codes'
+    }
+
+    It 'positive control: the old broad pattern would misclassify normal failures and fails the tightened assertion' {
+        # The previous pattern matched testhost, dump, createdump, access
+        # denied, and 0x800 -- all of which appear in ordinary failure
+        # output. A stub using that pattern must not satisfy the tightened
+        # "Aborted." assertion, proving the detector has a blind spot for
+        # false positives.
+        $flagged = @'
+$abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    $step1Crashed = $true
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $abortPatternAssignment = '\$abortPattern\s*=\s*[''"]Aborted\.[''"]'
+        $codeOnly | Should -Not -Match $abortPatternAssignment -Because 'this stub deliberately uses the old broad pattern, not the tightened "Aborted." token'
+    }
 }
