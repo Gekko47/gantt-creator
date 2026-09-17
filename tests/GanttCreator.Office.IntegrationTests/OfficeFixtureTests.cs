@@ -165,31 +165,36 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task Five_cycles_registering_the_packed_XLL_leave_no_orphan_and_show_shared_open_record_growth()
+    public async Task Five_cycles_registering_the_packed_XLL_leave_no_orphan_and_show_session_open_record_growth()
     {
-        // R1.6 smoke test (work item R1.6 D3): the five open/close cycles run
-        // with the add-in's packed XLL loaded via Application.RegisterXLL, so
-        // real Excel-DNA initialization runs inside Excel each cycle.
+        // R1.6 attributable gate (work item R1.6 D3/D5): the five open/close
+        // cycles run with the add-in's packed XLL loaded via
+        // Application.RegisterXLL, so real Excel-DNA initialization runs
+        // inside Excel each cycle. Each cycle asserts RegisterXLL success,
+        // the appearance of a session-bearing packed-XLL 'open' record for
+        // that cycle's session token, and owned-process exit.
         //
-        // Narrowed smoke-test scope: each cycle asserts RegisterXLL success,
-        // growth in the shared packed-XLL open-record count, and owned-process
-        // exit. A growing shared count does NOT attribute a record to one
-        // owned instance, and growth after Quit does NOT establish that
-        // AutoClose ran (deferred initialization is an unverified inference,
-        // not an established fact). The final orphan poll is the only closing
-        // assertion; AutoClose host evidence remains pending (see the pending
-        // work item below).
+        // Scope note: the session token correlates the open record to one
+        // load, but AutoClose still produces no 'close' record on the
+        // automation path (D6 finding) — the closing assertion is the owned
+        // orphan poll. Full close-callback proof remains pending.
         //
         // Observed Office behaviour (2026-09-16 spike, three runs, Microsoft
-        // 365 16.0.20326 x64): RegisterXLL returns true immediately, but the
-        // matching 'open' log record materializes only when the Excel instance
-        // quits. The wait therefore runs AFTER DisposeAsync (Quit + exit
-        // poll): once the process has exited, the flushed record must be on
-        // disk. AutoClose produces no 'close' record on this path.
+        // 365 16.0.20326 x64; 2026-09-17 session-token probe): RegisterXLL
+        // returns true immediately, and the matching 'open' log record
+        // materializes ~5-30 s after RegisterXLL, while the Excel instance is
+        // still alive or during shutdown. The wait therefore runs AFTER
+        // DisposeAsync (Quit + exit poll): once the process has exited, the
+        // flushed record must be on disk.
         var xllPath = ResolvePackedXllPath();
         var logPath = GetAddInLogPath();
         var pids = new List<int>();
-        var packedOpenRecordsBefore = CountPackedOpenRecords(TryReadLog(logPath));
+        // Negative control: seed the seen set with every session already in
+        // the log, so cycle 1 cannot be satisfied by a foreign record that
+        // predates the test — each cycle must produce a NEW session token.
+        var seenSessions = PackedOpenSessions(TryReadLog(logPath));
+        _output.WriteLine(
+            $"Pre-existing packed-XLL sessions in the log: {seenSessions.Count}.");
 
         for (int i = 1; i <= 5; i++)
         {
@@ -217,12 +222,12 @@ public class OfficeFixtureTests
                 await fixture.DisposeAsync().ConfigureAwait(true);
             }
 
-            var countAfter = await WaitForNewPackedOpenRecordAsync(
-                logPath, packedOpenRecordsBefore, i).ConfigureAwait(true);
+            var newSession = await WaitForNewPackedOpenSessionAsync(
+                logPath, seenSessions, i).ConfigureAwait(true);
+            seenSessions.Add(newSession);
             _output.WriteLine(
-                $"Cycle {i}: PID={pids[i - 1]}; RegisterXLL=True; shared packed-XLL 'open' " +
-                $"record count grew after quit (shared records: {packedOpenRecordsBefore} -> {countAfter}).");
-            packedOpenRecordsBefore = countAfter;
+                $"Cycle {i}: PID={pids[i - 1]}; RegisterXLL=True; session-bearing packed-XLL 'open' " +
+                $"record observed after quit (session={newSession}; sessions so far: {seenSessions.Count}).");
         }
 
         // After all five cycles, verify every owned process exited. Poll with
@@ -361,30 +366,53 @@ public class OfficeFixtureTests
             "GanttCreator", "logs", "gantt-creator-addin.log");
 
     /// <summary>
+    /// Extracts the session tokens of packed-XLL <c>open</c> records: lines
+    /// carrying the lifecycle record shape whose <c>xll=</c> field names the
+    /// packed XLL and whose <c>session=</c> field carries a non-empty token.
+    /// Pure and culture-free so the non-Office unit tests can pin it against
+    /// the real record shape.
+    /// </summary>
+    internal static HashSet<string> PackedOpenSessions(string? logContent)
+    {
+        var sessions = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(logContent))
+        {
+            return sessions;
+        }
+
+        foreach (var line in logContent.Split('\n'))
+        {
+            if (!line.Contains(" open addin-version=", StringComparison.Ordinal) ||
+                !line.Contains("xll=GanttCreator.AddIn-AddIn64-packed.xll", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var marker = "session=";
+            var start = line.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                continue;
+            }
+
+            var token = line.Substring(start + marker.Length).Trim();
+            if (!string.IsNullOrEmpty(token))
+            {
+                sessions.Add(token);
+            }
+        }
+
+        return sessions;
+    }
+
+    /// <summary>
     /// Counts the AutoOpen <c>open</c> records written for the packed XLL:
     /// lines carrying the lifecycle record shape whose <c>xll=</c> field names
     /// the packed XLL. Pure and culture-free so the non-Office unit tests can
     /// pin it against the real record shape.
     /// </summary>
-    internal static int CountPackedOpenRecords(string? logContent)
-    {
-        if (string.IsNullOrEmpty(logContent))
-        {
-            return 0;
-        }
-
-        var count = 0;
-        foreach (var line in logContent.Split('\n'))
-        {
-            if (line.Contains(" open addin-version=", StringComparison.Ordinal) &&
-                line.Contains("xll=GanttCreator.AddIn-AddIn64-packed.xll", StringComparison.Ordinal))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
+    internal static int CountPackedOpenRecords(string? logContent) =>
+        PackedOpenSessions(logContent).Count;
 
     /// <summary>
     /// Reads the log file without throwing while Excel holds it open
@@ -404,42 +432,38 @@ public class OfficeFixtureTests
     }
 
     /// <summary>
-    /// Polls the add-in log until the shared packed-XLL <c>open</c> record
-    /// count grows. This is a smoke signal only: a growing shared count does
-    /// NOT attribute a record to one owned instance and does NOT establish
-    /// that AutoClose ran. Returns the new total record count. The deadline is
-    /// 60 s after the Excel instance quit: the spiked record-growth behavior
-    /// materializes during shutdown, observed 0–20 s after <c>Quit()</c>
-    /// across all 2026-09-16 spike and gate runs, so 60 s gives a comfortable
-    /// margin over the measured worst case. Tolerates an interleaved record
-    /// from another session by asserting the count grew rather than grew by
-    /// exactly one; the exact per-cycle count is recorded in the test output
-    /// for the human evidence review.
+    /// Polls the add-in log until a session-bearing packed-XLL <c>open</c>
+    /// record appears whose session token was not seen before this cycle.
+    /// The token attributes the record to one load: a foreign session (for
+    /// example an interleaved record from another Excel instance) does not
+    /// satisfy the wait, and a missing record fails with a diagnostic. The
+    /// deadline is 60 s after the Excel instance quit. Returns the new
+    /// session token. The exact per-cycle session is recorded in the test
+    /// output for the human evidence review.
     /// </summary>
-    private static async Task<int> WaitForNewPackedOpenRecordAsync(
-        string logPath, int previousCount, int cycle)
+    private static async Task<string> WaitForNewPackedOpenSessionAsync(
+        string logPath, HashSet<string> seenSessions, int cycle)
     {
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed.TotalSeconds < 60)
         {
-            var count = CountPackedOpenRecords(TryReadLog(logPath));
-            if (count > previousCount)
+            var sessions = PackedOpenSessions(TryReadLog(logPath));
+            sessions.ExceptWith(seenSessions);
+            if (sessions.Count > 0)
             {
-                return count;
+                return sessions.OrderBy(s => s, StringComparer.Ordinal).First();
             }
 
             await Task.Delay(500).ConfigureAwait(true);
         }
 
         Assert.Fail(
-            $"Cycle {cycle}: the shared packed-XLL 'open' record count did not grow in " +
-            $"'{logPath}' within 60 s after the Excel instance quit (records before: {previousCount}). " +
-            "RegisterXLL returned true, so the XLL loaded; in the 2026-09-16 spike runs " +
-            "(0-20 s after Quit across six loaded instances) the matching record " +
-            "materialized during shutdown - its absence after 60 s means no new " +
-            "shared 'open' record appeared, not proof that a lifecycle callback " +
-            "was missed by this instance.");
-        return previousCount; // Unreachable: Assert.Fail throws.
+            $"Cycle {cycle}: no new session-bearing packed-XLL 'open' record appeared in " +
+            $"'{logPath}' within 60 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
+            "RegisterXLL returned true, so the XLL loaded; in the 2026-09-17 session-token probe " +
+            "the matching record materialized within ~30 s of RegisterXLL — its absence after 60 s " +
+            "means no attributable open record appeared for this load.");
+        throw new InvalidOperationException("Unreachable: Assert.Fail throws.");
     }
 
     // Non-Office unit tests for the R1.6 log matcher. These carry no
@@ -452,30 +476,44 @@ public class OfficeFixtureTests
     {
         const string content =
             "2026-09-16T21:44:19.135Z open addin-version=0.0.0+local.abc123 " +
-            "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll\r\n";
+            "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll session=s99-g0h1i2j3k4l5\r\n";
 
         Assert.Equal(1, CountPackedOpenRecords(content));
     }
 
     [Fact]
-    public void CountPackedOpenRecords_ignores_other_xll_names_and_record_kinds()
+    public void PackedOpenSessions_ignores_sessionless_records_other_xlls_and_close_records()
     {
+        // Negative control: a sessionless legacy open record, another XLL's
+        // session-bearing record, a Diagnostics record, and a close record
+        // must all be rejected — only the packed XLL's session-bearing open
+        // record counts.
         const string content =
+            "2026-09-16T21:44:19.135Z open addin-version=0.0.0+local.abc123 " +
+            "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll\r\n" +
             "2026-09-16T07:28:47.543Z open addin-version=0.0.0+local.abc123 " +
-            "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64.xll\r\n" +
+            "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64.xll session=s1-000000000000\r\n" +
             "2026-09-16T07:28:58.769Z Diagnostics: addin-version=0.0.0 " +
             "excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll\r\n" +
-            "2026-09-16T21:44:19.135Z close\r\n";
+            "2026-09-16T21:44:19.135Z close session=s1-000000000000\r\n";
 
         Assert.Equal(0, CountPackedOpenRecords(content));
+        Assert.Empty(PackedOpenSessions(content));
     }
 
     [Fact]
-    public void CountPackedOpenRecords_counts_each_record_once_and_handles_null_or_empty()
+    public void PackedOpenSessions_collects_each_session_once_and_ignores_empty_tokens()
     {
-        var one = "2026-09-16T21:44:19.135Z open addin-version=0.0.0 xll=GanttCreator.AddIn-AddIn64-packed.xll\r\n";
-        Assert.Equal(2, CountPackedOpenRecords(one + one));
+        const string one =
+            "2026-09-16T21:44:19.135Z open addin-version=0.0.0 xll=GanttCreator.AddIn-AddIn64-packed.xll session=s1-g0h1i2j3k4l5\r\n";
+        const string emptyToken =
+            "2026-09-16T21:44:19.135Z open addin-version=0.0.0 xll=GanttCreator.AddIn-AddIn64-packed.xll session=\r\n";
+        var sessions = PackedOpenSessions(one + one + emptyToken);
+        Assert.Equal(new HashSet<string>(["s1-g0h1i2j3k4l5"], StringComparer.Ordinal), sessions);
+
         Assert.Equal(0, CountPackedOpenRecords(null));
         Assert.Equal(0, CountPackedOpenRecords(string.Empty));
+        Assert.Empty(PackedOpenSessions(null));
+        Assert.Empty(PackedOpenSessions(string.Empty));
     }
 }

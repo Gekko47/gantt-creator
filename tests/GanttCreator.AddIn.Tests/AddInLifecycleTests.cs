@@ -19,10 +19,10 @@ public class AddInLifecycleTests
         var log = new CapturingLog();
         var lifecycle = new AddInLifecycle(log);
 
-        lifecycle.LogOpen(new AddInIdentity("1.2.3", "16.0", "x64", "packed.xll"));
+        lifecycle.LogOpen(new AddInIdentity("1.2.3", "16.0", "x64", "packed.xll", "s99-g0h1i2j3k4l5"));
 
         Assert.Equal(
-            ["open addin-version=1.2.3 excel-version=16.0 process=x64 xll=packed.xll"],
+            ["open addin-version=1.2.3 excel-version=16.0 process=x64 xll=packed.xll session=s99-g0h1i2j3k4l5"],
             log.Records);
     }
 
@@ -32,22 +32,33 @@ public class AddInLifecycleTests
         var log = new CapturingLog();
         var lifecycle = new AddInLifecycle(log);
 
-        lifecycle.LogOpen(new AddInIdentity("", "unknown", " ", string.Empty));
+        lifecycle.LogOpen(new AddInIdentity("", "unknown", " ", string.Empty, null!));
 
         Assert.Equal(
-            ["open addin-version=unknown excel-version=unknown process=unknown xll=unknown"],
+            ["open addin-version=unknown excel-version=unknown process=unknown xll=unknown session=unknown"],
             log.Records);
     }
 
     [Fact]
-    public void LogClose_writes_exactly_one_close_record()
+    public void LogClose_writes_exactly_one_close_record_with_the_session_token()
     {
         var log = new CapturingLog();
         var lifecycle = new AddInLifecycle(log);
 
-        lifecycle.LogClose();
+        lifecycle.LogClose("s99-g0h1i2j3k4l5");
 
-        Assert.Equal(["close"], log.Records);
+        Assert.Equal(["close session=s99-g0h1i2j3k4l5"], log.Records);
+    }
+
+    [Fact]
+    public void LogClose_normalizes_a_missing_session_token_to_unknown()
+    {
+        var log = new CapturingLog();
+        var lifecycle = new AddInLifecycle(log);
+
+        lifecycle.LogClose(null);
+
+        Assert.Equal(["close session=unknown"], log.Records);
     }
 
     [Fact]

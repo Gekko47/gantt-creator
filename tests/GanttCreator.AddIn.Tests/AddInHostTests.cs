@@ -55,10 +55,13 @@ public class AddInHostTests
         "0.0.0+test",
         "16.0",
         "x64",
-        "GanttCreator.AddIn-AddIn64-packed.xll");
+        "GanttCreator.AddIn-AddIn64-packed.xll",
+        "s7-g0h1i2j3k4l5");
 
     private const string ExpectedOpenRecord =
-        "open addin-version=0.0.0+test excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll";
+        "open addin-version=0.0.0+test excel-version=16.0 process=x64 xll=GanttCreator.AddIn-AddIn64-packed.xll session=s7-g0h1i2j3k4l5";
+
+    private const string ExpectedCloseRecord = "close session=s7-g0h1i2j3k4l5";
 
     [Fact]
     public void AddInHost_is_public_implements_IExcelAddIn_and_has_parameterless_ctor()
@@ -93,8 +96,48 @@ public class AddInHostTests
 
         host.AutoClose();
 
-        Assert.Equal([ExpectedOpenRecord, "close"], log.Records);
+        Assert.Equal([ExpectedOpenRecord, ExpectedCloseRecord], log.Records);
         Assert.True(log.Disposed, "AutoClose must dispose the log it opened.");
+    }
+
+    [Fact]
+    public void GenerateSessionToken_survives_the_log_redactor_unchanged()
+    {
+        // D5 correlation depends on the token reaching disk byte-identical:
+        // Core's Redactor masks GUIDs and long hex runs, so assert every
+        // generated token passes through Redact untouched.
+        var redactor = new GanttCreator.Core.Logging.Redactor();
+        for (int i = 0; i < 25; i++)
+        {
+            var token = AddInHost.GenerateSessionToken();
+            Assert.Equal(token, redactor.Redact(token));
+        }
+    }
+
+    [Fact]
+    public void GenerateSessionToken_produces_distinct_nonempty_tokens()
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < 25; i++)
+        {
+            var token = AddInHost.GenerateSessionToken();
+            Assert.False(string.IsNullOrWhiteSpace(token));
+            Assert.True(seen.Add(token), "Session tokens must be distinct per load.");
+        }
+    }
+
+    [Fact]
+    public void AutoClose_carries_the_open_session_token_into_the_close_record()
+    {
+        // The open/close pair of one load must be correlatable: AutoClose
+        // writes the session token captured from the identity AutoOpen logged.
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+        host.AutoOpen();
+
+        host.AutoClose();
+
+        Assert.Equal([ExpectedOpenRecord, ExpectedCloseRecord], log.Records);
     }
 
     [Fact]
@@ -249,7 +292,7 @@ public class AddInHostTests
         var exception = Record.Exception(host.AutoClose);
 
         Assert.Null(exception);
-        Assert.Equal([ExpectedOpenRecord, "close"], log.Records);
+        Assert.Equal([ExpectedOpenRecord, ExpectedCloseRecord], log.Records);
         Assert.True(log.Disposed);
     }
 
@@ -532,7 +575,7 @@ public class AddInHostTests
             host.AutoClose();
 
             Assert.Equal(
-                [ExpectedOpenRecord, "close", ExpectedOpenRecord, "close"],
+                [ExpectedOpenRecord, ExpectedCloseRecord, ExpectedOpenRecord, ExpectedCloseRecord],
                 log.Records);
             Assert.True(log.Disposed);
             Assert.Null(CommandBoundary.Instance.GetLog());

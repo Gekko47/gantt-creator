@@ -144,7 +144,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildContent_includes_identifier_fields()
     {
-        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");
         var content = DiagnosticsService.BuildContent(identity, "file:///test.log");
         Assert.Contains("Add-in Version:", content, StringComparison.Ordinal);
         Assert.Contains("Excel Version:", content, StringComparison.Ordinal);
@@ -156,7 +156,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildContent_includes_file_hyperlink()
     {
-        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");
         var content = DiagnosticsService.BuildContent(identity, "C:\\Logs\\test.log");
 
         Assert.Contains("file:///C:/Logs/test.log", content, StringComparison.Ordinal);
@@ -165,7 +165,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildContent_handles_missing_log_path()
     {
-        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");
         var content = DiagnosticsService.BuildContent(identity, null);
 
         Assert.Contains("not available", content, StringComparison.Ordinal);
@@ -291,7 +291,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildFallbackText_includes_the_log_file_path_as_plain_text()
     {
-        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");
         const string path = "C:\\Logs\\test.log";
 
         string text = DiagnosticsService.BuildFallbackText(identity, path);
@@ -308,7 +308,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildFallbackText_handles_missing_log_path()
     {
-        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll");
+        var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");
 
         string text = DiagnosticsService.BuildFallbackText(identity, null);
 
@@ -318,7 +318,7 @@ public class DiagnosticsServiceTests
     [Fact]
     public void BuildContent_escapes_access_key_ampersands()
     {
-        var identity = new AddInIdentity("1&0.0", "16&0", "x64", "test&file.xll");
+        var identity = new AddInIdentity("1&0.0", "16&0", "x64", "test&file.xll", "s1-g0h1i2j3k4l5");
 
         string content = DiagnosticsService.BuildContent(identity, null);
 

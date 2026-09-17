@@ -41,6 +41,7 @@ public sealed class AddInHost(
         applicationAdapterSource ?? DefaultApplicationAdapterSource;
 
     private IRollingLog? _log;
+    private string? _sessionToken;
 
     /// <summary>
     /// Creates the add-in host with the production identity and log
@@ -49,6 +50,36 @@ public sealed class AddInHost(
     public AddInHost()
         : this(DefaultIdentitySource, AddInLogFactory.Create)
     {
+    }
+
+    /// <summary>
+    /// Generates one per-load session token (work item R1.6 D5). The token
+    /// correlates the <c>open</c>/<c>close</c> pair of a single
+    /// <c>AutoOpen</c>/<c>AutoClose</c> cycle in the shared log. It is
+    /// deliberately not a GUID or long hex string: Core's
+    /// <see cref="Redactor"/> masks both to <c>[guid]</c>/<c>[token]</c> on
+    /// disk, which would destroy correlation. The alphabet below excludes
+    /// <c>a</c>–<c>f</c> so a 12-character token can never match the long-hex
+    /// pattern; the timestamp prefix keeps separately generated tokens
+    /// distinct.
+    /// </summary>
+    /// <returns>A redaction-safe correlation token.</returns>
+    internal static string GenerateSessionToken()
+    {
+        Span<char> token = stackalloc char[12];
+        // Draw one nibble at a time and map 10-15 to g-p (never a-f), so the
+        // 12-character suffix can never match the Redactor's long-hex
+        // pattern; the timestamp prefix keeps separately generated tokens
+        // distinct even within one second boundary.
+        var filled = 0;
+        while (filled < token.Length)
+        {
+            var value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
+            token[filled++] = value < 10 ? (char)('0' + value) : (char)('g' + (value - 10));
+        }
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"s{DateTimeOffset.UtcNow.ToUnixTimeSeconds():x}-{new string(token)}");
     }
 
     /// <summary>
@@ -70,7 +101,9 @@ public sealed class AddInHost(
             IRollingLog log = _logSource();
             try
             {
-                new AddInLifecycle(log).LogOpen(_identitySource());
+                AddInIdentity identity = _identitySource();
+                new AddInLifecycle(log).LogOpen(identity);
+                _sessionToken = identity.SessionToken;
             }
             catch
             {
@@ -145,13 +178,13 @@ public sealed class AddInHost(
             // guarded inside the subscription itself.
             RibbonStateService.Reset();
 
-            // Step 2: exactly one close record. A write failure degrades to
-            // a missing close record.
+            // Step 2: exactly one close record carrying this load's session
+            // token. A write failure degrades to a missing close record.
             try
             {
                 if (_log is not null)
                 {
-                    new AddInLifecycle(_log).LogClose();
+                    new AddInLifecycle(_log).LogClose(_sessionToken);
                 }
             }
 #pragma warning disable CA1031
@@ -192,6 +225,7 @@ public sealed class AddInHost(
             finally
             {
                 _log = null;
+                _sessionToken = null;
             }
         }
     }
@@ -239,6 +273,7 @@ public sealed class AddInHost(
             VersionInfo.InformationalVersion,
             excelVersion,
             Environment.Is64BitProcess ? "x64" : "x86",
-            string.IsNullOrWhiteSpace(xllFileName) ? "unknown" : xllFileName);
+            string.IsNullOrWhiteSpace(xllFileName) ? "unknown" : xllFileName,
+            GenerateSessionToken());
     }
 }
