@@ -259,9 +259,20 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 param([string]$UserPath)
                 $colon = $UserPath.IndexOf(':')
                 if ($colon -gt 0) {
-                    return @{ Qualifier = $UserPath.Substring(0, $colon); Name = $UserPath.Substring($colon + 1) }
+                    $qualifier = $UserPath.Substring(0, $colon)
+                    $name = $UserPath.Substring($colon + 1)
+                    # Only real variable-scope keywords are strippable
+                    # qualifiers. Any other qualifier ($env:Solution,
+                    # $function:Foo) is a provider- or function-qualified
+                    # path, not a variable declaration that matches a local
+                    # declaration of the bare name: callers must treat it as
+                    # an unverified target (never registered, never counted).
+                    if ($qualifier -match '^(?i)(script|global|local|private)$') {
+                        return @{ Qualifier = $qualifier.ToLowerInvariant(); Name = $name; IsScopeQualifier = $true }
+                    }
+                    return @{ Qualifier = $qualifier; Name = $name; IsScopeQualifier = $false }
                 }
-                return @{ Qualifier = ''; Name = $UserPath }
+                return @{ Qualifier = ''; Name = $UserPath; IsScopeQualifier = $true }
             }
             function Add-ScalarVar {
                 param([System.Management.Automation.Language.Ast]$Node, [string]$VarName, [bool]$IsScalar)
@@ -271,8 +282,14 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 }
                 # Key by the bare name so a qualified declaration
                 # (script:$Solution = ...) is found by an unqualified
-                # reference of the same name.
-                $bareName = (Split-ScopeQualifiedName -UserPath $VarName).Name
+                # reference of the same name. A provider-qualified path
+                # ($env:Solution) is not a variable declaration: it must
+                # never register scalar state under the bare name.
+                $parts = Split-ScopeQualifiedName -UserPath $VarName
+                if (-not $parts.IsScopeQualifier) {
+                    return
+                }
+                $bareName = $parts.Name
                 if (-not $IsScalar -and $scalarVars[$scope].ContainsKey($bareName) -and $scalarVars[$scope][$bareName]) {
                     # A [string] type constraint persists for the scope: a later
                     # unconstrained assignment to the same variable is coerced
@@ -302,8 +319,12 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 # AssignmentStatementAst: the qualifier lives on the variable.
                 $ancestor = $Node
                 if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                    if ((Split-ScopeQualifiedName -UserPath $Node.VariablePath.UserPath).Qualifier -match '^(?i)(script|global)$') {
+                    $parts = Split-ScopeQualifiedName -UserPath $Node.VariablePath.UserPath
+                    if ($parts.IsScopeQualifier -and $parts.Qualifier -eq 'script') {
                         return '__ScriptScope__'
+                    }
+                    if ($parts.IsScopeQualifier -and $parts.Qualifier -eq 'global') {
+                        return '__GlobalScope__'
                     }
                 }
                 while ($ancestor) {
@@ -315,34 +336,6 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     $ancestor = $ancestor.Parent
                 }
                 return '__ScriptScope__'
-            }
-            function Get-DeclarationScopeName {
-                param(
-                    [System.Management.Automation.Language.Ast]$Node,
-                    [System.Management.Automation.VariablePath]$VariablePath
-                )
-                if ($VariablePath.IsScript) { return '__ScriptScope__' }
-                if ($VariablePath.IsGlobal) { return '__GlobalScope__' }
-                # Explicit local/private and unqualified assignments belong to
-                # the nearest lexical scope. At script level that is script.
-                return Get-EnclosingScopeName -Node $Node
-            }
-            function Add-VariableDeclaration {
-                param(
-                    [System.Management.Automation.Language.Ast]$Node,
-                    [System.Management.Automation.Language.VariableExpressionAst]$Variable,
-                    [bool]$IsScalarString
-                )
-                $scope = Get-DeclarationScopeName -Node $Node -VariablePath $Variable.VariablePath
-                $name = Get-VariableName -VariablePath $Variable.VariablePath
-                if (-not $variableDeclarations.ContainsKey($scope)) {
-                    $variableDeclarations[$scope] = @{}
-                }
-                # A type-constrained parameter/variable remains constrained
-                # when subsequently assigned without repeating the cast.
-                if ($IsScalarString -or -not $variableDeclarations[$scope].ContainsKey($name)) {
-                    $variableDeclarations[$scope][$name] = $IsScalarString
-                }
             }
             function Get-EnclosingScopeChain {
                 param(
@@ -364,12 +357,19 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 $chain = [System.Collections.Generic.List[string]]::new()
                 $ancestor = $Node
                 if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                    if ((Split-ScopeQualifiedName -UserPath $Node.VariablePath.UserPath).Qualifier -match '^(?i)(script|global)$') {
-                        # A scope-qualified reference ($script:Solution) resolves
-                        # in the named scope only; the local function chain does
-                        # not apply.
-                        $chain.Add('__ScriptScope__')
-                        return $chain
+                    $parts = Split-ScopeQualifiedName -UserPath $Node.VariablePath.UserPath
+                    if ($parts.IsScopeQualifier) {
+                        # A scope-qualified reference ($script:Solution,
+                        # $global:Solution) resolves in the named scope only;
+                        # the local function chain does not apply.
+                        if ($parts.Qualifier -eq 'script') {
+                            $chain.Add('__ScriptScope__')
+                            return $chain
+                        }
+                        if ($parts.Qualifier -eq 'global') {
+                            $chain.Add('__GlobalScope__')
+                            return $chain
+                        }
                     }
                 }
                 while ($ancestor) {
@@ -410,9 +410,6 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                             }
                         }
                     }
-                }
-                if ($variable) {
-                    Add-VariableDeclaration -Node $assignment -Variable $variable -IsScalarString $isScalarString
                 }
             }
 
@@ -472,26 +469,34 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         # omits '$'; a splatted variable (@Splat) is never one
                         # positional target.
                         if (-not $elem.Splatted) {
-                            $name = (Split-ScopeQualifiedName -UserPath $elem.VariablePath.UserPath).Name
-                            if ($name -match '(?i)(Solution|Project)') {
-                                # Resolve the variable against its enclosing scope chain
-                                # before applying scalar validation, so a
-                                # [string]$Solution declared in function foo does
-                                # not vouch for a same-named collection in
-                                # function bar or script scope. Walk the full
-                                # chain (innermost function out to script
-                                # scope) and stop at the NEAREST matching
-                                # declaration: a local unqualified assignment
-                                # (scalar or not) shadows an outer one. Count
-                                # only when the nearest declaration is a verified
-                                # scalar [string].
-                                $scopeChain = Get-EnclosingScopeChain -Node $elem
-                                foreach ($scope in $scopeChain) {
-                                    if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
-                                        if ($scalarVars[$scope][$name]) {
-                                            $count++
+                            $parts = Split-ScopeQualifiedName -UserPath $elem.VariablePath.UserPath
+                            # Only a real scope keyword or an unqualified name
+                            # is a strippable variable path. Provider-qualified
+                            # paths ($env:Solution) are not variable declarations
+                            # matching local names; they stay unverified targets
+                            # and are never counted.
+                            if ($parts.IsScopeQualifier) {
+                                $name = $parts.Name
+                                if ($name -match '(?i)(Solution|Project)') {
+                                    # Resolve the variable against its enclosing scope chain
+                                    # before applying scalar validation, so a
+                                    # [string]$Solution declared in function foo does
+                                    # not vouch for a same-named collection in
+                                    # function bar or script scope. Walk the full
+                                    # chain (innermost function out to script
+                                    # scope) and stop at the NEAREST matching
+                                    # declaration: a local unqualified assignment
+                                    # (scalar or not) shadows an outer one. Count
+                                    # only when the nearest declaration is a verified
+                                    # scalar [string].
+                                    $scopeChain = Get-EnclosingScopeChain -Node $elem
+                                    foreach ($scope in $scopeChain) {
+                                        if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
+                                            if ($scalarVars[$scope][$name]) {
+                                                $count++
+                                            }
+                                            break
                                         }
-                                        break
                                     }
                                 }
                             }
@@ -696,6 +701,40 @@ function Use-Qualified {
 }
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $reference) | Should -Be @(0, 1)
+    }
+
+    It 'global-scope declarations resolve only to global references and stay distinct from script scope (parity fixture)' {
+        # A [string]$global:Solution cast declares in __GlobalScope__, not
+        # __ScriptScope__, so:
+        #   - $global:Solution resolves to the global scalar (one target);
+        #   - $script:Solution must NOT see the global declaration (zero);
+        #   - an unqualified $Solution must not see it either (zero).
+        $fixture = @'
+function Set-GlobalSolution {
+    [string]$global:Solution = 'GanttCreator.slnx'
+}
+function Use-GlobalSolution {
+    dotnet test $global:Solution
+}
+function Use-ScriptSolution {
+    dotnet test $script:Solution
+}
+dotnet test $Solution
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+    }
+
+    It 'provider-qualified paths are unverified targets, never matched against local declarations (parity fixture)' {
+        # $env:Solution is a provider-qualified path, not the local
+        # [string]$Solution: stripping its qualifier and matching the bare
+        # name against local declarations would let an environment variable
+        # vouch for a local scalar. Only script:/global:/local:/private:
+        # qualifiers are strippable; everything else counts as zero.
+        $fixture = @'
+param([string]$Solution = 'GanttCreator.slnx')
+dotnet test $env:Solution
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(0)
     }
 
     It 'tripwire throws on unparseable script text (positive control for parse-error hard failure)' {

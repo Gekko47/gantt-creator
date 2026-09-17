@@ -535,14 +535,18 @@ public class AddInHostTests
         {
             host.AutoOpen();
 
-            Assert.NotNull(CommandBoundary.Instance.GetLog());
+            // Capture the boundary that is active during the session: after
+            // AutoClose the session is reset, and accessing the singleton
+            // again would fabricate a fresh, trivially log-free boundary.
+            var boundary = CommandBoundary.Instance;
+            Assert.NotNull(boundary.GetLog());
             Assert.Equal(log.LogFilePath, DiagnosticsService.Instance.LogFilePath);
 
             host.AutoClose();
 
             // Both singletons dropped their log reference before the log was
             // disposed (work item R1.6 D1): no service observes a disposed log.
-            Assert.Null(CommandBoundary.Instance.GetLog());
+            Assert.Null(boundary.GetLog());
             Assert.Null(DiagnosticsService.Instance.LogFilePath);
             Assert.True(log.Disposed);
         }
@@ -557,27 +561,38 @@ public class AddInHostTests
     [Fact]
     public void AutoOpen_after_AutoClose_reopens_deterministically()
     {
-        var log = new CapturingLog();
+        // Each load cycle must get its own log: AutoClose disposes the log it
+        // opened, so the reloaded session must open a fresh one, not reuse
+        // the disposed instance.
+        var firstLog = new CapturingLog();
+        var secondLog = new CapturingLog();
+        var loadCycle = 0;
         DiagnosticsService.Reset();
         CommandBoundary.Reset();
         RibbonStateService.Reset();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = new AddInHost(
+            () => TestIdentity,
+            () => ++loadCycle == 1 ? firstLog : secondLog);
 
         try
         {
             host.AutoOpen();
             host.AutoClose();
 
+            Assert.Equal([ExpectedOpenRecord, ExpectedCloseRecord], firstLog.Records);
+            Assert.True(firstLog.Disposed);
+
             // Excel-DNA can load/unload/reload an XLL in one Excel session
             // (work item R1.6 D2): the reload must re-arm everything and
             // produce exactly one open/close pair per load cycle.
             host.AutoOpen();
-            host.AutoClose();
+            Assert.False(secondLog.Disposed, "the second session must run on a fresh, active log");
+            Assert.Equal([ExpectedOpenRecord], secondLog.Records);
 
-            Assert.Equal(
-                [ExpectedOpenRecord, ExpectedCloseRecord, ExpectedOpenRecord, ExpectedCloseRecord],
-                log.Records);
-            Assert.True(log.Disposed);
+            host.AutoClose();
+            Assert.Equal([ExpectedOpenRecord, ExpectedCloseRecord], secondLog.Records);
+            Assert.True(secondLog.Disposed);
+
             Assert.Null(CommandBoundary.Instance.GetLog());
             Assert.Null(DiagnosticsService.Instance.LogFilePath);
         }
