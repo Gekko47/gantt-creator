@@ -142,6 +142,17 @@ public class DiagnosticsServiceTests
     }
 
     [Fact]
+    public void GatherIdentifiers_uses_informational_version()
+    {
+        // Regression: the gathered identity must carry Core's full
+        // InformationalVersion (including build metadata), not the stripped
+        // SemanticVersion. This preserves the full version metadata in both
+        // the open and Diagnostics: log records.
+        var identity = DiagnosticsService.GatherIdentifiers();
+        Assert.Equal(VersionInfo.InformationalVersion, identity.AddInVersion);
+    }
+
+    [Fact]
     public void BuildContent_includes_identifier_fields()
     {
         var identity = new AddInIdentity("1.0.0", "16.0", "x64", "test.xll", "s1-g0h1i2j3k4l5");

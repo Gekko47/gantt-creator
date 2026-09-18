@@ -32,26 +32,32 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
     $kept = New-Object System.Collections.Generic.List[string]
     $fenceChar = $null
     $fenceLen = 0
+    $fenceIsQuoted = $false
     $fenceBuffer = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         if ($null -eq $fenceChar) {
-            if ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
+            if ($line -match '^(?<quote>(?: {0,3}> {0,3})?)(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
                 $fence = $Matches['fence']
                 $info = $Matches['info']
+                $quotePrefix = $Matches['quote']
                 # A backtick info string must not contain a backtick
                 # (CommonMark); a tilde info string has no such rule.
                 if ($fence[0] -eq '`' -and $info -match '`') { $kept.Add($line); continue }
                 $fenceChar = $fence[0]
                 $fenceLen = $fence.Length
+                $fenceIsQuoted = ($quotePrefix -ne '')
                 $fenceBuffer.Clear()
                 continue
             }
             $kept.Add($line)
-        } elseif ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
+        } elseif ($line -match '^(?<quote>(?: {0,3}> {0,3})?)(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
             $fence = $Matches['fence']
-            if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen) {
+            $quotePrefix = $Matches['quote']
+            # Require the same block-quote prefix style as the opening fence.
+            if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen -and ($quotePrefix -ne '') -eq $fenceIsQuoted) {
                 $fenceChar = $null
                 $fenceLen = 0
+                $fenceIsQuoted = $false
                 $fenceBuffer.Clear()
                 continue
             }

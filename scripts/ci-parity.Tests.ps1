@@ -253,6 +253,65 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             # applying scalar validation keeps same-named variables in
             # different functions or script scope independent.
             $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, object]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            # $pendingDeclarations collects every declaration event produced by
+            # the type-constraint loop and the plain-assignment loop below, in
+            # AST-traversal order. The events are sorted by DeclarationOffset
+            # and applied by Resolve-DeclarationEvents once, so the persistence
+            # logic (scalar downgrade protection, private propagation) sees the
+            # declarations in source order regardless of which loop produced
+            # them. Without this stage, a [string]$Solution declaration visited
+            # by the first loop could be followed by a $Solution = @(...) event
+            # visited by the second loop out of source order, and the resolver
+            # would apply the wrong "previous" declaration.
+            $pendingDeclarations = [System.Collections.Generic.List[object]]::new()
+            function Resolve-DeclarationEvents {
+                # Applies the staged declaration events to $scalarVars in source
+                # order. The events are collected by Add-ScalarVar from the
+                # type-constraint loop and the plain-assignment loop below; those
+                # two loops visit the AST in traversal order, not source order, so
+                # a [string]$Solution declaration and a later $Solution = @(...)
+                # assignment for the same name in the same scope must be applied
+                # in source order. Sorting by DeclarationOffset guarantees that
+                # the persistence logic (scalar downgrade protection, private
+                # propagation) always sees the correct "previous" declaration.
+                $ordered = $pendingDeclarations | Sort-Object -Property DeclarationOffset
+                foreach ($declEvent in $ordered) {
+                    $scope = $declEvent.Scope
+                    $bareName = $declEvent.BareName
+                    if (-not $scalarVars.ContainsKey($scope)) {
+                        $scalarVars[$scope] = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    }
+                    if (-not $scalarVars[$scope].ContainsKey($bareName)) {
+                        $scalarVars[$scope][$bareName] = [System.Collections.Generic.List[object]]::new()
+                    }
+                    $declaration = $scalarVars[$scope][$bareName]
+                    $IsScalar = $declEvent.IsScalar
+                    $IsPrivate = $declEvent.IsPrivate
+                    if ($declaration.Count -gt 0) {
+                        $existing = $declaration[$declaration.Count - 1]
+                        if (-not $IsScalar -and $existing.IsScalar) {
+                            # A [string] type constraint persists for the scope: a later
+                            # unconstrained assignment to the same variable is coerced
+                            # (verified: `[string]$x='a'; $x=@('b','c')` leaves $x a
+                            # String 'b c'). A proven scalar must therefore not be
+                            # downgraded to non-scalar within the same scope, or the
+                            # real entry points (verify.ps1 / verify-quick.ps1, which
+                            # re-assign $Solution from Join-Path after the param block)
+                            # would be miscounted as zero targets.
+                            $IsScalar = $true
+                        }
+                        # private: is a property of the scope entry, so a later
+                        # assignment to the same name in the same scope does not make
+                        # the variable visible to child scopes again.
+                        $IsPrivate = $IsPrivate -or $existing.IsPrivate
+                    }
+                    $declaration.Add(@{
+                        IsScalar          = [bool]$IsScalar
+                        IsPrivate         = [bool]$IsPrivate
+                        DeclarationOffset = $declEvent.DeclarationOffset
+                    })
+                }
+            }
             # $scalarVars[scope][name] = @{ IsScalar = <bool>; IsPrivate = <bool> }
             # IsScalar  -> a [string]-proven scalar (vs an array/collection, etc.)
             # IsPrivate -> the declaration carried the private: scope modifier,
@@ -290,9 +349,6 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             function Add-ScalarVar {
                 param([System.Management.Automation.Language.Ast]$Node, [string]$VarName, [bool]$IsScalar, [bool]$IsPrivate = $false)
                 $scope = Get-EnclosingScopeName -Node $Node
-                if (-not $scalarVars.ContainsKey($scope)) {
-                    $scalarVars[$scope] = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                }
                 # Key by the bare name so a qualified declaration
                 # (script:$Solution = ...) is found by an unqualified
                 # reference of the same name. A provider-qualified path
@@ -309,34 +365,23 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 if ($parts.Qualifier -eq 'private') {
                     $IsPrivate = $true
                 }
-                if ($scalarVars[$scope].ContainsKey($bareName)) {
-                    $existing = $scalarVars[$scope][$bareName]
-                    if (-not $IsScalar -and $existing.IsScalar) {
-                        # A [string] type constraint persists for the scope: a later
-                        # unconstrained assignment to the same variable is coerced
-                        # (verified: `[string]$x='a'; $x=@('b','c')` leaves $x a
-                        # String 'b c'). A proven scalar must therefore not be
-                        # downgraded to non-scalar within the same scope, or the
-                        # real entry points (verify.ps1 / verify-quick.ps1, which
-                        # re-assign $Solution from Join-Path after the param block)
-                        # would be miscounted as zero targets.
-                        $IsScalar = $true
-                    }
-                    # private: is a property of the scope entry, so a later
-                    # assignment to the same name in the same scope does not make
-                    # the variable visible to child scopes again.
-                    $IsPrivate = $IsPrivate -or $existing.IsPrivate
-                }
-                # Preserve the declaration source offset so command resolution
-                # only sees declarations encountered earlier in the same scope.
-                # A later typed assignment (including [string]) must not
-                # retroactively change the classification of a preceding use.
                 $declarationOffset = $Node.Extent.StartOffset
-                $scalarVars[$scope][$bareName] = @{
-                    IsScalar          = [bool]$IsScalar
-                    IsPrivate         = [bool]$IsPrivate
+                # Stage the event WITHOUT applying the persistence logic.
+                # The type-constraint loop and the plain-assignment loop each
+                # walk the AST independently, so their relative order is
+                # AST-traversal order, not source order. A [string]$Solution
+                # declaration and a later $Solution = @(...) assignment for the
+                # same name in the same scope must be applied in source order,
+                # or the persistence check below reads the wrong "previous"
+                # declaration. The staged events are sorted and applied by the
+                # Resolve-DeclarationEvents pass that follows both loops.
+                $pendingDeclarations.Add(@{
+                    Scope            = $scope
+                    BareName         = $bareName
+                    IsScalar         = [bool]$IsScalar
+                    IsPrivate        = [bool]$IsPrivate
                     DeclarationOffset = $declarationOffset
-                }
+                })
             }
             function Get-EnclosingScopeName {
                 param([System.Management.Automation.Language.Ast]$Node)
@@ -469,6 +514,12 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     }
                 }
             }
+            # Apply the staged declaration events in source order. This must
+            # run BEFORE the command loop, so the resolver sees every
+            # declaration that precedes a command. Sorting by
+            # DeclarationOffset guarantees source order even when the two
+            # collection loops above visit the same name in different orders.
+            Resolve-DeclarationEvents
 
             $commands = @()
             Find-DotnetTestCommands -Ast $ast -Results ([ref]$commands)
@@ -544,19 +595,54 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                     foreach ($scope in $scopeChain) {
                                         if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
                                             $declaration = $scalarVars[$scope][$name]
-                                            if ($declaration.IsPrivate -and $scope -ne $referenceScope) {
-                                                continue
-                                            }
                                             # Only declarations encountered earlier in the
                                             # same scope may classify this command. A
                                             # declaration at or after the command's source
                                             # offset must not retroactively change its
                                             # classification: the command uses only
                                             # declarations it has already seen.
-                                            if ($declaration.DeclarationOffset -ge $commandOffset) {
+                                            # Walk declarations in source order and select
+                                            # the latest one whose offset precedes the
+                                            # command. This preserves all declarations
+                                            # instead of overwriting, so intervening
+                                            # commands see the declaration active at
+                                            # that point. The selected declaration is
+                                            # stored as $latestDeclaration and every
+                                            # subsequent branch below evaluates its
+                                            # properties, never the full list's.
+                                            $latestDeclaration = $null
+                                            foreach ($decl in $declaration) {
+                                                if ($decl.DeclarationOffset -ge $commandOffset) {
+                                                    continue
+                                                }
+                                                $latestDeclaration = $decl
+                                            }
+                                            # No declaration in this scope precedes the
+                                            # command. Keep walking the scope chain
+                                            # outward instead of stopping on an absent
+                                            # declaration: a null selection must not
+                                            # terminate traversal.
+                                            if ($null -eq $latestDeclaration) {
                                                 continue
                                             }
-                                            if ($declaration.IsScalar) {
+                                            # A private: declaration is visible only in
+                                            # its declaring scope. When the walk
+                                            # reaches an OUTER scope, the nearest
+                                            # visible declaration is the latest one in
+                                            # that scope; if it is private, PowerShell
+                                            # does not inherit it into this reference's
+                                            # scope, so the walk continues outward
+                                            # instead of treating it as the nearest
+                                            # declaration. Evaluate the privacy of the
+                                            # SELECTED declaration, not of the full
+                                            # list: a list of [False, True] coerces to
+                                            # $true and would hide every public
+                                            # declaration in the same scope from child
+                                            # scopes.
+                                            if ($latestDeclaration.IsPrivate -and $scope -ne $referenceScope) {
+                                                continue
+                                            }
+                                            if ($latestDeclaration.IsScalar) {
                                                 $count++
                                             }
                                             break

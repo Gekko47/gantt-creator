@@ -308,6 +308,80 @@ public sealed partial class ArtifactSourceMarkerTests
         }
     }
 
+    [Fact]
+    public void HasMissingMarker_flags_disabled_preprocessor_branch_bin_reference()
+    {
+        // Regression: a bin/ or publish/ reference inside a non-DEBUG
+        // conditional branch must be detected. The previous MaskComments
+        // treated DisabledTextTrivia as comments, masking artifact-source
+        // references in disabled branches so the rule could not catch them.
+        var source = "#if !DEBUG" + Environment.NewLine +
+                     "var path = Path.Combine(\"bin\", \"output\");" + Environment.NewLine +
+                     "#endif" + Environment.NewLine;
+        var td = Path.Combine(Path.GetTempPath(), "artifact-marker-regression-" + Guid.NewGuid());
+        Directory.CreateDirectory(td);
+        var file = Path.Combine(td, "NonDebugConditional.cs");
+        try
+        {
+            File.WriteAllText(file, source);
+            Assert.True(HasMissingMarker(file),
+                "A bin/ reference inside a non-DEBUG conditional branch must be flagged.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void HasMissingMarker_flags_disabled_preprocessor_branch_publish_reference()
+    {
+        // Regression: a publish/ reference inside a non-DEBUG conditional
+        // branch must be detected (same root cause as the bin/ case above).
+        var source = "#if !DEBUG" + Environment.NewLine +
+                     "var path = Path.Combine(\"publish\", \"output\");" + Environment.NewLine +
+                     "#endif" + Environment.NewLine;
+        var td = Path.Combine(Path.GetTempPath(), "artifact-marker-regression-" + Guid.NewGuid());
+        Directory.CreateDirectory(td);
+        var file = Path.Combine(td, "NonDebugConditionalPublish.cs");
+        try
+        {
+            File.WriteAllText(file, source);
+            Assert.True(HasMissingMarker(file),
+                "A publish/ reference inside a non-DEBUG conditional branch must be flagged.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Regression_comment_in_disabled_preprocessor_branch_does_not_require_marker()
+    {
+        // Regression: a comment-only reference to bin/ inside a disabled
+        // preprocessor branch (using an undefined symbol) must NOT force an
+        // artifact-source marker. The DisabledTextTrivia is parsed to extract
+        // only comment spans, preserving non-comment code; comment-only
+        // references are masked away just like any other comment.
+        var source = "#if UNDEFINED_SYMBOL" + Environment.NewLine +
+                     "// clean up the bin/ folder before running" + Environment.NewLine +
+                     "#endif" + Environment.NewLine;
+        var td = Path.Combine(Path.GetTempPath(), "artifact-marker-comment-disabled-" + Guid.NewGuid());
+        Directory.CreateDirectory(td);
+        var file = Path.Combine(td, "CommentInDisabledBranch.cs");
+        try
+        {
+            File.WriteAllText(file, source);
+            Assert.False(HasMissingMarker(file),
+                "A 'bin/' mention inside a comment within a disabled preprocessor branch must not force a marker.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Masks comment trivia with blanks (newlines preserved) so the
     /// <c>bin</c>/<c>publish</c> reference scan sees code and string
@@ -316,6 +390,9 @@ public sealed partial class ArtifactSourceMarkerTests
     /// primary signal this rule exists to catch. Two parses (default
     /// symbols and DEBUG defined) cover comments inside disabled
     /// preprocessor branches on the common DEBUG-only guard shape.
+    /// Disabled preprocessor branches (<see cref="SyntaxKind.DisabledTextTrivia"/>)
+    /// are parsed to extract only comment spans, preserving non-comment code
+    /// so artifact references inside disabled branches remain detectable.
     /// </summary>
     private static string MaskComments(string source)
     {
@@ -356,27 +433,78 @@ public sealed partial class ArtifactSourceMarkerTests
         {
             foreach (var trivia in token.LeadingTrivia)
             {
-                AddCommentSpanIfComment(spans, trivia);
+                AddCommentSpanIfComment(spans, trivia, 0);
             }
 
             foreach (var trivia in token.TrailingTrivia)
             {
-                AddCommentSpanIfComment(spans, trivia);
+                AddCommentSpanIfComment(spans, trivia, 0);
             }
         }
 
         return spans;
     }
 
-    private static void AddCommentSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia)
+    private static void AddCommentSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia, int sourceOffset)
     {
+        if (trivia.IsKind(SyntaxKind.DisabledTextTrivia))
+        {
+            // Disabled preprocessor branches (e.g. #if UNDEFINED_SYMBOL) contain
+            // raw text that may include both code and comments. Parse the branch
+            // content and extract only comment spans, preserving non-comment code
+            // so artifact references inside disabled branches remain detectable.
+            // The branch text is re-parsed as its own tree, so nested trivia spans
+            // are relative to the branch start; pass the branch's absolute offset
+            // (trivia.Span.Start in the original source) so nested spans land in
+            // the original source coordinate space.
+            CollectCommentSpansFromTrivia(spans, trivia, trivia.Span.Start);
+            return;
+        }
+
         if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
-            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia)
-            || trivia.IsKind(SyntaxKind.DisabledTextTrivia))
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
         {
-            spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
+            spans.Add(new TextSpan(trivia.Span.Start + sourceOffset, trivia.Span.Length));
+        }
+    }
+
+    /// <summary>
+    /// Recursively parses the text of <paramref name="trivia"/> to find
+    /// comment spans, adding them to <paramref name="spans"/>. Used for
+    /// <see cref="SyntaxKind.DisabledTextTrivia"/> where the content is
+    /// raw C# source that may contain both code and comments.
+    /// </summary>
+    private static void CollectCommentSpansFromTrivia(List<TextSpan> spans, SyntaxTrivia trivia, int sourceOffset)
+    {
+        var text = trivia.ToString();
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        // Parse the disabled branch content to identify comment tokens. Nested
+        // trivia spans are relative to the branch text (starting at 0); the
+        // caller-supplied sourceOffset is the absolute offset of the branch in
+        // the original source, so every nested span is translated into original
+        // coordinates before being appended.
+        var syntaxTree = CSharpSyntaxTree.ParseText(
+            text,
+            new CSharpParseOptions(languageVersion: CommentMaskLanguageVersion));
+        var root = syntaxTree.GetRoot();
+
+        foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
+        {
+            foreach (var subTrivia in token.LeadingTrivia)
+            {
+                AddCommentSpanIfComment(spans, subTrivia, sourceOffset);
+            }
+
+            foreach (var subTrivia in token.TrailingTrivia)
+            {
+                AddCommentSpanIfComment(spans, subTrivia, sourceOffset);
+            }
         }
     }
 
