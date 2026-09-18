@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -45,7 +47,7 @@ public sealed class EntityTypeDefinition
         DefaultStyleKey = defaultStyleKey;
         ColourCapability = colourCapability;
         RequiresStyleKey = requiresStyleKey;
-        AllowedLabelPositions = allowedLabelPositions;
+        AllowedLabelPositions = allowedLabelPositions.ToFrozenSet();
     }
 
     /// <summary>The code identity of the type.</summary>

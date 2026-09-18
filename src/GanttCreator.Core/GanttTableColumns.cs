@@ -72,7 +72,7 @@ public sealed class GanttTableSchema
             throw new ArgumentException($"Duplicate column name '{duplicate.Key}'.", nameof(columns));
         }
 
-        Columns = [.. columns];
+        Columns = Array.AsReadOnly(columns.ToArray());
     }
 
     /// <summary>Gets the columns in header-row order.</summary>

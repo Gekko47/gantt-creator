@@ -223,7 +223,7 @@ public static class EntityTypeCatalog
     ];
 
     /// <summary>Gets the catalogue entries in the exact entity-guide order.</summary>
-    public static IReadOnlyList<EntityTypeDefinition> Entries => _entries;
+    public static IReadOnlyList<EntityTypeDefinition> Entries { get; } = Array.AsReadOnly(_entries);
 
     /// <summary>
     /// Returns the definition for a type, or <see langword="null"/> when the
