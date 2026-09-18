@@ -288,7 +288,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     $IsScalar = $declEvent.IsScalar
                     $IsPrivate = $declEvent.IsPrivate
                     if ($declaration.Count -gt 0) {
-                        $existing = $declaration[0]
+                        $existing = $declaration[$declaration.Count - 1]
                         if (-not $IsScalar -and $existing.IsScalar) {
                             # A [string] type constraint persists for the scope: a later
                             # unconstrained assignment to the same variable is coerced
