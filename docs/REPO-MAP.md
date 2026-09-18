@@ -13,7 +13,7 @@ Source-reviewed 2026-09-17; this date does not detect subsequent or uncommitted 
 [Tests](../tests/) mirror these areas; Architecture.Tests checks boundaries; Office.IntegrationTests requires live Office.
 Scene/layout, chart rendering and export pipelines remain planned: consult [architecture](02-ARCHITECTURE.md) and [roadmap](03-ROADMAP.md).
 Read the current [work item](work-items/) and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results.
-From `C:\repos\gantt-creator`: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
+From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
 After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`.
 Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when required; see [verification policy](05-GIT-QUALITY.md).
 Update this map in the same change as mapped responsibilities, entry points, test locations or commands; inspect working-tree edits before relying on it.

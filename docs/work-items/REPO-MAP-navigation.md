@@ -47,14 +47,14 @@ no new validator script is introduced.
 Run from the repository root.
 
 ```powershell
-pwsh -NoProfile -File C:\repos\gantt-creator\scripts\check-md-links.ps1
-pwsh -NoProfile -Command '$r = Invoke-Pester -Path C:\repos\gantt-creator\scripts\check-md-links.Tests.ps1 -PassThru; if ($r.FailedCount -gt 0 -or $r.TotalCount -eq 0) { exit 1 }'
-git -C C:\repos\gantt-creator add AGENTS.md docs/REPO-MAP.md docs/STATUS.md docs/work-items/REPO-MAP-navigation.md
-pwsh -NoProfile -File C:\repos\gantt-creator\scripts\verify-quick.ps1   # every-commit gate; expect exit 0
-git -C C:\repos\gantt-creator diff --cached --check
-git -C C:\repos\gantt-creator diff --cached
+pwsh -NoProfile -File ./scripts/check-md-links.ps1
+pwsh -NoProfile -Command '$r = Invoke-Pester -Path ./scripts/check-md-links.Tests.ps1 -PassThru; if ($r.FailedCount -gt 0 -or $r.TotalCount -eq 0) { exit 1 }'
+git add AGENTS.md docs/REPO-MAP.md docs/STATUS.md docs/work-items/REPO-MAP-navigation.md
+pwsh -NoProfile -File ./scripts/verify-quick.ps1   # every-commit gate; expect exit 0
+git diff --cached --check
+git diff --cached
 # after the commit, with a fully clean tree:
-pwsh -NoProfile -File C:\repos\gantt-creator\scripts\verify.ps1
+pwsh -NoProfile -File ./scripts/verify.ps1
 ```
 
 `check-md-links.ps1` proves that link targets exist, not that the mapped

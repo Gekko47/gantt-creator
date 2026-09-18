@@ -97,7 +97,20 @@ function Test-HarnessProcessTreeActive {
                 ParentProcessId = [int]$_.ParentProcessId
             }
         })
-    if ($processes.Count -eq 0) { return $false }
+    # An EMPTY snapshot is not evidence that the owned tree exited: it means
+    # the enumeration itself returned no rows (CIM/WMI unavailable, access
+    # failure), which is exactly when termination cannot be confirmed.
+    # Reporting "inactive" here would let Wait-HarnessProcessTreeExit -- and
+    # therefore every caller -- confirm termination from a failed probe, so
+    # the tree is reported as STILL ACTIVE and the caller's deadline decides.
+    # The warning is emitted once so a 250 ms poll loop cannot flood the report.
+    if ($processes.Count -eq 0) {
+        if (-not $script:emptyProcessSnapshotWarned) {
+            $script:emptyProcessSnapshotWarned = $true
+            Log 'WARN: Win32_Process enumeration returned no rows; the owned process tree is treated as still active (termination not confirmed).'
+        }
+        return $true
+    }
 
     $activePids = @{}
     $roots = @($RootProcessId) + @($KnownChildPids | Where-Object { $_ })

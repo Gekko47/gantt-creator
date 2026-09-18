@@ -223,6 +223,53 @@ $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyC
         $codeOnly | Should -Not -Match 'Wait-HarnessProcessTreeExit' -Because 'this stub never waits for descendants'
     }
 
+    It 'Test-HarnessProcessTreeActive treats an empty Win32_Process snapshot as active, not as confirmed termination' {
+        # An empty enumeration result means the probe itself failed (CIM/WMI
+        # unavailable, access denied), not that the owned tree exited. If the
+        # helper returned $false there, Wait-HarnessProcessTreeExit would
+        # report the tree gone and every caller (timeout kill, post-exit check,
+        # cleanup finally) would confirm termination from a failed probe. It
+        # must return $true so the caller's deadline decides instead.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+
+        $helperIdx = $codeOnly.IndexOf('function Test-HarnessProcessTreeActive')
+        $helperIdx | Should -BeGreaterThan -1 -Because 'the complete-tree check must be locatable'
+        $nextHelperIdx = $codeOnly.IndexOf('function Wait-HarnessProcessTreeExit', $helperIdx)
+        $nextHelperIdx | Should -BeGreaterThan $helperIdx -Because 'the helper body must be bounded by the next function'
+        $helperBody = $codeOnly.Substring($helperIdx, $nextHelperIdx - $helperIdx)
+
+        $helperBody | Should -Not -Match '\$processes\.Count\s+-eq\s+0\s*\)\s*\{\s*return\s+\$false' -Because 'an empty snapshot must never confirm termination'
+        $helperBody | Should -Match '(?s)\$processes\.Count\s+-eq\s+0\s*\)\s*\{.{0,600}?return\s+\$true' -Because 'an empty snapshot must be reported as still active'
+        $helperBody | Should -Match 'return\s+\$activePids\.Count\s+-gt\s+0' -Because 'normal parentage evaluation must be unchanged'
+    }
+
+    It 'positive control: the empty-snapshot-returns-false shape fails the empty-snapshot assertion' {
+        # The defect this pins: reading an empty enumeration as confirmed
+        # termination, which lets a failed probe look like a clean exit.
+        $flagged = @'
+function Test-HarnessProcessTreeActive {
+    param([Parameter(Mandatory)][int]$RootProcessId, [int[]]$KnownChildPids)
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+        ForEach-Object { [pscustomobject]@{ ProcessId = [int]$_.ProcessId; ParentProcessId = [int]$_.ParentProcessId } })
+    if ($processes.Count -eq 0) { return $false }
+    $activePids = @{}
+    return $activePids.Count -gt 0
+}
+
+function Wait-HarnessProcessTreeExit { }
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+
+        $helperIdx = $codeOnly.IndexOf('function Test-HarnessProcessTreeActive')
+        $nextHelperIdx = $codeOnly.IndexOf('function Wait-HarnessProcessTreeExit', $helperIdx)
+        $nextHelperIdx | Should -BeGreaterThan $helperIdx -Because 'the stub helper body must be bounded by the next function'
+        $helperBody = $codeOnly.Substring($helperIdx, $nextHelperIdx - $helperIdx)
+
+        $helperBody | Should -Match '\$processes\.Count\s+-eq\s+0\s*\)\s*\{\s*return\s+\$false' -Because 'this stub deliberately confirms termination from an empty snapshot'
+        $helperBody | Should -Not -Match '(?s)\$processes\.Count\s+-eq\s+0\s*\)\s*\{.{0,600}?return\s+\$true' -Because 'the stub must not satisfy the shipped empty-snapshot contract'
+    }
+
     It 'Step 0 resolves the runtime from runtimeOptions.framework/frameworks and never falls back to the first recursive createdump' {
         # The old 'Microsoft.NETCore.App.RuntimeVersion' property read never
         # matched the standard runtimeconfig schema, so Step 0 silently
