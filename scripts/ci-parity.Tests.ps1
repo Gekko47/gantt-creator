@@ -33,15 +33,23 @@ BeforeAll {
         param([string]$Text, [string]$StepName)
         $lines = $Text -split "`r?`n"
         $start = -1
+        $startIndent = -1
         for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^\s*- name:\s*(.+?)\s*$') {
-                if ($Matches[1] -eq $StepName) { $start = $i; break }
+            if ($lines[$i] -match '^(?<indent>\s*)- name:\s*(?<stepname>.+?)\s*$') {
+                if ($Matches['stepname'] -eq $StepName) { $start = $i; $startIndent = $Matches['indent'].Length; break }
             }
         }
         if ($start -lt 0) { return $null }
         $body = New-Object System.Collections.Generic.List[string]
         for ($i = $start + 1; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^\s*- name:') { break }
+            # A real step boundary is a `- name:` entry at the same or a
+            # shallower indent than the step found above. Script content
+            # inside a `run: |` block scalar (comments, string literals,
+            # example snippets) is indented deeper by construction and is
+            # part of this step's body, never a boundary.
+            if ($lines[$i] -match '^(?<indent>\s*)- name:') {
+                if ($Matches['indent'].Length -le $startIndent) { break }
+            }
             $null = $body.Add($lines[$i])
         }
         return ($body -join "`n")
@@ -906,6 +914,41 @@ Describe 'PSScriptAnalyzer gate delegates to Invoke-PssaGate (W13)' {
         # names the forbidden switch as the reason for the delegation.
         $codeLines = ($block -split "`n") | Where-Object { $_ -notmatch '^\s*#' }
         ($codeLines -join "`n") | Should -Not -Match '-EnableExit'
+    }
+}
+
+Describe 'Get-CiStepBlock boundary handling' {
+    BeforeAll {
+        $script:synthetic = @'
+jobs:
+  build-and-test:
+    steps:
+      - name: First
+        run: |
+          # - name: Fake (a comment inside the script)
+          Write-Host "- name: Fake (a string literal inside the script)"
+          pwsh -NoProfile -File scripts/test-scripts.ps1
+      - name: Second
+        run: echo hi
+'@
+    }
+
+    It 'does not treat a - name: line inside a run: block as a step boundary (positive test)' {
+        $block = Get-CiStepBlock -Text $script:synthetic -StepName 'First'
+        $block | Should -Not -BeNullOrEmpty
+        # The real script content survives in the block.
+        $block | Should -Match 'test-scripts\.ps1'
+        # Both lookalikes stay inside the block instead of truncating it.
+        $block | Should -Match '- name: Fake'
+        # The next real step's content is still excluded.
+        $block | Should -Not -Match 'echo hi'
+    }
+
+    It 'still splits at a real same-indent step boundary' {
+        $block = Get-CiStepBlock -Text $script:synthetic -StepName 'Second'
+        $block | Should -Not -BeNullOrEmpty
+        $block | Should -Match 'echo hi'
+        $block | Should -Not -Match 'test-scripts\.ps1'
     }
 }
 
