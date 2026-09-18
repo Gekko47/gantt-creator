@@ -308,6 +308,54 @@ public sealed partial class ArtifactSourceMarkerTests
         }
     }
 
+    [Fact]
+    public void HasMissingMarker_flags_disabled_preprocessor_branch_bin_reference()
+    {
+        // Regression: a bin/ or publish/ reference inside a non-DEBUG
+        // conditional branch must be detected. The previous MaskComments
+        // treated DisabledTextTrivia as comments, masking artifact-source
+        // references in disabled branches so the rule could not catch them.
+        var source = "#if !DEBUG" + Environment.NewLine +
+                     "var path = Path.Combine(\"bin\", \"output\");" + Environment.NewLine +
+                     "#endif" + Environment.NewLine;
+        var td = Path.Combine(Path.GetTempPath(), "artifact-marker-regression-" + Guid.NewGuid());
+        Directory.CreateDirectory(td);
+        var file = Path.Combine(td, "NonDebugConditional.cs");
+        try
+        {
+            File.WriteAllText(file, source);
+            Assert.True(HasMissingMarker(file),
+                "A bin/ reference inside a non-DEBUG conditional branch must be flagged.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void HasMissingMarker_flags_disabled_preprocessor_branch_publish_reference()
+    {
+        // Regression: a publish/ reference inside a non-DEBUG conditional
+        // branch must be detected (same root cause as the bin/ case above).
+        var source = "#if !DEBUG" + Environment.NewLine +
+                     "var path = Path.Combine(\"publish\", \"output\");" + Environment.NewLine +
+                     "#endif" + Environment.NewLine;
+        var td = Path.Combine(Path.GetTempPath(), "artifact-marker-regression-" + Guid.NewGuid());
+        Directory.CreateDirectory(td);
+        var file = Path.Combine(td, "NonDebugConditionalPublish.cs");
+        try
+        {
+            File.WriteAllText(file, source);
+            Assert.True(HasMissingMarker(file),
+                "A publish/ reference inside a non-DEBUG conditional branch must be flagged.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Masks comment trivia with blanks (newlines preserved) so the
     /// <c>bin</c>/<c>publish</c> reference scan sees code and string
@@ -373,8 +421,7 @@ public sealed partial class ArtifactSourceMarkerTests
         if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
-            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia)
-            || trivia.IsKind(SyntaxKind.DisabledTextTrivia))
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
         {
             spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
         }

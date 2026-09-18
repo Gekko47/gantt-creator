@@ -170,7 +170,12 @@ function Test-HarnessProcessTreeActive {
             $isReusedPid = $knownChildWithSamePid -and (
                 $knownChildWithSamePid | Where-Object { $_ -ne $ck }
             )
-            if ($isReusedPid) { continue }
+            if ($isReusedPid) {
+                # A reused PID is a different process (different creation date);
+                # skip it entirely and do not expand its parentage so children
+                # of reused PIDs are not added to the traversal.
+                continue
+            }
 
             # This live process is part of the owned tree (known child or new
             # descendant) -- the tree is still active.
@@ -178,8 +183,12 @@ function Test-HarnessProcessTreeActive {
         }
 
         # Enqueue children by parentage even if the parent has exited (the
-        # ParentProcessId field preserves the creating pid after exit).
-        $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+        # ParentProcessId field preserves the creating pid after exit). Skip
+        # parentage expansion for reused PIDs: children of reused PIDs are not
+        # part of the owned tree.
+        if (-not $isReusedPid) {
+            $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+        }
     }
 
     return $false

@@ -309,8 +309,18 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 if ($parts.Qualifier -eq 'private') {
                     $IsPrivate = $true
                 }
-                if ($scalarVars[$scope].ContainsKey($bareName)) {
-                    $existing = $scalarVars[$scope][$bareName]
+                $declarationOffset = $Node.Extent.StartOffset
+                # Preserve ALL declarations in source order instead of
+                # overwriting the existing record. The resolver walks the
+                # list and selects the latest visible declaration whose
+                # offset precedes the command, so intervening commands use
+                # the declaration active at that point.
+                if (-not $scalarVars[$scope].ContainsKey($bareName)) {
+                    $scalarVars[$scope][$bareName] = [System.Collections.Generic.List[object]]::new()
+                }
+                $declaration = $scalarVars[$scope][$bareName]
+                if ($declaration.Count -gt 0) {
+                    $existing = $declaration[0]
                     if (-not $IsScalar -and $existing.IsScalar) {
                         # A [string] type constraint persists for the scope: a later
                         # unconstrained assignment to the same variable is coerced
@@ -327,16 +337,11 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     # the variable visible to child scopes again.
                     $IsPrivate = $IsPrivate -or $existing.IsPrivate
                 }
-                # Preserve the declaration source offset so command resolution
-                # only sees declarations encountered earlier in the same scope.
-                # A later typed assignment (including [string]) must not
-                # retroactively change the classification of a preceding use.
-                $declarationOffset = $Node.Extent.StartOffset
-                $scalarVars[$scope][$bareName] = @{
+                $declaration.Add(@{
                     IsScalar          = [bool]$IsScalar
                     IsPrivate         = [bool]$IsPrivate
                     DeclarationOffset = $declarationOffset
-                }
+                })
             }
             function Get-EnclosingScopeName {
                 param([System.Management.Automation.Language.Ast]$Node)
@@ -553,11 +558,23 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                             # offset must not retroactively change its
                                             # classification: the command uses only
                                             # declarations it has already seen.
-                                            if ($declaration.DeclarationOffset -ge $commandOffset) {
-                                                continue
+                                            # Walk declarations in source order and select
+                                            # the latest one whose offset precedes the
+                                            # command. This preserves all declarations
+                                            # instead of overwriting, so intervening
+                                            # commands see the declaration active at
+                                            # that point.
+                                            $latestDeclaration = $null
+                                            foreach ($decl in $declaration) {
+                                                if ($decl.DeclarationOffset -ge $commandOffset) {
+                                                    continue
+                                                }
+                                                $latestDeclaration = $decl
                                             }
-                                            if ($declaration.IsScalar) {
-                                                $count++
+                                            if ($null -ne $latestDeclaration) {
+                                                if ($latestDeclaration.IsScalar) {
+                                                    $count++
+                                                }
                                             }
                                             break
                                         }

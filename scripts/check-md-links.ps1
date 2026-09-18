@@ -35,7 +35,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
     $fenceBuffer = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         if ($null -eq $fenceChar) {
-            if ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
+            if ($line -match '^(?: {0,3}>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
                 $fence = $Matches['fence']
                 $info = $Matches['info']
                 # A backtick info string must not contain a backtick
@@ -47,7 +47,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
                 continue
             }
             $kept.Add($line)
-        } elseif ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
+        } elseif ($line -match '^(?: {0,3}>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
             $fence = $Matches['fence']
             if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen) {
                 $fenceChar = $null
