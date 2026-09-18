@@ -516,7 +516,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                     # scope), so the walk skips it and keeps
                                     # looking further out instead of treating it
                                     # as the nearest declaration.
-                                    $scopeChain = @(Get-EnclosingScopeChain -Node $elem)
+                                    $scopeChain = @(Get-EnclosingScopeChain -Node $elem -VariablePath $elem.VariablePath)
                                     $referenceScope = $scopeChain[0]
                                     foreach ($scope in $scopeChain) {
                                         if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
