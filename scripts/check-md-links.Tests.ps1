@@ -94,5 +94,21 @@ Describe 'check-md-links.ps1' {
             $r.Output | Should -Match 'AGENTS.md'
             $r.Output | Should -Match 'does not exist'
         }
+
+        It 'keeps an unclosed fenced block content and still flags a broken link after it (regression test)' {
+            # Regression: an unclosed fence must not discard the content that
+            # follows the opening fence; any broken link inside the unclosed
+            # block must still be flagged. This guards the fence-buffered
+            # rewrite of Get-MarkdownTextWithoutFencedCodeBlock.
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\a.md') -Value (@"
+```fenced
+[unclosed](./missing.md)
+"@) -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'BROKEN LINKS'
+            $r.Output | Should -Match 'missing\.md'
+        }
     }
 }

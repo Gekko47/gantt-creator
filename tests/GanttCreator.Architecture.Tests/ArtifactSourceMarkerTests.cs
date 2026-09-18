@@ -271,13 +271,13 @@ public sealed partial class ArtifactSourceMarkerTests
         {
             var file = Path.Combine(td, "CommentTests.cs");
             File.WriteAllText(file,
-                "// clean up the bin folder before running" + Environment.NewLine +
+                "// clean up the bin/ folder before running" + Environment.NewLine +
                 "class CommentTests {" + Environment.NewLine +
                 "  static void M() { }" + Environment.NewLine +
                 "}" + Environment.NewLine);
 
             Assert.False(HasMissingMarker(file),
-                "A 'bin' mention inside a line comment must not force a marker.");
+                "A 'bin/' mention inside a line comment must not force a marker.");
         }
         finally
         {
@@ -294,13 +294,13 @@ public sealed partial class ArtifactSourceMarkerTests
         {
             var file = Path.Combine(td, "BlockCommentTests.cs");
             File.WriteAllText(file,
-                "/* publish output goes here */" + Environment.NewLine +
+                "/* publish/ output goes here */" + Environment.NewLine +
                 "class BlockCommentTests {" + Environment.NewLine +
                 "  static void M() { }" + Environment.NewLine +
                 "}" + Environment.NewLine);
 
             Assert.False(HasMissingMarker(file),
-                "A 'publish' mention inside a block comment must not force a marker.");
+                "A 'publish/' mention inside a block comment must not force a marker.");
         }
         finally
         {

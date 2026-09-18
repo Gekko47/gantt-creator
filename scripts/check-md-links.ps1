@@ -32,6 +32,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
     $kept = New-Object System.Collections.Generic.List[string]
     $fenceChar = $null
     $fenceLen = 0
+    $fenceBuffer = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         if ($null -eq $fenceChar) {
             if ($line -match '^(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
@@ -42,6 +43,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
                 if ($fence[0] -eq '`' -and $info -match '`') { $kept.Add($line); continue }
                 $fenceChar = $fence[0]
                 $fenceLen = $fence.Length
+                $fenceBuffer.Clear()
                 continue
             }
             $kept.Add($line)
@@ -50,7 +52,18 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
             if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen) {
                 $fenceChar = $null
                 $fenceLen = 0
+                $fenceBuffer.Clear()
+                continue
             }
+            $fenceBuffer.Add($line)
+        } else {
+            $fenceBuffer.Add($line)
+        }
+    }
+    # Append any remaining buffered lines when the last fence was unclosed
+    if ($null -ne $fenceChar) {
+        foreach ($bufferedLine in $fenceBuffer) {
+            $kept.Add($bufferedLine)
         }
     }
     return ($kept -join "`n")

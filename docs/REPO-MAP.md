@@ -10,9 +10,18 @@ Source-reviewed 2026-09-17; this date does not detect subsequent or uncommitted 
 | [Office](../src/GanttCreator.Office/) | IExcelApplicationAdapter / ExcelApplicationAdapter: active-workbook facts and event subscriptions |
 | [Raster](../src/GanttCreator.Raster/) | ExportSize: width parsing and pixel dimensions, not PNG encoding |
 
+A second table records the project-to-project references (the dependency graph); the first table records current responsibilities and entry points.
+
+| Project | References |
+| --- | --- |
+| [AddIn](../src/GanttCreator.AddIn/) | Core, Office, Raster |
+| [Core](../src/GanttCreator.Core/) | (none) |
+| [Office](../src/GanttCreator.Office/) | Core |
+| [Raster](../src/GanttCreator.Raster/) | Core |
+
 [Tests](../tests/) mirror these areas; Architecture.Tests checks boundaries; Office.IntegrationTests requires live Office.
 Scene/layout, chart rendering, PowerPoint transfer, and PNG encoding remain planned: consult [architecture](02-ARCHITECTURE.md) and [roadmap](03-ROADMAP.md).
-Read the current [work item](work-items/) and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results.
+Read the current [work item](work-items/) and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results. A symbol outline is only a locator; treat it as navigation aid, not as compiler or reference evidence — verify any finding against current source.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
 After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`.
 Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when required; see [verification policy](05-GIT-QUALITY.md).

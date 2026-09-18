@@ -135,25 +135,25 @@ function Test-HarnessProcessTreeActive {
     }
 
     # Walk from the root pid to find any live descendant. We check the root
-    # by pid because we only have its pid (not creation date) from the caller;
-    # a live root pid is treated as active. For descendants we honour the
-    # composite-key identity of the known children already checked above, and
-    # any NEW descendant (pid not in the known set) is also active.
-    $rootLive = $processes | Where-Object { $_.ProcessId -eq $RootProcessId } | Select-Object -First 1
-    if ($rootLive) {
-        return $true
-    }
-
+    # by pid because we only have its pid (not creation date) from the caller.
+    # For descendants we honour the composite-key identity of the known children
+    # already checked above, and any NEW descendant (pid not in the known set)
+    # is also active. The root is classified through the same composite-key
+    # walk below: a pid-only check is removed so the reused-PID exclusion and
+    # descendant handling apply uniformly to every candidate.
     # Walk the live tree from the root pid to catch descendants that may not
     # be in the known set (spawned after our last snapshot). For each live
     # process encountered, check whether its pid matches a known child pid
     # with a DIFFERENT creation date (reused pid) -- if so, exclude it.
     $pending = @($RootProcessId)
     $visitedComposite = @{}
+    $visitedPid = @{}
     $index = 0
     while ($index -lt $pending.Count) {
         $candidateId = $pending[$index]
         $index++
+        if ($visitedPid.ContainsKey($candidateId)) { continue }
+        $visitedPid[$candidateId] = $true
         $matching = $processes | Where-Object { $_.ProcessId -eq $candidateId }
         foreach ($process in $matching) {
             $ck = "$($process.ProcessId)`n$($process.CreationDate)"
