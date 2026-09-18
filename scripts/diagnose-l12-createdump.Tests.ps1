@@ -353,6 +353,33 @@ if ($step1Proc.HasExited) { } else {
         $discardIdx | Should -Be -1 -Because 'the deadline branch must not discard a WaitForExit bool with `$null =`'
     }
 
+    It 'Step 1 passes only RootProcessId to Get-HarnessProcessTreePids and unions the accumulated polling pids into the later tree checks' {
+        # Get-HarnessProcessTreePids declares only RootProcessId: it walks the
+        # whole parentage chain itself. Passing -KnownChildPids aborts the
+        # script on the first poll iteration with a parameter-binding error
+        # (verified in pwsh: "A parameter cannot be found that matches
+        # parameter name 'KnownChildPids'"), and $ErrorActionPreference =
+        # 'Stop' makes that terminating. Only Test-HarnessProcessTreeActive and
+        # Wait-HarnessProcessTreeExit accept -KnownChildPids.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $lines = @($codeOnly -split "`r?`n")
+
+        $snapshotLines = @($lines | Where-Object { $_ -match 'Get-HarnessProcessTreePids\s+-RootProcessId' })
+        $snapshotLines.Count | Should -BeGreaterThan 0 -Because 'the tree snapshot calls must be locatable'
+        foreach ($line in $snapshotLines) {
+            $line | Should -Not -Match '-KnownChildPids' -Because 'Get-HarnessProcessTreePids accepts only RootProcessId; an extra argument is a binding error, not a filtering hint'
+        }
+
+        # A descendant observed during polling must still be classified by the
+        # pre-kill/post-exit and cleanup checks, so those snapshots union the
+        # accumulated $step1KnownTreePids with their own fresh walk.
+        @($lines | Where-Object { $_ -match '\$step1KnownChildPids\s*=\s*@\(\$step1KnownTreePids' }).Count |
+            Should -BeGreaterThan 0 -Because 'the pre-kill/post-exit snapshots must include the pids accumulated during polling'
+        @($lines | Where-Object { $_ -match '\$step1CleanupPids\s*=\s*@\(\$step1KnownTreePids' }).Count |
+            Should -BeGreaterThan 0 -Because 'the cleanup snapshot must include the pids accumulated during polling'
+    }
+
     It 'positive control: root-only WaitForExit lacks complete-tree shutdown confirmation' {
         $flagged = @'
 if (-not $step1Proc.HasExited) {
@@ -409,7 +436,7 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
             Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
         $abortPatternLine | Should -Not -Be $null -Because 'the abort pattern assignment must be locatable'
         $abortPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
-        $abortPattern | Should -Be '^(?:Aborted\.|The process was aborted\.)$' -Because 'the pattern must be the two-signature line-anchored form'
+        $abortPattern | Should -Be '^(?:Aborted\.|The process was aborted\.)\r?$' -Because 'the pattern must be the two-signature line-anchored form with the optional trailing CR that precedes the LF in Windows output'
 
         'Aborted.' | Should -Match $abortPattern -Because '"Aborted." is an accepted native abort signature'
         'The process was aborted.' | Should -Match $abortPattern -Because '"The process was aborted." is an accepted native abort signature'
@@ -423,6 +450,16 @@ if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortP
         $capture = "MSBuild output:`nThe process was aborted.`nMSBuild output:`nOperation was aborted."
         @($capture -split "`n" | Where-Object { $_ -match "(?im)$abortPattern" }) |
             Should -Be @('The process was aborted.') -Because 'only the complete accepted signature line may be classified in multi-line output'
+
+        # CRLF capture: the real match site runs the pattern against the whole
+        # captured output, and Windows tool output terminates every line with
+        # \r\n. The \r must not defeat the $ anchor, so the shipped pattern
+        # carries an optional \r. Assert directly against unsplit CRLF text (a
+        # bare $ anchor returns False there) and again after CRLF splitting.
+        $crlfCapture = "MSBuild output:`r`nThe process was aborted.`r`nMSBuild output:`r`nOperation was aborted.`r`n"
+        $crlfCapture | Should -Match "(?im)$abortPattern" -Because 'the abort signature must still be classified when the captured output uses CRLF line endings'
+        @($crlfCapture -split "`r?`n" | Where-Object { $_ -match "(?im)$abortPattern" }) |
+            Should -Be @('The process was aborted.') -Because 'only the complete accepted signature line may be classified in CRLF multi-line output'
 
         # The match site must run in multiline mode for the anchors to apply per
         # line rather than to the whole capture.
@@ -477,7 +514,7 @@ if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
             Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
         $abortPatternLine | Should -Not -Be $null
         $flaggedPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
-        $flaggedPattern | Should -Not -Be '^(?:Aborted\.|The process was aborted\.)$' -Because 'this stub deliberately uses the old broad pattern'
+        $flaggedPattern | Should -Not -Be '^(?:Aborted\.|The process was aborted\.)\r?$' -Because 'this stub deliberately uses the old broad pattern'
         $flaggedPattern | Should -Match 'createdump' -Because 'the flagged stub keeps the broad terms the tightened pattern removed'
         $codeOnly | Should -Not -Match '\(\?im\)' -Because 'this stub does not use multiline matching'
     }

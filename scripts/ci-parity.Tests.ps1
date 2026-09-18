@@ -244,12 +244,17 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
             # each command variable against its own enclosing scope before
             # applying scalar validation keeps same-named variables in
             # different functions or script scope independent.
-            $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, bool]]]::new([System.StringComparer]::OrdinalIgnoreCase)
-            # $scalarVars[scope][name] = $true  -> scalar [string] declaration
-            # $scalarVars[scope][name] = $false -> non-scalar declaration (array, etc.)
+            $scalarVars = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, object]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            # $scalarVars[scope][name] = @{ IsScalar = <bool>; IsPrivate = <bool> }
+            # IsScalar  -> a [string]-proven scalar (vs an array/collection, etc.)
+            # IsPrivate -> the declaration carried the private: scope modifier,
+            #              which hides the variable from CHILD scopes
             # Recording both per scope lets the resolver stop at the NEAREST
             # matching declaration (local unqualified assignments shadow outer
-            # ones) and count only when that nearest declaration is scalar.
+            # ones) and count only when that nearest VISIBLE declaration is
+            # scalar. Visibility matters because PowerShell does not inherit a
+            # private: scope: a private declaration in an outer scope must not
+            # vouch for a reference made in a child scope.
             # In this PowerShell runtime VariablePath.UserPath keeps an explicit
             # scope qualifier ('script:$Solution' -> 'script:Solution'), so
             # every declaration/reference name must be split into the qualifier
@@ -275,10 +280,10 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 return @{ Qualifier = ''; Name = $UserPath; IsScopeQualifier = $true }
             }
             function Add-ScalarVar {
-                param([System.Management.Automation.Language.Ast]$Node, [string]$VarName, [bool]$IsScalar)
+                param([System.Management.Automation.Language.Ast]$Node, [string]$VarName, [bool]$IsScalar, [bool]$IsPrivate = $false)
                 $scope = Get-EnclosingScopeName -Node $Node
                 if (-not $scalarVars.ContainsKey($scope)) {
-                    $scalarVars[$scope] = [System.Collections.Generic.Dictionary[string, bool]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $scalarVars[$scope] = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 }
                 # Key by the bare name so a qualified declaration
                 # (script:$Solution = ...) is found by an unqualified
@@ -290,18 +295,31 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     return
                 }
                 $bareName = $parts.Name
-                if (-not $IsScalar -and $scalarVars[$scope].ContainsKey($bareName) -and $scalarVars[$scope][$bareName]) {
-                    # A [string] type constraint persists for the scope: a later
-                    # unconstrained assignment to the same variable is coerced
-                    # (verified: `[string]$x='a'; $x=@('b','c')` leaves $x a
-                    # String 'b c'). A proven scalar must therefore not be
-                    # downgraded to non-scalar within the same scope, or the
-                    # real entry points (verify.ps1 / verify-quick.ps1, which
-                    # re-assign $Solution from Join-Path after the param block)
-                    # would be miscounted as zero targets.
-                    return
+                # The private: qualifier is part of the declaration, not a
+                # registry-visible detail: preserve it in the declaration record
+                # so resolution can hide the variable from child scopes.
+                if ($parts.Qualifier -eq 'private') {
+                    $IsPrivate = $true
                 }
-                $scalarVars[$scope][$bareName] = $IsScalar
+                if ($scalarVars[$scope].ContainsKey($bareName)) {
+                    $existing = $scalarVars[$scope][$bareName]
+                    if (-not $IsScalar -and $existing.IsScalar) {
+                        # A [string] type constraint persists for the scope: a later
+                        # unconstrained assignment to the same variable is coerced
+                        # (verified: `[string]$x='a'; $x=@('b','c')` leaves $x a
+                        # String 'b c'). A proven scalar must therefore not be
+                        # downgraded to non-scalar within the same scope, or the
+                        # real entry points (verify.ps1 / verify-quick.ps1, which
+                        # re-assign $Solution from Join-Path after the param block)
+                        # would be miscounted as zero targets.
+                        $IsScalar = $true
+                    }
+                    # private: is a property of the scope entry, so a later
+                    # assignment to the same name in the same scope does not make
+                    # the variable visible to child scopes again.
+                    $IsPrivate = $IsPrivate -or $existing.IsPrivate
+                }
+                $scalarVars[$scope][$bareName] = @{ IsScalar = [bool]$IsScalar; IsPrivate = [bool]$IsPrivate }
             }
             function Get-EnclosingScopeName {
                 param([System.Management.Automation.Language.Ast]$Node)
@@ -489,10 +507,24 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                     # (scalar or not) shadows an outer one. Count
                                     # only when the nearest declaration is a verified
                                     # scalar [string].
-                                    $scopeChain = Get-EnclosingScopeChain -Node $elem
+                                    # The first entry of the chain is the scope
+                                    # that declares/carries this reference; a
+                                    # private: declaration is visible only
+                                    # there. A private declaration found in an
+                                    # OUTER scope is invisible to this reference
+                                    # (PowerShell does not inherit private
+                                    # scope), so the walk skips it and keeps
+                                    # looking further out instead of treating it
+                                    # as the nearest declaration.
+                                    $scopeChain = @(Get-EnclosingScopeChain -Node $elem)
+                                    $referenceScope = $scopeChain[0]
                                     foreach ($scope in $scopeChain) {
                                         if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
-                                            if ($scalarVars[$scope][$name]) {
+                                            $declaration = $scalarVars[$scope][$name]
+                                            if ($declaration.IsPrivate -and $scope -ne $referenceScope) {
+                                                continue
+                                            }
+                                            if ($declaration.IsScalar) {
                                                 $count++
                                             }
                                             break
@@ -722,6 +754,71 @@ function Use-ScriptSolution {
 dotnet test $Solution
 '@
         @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+    }
+
+    It 'private declarations resolve only within their declaring scope and are skipped from outer scopes (parity fixture)' {
+        # PowerShell does not inherit a private: scope: the variable is visible
+        # in the scope that declares it and invisible to every child scope. The
+        # declaration record therefore carries the private qualifier (IsPrivate
+        # alongside IsScalar) and the resolver skips a private declaration found
+        # in an OUTER scope instead of treating it as the nearest declaration.
+        $ownScope = @'
+function Use-OwnPrivate {
+    [string]$private:Solution = 'own.slnx'
+    dotnet test $Solution
+}
+'@
+        # Same scope: the private declaration is the reference's own scope, so
+        # it still counts as one verified scalar target.
+        @(Get-DotnetTestProjectTokenCount -ScriptText $ownScope) | Should -Be @(1)
+
+        # A private-qualified REFERENCE ($private:Solution) resolves in its own
+        # declaring scope: the fix must hide private declarations from child
+        # scopes without making them unresolvable where they were declared.
+        $ownPrivateRef = @'
+function Use-OwnPrivateRef {
+    [string]$private:Solution = 'own.slnx'
+    dotnet test $private:Solution
+}
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $ownPrivateRef) | Should -Be @(1)
+
+        # Nested functions: the private declaration lives in Outer's scope, so
+        # Outer's own reference counts (1) while Inner's reference cannot see it
+        # (0) and the walk must not stop on the invisible declaration.
+        $nested = @'
+function Outer {
+    [string]$private:Solution = 'outer.slnx'
+    dotnet test $Solution
+    function Inner {
+        dotnet test $Solution
+    }
+}
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $nested) | Should -Be @(1, 0)
+
+        # Script scope: the private script-scope declaration counts for the
+        # script-scope reference (1) and is invisible to the function (0).
+        $scriptPrivate = @'
+[string]$private:Solution = 'script.slnx'
+dotnet test $Solution
+function Use-ScriptPrivate {
+    dotnet test $Solution
+}
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $scriptPrivate) | Should -Be @(1, 0)
+
+        # Negative control for the skip rule: the same script-scope scalar
+        # WITHOUT private: stays visible to the child scope, so both references
+        # count as one target each.
+        $scriptPublic = @'
+[string]$Solution = 'script.slnx'
+dotnet test $Solution
+function Use-ScriptPublic {
+    dotnet test $Solution
+}
+'@
+        @(Get-DotnetTestProjectTokenCount -ScriptText $scriptPublic) | Should -Be @(1, 1)
     }
 
     It 'provider-qualified paths are unverified targets, never matched against local declarations (parity fixture)' {

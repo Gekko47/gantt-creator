@@ -351,12 +351,18 @@ $step1Outcome = ''
 # sets $step1Crashed when those results identify a testhost abort; missing
 # inputs and invalid arguments keep distinct handling via the pre-flight
 # exits above and the invalid-args outcome below.
+# Get-HarnessProcessTreePids takes ONLY RootProcessId (it walks the whole
+# parentage chain itself); passing -KnownChildPids raises a parameter-binding
+# error, which $ErrorActionPreference = 'Stop' turns into a terminating failure
+# on the first poll iteration. The polling result is ACCUMULATED so descendants
+# observed while the launcher was alive stay classified after the kill has
+# broken the parentage chain.
 while (-not $step1Proc.HasExited -and $step1Watchdog.Elapsed.TotalSeconds -lt $Step1DeadlineSeconds) {
-    $step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownTreePids) |
+    $step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id) |
         Sort-Object -Unique)
     Start-Sleep -Seconds 1
 }
-$step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownTreePids) |
+$step1KnownTreePids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id) |
     Sort-Object -Unique)
 
 if (-not $step1Proc.HasExited) {
@@ -381,7 +387,12 @@ if (-not $step1Proc.HasExited) {
     # the WHOLE tree exited: a descendant that refuses the signal, or a
     # grandchild spawned in the window, would otherwise hold the redirected
     # stdout/stderr temp files open while the diagnostic reads or deletes them.
-    $step1KnownChildPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+    # Union the fresh snapshot with the pids observed during polling: the tree
+    # can spawn (or lose) processes between the last poll and the kill. Dead
+    # pids resolve to nothing in the tree checks, so the union cannot keep a
+    # tree that is gone classified as active.
+    $step1KnownChildPids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id) |
+        Sort-Object -Unique)
     Log "  Owned tree before the kill: $($step1KnownChildPids.Count) live process(es) (root + descendants)."
     # Capture taskkill's own result rather than discarding it: taskkill /T /F
     # returns 0 only when it successfully signaled the whole tree, so a
@@ -412,7 +423,10 @@ if (-not $step1Proc.HasExited) {
 # COMPLETE owned tree has exited before the streams are read or deleted: the
 # root's own exit is not sufficient evidence. On the timeout path the tree was
 # already confirmed gone above, so this check returns immediately.
-$step1KnownChildPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+# Union the pids accumulated during polling with the fresh snapshot so a
+# descendant observed before parentage broke is still classified here.
+$step1KnownChildPids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id) |
+    Sort-Object -Unique)
 if (Test-HarnessProcessTreeActive -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids) {
     Log 'Step 1: descendant process(es) of the owned tree outlived the launcher; waiting up to 5s for the complete tree to exit before touching the redirected streams.'
     if (-not (Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids -TimeoutSeconds 5)) {
@@ -454,7 +468,14 @@ if ($step1Outcome -eq 'timeout') {
     # process was aborted."; multi-line output is scanned line by line, and
     # other lines such as "Operation was aborted." are not classified as abort
     # signatures.
-    $abortPattern = '^(?:Aborted\.|The process was aborted\.)$'
+    # The optional \r is required, not cosmetic: the match site runs the
+    # pattern against the whole captured output under (?im), and Windows tool
+    # output terminates the line with CRLF. .NET's multiline $ matches only
+    # before a \n, so without \r? the accepted line "Aborted.\r\n" would not
+    # match at all and a genuine abort would fall through to the plain
+    # test-failure branches (verified: the bare anchor returns False for
+    # "Aborted." + CR + LF and True with \r?).
+    $abortPattern = '^(?:Aborted\.|The process was aborted\.)\r?$'
     $invalidArgsPattern = 'MSB1008|invalid argument|unrecognized|MSB1009|missing|not found|could not find'
     if ($age -lt 1.0 -and $step1ExitCode -ne 0 -and $step1Output -match "(?i)$invalidArgsPattern") {
         $step1Outcome = 'invalid-args'
@@ -501,7 +522,11 @@ finally {
     # Owned-process teardown on every path: normal exit, the timeout branch
     # above, and any terminating error or interruption after launch.
     if ($step1Proc) {
-        $step1CleanupPids = @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id)
+        # Same union as the post-exit check: include the pids accumulated during
+        # polling so a descendant that left the parentage chain is still
+        # classified on the cleanup path.
+        $step1CleanupPids = @($step1KnownTreePids + @(Get-HarnessProcessTreePids -RootProcessId $step1Proc.Id) |
+            Sort-Object -Unique)
         if (Test-HarnessProcessTreeActive -RootProcessId $step1Proc.Id -KnownChildPids $step1CleanupPids) {
             Log 'Step 1: terminating the owned testhost process tree (error/interruption cleanup path).'
             & taskkill /PID $step1Proc.Id /T /F 2>$null | Out-Null
