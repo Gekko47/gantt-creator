@@ -559,6 +559,44 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoClose_close_record_failure_does_not_skip_the_singleton_resets()
+    {
+        // Every teardown step is guarded separately (work item R1.6 D1): a
+        // failing close-record write must not skip the log-reference drops,
+        // so no session singleton keeps the log that the last step disposes.
+        // The throwing log's first write (AutoOpen) succeeds, so the log is
+        // retained and only the close record fails.
+        var log = new ThrowingLog();
+        DiagnosticsService.Reset();
+        CommandBoundary.Reset();
+        RibbonStateService.Reset();
+        var host = new AddInHost(() => TestIdentity, () => log);
+
+        try
+        {
+            host.AutoOpen();
+
+            // Capture the boundary that is active during the session: a
+            // post-reset CommandBoundary.Instance would be a fresh,
+            // trivially log-free boundary.
+            var boundary = CommandBoundary.Instance;
+            Assert.NotNull(boundary.GetLog());
+
+            host.AutoClose();
+
+            Assert.Null(boundary.GetLog());
+            Assert.Null(DiagnosticsService.Instance.LogFilePath);
+            Assert.True(log.Disposed, "the step after the failed close record must still dispose the log.");
+        }
+        finally
+        {
+            DiagnosticsService.Reset();
+            CommandBoundary.Reset();
+            RibbonStateService.Reset();
+        }
+    }
+
+    [Fact]
     public void AutoOpen_after_AutoClose_reopens_deterministically()
     {
         // Each load cycle must get its own log: AutoClose disposes the log it

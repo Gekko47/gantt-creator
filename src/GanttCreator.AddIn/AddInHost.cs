@@ -166,68 +166,87 @@ public sealed class AddInHost(
     public void AutoClose()
     {
         // CA1031: Teardown must never propagate into Excel — an exception
-        // from AutoClose surfaces as a host error during unload. Every step
-        // is individually guarded so one failure cannot block the remaining
-        // steps; a failure degrades to "that step not done".
+        // from AutoClose surfaces as a host error during unload. Each step is
+        // guarded separately (same shape as ExcelApplicationAdapter.Dispose)
+        // so one failure cannot block the remaining steps; a failure degrades
+        // to "that step not done".
+#pragma warning disable CA1031
+        // Step 1 (work item R1.6): detach the one owned COM resource — the
+        // workbook-state event connection — before anything else, so a
+        // workbook-state event can no longer fire into services mid-teardown.
+        // Reset never throws by contract (every detach failure is guarded
+        // inside the subscription itself); this guard is defence in depth so
+        // a failure here cannot skip steps 2-5.
         try
         {
-            // Step 1 (work item R1.6): detach the one owned COM resource —
-            // the workbook-state event connection — before anything else, so
-            // a workbook-state event can no longer fire into services
-            // mid-teardown. Reset never throws: every detach failure is
-            // guarded inside the subscription itself.
             RibbonStateService.Reset();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
 
-            // Step 2: exactly one close record carrying this load's session
-            // token. A write failure degrades to a missing close record.
-            try
+        // Step 2: exactly one close record carrying this load's session
+        // token. A write failure degrades to a missing close record and must
+        // not skip the log-reference drops below.
+        try
+        {
+            if (_log is not null)
             {
-                if (_log is not null)
-                {
-                    new AddInLifecycle(_log).LogClose(_sessionToken);
-                }
+                new AddInLifecycle(_log).LogClose(_sessionToken);
             }
-#pragma warning disable CA1031
-            catch
-#pragma warning restore CA1031
-            {
-                // Intentionally empty: teardown degrades silently. See the
-                // justification comment above.
-            }
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
 
-            // Step 3: drop every session singleton's log reference BEFORE the
-            // log is disposed, so no service can hold (or write through) a
-            // disposed log. Both resets only clear references under a lock.
+        // Step 3: drop the command boundary's log reference BEFORE the log is
+        // disposed, so it cannot hold (or write through) a disposed log. The
+        // reset only clears references under a lock.
+        try
+        {
             CommandBoundary.Reset();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 4: drop the diagnostics service's log reference, guarded
+        // separately from step 3 so a boundary-reset failure cannot leave the
+        // diagnostics singleton holding the log that step 5 is about to
+        // dispose.
+        try
+        {
             DiagnosticsService.Reset();
         }
-#pragma warning disable CA1031
         catch
-#pragma warning restore CA1031
         {
-            // Intentionally empty: teardown must never propagate into Excel.
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 5: the log is disposed last, when no other component holds it.
+        // Disposal exceptions are suppressed so AutoClose never propagates
+        // into Excel.
+        try
+        {
+            _log?.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: see the disposal rationale above.
         }
         finally
         {
-            // Step 4: the log is disposed last, when no other component holds
-            // it. Disposal exceptions are suppressed so AutoClose never
-            // propagates into Excel.
-            try
-            {
-                _log?.Dispose();
-            }
-#pragma warning disable CA1031
-            catch
-#pragma warning restore CA1031
-            {
-                // Intentionally empty: see the disposal rationale above.
-            }
-            finally
-            {
-                _log = null;
-                _sessionToken = null;
-            }
+            _log = null;
+            _sessionToken = null;
         }
+#pragma warning restore CA1031
     }
 
     /// <summary>
