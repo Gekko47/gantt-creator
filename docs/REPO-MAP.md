@@ -11,7 +11,7 @@ Source-reviewed 2026-09-17; this date does not detect subsequent or uncommitted 
 | [Raster](../src/GanttCreator.Raster/) | ExportSize: width parsing and pixel dimensions, not PNG encoding |
 
 [Tests](../tests/) mirror these areas; Architecture.Tests checks boundaries; Office.IntegrationTests requires live Office.
-Scene/layout, chart rendering and export pipelines remain planned: consult [architecture](02-ARCHITECTURE.md) and [roadmap](03-ROADMAP.md).
+Scene/layout, chart rendering, PowerPoint transfer, and PNG encoding remain planned: consult [architecture](02-ARCHITECTURE.md) and [roadmap](03-ROADMAP.md).
 Read the current [work item](work-items/) and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
 After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`.

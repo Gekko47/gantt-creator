@@ -241,7 +241,7 @@ $step1StdOut = Get-Content -LiteralPath $step1OutTmp -Raw -ErrorAction SilentlyC
 
         $helperBody | Should -Not -Match '\$processes\.Count\s+-eq\s+0\s*\)\s*\{\s*return\s+\$false' -Because 'an empty snapshot must never confirm termination'
         $helperBody | Should -Match '(?s)\$processes\.Count\s+-eq\s+0\s*\)\s*\{.{0,600}?return\s+\$true' -Because 'an empty snapshot must be reported as still active'
-        $helperBody | Should -Match 'return\s+\$activePids\.Count\s+-gt\s+0' -Because 'normal parentage evaluation must be unchanged'
+        $helperBody | Should -Match 'return\s+\$false\s*\n\s*}' -Because 'the function now returns false when no active tree is found, using composite-key identity'
     }
 
     It 'positive control: the empty-snapshot-returns-false shape fails the empty-snapshot assertion' {

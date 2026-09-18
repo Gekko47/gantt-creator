@@ -63,6 +63,7 @@ function Get-HarnessProcessTreePids {
             [pscustomobject]@{
                 ProcessId       = [int]$_.ProcessId
                 ParentProcessId = [int]$_.ParentProcessId
+                CreationDate    = $_.CreationDate
             }
         })
 
@@ -73,7 +74,11 @@ function Get-HarnessProcessTreePids {
         $candidateId = $pending[$index]
         $index++
         if ($seen.ContainsKey($candidateId)) { continue }
-        $seen[$candidateId] = $true
+        $process = $processes | Where-Object { $_.ProcessId -eq $candidateId } | Select-Object -First 1
+        if (-not $process) { continue }
+        $compositeKey = "$($process.ProcessId)`n$($process.CreationDate)"
+        if ($seen.ContainsKey($compositeKey)) { continue }
+        $seen[$compositeKey] = $true
         $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
     }
 
@@ -83,7 +88,7 @@ function Get-HarnessProcessTreePids {
 function Test-HarnessProcessTreeActive {
     param(
         [Parameter(Mandatory)][int]$RootProcessId,
-        [int[]]$KnownChildPids
+        [string[]]$KnownChildPids
     )
 
     # True while the owned root or ANY known descendant (or their descendants)
@@ -95,6 +100,7 @@ function Test-HarnessProcessTreeActive {
             [pscustomobject]@{
                 ProcessId       = [int]$_.ProcessId
                 ParentProcessId = [int]$_.ParentProcessId
+                CreationDate    = $_.CreationDate
             }
         })
     # An EMPTY snapshot is not evidence that the owned tree exited: it means
@@ -112,35 +118,76 @@ function Test-HarnessProcessTreeActive {
         return $true
     }
 
-    $activePids = @{}
-    $roots = @($RootProcessId) + @($KnownChildPids | Where-Object { $_ })
-    foreach ($ownedRootId in $roots) {
-        if ($activePids.ContainsKey($ownedRootId)) { continue }
+    # Build a lookup from composite key (pid + CreationDate) to the live
+    # process object so we can compare creation times for identity.
+    $processByCompositeKey = @{}
+    foreach ($p in $processes) {
+        $ck = "$($p.ProcessId)`n$($p.CreationDate)"
+        $processByCompositeKey[$ck] = $p
+    }
 
-        $pending = @($ownedRootId)
-        $visited = @{}
-        $index = 0
-        while ($index -lt $pending.Count) {
-            $candidateId = $pending[$index]
-            $index++
-            if ($visited.ContainsKey($candidateId)) { continue }
-            $visited[$candidateId] = $true
-
-            $process = $processes | Where-Object { $_.ProcessId -eq $candidateId } | Select-Object -First 1
-            if (-not $process) { continue }
-
-            $activePids[$candidateId] = $true
-            $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+    # Check each known child by composite-key identity. A reused PID with a
+    # different creation time is a different process and does not count.
+    foreach ($compositeKey in $KnownChildPids) {
+        if ($processByCompositeKey.ContainsKey($compositeKey)) {
+            return $true
         }
     }
 
-    return $activePids.Count -gt 0
+    # Walk from the root pid to find any live descendant. We check the root
+    # by pid because we only have its pid (not creation date) from the caller;
+    # a live root pid is treated as active. For descendants we honour the
+    # composite-key identity of the known children already checked above, and
+    # any NEW descendant (pid not in the known set) is also active.
+    $rootLive = $processes | Where-Object { $_.ProcessId -eq $RootProcessId } | Select-Object -First 1
+    if ($rootLive) {
+        return $true
+    }
+
+    # Walk the live tree from the root pid to catch descendants that may not
+    # be in the known set (spawned after our last snapshot). For each live
+    # process encountered, check whether its pid matches a known child pid
+    # with a DIFFERENT creation date (reused pid) — if so, exclude it.
+    $pending = @($RootProcessId)
+    $visitedComposite = @{}
+    $index = 0
+    while ($index -lt $pending.Count) {
+        $candidateId = $pending[$index]
+        $index++
+        $matching = $processes | Where-Object { $_.ProcessId -eq $candidateId }
+        foreach ($process in $matching) {
+            $ck = "$($process.ProcessId)`n$($process.CreationDate)"
+            if ($visitedComposite.ContainsKey($ck)) { continue }
+            $visitedComposite[$ck] = $true
+
+            # Exclude a reused pid whose creation date differs from any known
+            # child record for that pid.
+            $pidStr = $process.ProcessId.ToString()
+            $knownChildWithSamePid = $KnownChildPids | Where-Object {
+                ($ck.Split("`n")[0]) -eq ($_.Split("`n")[0])
+            }
+            $isReusedPid = $knownChildWithSamePid -and (
+                $knownChildWithSamePid | Where-Object { $_ -ne $ck }
+            )
+            if ($isReusedPid) { continue }
+
+            # This live process is part of the owned tree (known child or new
+            # descendant) — the tree is still active.
+            return $true
+        }
+
+        # Enqueue children by parentage even if the parent has exited (the
+        # ParentProcessId field preserves the creating pid after exit).
+        $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
+    }
+
+    return $false
 }
 
 function Wait-HarnessProcessTreeExit {
     param(
         [Parameter(Mandatory)][int]$RootProcessId,
-        [int[]]$KnownChildPids,
+        [string[]]$KnownChildPids,
         [int]$TimeoutSeconds = 5
     )
 
@@ -419,7 +466,8 @@ if (-not $step1Proc.HasExited) {
     # went away, not whether the kill reached (or spawned) descendants.
     $step1RootExited = $step1Proc.WaitForExit(5000)
     $step1TreeExited = $step1RootExited -and (Wait-HarnessProcessTreeExit -RootProcessId $step1Proc.Id -KnownChildPids $step1KnownChildPids -TimeoutSeconds 5)
-    if ($step1TaskkillExit -ne 0 -or -not $step1TreeExited) {
+    Log "  taskkill exit code: $step1TaskkillExit (diagnostic only; termination gated on tree exit)."
+    if (-not $step1TreeExited) {
         Log "FAIL: Step 1: the owned testhost process tree termination was not confirmed (taskkill exit=$step1TaskkillExit, rootExited=$step1RootExited, treeExited=$step1TreeExited)."
         Log '  The redirected streams are left untouched (the process still has them open);'
         Log '  the diagnostic is stopping here rather than reading or deleting them.'

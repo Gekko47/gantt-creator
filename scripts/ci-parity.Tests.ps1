@@ -319,7 +319,16 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     # the variable visible to child scopes again.
                     $IsPrivate = $IsPrivate -or $existing.IsPrivate
                 }
-                $scalarVars[$scope][$bareName] = @{ IsScalar = [bool]$IsScalar; IsPrivate = [bool]$IsPrivate }
+                # Preserve the declaration source offset so command resolution
+                # only sees declarations encountered earlier in the same scope.
+                # A later typed assignment (including [string]) must not
+                # retroactively change the classification of a preceding use.
+                $declarationOffset = $Node.Extent.StartOffset
+                $scalarVars[$scope][$bareName] = @{
+                    IsScalar          = [bool]$IsScalar
+                    IsPrivate         = [bool]$IsPrivate
+                    DeclarationOffset = $declarationOffset
+                }
             }
             function Get-EnclosingScopeName {
                 param([System.Management.Automation.Language.Ast]$Node)
@@ -366,12 +375,13 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     return @(Get-EnclosingScopeName -Node $Node)
                 }
                 # Returns the ordered chain of enclosing scope names, from
-                # the innermost lexical scope out to script scope. A variable
-                # declared in any enclosing scope (a function's parameter, a
-                # variable in a parent function, or a script-scope variable)
-                # is visible to the command, so scalar validation must walk
-                # the full chain rather than checking only the immediate
-                # function name.
+                # the innermost lexical scope out to script scope and then
+                # global scope. A variable declared in any enclosing scope
+                # (a function's parameter, a variable in a parent function,
+                # a script-scope variable, or a global-scope variable) is
+                # visible to the command, so scalar validation must walk the
+                # full chain rather than checking only the immediate function
+                # name.
                 $chain = [System.Collections.Generic.List[string]]::new()
                 $ancestor = $Node
                 if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
@@ -396,8 +406,12 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     }
                     $ancestor = $ancestor.Parent
                 }
-                # Always include script scope as the outermost scope.
+                # Always include script scope as the outermost lexical scope,
+                # then global scope so unqualified lookups can resolve global
+                # scalar declarations (e.g. [string]$global:Solution) that are
+                # not visible through script scope alone.
                 $chain.Add('__ScriptScope__')
+                $chain.Add('__GlobalScope__')
                 return $chain
             }
             foreach ($typeConstraint in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.TypeConstraintAst] }, $true)) {
@@ -518,10 +532,20 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                                     # as the nearest declaration.
                                     $scopeChain = @(Get-EnclosingScopeChain -Node $elem -VariablePath $elem.VariablePath)
                                     $referenceScope = $scopeChain[0]
+                                    $commandOffset = $cmd.Extent.StartOffset
                                     foreach ($scope in $scopeChain) {
                                         if ($scalarVars.ContainsKey($scope) -and $scalarVars[$scope].ContainsKey($name)) {
                                             $declaration = $scalarVars[$scope][$name]
                                             if ($declaration.IsPrivate -and $scope -ne $referenceScope) {
+                                                continue
+                                            }
+                                            # Only declarations encountered earlier in the
+                                            # same scope may classify this command. A
+                                            # declaration at or after the command's source
+                                            # offset must not retroactively change its
+                                            # classification: the command uses only
+                                            # declarations it has already seen.
+                                            if ($declaration.DeclarationOffset -ge $commandOffset) {
                                                 continue
                                             }
                                             if ($declaration.IsScalar) {
@@ -740,7 +764,10 @@ function Use-Qualified {
         # __ScriptScope__, so:
         #   - $global:Solution resolves to the global scalar (one target);
         #   - $script:Solution must NOT see the global declaration (zero);
-        #   - an unqualified $Solution must not see it either (zero).
+        #   - an unqualified $Solution at the script level now resolves
+        #     through __ScriptScope__ then __GlobalScope__ and sees the
+        #     global scalar (one target) — this is the behaviour the
+        #     __GlobalScope__ append enables.
         $fixture = @'
 function Set-GlobalSolution {
     [string]$global:Solution = 'GanttCreator.slnx'
@@ -753,7 +780,7 @@ function Use-ScriptSolution {
 }
 dotnet test $Solution
 '@
-        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 0)
+        @(Get-DotnetTestProjectTokenCount -ScriptText $fixture) | Should -Be @(1, 0, 1)
     }
 
     It 'private declarations resolve only within their declaring scope and are skipped from outer scopes (parity fixture)' {
