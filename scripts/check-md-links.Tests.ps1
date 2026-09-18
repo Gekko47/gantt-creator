@@ -123,11 +123,15 @@ Describe 'check-md-links.ps1' {
             $r.Exit   | Should -Be 0
             $r.Output | Should -Match 'OK'
         }
-It 'excludes links inside indented block-quoted fenced code blocks (regression test)' {
+        It 'excludes links inside indented block-quoted fenced code blocks (regression test)' {
             # Regression: a fenced code block with up to 3 spaces of indent before
             # the block-quote marker (>), such as an indented block quote, must still
             # be recognised as a fence so its links are excluded from validation.
-            $indentedBlockQuotedFence = "   > ``````n   > [indented-quoted-link](./missing.md)`n   > ``````n"
+            $indentedBlockQuotedFence = @'
+   > ```
+   > [indented-quoted-link](./missing.md)
+   > ```
+'@
             Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\b.md') -Value 'target' -Encoding utf8
             Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\a.md') -Value $indentedBlockQuotedFence -Encoding utf8
             $r = Invoke-MdLinksHarness
