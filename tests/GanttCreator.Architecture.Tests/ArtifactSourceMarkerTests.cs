@@ -373,7 +373,8 @@ public sealed partial class ArtifactSourceMarkerTests
         if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
             || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
-            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia)
+            || trivia.IsKind(SyntaxKind.DisabledTextTrivia))
         {
             spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
         }
