@@ -36,7 +36,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
     $fenceBuffer = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         if ($null -eq $fenceChar) {
-            if ($line -match '^(?<quote>(?: {0,3}> {0,3})?)(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
+            if ($line -match '^(?<quote>(?: {0,3}> ?)?)(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
                 $fence = $Matches['fence']
                 $info = $Matches['info']
                 $quotePrefix = $Matches['quote']
@@ -50,7 +50,7 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
                 continue
             }
             $kept.Add($line)
-        } elseif ($line -match '^(?<quote>(?: {0,3}> {0,3})?)(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
+        } elseif ($line -match '^(?<quote>(?: {0,3}> ?)?)(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
             $fence = $Matches['fence']
             $quotePrefix = $Matches['quote']
             # Require the same block-quote prefix style as the opening fence.

@@ -139,6 +139,24 @@ Describe 'check-md-links.ps1' {
             $r.Output | Should -Match 'OK'
         }
 
+        It 'does not treat a five-space near-miss after the block-quote marker as a fence (regression test)' {
+            # Regression: the block-quote marker may be followed by at most one
+            # optional space before the fence characters. A five-space gap after
+            # the marker (">     ```") is NOT a fenced block, so a link on the
+            # following line must be validated and (if missing) break the gate.
+            $nearMissFence = @'
+>     ```
+>     [near-miss-link](./missing.md)
+>     ```
+'@
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\a.md') -Value $nearMissFence -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'BROKEN LINKS'
+            $r.Output | Should -Match 'missing\.md'
+        }
+
         It 'flags a link inside a block-quoted fenced block when the same link is outside any fence (regression test)' {
             # The same link text, when not inside a fence (block-quoted or otherwise),
             # must still be validated. This proves the block-quote fence exclusion is
