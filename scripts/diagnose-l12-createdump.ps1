@@ -68,18 +68,20 @@ function Get-HarnessProcessTreePids {
         })
 
     $seen = @{}
+    $visitedPid = @{}
     $pending = @($RootProcessId)
     $index = 0
     while ($index -lt $pending.Count) {
         $candidateId = $pending[$index]
         $index++
-        if ($seen.ContainsKey($candidateId)) { continue }
+        if ($visitedPid.ContainsKey($candidateId)) { continue }
+        $visitedPid[$candidateId] = $true
+        $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
         $process = $processes | Where-Object { $_.ProcessId -eq $candidateId } | Select-Object -First 1
         if (-not $process) { continue }
         $compositeKey = "$($process.ProcessId)`n$($process.CreationDate)"
         if ($seen.ContainsKey($compositeKey)) { continue }
         $seen[$compositeKey] = $true
-        $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
     }
 
     return @($seen.Keys)
