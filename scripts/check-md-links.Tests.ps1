@@ -57,7 +57,16 @@ Describe 'check-md-links.ps1' {
             $r.Output | Should -Match 'OK'
         }
 
-        It 'exits 1 on a broken relative link' {
+        It 'ignores links inside fenced code blocks (positive test)' {
+            $fenced = "``````md`n[example](./missing.md)`n```````n"
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\a.md') -Value $fenced -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'still flags the same link outside a fenced code block' {
             Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\a.md') -Value '[missing](missing.md)' -Encoding utf8
             $r = Invoke-MdLinksHarness
             $r.Exit   | Should -Not -Be 0
