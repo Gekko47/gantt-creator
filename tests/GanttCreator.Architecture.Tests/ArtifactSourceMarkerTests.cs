@@ -433,19 +433,19 @@ public sealed partial class ArtifactSourceMarkerTests
         {
             foreach (var trivia in token.LeadingTrivia)
             {
-                AddCommentSpanIfComment(spans, trivia);
+                AddCommentSpanIfComment(spans, trivia, 0);
             }
 
             foreach (var trivia in token.TrailingTrivia)
             {
-                AddCommentSpanIfComment(spans, trivia);
+                AddCommentSpanIfComment(spans, trivia, 0);
             }
         }
 
         return spans;
     }
 
-    private static void AddCommentSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia)
+    private static void AddCommentSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia, int sourceOffset)
     {
         if (trivia.IsKind(SyntaxKind.DisabledTextTrivia))
         {
@@ -453,7 +453,11 @@ public sealed partial class ArtifactSourceMarkerTests
             // raw text that may include both code and comments. Parse the branch
             // content and extract only comment spans, preserving non-comment code
             // so artifact references inside disabled branches remain detectable.
-            CollectCommentSpansFromTrivia(spans, trivia);
+            // The branch text is re-parsed as its own tree, so nested trivia spans
+            // are relative to the branch start; pass the branch's absolute offset
+            // (trivia.Span.Start in the original source) so nested spans land in
+            // the original source coordinate space.
+            CollectCommentSpansFromTrivia(spans, trivia, trivia.Span.Start);
             return;
         }
 
@@ -462,7 +466,7 @@ public sealed partial class ArtifactSourceMarkerTests
             || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
             || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
         {
-            spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
+            spans.Add(new TextSpan(trivia.Span.Start + sourceOffset, trivia.Span.Length));
         }
     }
 
@@ -472,7 +476,7 @@ public sealed partial class ArtifactSourceMarkerTests
     /// <see cref="SyntaxKind.DisabledTextTrivia"/> where the content is
     /// raw C# source that may contain both code and comments.
     /// </summary>
-    private static void CollectCommentSpansFromTrivia(List<TextSpan> spans, SyntaxTrivia trivia)
+    private static void CollectCommentSpansFromTrivia(List<TextSpan> spans, SyntaxTrivia trivia, int sourceOffset)
     {
         var text = trivia.ToString();
         if (string.IsNullOrEmpty(text))
@@ -480,7 +484,11 @@ public sealed partial class ArtifactSourceMarkerTests
             return;
         }
 
-        // Parse the disabled branch content to identify comment tokens.
+        // Parse the disabled branch content to identify comment tokens. Nested
+        // trivia spans are relative to the branch text (starting at 0); the
+        // caller-supplied sourceOffset is the absolute offset of the branch in
+        // the original source, so every nested span is translated into original
+        // coordinates before being appended.
         var syntaxTree = CSharpSyntaxTree.ParseText(
             text,
             new CSharpParseOptions(languageVersion: CommentMaskLanguageVersion));
@@ -490,12 +498,12 @@ public sealed partial class ArtifactSourceMarkerTests
         {
             foreach (var subTrivia in token.LeadingTrivia)
             {
-                AddCommentSpanIfComment(spans, subTrivia);
+                AddCommentSpanIfComment(spans, subTrivia, sourceOffset);
             }
 
             foreach (var subTrivia in token.TrailingTrivia)
             {
-                AddCommentSpanIfComment(spans, subTrivia);
+                AddCommentSpanIfComment(spans, subTrivia, sourceOffset);
             }
         }
     }
