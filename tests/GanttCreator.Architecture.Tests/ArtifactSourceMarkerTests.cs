@@ -1,3 +1,6 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 using System.Text.RegularExpressions;
 
 namespace GanttCreator.Architecture.Tests;
@@ -40,6 +43,19 @@ public sealed partial class ArtifactSourceMarkerTests
 
     [GeneratedRegex(@"^\s*//\s*artifact-source\s*:\s*\S+\s*->\s*'", RegexOptions.IgnoreCase)]
     private static partial Regex MarkerLineImpl();
+
+    /// <summary>
+    /// Language version pinned to C# 14, the level the repository compiles
+    /// with under the .NET 10 SDK. Mirrors the
+    /// <c>ScannerLanguageVersion</c> pin in <c>EnvVarGuardScanner</c> so
+    /// comment masking cannot drift when the parser package and the
+    /// repository language level move apart. The value is 1400, expressed
+    /// as a cast because the 4.14.0 package's compile asset has no named
+    /// CSharp14 member.
+    /// </summary>
+    private const LanguageVersion CommentMaskLanguageVersion = (LanguageVersion)1400;
+
+    private static readonly string[] DebugPreprocessorSymbol = new[] { "DEBUG" };
 
     [Fact]
     public void Every_test_file_referencing_bin_or_publish_has_artifact_source_marker()
@@ -105,7 +121,11 @@ public sealed partial class ArtifactSourceMarkerTests
         // artifact-source marker line, or the marker references an unknown
         // script or step.
         var text = File.ReadAllText(filePath);
-        if (!BinPublishRef.IsMatch(text))
+        // The artifact signal lives in code and string literals, so only
+        // comments are masked: masking strings would hide the quoted
+        // Path.Combine("bin", ...) form the rule exists to catch, while a
+        // stray "bin" in a comment must not force a marker.
+        if (!BinPublishRef.IsMatch(MaskComments(text)))
         {
             return false;
         }
@@ -239,6 +259,124 @@ public sealed partial class ArtifactSourceMarkerTests
         finally
         {
             Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Regression_bin_word_in_line_comment_does_not_require_marker()
+    {
+        var td = Path.Combine(Path.GetTempPath(), "asm-cmt1-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(td);
+        try
+        {
+            var file = Path.Combine(td, "CommentTests.cs");
+            File.WriteAllText(file,
+                "// clean up the bin/ folder before running" + Environment.NewLine +
+                "class CommentTests {" + Environment.NewLine +
+                "  static void M() { }" + Environment.NewLine +
+                "}" + Environment.NewLine);
+
+            Assert.False(HasMissingMarker(file),
+                "A 'bin/' mention inside a line comment must not force a marker.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Regression_publish_word_in_block_comment_does_not_require_marker()
+    {
+        var td = Path.Combine(Path.GetTempPath(), "asm-cmt2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(td);
+        try
+        {
+            var file = Path.Combine(td, "BlockCommentTests.cs");
+            File.WriteAllText(file,
+                "/* publish/ output goes here */" + Environment.NewLine +
+                "class BlockCommentTests {" + Environment.NewLine +
+                "  static void M() { }" + Environment.NewLine +
+                "}" + Environment.NewLine);
+
+            Assert.False(HasMissingMarker(file),
+                "A 'publish/' mention inside a block comment must not force a marker.");
+        }
+        finally
+        {
+            Directory.Delete(td, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Masks comment trivia with blanks (newlines preserved) so the
+    /// <c>bin</c>/<c>publish</c> reference scan sees code and string
+    /// literals but never comment text. String literals are deliberately
+    /// kept: the quoted <c>Path.Combine(..., "bin", ...)</c> form is the
+    /// primary signal this rule exists to catch. Two parses (default
+    /// symbols and DEBUG defined) cover comments inside disabled
+    /// preprocessor branches on the common DEBUG-only guard shape.
+    /// </summary>
+    private static string MaskComments(string source)
+    {
+        var spansToMask = new List<TextSpan>();
+        spansToMask.AddRange(CollectCommentSpans(
+            source, new CSharpParseOptions(languageVersion: CommentMaskLanguageVersion)));
+        spansToMask.AddRange(CollectCommentSpans(
+            source,
+            new CSharpParseOptions(
+                languageVersion: CommentMaskLanguageVersion,
+                preprocessorSymbols: DebugPreprocessorSymbol)));
+
+        var masked = source.ToCharArray();
+        int n = source.Length;
+        foreach (var span in spansToMask)
+        {
+            int start = span.Start;
+            int end = Math.Min(span.End, n);
+            for (int k = start; k < end && k < masked.Length; k++)
+            {
+                if (masked[k] != '\n')
+                {
+                    masked[k] = ' ';
+                }
+            }
+        }
+
+        return new string(masked);
+    }
+
+    private static List<TextSpan> CollectCommentSpans(string source, CSharpParseOptions parseOptions)
+    {
+        var spans = new List<TextSpan>();
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var root = syntaxTree.GetRoot();
+
+        foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
+        {
+            foreach (var trivia in token.LeadingTrivia)
+            {
+                AddCommentSpanIfComment(spans, trivia);
+            }
+
+            foreach (var trivia in token.TrailingTrivia)
+            {
+                AddCommentSpanIfComment(spans, trivia);
+            }
+        }
+
+        return spans;
+    }
+
+    private static void AddCommentSpanIfComment(List<TextSpan> spans, SyntaxTrivia trivia)
+    {
+        if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia)
+            || trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+            || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia)
+            || trivia.IsKind(SyntaxKind.DisabledTextTrivia))
+        {
+            spans.Add(new TextSpan(trivia.Span.Start, trivia.Span.Length));
         }
     }
 

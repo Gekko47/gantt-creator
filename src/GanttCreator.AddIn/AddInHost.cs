@@ -16,10 +16,17 @@ namespace GanttCreator.AddIn;
 /// </summary>
 /// <param name="identitySource">Supplies the load-session identity.</param>
 /// <param name="logSource">Supplies the rolling log.</param>
+/// <param name="applicationAdapterSource">
+/// Supplies the Excel application adapter during <see cref="AutoOpen"/>.
+/// Defaults to the production <c>ExcelDnaUtil.Application</c> probe;
+/// injectable so the <see cref="AutoClose"/> teardown order is
+/// contract-testable outside Excel (work item R1.6).
+/// </param>
 /// <exception cref="ArgumentNullException">A source is <see langword="null"/>.</exception>
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
-    Func<IRollingLog> logSource) : IExcelAddIn
+    Func<IRollingLog> logSource,
+    Func<IExcelApplicationAdapter>? applicationAdapterSource = null) : IExcelAddIn
 {
     private readonly Func<AddInIdentity> _identitySource =
         identitySource ?? throw new ArgumentNullException(nameof(identitySource));
@@ -27,7 +34,14 @@ public sealed class AddInHost(
     private readonly Func<IRollingLog> _logSource =
         logSource ?? throw new ArgumentNullException(nameof(logSource));
 
+    // Defaults to the production ExcelDnaUtil.Application probe; injectable
+    // so the AutoClose teardown order is contract-testable outside Excel
+    // (work item R1.6).
+    private readonly Func<IExcelApplicationAdapter> _applicationAdapterSource =
+        applicationAdapterSource ?? DefaultApplicationAdapterSource;
+
     private IRollingLog? _log;
+    private string? _sessionToken;
 
     /// <summary>
     /// Creates the add-in host with the production identity and log
@@ -36,6 +50,36 @@ public sealed class AddInHost(
     public AddInHost()
         : this(DefaultIdentitySource, AddInLogFactory.Create)
     {
+    }
+
+    /// <summary>
+    /// Generates one per-load session token (work item R1.6 D5). The token
+    /// correlates the <c>open</c>/<c>close</c> pair of a single
+    /// <c>AutoOpen</c>/<c>AutoClose</c> cycle in the shared log. It is
+    /// deliberately not a GUID or long hex string: Core's
+    /// <see cref="Redactor"/> masks both to <c>[guid]</c>/<c>[token]</c> on
+    /// disk, which would destroy correlation. The alphabet below excludes
+    /// <c>a</c>–<c>f</c> so a 12-character token can never match the long-hex
+    /// pattern; the timestamp prefix keeps separately generated tokens
+    /// distinct.
+    /// </summary>
+    /// <returns>A redaction-safe correlation token.</returns>
+    internal static string GenerateSessionToken()
+    {
+        Span<char> token = stackalloc char[12];
+        // Draw one nibble at a time and map 10-15 to g-p (never a-f), so the
+        // 12-character suffix can never match the Redactor's long-hex
+        // pattern; the timestamp prefix keeps separately generated tokens
+        // distinct even within one second boundary.
+        var filled = 0;
+        while (filled < token.Length)
+        {
+            var value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
+            token[filled++] = value < 10 ? (char)('0' + value) : (char)('g' + (value - 10));
+        }
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"s{DateTimeOffset.UtcNow.ToUnixTimeSeconds():x}-{new string(token)}");
     }
 
     /// <summary>
@@ -57,7 +101,9 @@ public sealed class AddInHost(
             IRollingLog log = _logSource();
             try
             {
-                new AddInLifecycle(log).LogOpen(_identitySource());
+                AddInIdentity identity = _identitySource();
+                new AddInLifecycle(log).LogOpen(identity);
+                _sessionToken = identity.SessionToken;
             }
             catch
             {
@@ -97,7 +143,7 @@ public sealed class AddInHost(
         try
         {
             RibbonStateService.Instance.SetApplicationAdapter(
-                new ExcelApplicationAdapter(ExcelDnaUtil.Application));
+                _applicationAdapterSource());
             RibbonStateService.Instance.SetLogAvailabilitySource(
                 () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
             RibbonStateService.Instance.Activate();
@@ -111,51 +157,107 @@ public sealed class AddInHost(
     }
 
     /// <summary>
-    /// Excel-DNA entry point invoked when the XLL unloads. Writes exactly
-    /// one close record and disposes the log; failures degrade instead of
-    /// propagating into Excel.
+    /// Excel-DNA entry point invoked when the XLL unloads. Tears down in one
+    /// deterministic order (work item R1.6): the owned COM event connection
+    /// is detached first, then one close record is written, then every
+    /// session singleton drops its log reference, and the log is disposed
+    /// last. Failures degrade instead of propagating into Excel.
     /// </summary>
     public void AutoClose()
     {
         // CA1031: Teardown must never propagate into Excel — an exception
-        // from AutoClose surfaces as a host error during unload. The write
-        // failure degrades to a missing close record.
+        // from AutoClose surfaces as a host error during unload. Each step is
+        // guarded separately (same shape as ExcelApplicationAdapter.Dispose)
+        // so one failure cannot block the remaining steps; a failure degrades
+        // to "that step not done".
+#pragma warning disable CA1031
+        // Step 1 (work item R1.6): detach the one owned COM resource — the
+        // workbook-state event connection — before anything else, so a
+        // workbook-state event can no longer fire into services mid-teardown.
+        // Reset never throws by contract (every detach failure is guarded
+        // inside the subscription itself); this guard is defence in depth so
+        // a failure here cannot skip steps 2-5.
         try
         {
-            if (_log is not null)
-            {
-                new AddInLifecycle(_log).LogClose();
-            }
+            RibbonStateService.Reset();
         }
-#pragma warning disable CA1031
         catch
-#pragma warning restore CA1031
         {
             // Intentionally empty: teardown degrades silently. See the
             // justification comment above.
         }
-        finally
+
+        // Step 2: exactly one close record carrying this load's session
+        // token. A write failure degrades to a missing close record and must
+        // not skip the log-reference drops below.
+        try
         {
-            try
+            if (_log is not null)
             {
-                _log?.Dispose();
-            }
-#pragma warning disable CA1031
-            catch
-#pragma warning restore CA1031
-            {
-                // Suppress disposal exceptions so AutoClose never
-                // propagates into Excel.
-            }
-            finally
-            {
-                DiagnosticsService.Reset();
-                CommandBoundary.Reset();
-                RibbonStateService.Reset();
-                _log = null;
+                new AddInLifecycle(_log).LogClose(_sessionToken);
             }
         }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 3: drop the command boundary's log reference BEFORE the log is
+        // disposed, so it cannot hold (or write through) a disposed log. The
+        // reset only clears references under a lock.
+        try
+        {
+            CommandBoundary.Reset();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 4: drop the diagnostics service's log reference, guarded
+        // separately from step 3 so a boundary-reset failure cannot leave the
+        // diagnostics singleton holding the log that step 5 is about to
+        // dispose.
+        try
+        {
+            DiagnosticsService.Reset();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently. See the
+            // justification comment above.
+        }
+
+        // Step 5: the log is disposed last, when no other component holds it.
+        // Disposal exceptions are suppressed so AutoClose never propagates
+        // into Excel.
+        try
+        {
+            _log?.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: see the disposal rationale above.
+        }
+        finally
+        {
+            _log = null;
+            _sessionToken = null;
+        }
+#pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// The production application-adapter source: the Excel application
+    /// object supplied by the Excel-DNA host. Outside a live Excel host the
+    /// probe returns null, so the adapter reports "not determinable" and
+    /// subscribes no events.
+    /// </summary>
+    /// <returns>The live application adapter for this Excel session.</returns>
+    private static IExcelApplicationAdapter DefaultApplicationAdapterSource() =>
+        new ExcelApplicationAdapter(ExcelDnaUtil.Application);
 
     private static AddInIdentity DefaultIdentitySource()
     {
@@ -190,6 +292,7 @@ public sealed class AddInHost(
             VersionInfo.InformationalVersion,
             excelVersion,
             Environment.Is64BitProcess ? "x64" : "x86",
-            string.IsNullOrWhiteSpace(xllFileName) ? "unknown" : xllFileName);
+            string.IsNullOrWhiteSpace(xllFileName) ? "unknown" : xllFileName,
+            GenerateSessionToken());
     }
 }

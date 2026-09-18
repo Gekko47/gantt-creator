@@ -189,7 +189,7 @@ public sealed class DiagnosticsService
             // Intentionally empty: identifier degrades to "unknown".
         }
 
-        return new AddInIdentity(VersionInfo.SemanticVersion, excelVersion, Environment.Is64BitProcess ? "x64" : "x86", xllFileName);
+        return new AddInIdentity(VersionInfo.SemanticVersion, excelVersion, Environment.Is64BitProcess ? "x64" : "x86", xllFileName, "unknown");
     }
 
     /// <summary>

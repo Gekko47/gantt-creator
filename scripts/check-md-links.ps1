@@ -16,6 +16,58 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $broken = New-Object System.Collections.Generic.List[string]
 $scanned = 0
 $roots = $Roots + $Entry
+
+# Removes fenced code blocks (``` or ~~~, CommonMark rules) so link
+# examples inside documentation samples are never validated as real
+# links. Only the fence structure is parsed, not Markdown itself: an
+# opening fence is up to 3 spaces of indent, a run of 3+ backticks
+# (with an info string that contains no backtick) or tildes, and a
+# closing fence is the same character, at least as long, with nothing
+# but whitespace after it. Shorter or different-character runs and
+# unclosed fences stay code through end of file.
+function Get-MarkdownTextWithoutFencedCodeBlock {
+    [CmdletBinding()]
+    param([string]$Text)
+    $lines = $Text -split "`r?`n"
+    $kept = New-Object System.Collections.Generic.List[string]
+    $fenceChar = $null
+    $fenceLen = 0
+    $fenceBuffer = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        if ($null -eq $fenceChar) {
+            if ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
+                $fence = $Matches['fence']
+                $info = $Matches['info']
+                # A backtick info string must not contain a backtick
+                # (CommonMark); a tilde info string has no such rule.
+                if ($fence[0] -eq '`' -and $info -match '`') { $kept.Add($line); continue }
+                $fenceChar = $fence[0]
+                $fenceLen = $fence.Length
+                $fenceBuffer.Clear()
+                continue
+            }
+            $kept.Add($line)
+        } elseif ($line -match '^(?:>\s*)?(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
+            $fence = $Matches['fence']
+            if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen) {
+                $fenceChar = $null
+                $fenceLen = 0
+                $fenceBuffer.Clear()
+                continue
+            }
+            $fenceBuffer.Add($line)
+        } else {
+            $fenceBuffer.Add($line)
+        }
+    }
+    # Append any remaining buffered lines when the last fence was unclosed
+    if ($null -ne $fenceChar) {
+        foreach ($bufferedLine in $fenceBuffer) {
+            $kept.Add($bufferedLine)
+        }
+    }
+    return ($kept -join "`n")
+}
 foreach ($root in $roots)
 {
     $rootPath = Join-Path $repoRoot $root
@@ -27,6 +79,7 @@ foreach ($root in $roots)
         $script:scanned++
         $file = $_.FullName
         $content = Get-Content -LiteralPath $file -Raw
+        $content = Get-MarkdownTextWithoutFencedCodeBlock -Text $content
         # Relative and root-relative targets only; absolute URLs, anchors,
         # and mailto links are skipped. './relative.md' links ARE validated:
         # a leading dot no longer exempts a link from the check.

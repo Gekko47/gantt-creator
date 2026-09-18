@@ -83,6 +83,15 @@ public sealed class CommandBoundary
     public void SetLog(IRollingLog log) => _log = log ?? throw new ArgumentNullException(nameof(log));
 
     /// <summary>
+    /// Returns the log injected via <see cref="SetLog"/>, for test
+    /// verification only: the R1.6 teardown contract asserts that the
+    /// boundary holds no log after <see cref="AddInHost.AutoClose"/>.
+    /// Mirrors <c>RibbonStateService.GetRibbon()</c>.
+    /// </summary>
+    /// <returns>The injected log, or null after a reset.</returns>
+    internal IRollingLog? GetLog() => _log;
+
+    /// <summary>
     /// Resets the singleton and clears the log reference, so the next Excel
     /// session starts fresh. Called by <see cref="AddInHost.AutoClose"/>.
     /// </summary>

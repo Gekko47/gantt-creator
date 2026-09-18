@@ -55,6 +55,34 @@ internal sealed class OfficeFixture : IAsyncLifetime
     /// </summary>
     public int ProcessId => _excelProcessId;
 
+    /// <summary>
+    /// Loads an XLL code resource into the owned Excel instance via
+    /// <c>Application.RegisterXLL</c> (work item R1.6 D3). Excel loads the
+    /// resource and registers its entry points; in the 2026-09-16 automation
+    /// spike, the matching <c>open</c> record in the add-in rolling log
+    /// materialized after the Excel instance quit. Callback timing and record
+    /// ownership were not established; treat the record as a shared-log
+    /// growth signal, not per-instance lifecycle proof.
+    /// </summary>
+    /// <param name="xllPath">Full path to the XLL to load.</param>
+    /// <returns>
+    /// The <c>RegisterXLL</c> Boolean result: <see langword="true"/> when the
+    /// code resource was loaded successfully.
+    /// </returns>
+    /// <remarks>
+    /// COM ownership: <c>RegisterXLL</c> returns a Boolean and crosses no COM
+    /// proxy; the call runs on the fixture's held <c>Application</c> proxy,
+    /// which <see cref="DisposeAsync"/> owns and releases exactly once. The
+    /// XLL is not deregistered here — Excel unloads it at <c>Quit()</c>,
+    /// which is what the five-cycle orphan gate observes.
+    /// </remarks>
+    public bool RegisterXll(string xllPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(xllPath);
+        Application excel = Excel;
+        return excel.RegisterXLL(xllPath);
+    }
+
     /// <inheritdoc />
     public Task InitializeAsync()
     {

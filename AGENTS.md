@@ -16,6 +16,10 @@ Detailed elaboration for each section below lives in the matching on-demand skil
 
 When sources conflict, stop and report the conflict. Do not silently choose one.
 
+## Repository navigation
+
+At session start, read [the repository map](docs/REPO-MAP.md) for project responsibilities, entry points, test locations, and verification commands, then consult the current work item and source. The map is a navigation aid, not another source of product requirements; the source-of-truth order above is unchanged. Update the map in the same change when a project boundary, mapped entry point, test location, or verification command changes. Use scoped live symbol queries for implementation detail; a truncated outline is not a complete inventory.
+
 ## Non-negotiable product invariants
 
 - Windows desktop Excel add-in: Excel-DNA 1.9, C#, `.NET 10`, `net10.0-windows`, x64 first.
