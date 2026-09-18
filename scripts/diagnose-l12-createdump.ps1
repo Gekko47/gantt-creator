@@ -157,6 +157,11 @@ function Test-HarnessProcessTreeActive {
         if ($visitedPid.ContainsKey($candidateId)) { continue }
         $visitedPid[$candidateId] = $true
         $matching = $processes | Where-Object { $_.ProcessId -eq $candidateId }
+        # Reset the reused-PID status for each candidate before evaluating its
+        # matching processes. The parentage-expansion guard below must reflect
+        # only the current candidate, so descendants of exited owned parents are
+        # still traversed even when a previous candidate left the flag set.
+        $candidateIsReusedPid = $false
         foreach ($process in $matching) {
             $ck = "$($process.ProcessId)`n$($process.CreationDate)"
             if ($visitedComposite.ContainsKey($ck)) { continue }
@@ -167,13 +172,15 @@ function Test-HarnessProcessTreeActive {
             $knownChildWithSamePid = $KnownChildPids | Where-Object {
                 ($ck.Split("`n")[0]) -eq ($_.Split("`n")[0])
             }
-            $isReusedPid = $knownChildWithSamePid -and (
+            if ($knownChildWithSamePid -and (
                 $knownChildWithSamePid | Where-Object { $_ -ne $ck }
-            )
-            if ($isReusedPid) {
+            )) {
                 # A reused PID is a different process (different creation date);
                 # skip it entirely and do not expand its parentage so children
-                # of reused PIDs are not added to the traversal.
+                # of reused PIDs are not added to the traversal. Record that
+                # this candidate had a reused PID so the guard below holds for
+                # the whole candidate, not just the last matching process.
+                $candidateIsReusedPid = $true
                 continue
             }
 
@@ -185,8 +192,9 @@ function Test-HarnessProcessTreeActive {
         # Enqueue children by parentage even if the parent has exited (the
         # ParentProcessId field preserves the creating pid after exit). Skip
         # parentage expansion for reused PIDs: children of reused PIDs are not
-        # part of the owned tree.
-        if (-not $isReusedPid) {
+        # part of the owned tree. The guard reflects only the current
+        # candidate's reused-PID status, computed above.
+        if (-not $candidateIsReusedPid) {
             $pending += @($processes | Where-Object { $_.ParentProcessId -eq $candidateId } | ForEach-Object { $_.ProcessId })
         }
     }

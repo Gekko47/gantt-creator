@@ -565,4 +565,93 @@ if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
         $flaggedPattern | Should -Match 'createdump' -Because 'the flagged stub keeps the broad terms the tightened pattern removed'
         $codeOnly | Should -Not -Match '\(\?im\)' -Because 'this stub does not use multiline matching'
     }
+
+    It 'the reused-PID flag is reset per candidate so descendants of exited owned parents are still traversed' {
+        # Defect this test targets: $isReusedPid was set inside the
+        # foreach ($process in $matching) loop but read by the parentage-expansion
+        # guard OUTSIDE that loop, so the guard reflected only the last matching
+        # process of the previous candidate. A reused PID whose last live
+        # instance was NOT reused would let the traversal expand children of a
+        # reused PID, and a candidate with no matching processes would inherit a
+        # stale $true from an earlier reused candidate and skip its children.
+        # The fix introduces a per-candidate $candidateIsReusedPid, reset at the
+        # top of each candidate iteration.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $lines = @($codeOnly -split "`r?`n")
+
+        # The per-candidate reset must sit immediately after the visited-Pid
+        # check and before the matching-process loop.
+        $resetLine = @($lines | Where-Object { $_ -match '\$candidateIsReusedPid\s*=\s*\$false' })
+        $resetLine.Count | Should -Be 1 -Because 'the reused-PID status must be reset exactly once per candidate'
+        $resetIdx = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '\$candidateIsReusedPid\s*=\s*\$false') { $resetIdx = $i; break }
+        }
+        $resetIdx | Should -BeGreaterThan -1 -Because 'the reset line must be locable in the script'
+        # The reset must fall between the visited-Pid check for the current
+        # candidate and the matching-process loop: it must not precede the
+        # visited-Pid check, and the matching-process loop must follow it.
+        $visitedIdx = -1
+        for ($i = $resetIdx; $i -ge 0; $i--) {
+            if ($lines[$i] -match 'visitedPid\.ContainsKey\(\$candidateId\)') { $visitedIdx = $i; break }
+        }
+        $visitedIdx | Should -BeGreaterThan -1 -Because 'the visited-Pid check for the current candidate must be locable before the reset'
+        $visitedIdx | Should -BeLessThan $resetIdx -Because 'the reset must follow the visited-Pid check for the current candidate'
+        $lines[$resetIdx + 1] | Should -Match 'foreach\s*\(\$process\s+in\s+\$matching\)' -Because 'the reset must precede the matching-process loop'
+
+        # The per-candidate flag must drive the parentage-expansion guard, and
+        # the old shared $isReusedPid must not be the one the guard reads.
+        $guardLine = @($lines | Where-Object { $_ -match 'if\s*\(\s*-not\s+\$candidateIsReusedPid\s*\)' })
+        $guardLine.Count | Should -Be 1 -Because 'the parentage-expansion guard must read the per-candidate flag'
+        @($lines | Where-Object { $_ -match 'if\s*\(\s*-not\s+\$isReusedPid\s*\)' }).Count |
+            Should -Be 0 -Because 'the guard must not read the stale loop-scoped $isReusedPid'
+
+        # The reused-PID branch must set the per-candidate flag, not merely
+        # continue, so the guard holds for the whole candidate regardless of
+        # which matching process was last.
+        $reusedBranch = @($lines | Where-Object { $_ -match '\$candidateIsReusedPid\s*=\s*\$true' })
+        $reusedBranch.Count | Should -Be 1 -Because 'the reused-PID branch must record the candidate as reused'
+    }
+
+    It 'positive control: the superseded single-token pattern misclassifies the rejected variants' {
+        # The defect this tightening removes: the bare "Aborted\." token matched
+        # any line containing it, so an unrelated "Operation was aborted." or a
+        # fragment such as "aAborted.b" was read as a native abort signature. A
+        # pattern that still behaves that way must not be the pattern the script
+        # now ships.
+        $supersededPattern = 'Aborted\.'
+        'Operation was aborted.' | Should -Match $supersededPattern -Because 'the superseded token pattern matched unrelated abort messages'
+        'aAborted.b' | Should -Match $supersededPattern -Because 'the superseded token pattern matched embedded fragments'
+
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
+        $shippedPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
+        $shippedPattern | Should -Not -Be $supersededPattern -Because 'the shipped pattern must not be the superseded single-token form'
+        'Operation was aborted.' | Should -Not -Match $shippedPattern -Because 'the shipped pattern must reject the variant the superseded pattern accepted'
+    }
+
+    It 'positive control: the old broad pattern would misclassify normal failures and fails the tightened assertion' {
+        # The previous pattern matched testhost, dump, createdump, access
+        # denied, and 0x800 -- all of which appear in ordinary failure
+        # output. A stub using that pattern must not satisfy the tightened
+        # two-signature assertion, proving the detector has a blind spot for
+        # false positives.
+        $flagged = @'
+$abortPattern = 'testhost|aborted|abortion|createdump|dump|crash|fault|access.?denied|0x800'
+if ($step1ExitCode -ne 0 -and $step1Output -match "(?i)$abortPattern") {
+    $step1Crashed = $true
+}
+'@
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $abortPatternLine = ($codeOnly -split "`r?`n") |
+            Where-Object { $_ -match '\$abortPattern\s*=' } | Select-Object -First 1
+        $abortPatternLine | Should -Not -Be $null
+        $flaggedPattern = [regex]::Match($abortPatternLine, "'([^']*)'").Groups[1].Value
+        $flaggedPattern | Should -Not -Be '^(?:Aborted\.|The process was aborted\.)\r?$' -Because 'this stub deliberately uses the old broad pattern'
+        $flaggedPattern | Should -Match 'createdump' -Because 'the flagged stub keeps the broad terms the tightened pattern removed'
+        $codeOnly | Should -Not -Match '\(\?im\)' -Because 'this stub does not use multiline matching'
+    }
 }
