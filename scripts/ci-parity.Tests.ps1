@@ -275,9 +275,9 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                 # the persistence logic (scalar downgrade protection, private
                 # propagation) always sees the correct "previous" declaration.
                 $ordered = $pendingDeclarations | Sort-Object -Property DeclarationOffset
-                foreach ($event in $ordered) {
-                    $scope = $event.Scope
-                    $bareName = $event.BareName
+                foreach ($declEvent in $ordered) {
+                    $scope = $declEvent.Scope
+                    $bareName = $declEvent.BareName
                     if (-not $scalarVars.ContainsKey($scope)) {
                         $scalarVars[$scope] = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                     }
@@ -285,8 +285,8 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                         $scalarVars[$scope][$bareName] = [System.Collections.Generic.List[object]]::new()
                     }
                     $declaration = $scalarVars[$scope][$bareName]
-                    $IsScalar = $event.IsScalar
-                    $IsPrivate = $event.IsPrivate
+                    $IsScalar = $declEvent.IsScalar
+                    $IsPrivate = $declEvent.IsPrivate
                     if ($declaration.Count -gt 0) {
                         $existing = $declaration[0]
                         if (-not $IsScalar -and $existing.IsScalar) {
@@ -308,7 +308,7 @@ Describe 'dotnet test entry points pass exactly one project or solution (W14)' {
                     $declaration.Add(@{
                         IsScalar          = [bool]$IsScalar
                         IsPrivate         = [bool]$IsPrivate
-                        DeclarationOffset = $event.DeclarationOffset
+                        DeclarationOffset = $declEvent.DeclarationOffset
                     })
                 }
             }
