@@ -774,7 +774,7 @@ function Use-Qualified {
         #   - $script:Solution must NOT see the global declaration (zero);
         #   - an unqualified $Solution at the script level now resolves
         #     through __ScriptScope__ then __GlobalScope__ and sees the
-        #     global scalar (one target) — this is the behaviour the
+        #     global scalar (one target) -- this is the behaviour the
         #     __GlobalScope__ append enables.
         $fixture = @'
 function Set-GlobalSolution {

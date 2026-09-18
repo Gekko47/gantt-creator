@@ -147,7 +147,7 @@ function Test-HarnessProcessTreeActive {
     # Walk the live tree from the root pid to catch descendants that may not
     # be in the known set (spawned after our last snapshot). For each live
     # process encountered, check whether its pid matches a known child pid
-    # with a DIFFERENT creation date (reused pid) — if so, exclude it.
+    # with a DIFFERENT creation date (reused pid) -- if so, exclude it.
     $pending = @($RootProcessId)
     $visitedComposite = @{}
     $index = 0
@@ -162,7 +162,6 @@ function Test-HarnessProcessTreeActive {
 
             # Exclude a reused pid whose creation date differs from any known
             # child record for that pid.
-            $pidStr = $process.ProcessId.ToString()
             $knownChildWithSamePid = $KnownChildPids | Where-Object {
                 ($ck.Split("`n")[0]) -eq ($_.Split("`n")[0])
             }
@@ -172,7 +171,7 @@ function Test-HarnessProcessTreeActive {
             if ($isReusedPid) { continue }
 
             # This live process is part of the owned tree (known child or new
-            # descendant) — the tree is still active.
+            # descendant) -- the tree is still active.
             return $true
         }
 
