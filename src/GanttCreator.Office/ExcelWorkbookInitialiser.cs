@@ -106,7 +106,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         // so the create path does not add a sheet before validation.
         if (!adopt && activeWorksheet is not null)
         {
-            if (IsWorksheetProtected(activeWorksheet) || IsWorkbookStructureProtected(workbook))
+            if (IsWorkbookStructureProtected(workbook))
             {
                 return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
             }
@@ -153,10 +153,46 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             }
         }
 
-        WriteHeaderRow(target);
-        CreateDataTable(target);
-        CreateConfigurationSheet(sheets, target);
-        WritePlotAnchorName(target);
+        var wroteHeader = false;
+        var createdTable = false;
+        var createdConfigSheet = false;
+        var wrotePlotAnchor = false;
+
+        try
+        {
+            WriteHeaderRow(target);
+            wroteHeader = true;
+            CreateDataTable(target);
+            createdTable = true;
+            CreateConfigurationSheet(sheets, target);
+            createdConfigSheet = true;
+            WritePlotAnchorName(target);
+            wrotePlotAnchor = true;
+        }
+        catch
+        {
+            if (wrotePlotAnchor)
+            {
+                RollBackPlotAnchorName(target);
+            }
+
+            if (createdConfigSheet)
+            {
+                RollBackConfigurationSheet(sheets);
+            }
+
+            if (createdTable)
+            {
+                RollBackDataTable(target);
+            }
+
+            if (wroteHeader)
+            {
+                RollBackHeaderRow(target);
+            }
+
+            throw;
+        }
 
         return adopt
             ? WorkbookInitialiseOutcome.Adopted(label)
@@ -196,7 +232,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         {
             // Only worksheets carry ListObjects; chart sheets are skipped
             // because the cast to Excel.Worksheet fails for them.
-            Worksheet sheet = GetSheetAt(sheets, index);
+            var sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
@@ -207,7 +243,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
                     if (string.Equals(
                         table.Name,
                         GanttTableSchema.TableName,
-                        StringComparison.Ordinal))
+                        StringComparison.OrdinalIgnoreCase))
                     {
                         return true;
                     }
@@ -269,7 +305,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             // chain via GetSheetAt to keep the seam consistent with the test
             // seam pattern, then widen to object only for Name access on
             // chart sheets that are not Excel.Worksheet.
-            object sheet = GetSheetAt(sheets, index);
+            var sheet = GetSheetAt(sheets, index);
             var sheetName = sheet switch
             {
                 Worksheet worksheet => worksheet.Name,
@@ -316,10 +352,148 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// after the sheet has been added but before any content is written.
     /// </summary>
     /// <param name="target">The worksheet to remove.</param>
-    private static void RollBackCreatedSheet(Worksheet target) =>
-        // Delete without prompting: the sheet is empty and was created by this
-        // initialiser as a tentative step that did not pass validation.
-        target.Delete();
+    private void RollBackCreatedSheet(Worksheet target)
+    {
+        if (_application is null)
+        {
+            return;
+        }
+        var original = _application.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            target.Delete();
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+    }
+
+    /// <summary>
+    /// Removes the plot-anchor defined name that <see cref="WritePlotAnchorName"/>
+    /// created on <paramref name="target"/>. No-op when the name does not exist.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    private static void RollBackPlotAnchorName(Worksheet target)
+    {
+        try
+        {
+            Names names = target.Names;
+            Name name = names.Item(
+                GanttWorkbookContract.PlotAnchorDefinedName);
+            name.Delete();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // The defined name may not exist; nothing to roll back.
+        }
+    }
+
+    /// <summary>
+    /// Deletes the configuration worksheet named
+    /// <c>GanttWorkbookContract.ConfigSheetName</c>, if it exists. Used to roll
+    /// back <see cref="CreateConfigurationSheet"/> when a later mutation fails.
+    /// </summary>
+    /// <param name="sheets">The workbook's sheets.</param>
+    private void RollBackConfigurationSheet(Sheets sheets)
+    {
+        if (_application is null)
+        {
+            return;
+        }
+        var original = _application.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            var count = sheets.Count;
+            for (var index = 1; index <= count; index++)
+            {
+                object sheet = sheets[index];
+                var sheetName = sheet switch
+                {
+                    Worksheet worksheet => worksheet.Name,
+                    _ => (string)sheet.GetType().InvokeMember(
+                        "Name",
+                        System.Reflection.BindingFlags.GetProperty,
+                        null,
+                        sheet,
+                        null,
+                        CultureInfo.InvariantCulture)!,
+                };
+                if (string.Equals(
+                    sheetName,
+                    GanttWorkbookContract.ConfigSheetName,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    if (sheet is Worksheet configSheet)
+                    {
+                        configSheet.Delete();
+                    }
+
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+    }
+
+    /// <summary>
+    /// Deletes the table named <c>GanttTableSchema.TableName</c> on
+    /// <paramref name="target"/>, if it exists. Used to roll back
+    /// <see cref="CreateDataTable"/> when a later mutation fails.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    private void RollBackDataTable(Worksheet target)
+    {
+        if (_application is null)
+        {
+            return;
+        }
+        var original = _application.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            var tableCount = target.ListObjects.Count;
+            for (var index = 1; index <= tableCount; index++)
+            {
+                ListObject table = GetTableAt(target.ListObjects, index);
+                if (string.Equals(
+                    table.Name,
+                    GanttTableSchema.TableName,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    table.Delete();
+                    break;
+                }
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // The table may already have been removed; nothing to roll back.
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+    }
+
+    /// <summary>
+    /// Clears the header row content written by <see cref="WriteHeaderRow"/> on
+    /// <paramref name="target"/>. Used to roll back the header row when a later
+    /// mutation fails.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    private void RollBackHeaderRow(Worksheet target)
+    {
+        Excel.Range headerRange = GetHeaderRange(
+            target,
+            GanttTableSchema.Default.Columns.Count);
+        headerRange.ClearContents();
+    }
 
     /// <summary>
     /// Determines whether the worksheet is protected against edits.
@@ -457,8 +631,8 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="index">The one-based sheet index.</param>
     /// <returns>The worksheet at the index.</returns>
-    internal virtual Worksheet GetSheetAt(Sheets sheets, int index)
-        => (Worksheet)sheets[index];
+    internal virtual object GetSheetAt(Sheets sheets, int index)
+        => sheets[index];
 
     /// <summary>
     /// Returns the list object at the one-based index. Test seam over the COM

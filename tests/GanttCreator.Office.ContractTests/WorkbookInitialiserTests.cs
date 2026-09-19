@@ -153,7 +153,7 @@ public class WorkbookInitialiserTests
 
         private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
-        internal override Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index)
+        internal override object GetSheetAt(Excel.Sheets sheets, int index)
             => SheetAt(sheets, index);
 
         internal override Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index)
@@ -184,7 +184,7 @@ public class WorkbookInitialiserTests
 
             _ = Application.SetupGet(a => a.ActiveWorkbook).Returns(Workbook.Object);
             _ = Application.SetupGet(a => a.WorksheetFunction).Returns(Functions.Object);
-            _ = Workbook.SetupGet(w => w.Worksheets).Returns(Sheets.Object);
+            _ = Workbook.SetupGet(w => w.Sheets).Returns(Sheets.Object);
             _ = Sheets.SetupGet(s => s.Count).Returns(() => SheetsByIndex.Count);
             _ = Sheets.Setup(s => s.Add(
                     It.IsAny<object>(), It.IsAny<object>(),
