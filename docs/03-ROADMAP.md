@@ -87,7 +87,7 @@ Goal: create/read the visible single-sheet data model without rendering.
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
 | R2.1 | Define table column names, event types, and schema version in Core | Enum, schema, and serialization round-trip tests | None |
-| R2.2 | Implement `Initialise Sheet` to create the visible Gantt sheet and `_GanttCreatorConfig` | Adapter tests assert exact names, one visible sheet, one `xlSheetVeryHidden` sheet, and no others | Required: initialise a blank workbook and inspect table, plot anchor, helper visibility, and sheet count |
+| R2.2 | Implement `Initialise Sheet` to bring a workbook into the supported state: adopt the blank active worksheet as `tblGanttData`'s home, or create one, plus `_GanttCreatorConfig` | Adapter tests assert exact names, one visible sheet, one `xlSheetVeryHidden` sheet, and no others; typed refusals mutate nothing | Required: initialise a blank workbook and inspect table, plot anchor, helper visibility, and sheet count |
 | R2.3 | Add stable ID generation and preservation independent of row number | Insert, sort, move, and delete contract tests | Required: sort and insert rows in Excel; IDs remain stable and unique |
 | R2.4 | Read cell values into neutral row DTOs without locale display parsing | 1900 date-system and multiple-culture conversion tests | Required: read representative real Excel dates under both supported locale formats |
 | R2.5 | Map DTOs into Core events with all-errors validation | Table-driven valid, invalid, and all-errors tests | None |

@@ -76,6 +76,17 @@ Optional columns can be added only by an approved schema ADR, initially `SortOrd
 
 Workbook-level configuration uses one worksheet named `_GanttCreatorConfig` with `Visible = xlSheetVeryHidden`, plus workbook-defined names prefixed `GanttCreator.` that point to its validation ranges. Shape ownership uses a deterministic shape name plus tags/alternative text.
 
+### Sheet initialisation (R2.2)
+
+The Initialise-sheet command brings a workbook into the supported state in one action. It never creates a helper sheet and never modifies any sheet other than the target:
+
+- **Hybrid sheet selection.** The active worksheet is adopted when it is blank and is an `Excel.Worksheet` (a chart sheet is not, so it takes the create path); otherwise a new worksheet is created immediately after the active sheet. "Blank" means `WorksheetFunction.CountA(UsedRange) = 0`. Existing sheets are never modified, hidden, or deleted by this command.
+- **Uniform labelling.** The target is always labelled `Gantt Data`, whether it was adopted in place or created. On a name collision Excel's own `" (n)"` suffix convention applies (`OrdinalIgnoreCase`, first free `n`, starting at 2). Sheet-name uniqueness is case-insensitive in Excel, so collision detection is `OrdinalIgnoreCase`.
+- **Mutation order.** All read-only checks run first (configuration sheet present? target blank? target already carries `tblGanttData`?), then rename, header row, table, configuration sheet, defined name. A failure before the rename mutates nothing; a failure after it leaves at most a renamed blank worksheet (cosmetic) and surfaces through the command boundary. A protected target is detected at the rename, the first mutation.
+- **Plot anchor.** Initialise writes the sheet-scoped defined name `GanttCreator.PlotAnchor` referring to the cell one column right of the table's last column on the header row (default `$O$1`, since the schema has 14 columns). Sheet-scoping, not workbook-scoping, leaves a future multi-Gantt-sheet extension needing no name migration. The Phase-4 renderer always derives the anchor from the live table and treats stored-vs-derived disagreement as an integrity finding (R2.10); the stored name is a claim, not the source of truth.
+
+See `docs/work-items/R2.2-initialise-sheet.md` decisions D1/D2/D3/D4/D7.
+
 ## VeryHidden configuration worksheet contract
 
 The workbook contains exactly:
