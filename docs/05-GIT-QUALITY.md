@@ -120,7 +120,7 @@ Before declaring a commit or PR green, run these tools and observe their output:
 3. `git_tool` with `diff --check` — must show no conflict markers or whitespace drift.
 4. `git_tool` with `log --oneline -1` — verify Conventional Commit prefix.
 5. `github__get_pull_request_status` (if a PR exists) — must show `success` (W-12 rule).
-6. `memra_add` — record the green state as a fact with the commit hash and CI run URL.
+6. `memra_add` — record one work-item completion fact (3-5 lines: ID, commit, gates, Office status, next item). Not commit text or test counts — see `docs/06-LLM-PROTOCOL.md` "Persisting the ledger".
 
 Pre-commit safety net (optional, recommended):
 

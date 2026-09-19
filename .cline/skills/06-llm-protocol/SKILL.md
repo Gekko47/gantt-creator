@@ -26,10 +26,11 @@ Do not get wrong:
 
 ## Tools
 
-- `memra_add` / `memra_add_decision` — persist evidence-ledger rows and irreversible decisions across turns.
-- `memra_bootstrap` — recall prior decisions and patterns at session start.
+- `memra_add` — persist a work-item completion fact, tooling gotcha, or live/Office evidence row (not commit text, test counts, or file lists — see "Persisting the ledger").
+- `memra_add_decision` — persist an irreversible decision with the context that made it irreversible; the highest-value entry type.
+- `memra_bootstrap` — recall prior decisions and patterns at session start before restating unknowns.
 - `memra_add_pattern` — store reusable methodologies (e.g. the full-repo review phases).
-- `memra_search` / `memra_recall` — retrieve prior evidence by semantic similarity.
+- `memra_search` / `memra_recall` — retrieve prior evidence by tag or semantic similarity.
 - `memra_supersede` — update an evidence-ledger row when its status changes, preserving the history chain.
 - `sequential-thinking__sequentialthinking` — structure multi-step reasoning (review methodology, failure classification).
 - `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — get compiler-grade type/symbol info instead of guessing APIs.
