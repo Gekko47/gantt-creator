@@ -109,14 +109,21 @@ internal sealed class OfficeFixture : IAsyncLifetime
     public Workbook CreateWorkbook()
     {
         Workbooks workbooks = Excel.Workbooks;
-        Workbook created = workbooks.Add();
-        if (_createdWorkbooks is null)
+        try
         {
-            _createdWorkbooks = new List<Workbook>();
-        }
+            Workbook created = workbooks.Add(XlWBATemplate.xlWBATWorksheet);
+            if (_createdWorkbooks is null)
+            {
+                _createdWorkbooks = new List<Workbook>();
+            }
 
-        _createdWorkbooks.Add(created);
-        return created;
+            _createdWorkbooks.Add(created);
+            return created;
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(workbooks);
+        }
     }
 
     /// <inheritdoc />

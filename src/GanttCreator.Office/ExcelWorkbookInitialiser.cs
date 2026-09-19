@@ -62,7 +62,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook);
         }
 
-        Excel.Sheets sheets = workbook.Worksheets;
+        Excel.Sheets sheets = workbook.Sheets;
 
         // Read-only check 1: the workbook must not already carry the
         // configuration sheet — creating a second helper sheet is a product
@@ -72,7 +72,15 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.ConfigSheetExists);
         }
 
-        // Read-only check 2: select the target. The active worksheet is
+        // Read-only check 2: scan every worksheet for a table named
+        // GanttTableSchema.TableName before any sheets or headers are created.
+        // This catches the table on any worksheet, not only the active one.
+        if (AnyWorksheetContainsTable(sheets))
+        {
+            return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TableExists);
+        }
+
+        // Read-only check 3: select the target. The active worksheet is
         // adopted only when it is blank; a chart sheet or any non-empty
         // worksheet causes a fresh sheet to be created. A chart sheet is not
         // an Excel.Worksheet, so the cast selects the create path for it.
@@ -80,11 +88,6 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         var adopt = false;
         if (activeWorksheet is not null && IsBlank(activeWorksheet, application))
         {
-            if (ContainsDataTable(activeWorksheet))
-            {
-                return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TableExists);
-            }
-
             adopt = true;
         }
 
@@ -93,6 +96,30 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         // uniqueness) before any mutation. On the adopt path the target's own
         // current name is excluded — it is about to be renamed.
         var label = ResolveAvailableLabel(sheets, adopt ? activeWorksheet!.Name : null);
+
+        // Read-only check 4: verify worksheet and workbook-structure
+        // protection before any mutation. On the create path, both the
+        // worksheet-level protection (which would block headerRange.Value2
+        // writes) and the workbook-structure protection (which would block
+        // sheet creation or rename) are checked here on the active worksheet
+        // so the create path does not add a sheet before validation.
+        if (!adopt && activeWorksheet is not null)
+        {
+            if (IsWorksheetProtected(activeWorksheet) || IsWorkbookStructureProtected(workbook))
+            {
+                return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+            }
+        }
+        else if (adopt)
+        {
+            // The adopt path writes directly onto the active worksheet, so its
+            // protection is authoritative for the later headerRange.Value2
+            // write.
+            if (IsWorksheetProtected(activeWorksheet!))
+            {
+                return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+            }
+        }
 
         Excel.Worksheet target = adopt ? activeWorksheet! : CreateTargetSheet(sheets, activeWorksheet);
         try
@@ -108,6 +135,21 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             // structure) is protected, so the rename — the first mutation —
             // cannot proceed. Nothing else has been written yet.
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+        }
+
+        // Post-creation protection re-check: if a sheet was created on the
+        // create path, validate that the new worksheet and workbook structure
+        // still permit writes before attempting headerRange.Value2. If
+        // protection would block later writes, roll back the sheet creation.
+        if (!adopt)
+        {
+            if (IsWorksheetProtected(target) || IsWorkbookStructureProtected(workbook))
+            {
+                // Roll back the sheet creation: delete the sheet we just
+                // added, then refuse. Nothing else has been written yet.
+                RollBackCreatedSheet(target);
+                return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+            }
         }
 
         WriteHeaderRow(target);
@@ -140,21 +182,35 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     }
 
     /// <summary>
-    /// Determines whether the worksheet already contains a list object named
-    /// <c>tblGanttData</c>.
+    /// Determines whether any worksheet in the workbook already contains a
+    /// list object named <c>tblGanttData</c>. This runs before any sheets or
+    /// headers are created and inspects every worksheet.
     /// </summary>
-    /// <param name="worksheet">The worksheet to inspect.</param>
-    /// <returns><see langword="true"/> when the table name is already taken on this sheet.</returns>
-    private bool ContainsDataTable(Excel.Worksheet worksheet)
+    /// <param name="sheets">The workbook's sheets.</param>
+    /// <returns><see langword="true"/> when the table name is already taken on any worksheet.</returns>
+    private bool AnyWorksheetContainsTable(Excel.Sheets sheets)
     {
-        Excel.ListObjects listObjects = worksheet.ListObjects;
-        var count = listObjects.Count;
+        var count = sheets.Count;
         for (var index = 1; index <= count; index++)
         {
-            Excel.ListObject table = GetTableAt(listObjects, index);
-            if (string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+            // Only worksheets carry ListObjects; chart sheets are skipped
+            // because the cast to Excel.Worksheet fails for them.
+            var sheet = GetSheetAt(sheets, index);
+            if (sheet is Excel.Worksheet worksheet)
             {
-                return true;
+                var listObjects = worksheet.ListObjects;
+                var tableCount = listObjects.Count;
+                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                {
+                    var table = GetTableAt(listObjects, tableIndex);
+                    if (string.Equals(
+                        table.Name,
+                        GanttTableSchema.TableName,
+                        StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -194,6 +250,9 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <summary>
     /// Determines whether <paramref name="name"/> is used by any sheet other
     /// than the one whose name equals <paramref name="excludeSheetName"/>.
+    /// Workbook.Sheets includes chart sheets; the Sheets collection exposes
+    /// Name on every sheet type, so chart-sheet names participate in
+    /// availability validation.
     /// </summary>
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="name">The candidate name.</param>
@@ -204,8 +263,23 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         var count = sheets.Count;
         for (var index = 1; index <= count; index++)
         {
-            Excel.Worksheet sheet = GetSheetAt(sheets, index);
-            var sheetName = sheet.Name;
+            // Every sheet in the collection exposes Name, including chart
+            // sheets (which are not Excel.Worksheet). Use the unsealed cast
+            // chain via GetSheetAt to keep the seam consistent with the test
+            // seam pattern, then widen to object only for Name access on
+            // chart sheets that are not Excel.Worksheet.
+            object sheet = GetSheetAt(sheets, index);
+            string sheetName = sheet switch
+            {
+                Excel.Worksheet worksheet => worksheet.Name,
+                _ => (string)sheet.GetType().InvokeMember(
+                    "Name",
+                    System.Reflection.BindingFlags.GetProperty,
+                    null,
+                    sheet,
+                    null,
+                    System.Globalization.CultureInfo.InvariantCulture)!,
+            };
             if (excludeSheetName is not null
                 && string.Equals(sheetName, excludeSheetName, StringComparison.OrdinalIgnoreCase))
             {
@@ -233,6 +307,44 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             ? (Excel.Worksheet)sheets.Add()
             : (Excel.Worksheet)sheets.Add(After: activeWorksheet);
         return created;
+    }
+
+    /// <summary>
+    /// Deletes a newly-created worksheet that must not persist because
+    /// protection would block later writes. Called only on the create path
+    /// after the sheet has been added but before any content is written.
+    /// </summary>
+    /// <param name="target">The worksheet to remove.</param>
+    private static void RollBackCreatedSheet(Excel.Worksheet target)
+    {
+        // Delete without prompting: the sheet is empty and was created by this
+        // initialiser as a tentative step that did not pass validation.
+        target.Delete();
+    }
+
+    /// <summary>
+    /// Determines whether the worksheet is protected against edits.
+    /// </summary>
+    /// <param name="worksheet">The worksheet to inspect.</param>
+    /// <returns><see langword="true"/> when the worksheet is protected.</returns>
+    private static bool IsWorksheetProtected(Excel.Worksheet worksheet)
+    {
+        // The ProtectContents flag indicates cell-level protection is active.
+        // A protected worksheet blocks headerRange.Value2 writes.
+        return worksheet.ProtectContents;
+    }
+
+    /// <summary>
+    /// Determines whether the workbook structure is protected, which blocks
+    /// sheet creation, deletion, rename, and move operations.
+    /// </summary>
+    /// <param name="workbook">The workbook to inspect.</param>
+    /// <returns><see langword="true"/> when the workbook structure is protected.</returns>
+    private static bool IsWorkbookStructureProtected(Excel.Workbook workbook)
+    {
+        // The ProtectStructure flag indicates workbook-structure protection is
+        // active, blocking sheet-level structural changes.
+        return workbook.ProtectStructure;
     }
 
     /// <summary>

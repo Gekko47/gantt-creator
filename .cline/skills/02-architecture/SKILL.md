@@ -8,8 +8,12 @@ and COM/error-handling rules for the add-in.
 
 Do not get wrong:
 - Exactly one visible worksheet plus one `xlSheetVeryHidden`
-  `_GanttCreatorConfig` worksheet — never a second helper sheet, and
-  never schedule rows, shapes, or logs on the VeryHidden sheet.
+  `_GanttCreatorConfig` worksheet for the adopted-blank target, or two
+  visible worksheets for the create path (the preserved original worksheet
+  plus the new `Gantt Data` sheet) plus one `xlSheetVeryHidden`
+  `_GanttCreatorConfig` worksheet — never a second helper sheet, never
+  schedule rows, shapes, or logs on the VeryHidden sheet, and never hiding
+  an existing worksheet during initialization.
 - `verify-quick.ps1`/`verify.ps1` are the only authoritative producers
   of `bin/`, `publish/`, and `coverage/` — a test that reads one of
   these artifacts without naming the producing step is a drift risk

@@ -90,7 +90,7 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             var veryHiddenSheets = workbook.Sheets
                 .Cast<Excel.Worksheet>()
                 .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
-            Assert.Equal(1, visibleSheets);
+            Assert.Equal(2, visibleSheets);
             Assert.Equal(1, veryHiddenSheets);
             Assert.Equal(
                 GanttWorkbookContract.ConfigSheetName,
@@ -123,6 +123,17 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
             active.Name = GanttWorkbookContract.GanttSheetLabel;
 
+            // Create a real ListObject named GanttTableSchema.TableName on the
+            // renamed worksheet so the TableExists refusal path is exercised.
+            Excel.Range headerRange = active.Cells[1, 1].Resize[1, 1];
+            Excel.ListObject existingTable = active.ListObjects.Add(
+                Excel.XlListObjectSourceType.xlSrcRange,
+                headerRange,
+                Type.Missing,
+                Excel.XlYesNoGuess.xlYes,
+                Type.Missing);
+            existingTable.Name = GanttTableSchema.TableName;
+
             WorkbookInitialiseOutcome outcome =
                 new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
             _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
@@ -134,9 +145,10 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                 GanttWorkbookContract.GanttSheetLabel,
                 active.Name,
                 StringComparer.OrdinalIgnoreCase);
-            Assert.Equal(0, active.ListObjects.Count);
+            Assert.Equal(1, active.ListObjects.Count);
+            Assert.Equal(GanttTableSchema.TableName, active.ListObjects[1].Name, StringComparer.Ordinal);
             Assert.Equal(2, workbook.Sheets.Count);
-            _output.WriteLine("Refusal path left the workbook with 2 sheets and no table.");
+            _output.WriteLine("Refusal path left the workbook with 2 sheets and the existing table unchanged.");
         }
         finally
         {
@@ -189,7 +201,7 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             var veryHiddenSheets = workbook.Sheets
                 .Cast<Excel.Worksheet>()
                 .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
-            Assert.Equal(1, visibleSheets);
+            Assert.Equal(2, visibleSheets);
             Assert.Equal(1, veryHiddenSheets);
             Assert.Equal(3, workbook.Sheets.Count);
             _output.WriteLine("Create path left the non-blank active sheet untouched and added Gantt Data + config.");

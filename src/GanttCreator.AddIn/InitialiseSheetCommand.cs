@@ -78,17 +78,17 @@ internal static class InitialiseSheetCommand
     /// contain schedule content or technical detail.
     /// </summary>
     /// <param name="refusal">The refusal reason.</param>
-    /// <param name="sheetName">
-    /// The target sheet label when the refusal is target-specific, else
-    /// <see langword="null"/>.
+    /// <param name="_sheetName">
+    /// Reserved for future use. Not interpolated in the current messages.
     /// </param>
     /// <returns>The user-safe message.</returns>
-    internal static string TranslateRefusal(InitialiseRefusalReason refusal, string? sheetName) => refusal switch
+#pragma warning disable IDE0060 // Remove unused parameter
+    internal static string TranslateRefusal(InitialiseRefusalReason refusal, string? _sheetName) => refusal switch
     {
         InitialiseRefusalReason.NoActiveWorkbook =>
             "Gantt Creator needs an open workbook. Open or create a workbook, then try Initialise sheet again.",
         InitialiseRefusalReason.TableExists =>
-            $"'{sheetName}' already contains a table named tblGanttData, so Initialise sheet left it unchanged.",
+            "The target worksheet already contains a table named tblGanttData, so Initialise sheet left it unchanged.",
         InitialiseRefusalReason.ConfigSheetExists =>
             "This workbook already contains Gantt Creator configuration (_GanttCreatorConfig), "
             + "so Initialise sheet left it unchanged.",
@@ -97,4 +97,5 @@ internal static class InitialiseSheetCommand
             + "Unprotect the worksheet and try again.",
         _ => "Initialise sheet could not run. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
+#pragma warning restore IDE0060 // Remove unused parameter
 }

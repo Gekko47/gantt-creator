@@ -111,9 +111,13 @@ public class OfficeFixtureTests
     public async Task CreateWorkbook_returns_a_non_null_workbook_and_leaves_no_orphan()
     {
         var fixture = new OfficeFixture();
+        var pid = 0;
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
+            pid = fixture.ProcessId;
+            Assert.True(pid != 0,
+                "Excel launched but process ID was not captured.");
 
             var workbook = fixture.CreateWorkbook();
             Assert.NotNull(workbook);
@@ -122,6 +126,27 @@ public class OfficeFixtureTests
         {
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
+
+        // Assert the owned Excel process exited after teardown.
+        var sw = Stopwatch.StartNew();
+        bool exited = false;
+        while (sw.Elapsed.TotalSeconds < 10)
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(pid);
+                if (proc.HasExited) { exited = true; break; }
+            }
+            catch (ArgumentException)
+            {
+                exited = true;
+                break;
+            }
+            await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        Assert.True(exited,
+            $"Excel process {pid} still running after teardown (orphan).");
     }
 
     [Trait("Category", "OfficeIntegration")]
