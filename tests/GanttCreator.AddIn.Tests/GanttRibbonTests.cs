@@ -307,8 +307,12 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Ribbon_declares_getEnabled_on_exactly_the_two_gated_controls()
+    public void Ribbon_declares_getEnabled_on_exactly_the_three_gated_controls()
     {
+        // R2.2 adds the Initialise sheet button to the Data group; it is gated
+        // on the same workbook fact as Diagnostics. The count is pinned here so
+        // a fourth gated control (or a dropped one) fails the contract instead
+        // of silently changing the user surface.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
@@ -319,8 +323,34 @@ public class GanttRibbonTests
             .ToList();
 
         Assert.Equal(
-            [RibbonControlIds.Diagnostics, RibbonControlIds.OpenLog],
+            [RibbonControlIds.InitialiseSheet, RibbonControlIds.Diagnostics, RibbonControlIds.OpenLog],
             gatedIds);
+    }
+
+    [Fact]
+    public void Ribbon_declares_getEnabled_on_each_control_exactly_once()
+    {
+        // Each gated control declares getEnabled exactly once: a duplicated
+        // attribute on one control would make the count above pass while the
+        // ribbon rendered with a duplicate callback.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        foreach (string id in new[]
+        {
+            RibbonControlIds.Diagnostics,
+            RibbonControlIds.OpenLog,
+            RibbonControlIds.InitialiseSheet,
+        })
+        {
+            var matches = doc.Descendants(ns + "button")
+                .Where(b => b.Attribute("id")?.Value == id)
+                .Select(b => b.Attribute("getEnabled"))
+                .Count(attr => attr is not null);
+
+            Assert.Equal(1, matches);
+        }
     }
 
     [Fact]
@@ -393,13 +423,81 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void OnInitialiseSheetClick_routes_through_the_command_boundary()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var executed = false;
+
+        GanttRibbon.OnInitialiseSheetClick(null, boundary, () => executed = true);
+
+        Assert.True(executed, "The initialise command must run.");
+        Assert.Empty(written);
+        Assert.Empty(shown);
+    }
+
+    [Fact]
+    public void OnInitialiseSheetClick_failure_produces_one_record_one_dialog_and_the_fallback_name()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+
+        GanttRibbon.OnInitialiseSheetClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("CommandError", record, StringComparison.Ordinal);
+        Assert.Contains("command=OnInitialiseSheetClick", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void OnInitialiseSheetClick_uses_the_control_id_as_the_command_name_when_available()
+    {
+        // The boundary records the stable command name; for Initialise sheet the
+        // control ID is btnInitialiseSheet, not the fallback method name.
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log.Object);
+
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.InitialiseSheet);
+        GanttRibbon.OnInitialiseSheetClick(
+            control.Object, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=btnInitialiseSheet", record, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Every_ribbon_command_refreshes_the_ribbon_state_after_the_boundary_run()
     {
         // Work item R1.5 decision D3: every command run through the ribbon's
         // boundary ends with a ribbon-state refresh — once on success and once
-        // when the command throws (the boundary absorbs the failure).
+        // when the command throws (the boundary absorbs the failure). R2.2's
+        // Initialise sheet command is no exception: it refreshes on both paths.
         var diagnosticsRefreshes = 0;
         var openLogRefreshes = 0;
+        var initialiseRefreshes = 0;
         var boundary = new CommandBoundary(presenter: _ => { });
 
         GanttRibbon.OnDiagnosticsClick(null, boundary, () => { }, () => diagnosticsRefreshes++);
@@ -408,9 +506,13 @@ public class GanttRibbonTests
         GanttRibbon.OnOpenLogClick(null, boundary, () => { }, () => openLogRefreshes++);
         GanttRibbon.OnOpenLogClick(
             null, boundary, () => throw new InvalidOperationException("simulated"), () => openLogRefreshes++);
+        GanttRibbon.OnInitialiseSheetClick(null, boundary, () => { }, () => initialiseRefreshes++);
+        GanttRibbon.OnInitialiseSheetClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"), () => initialiseRefreshes++);
 
         Assert.Equal(2, diagnosticsRefreshes);
         Assert.Equal(2, openLogRefreshes);
+        Assert.Equal(2, initialiseRefreshes);
     }
 
     /// <summary>

@@ -18,4 +18,7 @@ internal static class RibbonControlIds
 
     /// <summary>The Open log file button (<c>getEnabled</c> driven by log availability).</summary>
     internal const string OpenLog = "btnOpenLog";
+
+    /// <summary>The Initialise sheet button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string InitialiseSheet = "btnInitialiseSheet";
 }

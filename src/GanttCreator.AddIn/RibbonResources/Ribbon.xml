@@ -3,6 +3,9 @@
   <ribbon>
     <tabs>
       <tab id="tabGanttCreator" label="Gantt Creator">
+        <group id="grpData" label="Data">
+          <button id="btnInitialiseSheet" label="Initialise sheet" getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
+        </group>
         <group id="grpPlaceholder" label="Gantt Creator">
         </group>
         <group id="grpDiagnostics" label="Diagnostics">

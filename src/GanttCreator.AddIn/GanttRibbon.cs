@@ -144,6 +144,45 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Called when the user clicks the Initialise sheet button. The callback is
+    /// a thin error boundary exactly like the Diagnostics callback: the
+    /// initialise command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed
+    /// afterwards (work item R1.5 decision D3). The initialise command itself
+    /// surfaces typed refusals; unexpected failures are translated here.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnInitialiseSheetClick(IRibbonControl control)
+        => OnInitialiseSheetClick(control, CommandBoundary.Instance, RunInitialiseSheet, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Initialise-sheet command across an injected boundary. Internal
+    /// so contract tests can verify the routing without the singletons and the
+    /// real workbook mutation.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The initialise command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnInitialiseSheetClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, nameof(OnInitialiseSheetClick)), command, nameof(OnInitialiseSheetClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// The Initialise-sheet command: runs the workbook initialiser for the
+    /// current Excel session via the application command.
+    /// </summary>
+    private static void RunInitialiseSheet() => InitialiseSheetCommand.RunForExcel();
+
+    /// <summary>
     /// Excel's getEnabled callback for the gated controls. A pure read of the
     /// state service's cached snapshot: fast, side-effect-free, and fail-open —
     /// an absent control or a control whose ID cannot be probed stays enabled
