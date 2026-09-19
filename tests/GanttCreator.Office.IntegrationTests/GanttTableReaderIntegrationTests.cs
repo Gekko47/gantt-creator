@@ -56,7 +56,14 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             // Locate the table on the now-labelled sheet.
             Excel.Worksheet ganttSheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
+
+            // A freshly-initialised table has only the header row: DataBodyRange
+            // is null until the first body row exists (integration failure
+            // 2026-09-19, verify-office run 1). Add the two body rows first.
+            _ = table.ListRows.Add();
+            _ = table.ListRows.Add();
             Excel.Range body = table.DataBodyRange;
+            Assert.NotNull(body);
 
             // Two rows: a span + a milestone (Start-only geometry is R2.5; here
             // we only prove value reading). Dates as OLE Automation serials so

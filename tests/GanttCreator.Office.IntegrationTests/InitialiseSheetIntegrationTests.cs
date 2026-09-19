@@ -84,13 +84,17 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                 anchor.RefersTo,
                 StringComparer.Ordinal);
 
+            // Adopted-blank path (roadmap R2.2): one visible sheet (the renamed
+            // target) plus one VeryHidden config sheet — NOT the create path's
+            // two-visible expectation. Live-Excel evidence 2026-09-19: the old
+            // expectation of 2 visible sheets contradicted the contract.
             var visibleSheets = workbook.Sheets
                 .Cast<Excel.Worksheet>()
                 .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVisible);
             var veryHiddenSheets = workbook.Sheets
                 .Cast<Excel.Worksheet>()
                 .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
-            Assert.Equal(2, visibleSheets);
+            Assert.Equal(1, visibleSheets);
             Assert.Equal(1, veryHiddenSheets);
             Assert.Equal(
                 GanttWorkbookContract.ConfigSheetName,
@@ -147,8 +151,12 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                 StringComparer.OrdinalIgnoreCase);
             Assert.Equal(1, active.ListObjects.Count);
             Assert.Equal(GanttTableSchema.TableName, active.ListObjects[1].Name, StringComparer.Ordinal);
-            Assert.Equal(2, workbook.Sheets.Count);
-            _output.WriteLine("Refusal path left the workbook with 2 sheets and the existing table unchanged.");
+            // The prepared workbook has one sheet and the TableExists refusal
+            // mutates nothing (contract tests prove no-mutation; live evidence
+            // 2026-09-19: the old expectation of 2 sheets never matched the
+            // prepared state — the test had never been run against live Excel).
+            Assert.Equal(1, workbook.Sheets.Count);
+            _output.WriteLine("Refusal path left the workbook unchanged (1 sheet) and the existing table intact.");
         }
         finally
         {
