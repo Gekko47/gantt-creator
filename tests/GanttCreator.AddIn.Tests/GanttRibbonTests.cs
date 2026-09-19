@@ -360,13 +360,25 @@ public class GanttRibbonTests
         // Diagnostics button showed no icon with imageMso="Information",
         // which is absent from the Office 2010 Icons Gallery workbook
         // (customUI14.xml: 7344 unique IDs, no "Information"). Pin
-        // gallery-verified IDs so a typo regresses to a failing test
-        // instead of a silently missing icon. Both IDs are additionally
-        // present in the Excel 2007 idMso table of [MS-CUSTOMUI]-250218
-        // (`.microsoft/` reference, git-ignored): FileOpen renders in
-        // Excel, Help is the diagnostics fallback after OfficeDiagnostics
-        // (valid gallery ID, but absent from the Excel idMso table and
-        // not rendered by Excel on the ribbon in F5) also failed.
+        // evidence-backed IDs so a typo regresses to a failing test
+        // instead of a silently missing icon.
+        //
+        // Operative criterion, established empirically: the ID must be a
+        // command present in the Excel 2007 idMso table of
+        // [MS-CUSTOMUI]-250218 (`.microsoft/` reference, git-ignored).
+        // imageMso="OfficeDiagnostics" was a valid gallery ID but absent
+        // from that table and rendered nothing in F5. FileOpen and Help
+        // are in that table and render (Help glyph confirmed by a human
+        // operator in F5, 2026-09-16).
+        //
+        // TableInsertExcel was read directly from the same table (row:
+        // idMso=TableInsertExcel, control=button, label="Table") — the
+        // Excel Insert-Table command, whose glyph is the semantically
+        // exact match for "Initialise sheet", which creates tblGanttData.
+        // Gallery membership is not independently checkable offline (the
+        // gallery workbook is not in this repository); its F5 glyph
+        // confirmation is tracked in docs/work-items/R2.2-initialise-sheet.md
+        // decision D8.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
@@ -378,6 +390,7 @@ public class GanttRibbonTests
 
         Assert.Equal("Help", ImageMso(RibbonControlIds.Diagnostics));
         Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
+        Assert.Equal("TableInsertExcel", ImageMso(RibbonControlIds.InitialiseSheet));
     }
 
     [Fact]
