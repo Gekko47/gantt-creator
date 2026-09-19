@@ -34,7 +34,7 @@ Do not get wrong:
 - `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
 - `context7__query-docs` / `microsoft-learn__microsoft_docs_search` / `microsoft-learn__microsoft_docs_fetch` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
 - `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
-- `pwsh_run` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
+- `combined-mcp-server__run_commands` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
 - `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
 <!-- SKILL-TOOLS:END -->
 
@@ -381,9 +381,9 @@ This is intentionally short. The code, tests, work item, and Git diff are the du
 Before declaring a work item done, run these tools and observe their output:
 
 1. `dotnet_test` on the targeted project — must PASS.
-2. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS (the every-commit
+2. `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` — must PASS (the every-commit
    gate; run it with the work staged — it accepts staged changes).
-3. `pwsh_run` with `scripts/verify.ps1` — the branch-final gate, run once
+3. `combined-mcp-server__run_commands` with `scripts/verify.ps1` — the branch-final gate, run once
    after the LAST commit for the branch; requires a clean tree (its first
    step fails in under a second otherwise). The agent never pushes and
    never opens a pull request without explicit human instruction; the

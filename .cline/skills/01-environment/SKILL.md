@@ -20,11 +20,11 @@ Do not get wrong:
 
 ## Tools
 
-- `run_commands` / `pwsh_run` — run `dotnet --info`, `(Get-CimInstance Win32_OperatingSystem).BuildNumber`, and other environment probes.
-- `read_files` — read `global.json`, `Directory.Packages.props`, `tool-versions.psd1` to verify pinned versions.
+- `combined-mcp-server__run_commands` — run `dotnet --info`, `(Get-CimInstance Win32_OperatingSystem).BuildNumber`, and other environment probes.
+- `combined-mcp-server__read_file` — read `global.json`, `Directory.Packages.props`, `tool-versions.psd1` to verify pinned versions.
 - `dotnet_build` / `dotnet_test` — run the offline acceptance check; build and test without Office.
 - `dotnet_packages` — audit NuGet references for outdated/vulnerable versions against the baseline.
-- `read_files` on `docs/adr/` — check ADRs before assuming version parity (e.g. ADR 0003 for VS version).
+- `combined-mcp-server__read_file` on `docs/adr/` — check ADRs before assuming version parity (e.g. ADR 0003 for VS version).
 
 ---
 

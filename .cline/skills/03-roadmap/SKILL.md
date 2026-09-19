@@ -24,7 +24,7 @@ Do not get wrong:
 - `github__get_pull_request_status` — verify green CI before declaring a phase exit (the W-12 rule).
 - `github__get_pull_request_files` — check the diff links to a specific test or script step.
 - `dotnet_test` — run the named test or script step an acceptance criterion references.
-- `read_files` on `docs/work-items/` — confirm a work-item file exists before implementation.
+- `combined-mcp-server__read_file` on `docs/work-items/` — confirm a work-item file exists before implementation.
 - `memra_add` — record green CI evidence (commit hash + run URL) as a fact.
 
 ---

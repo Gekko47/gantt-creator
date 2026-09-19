@@ -37,7 +37,7 @@ Do not get wrong:
 - `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
 - `context7__query-docs` / `microsoft-learn__microsoft_docs_search` / `microsoft-learn__microsoft_docs_fetch` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
 - `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
-- `pwsh_run` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
+- `combined-mcp-server__run_commands` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
 - `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
 
 ---
