@@ -44,12 +44,12 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialiser
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Application? _application = application as Application;
 
     /// <inheritdoc />
     public WorkbookInitialiseOutcome Initialise()
     {
-        Excel.Application? application = _application;
+        Application? application = _application;
         if (application is null)
         {
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook);
@@ -57,13 +57,13 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
 
         // One proxy per local: no chained `app.ActiveWorkbook.Worksheets[…]`
         // member expressions (docs/02-ARCHITECTURE.md COM ownership).
-        Excel.Workbook? workbook = application.ActiveWorkbook;
+        Workbook? workbook = application.ActiveWorkbook;
         if (workbook is null)
         {
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook);
         }
 
-        Excel.Sheets sheets = workbook.Sheets;
+        Sheets sheets = workbook.Sheets;
 
         // Read-only check 1: the workbook must not already carry the
         // configuration sheet — creating a second helper sheet is a product
@@ -85,7 +85,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         // adopted only when it is blank; a chart sheet or any non-empty
         // worksheet causes a fresh sheet to be created. A chart sheet is not
         // an Excel.Worksheet, so the cast selects the create path for it.
-        var activeWorksheet = workbook.ActiveSheet as Excel.Worksheet;
+        var activeWorksheet = workbook.ActiveSheet as Worksheet;
         var adopt = false;
         if (activeWorksheet is not null && IsBlank(activeWorksheet, application))
         {
@@ -122,7 +122,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             }
         }
 
-        Excel.Worksheet target = adopt ? activeWorksheet! : CreateTargetSheet(sheets, activeWorksheet);
+        Worksheet target = adopt ? activeWorksheet! : CreateTargetSheet(sheets, activeWorksheet);
         try
         {
             if (!string.Equals(target.Name, label, StringComparison.OrdinalIgnoreCase))
@@ -170,7 +170,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="worksheet">The candidate target worksheet.</param>
     /// <param name="application">The Excel application (for the worksheet function).</param>
     /// <returns><see langword="true"/> when the used range contains no values.</returns>
-    private static bool IsBlank(Excel.Worksheet worksheet, Excel.Application application)
+    private static bool IsBlank(Worksheet worksheet, Application application)
     {
         Excel.Range? usedRange = worksheet.UsedRange;
         if (usedRange is null)
@@ -178,7 +178,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             return true;
         }
 
-        Excel.WorksheetFunction functions = application.WorksheetFunction;
+        WorksheetFunction functions = application.WorksheetFunction;
         return functions.CountA(usedRange) == 0;
     }
 
@@ -189,7 +189,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// </summary>
     /// <param name="sheets">The workbook's sheets.</param>
     /// <returns><see langword="true"/> when the table name is already taken on any worksheet.</returns>
-    private bool AnyWorksheetContainsTable(Excel.Sheets sheets)
+    private bool AnyWorksheetContainsTable(Sheets sheets)
     {
         var count = sheets.Count;
         for (var index = 1; index <= count; index++)
@@ -197,7 +197,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             // Only worksheets carry ListObjects; chart sheets are skipped
             // because the cast to Excel.Worksheet fails for them.
             Worksheet sheet = GetSheetAt(sheets, index);
-            if (sheet is Excel.Worksheet worksheet)
+            if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
                 var tableCount = listObjects.Count;
@@ -229,7 +229,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// to be renamed), or <see langword="null"/> on the create path.
     /// </param>
     /// <returns>The available, culture-invariant label.</returns>
-    private string ResolveAvailableLabel(Excel.Sheets sheets, string? excludeSheetName)
+    private string ResolveAvailableLabel(Sheets sheets, string? excludeSheetName)
     {
         var baseLabel = GanttWorkbookContract.GanttSheetLabel;
         if (!NameTakenByOtherSheet(sheets, baseLabel, excludeSheetName))
@@ -259,7 +259,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="name">The candidate name.</param>
     /// <param name="excludeSheetName">The name to ignore, or <see langword="null"/>.</param>
     /// <returns><see langword="true"/> when the name is taken.</returns>
-    private bool NameTakenByOtherSheet(Excel.Sheets sheets, string name, string? excludeSheetName)
+    private bool NameTakenByOtherSheet(Sheets sheets, string name, string? excludeSheetName)
     {
         var count = sheets.Count;
         for (var index = 1; index <= count; index++)
@@ -272,7 +272,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             object sheet = GetSheetAt(sheets, index);
             var sheetName = sheet switch
             {
-                Excel.Worksheet worksheet => worksheet.Name,
+                Worksheet worksheet => worksheet.Name,
                 _ => (string)sheet.GetType().InvokeMember(
                     "Name",
                     System.Reflection.BindingFlags.GetProperty,
@@ -302,11 +302,11 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="activeWorksheet">The current active worksheet, or <see langword="null"/>.</param>
     /// <returns>The created worksheet.</returns>
-    private static Excel.Worksheet CreateTargetSheet(Excel.Sheets sheets, Excel.Worksheet? activeWorksheet)
+    private static Worksheet CreateTargetSheet(Sheets sheets, Worksheet? activeWorksheet)
     {
-        Excel.Worksheet created = activeWorksheet is null
-            ? (Excel.Worksheet)sheets.Add()
-            : (Excel.Worksheet)sheets.Add(After: activeWorksheet);
+        Worksheet created = activeWorksheet is null
+            ? (Worksheet)sheets.Add()
+            : (Worksheet)sheets.Add(After: activeWorksheet);
         return created;
     }
 
@@ -316,7 +316,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// after the sheet has been added but before any content is written.
     /// </summary>
     /// <param name="target">The worksheet to remove.</param>
-    private static void RollBackCreatedSheet(Excel.Worksheet target) =>
+    private static void RollBackCreatedSheet(Worksheet target) =>
         // Delete without prompting: the sheet is empty and was created by this
         // initialiser as a tentative step that did not pass validation.
         target.Delete();
@@ -326,7 +326,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// </summary>
     /// <param name="worksheet">The worksheet to inspect.</param>
     /// <returns><see langword="true"/> when the worksheet is protected.</returns>
-    private static bool IsWorksheetProtected(Excel.Worksheet worksheet) =>
+    private static bool IsWorksheetProtected(Worksheet worksheet) =>
         // The ProtectContents flag indicates cell-level protection is active.
         // A protected worksheet blocks headerRange.Value2 writes.
         worksheet.ProtectContents;
@@ -337,7 +337,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// </summary>
     /// <param name="workbook">The workbook to inspect.</param>
     /// <returns><see langword="true"/> when the workbook structure is protected.</returns>
-    private static bool IsWorkbookStructureProtected(Excel.Workbook workbook) =>
+    private static bool IsWorkbookStructureProtected(Workbook workbook) =>
         // The ProtectStructure flag indicates workbook-structure protection is
         // active, blocking sheet-level structural changes.
         workbook.ProtectStructure;
@@ -347,7 +347,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// exact contract order, as one array assignment (one COM call).
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void WriteHeaderRow(Excel.Worksheet target)
+    private void WriteHeaderRow(Worksheet target)
     {
         IReadOnlyList<GanttTableColumn> columns =
             GanttTableSchema.Default.Columns;
@@ -372,12 +372,12 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// header-name behaviour, then names it from the Core schema constant.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void CreateDataTable(Excel.Worksheet target)
+    private void CreateDataTable(Worksheet target)
     {
         var columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
-        Excel.ListObjects listObjects = target.ListObjects;
-        Excel.ListObject table = listObjects.Add(
+        ListObjects listObjects = target.ListObjects;
+        ListObject table = listObjects.Add(
             XlListObjectSourceType.xlSrcRange,
             tableRange,
             Type.Missing,
@@ -392,9 +392,9 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// </summary>
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="target">The Gantt worksheet the config sheet follows.</param>
-    private static void CreateConfigurationSheet(Excel.Sheets sheets, Excel.Worksheet target)
+    private static void CreateConfigurationSheet(Sheets sheets, Worksheet target)
     {
-        var config = (Excel.Worksheet)sheets.Add(After: target);
+        var config = (Worksheet)sheets.Add(After: target);
         config.Name = GanttWorkbookContract.ConfigSheetName;
         config.Visible = XlSheetVisibility.xlSheetVeryHidden;
     }
@@ -404,10 +404,10 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// right of the table's last column, on the header row.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private static void WritePlotAnchorName(Excel.Worksheet target)
+    private static void WritePlotAnchorName(Worksheet target)
     {
         var anchorColumnIndex = GanttTableSchema.Default.Columns.Count + 1;
-        Excel.Names names = target.Names;
+        Names names = target.Names;
         _ = names.Add(
             GanttWorkbookContract.PlotAnchorDefinedName,
             BuildAnchorRefersTo(target.Name, anchorColumnIndex));
@@ -457,8 +457,8 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="index">The one-based sheet index.</param>
     /// <returns>The worksheet at the index.</returns>
-    internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index)
-        => (Excel.Worksheet)sheets[index];
+    internal virtual Worksheet GetSheetAt(Sheets sheets, int index)
+        => (Worksheet)sheets[index];
 
     /// <summary>
     /// Returns the list object at the one-based index. Test seam over the COM
@@ -467,7 +467,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="listObjects">The worksheet's list objects.</param>
     /// <param name="index">The one-based table index.</param>
     /// <returns>The list object at the index.</returns>
-    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index)
+    internal virtual ListObject GetTableAt(ListObjects listObjects, int index)
         => listObjects[index];
 
     /// <summary>
@@ -478,6 +478,6 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <param name="target">The Gantt worksheet.</param>
     /// <param name="columnCount">The header column count.</param>
     /// <returns>The one-row range spanning the header columns.</returns>
-    internal virtual Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
+    internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
         => target.Cells[1, 1].Resize[1, columnCount];
 }
