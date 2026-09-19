@@ -1,5 +1,6 @@
 using System.Globalization;
 using GanttCreator.Core;
+using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
@@ -195,14 +196,14 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         {
             // Only worksheets carry ListObjects; chart sheets are skipped
             // because the cast to Excel.Worksheet fails for them.
-            var sheet = GetSheetAt(sheets, index);
+            Worksheet sheet = GetSheetAt(sheets, index);
             if (sheet is Excel.Worksheet worksheet)
             {
-                var listObjects = worksheet.ListObjects;
+                ListObjects listObjects = worksheet.ListObjects;
                 var tableCount = listObjects.Count;
                 for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
-                    var table = GetTableAt(listObjects, tableIndex);
+                    ListObject table = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
                         table.Name,
                         GanttTableSchema.TableName,
@@ -269,7 +270,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             // seam pattern, then widen to object only for Name access on
             // chart sheets that are not Excel.Worksheet.
             object sheet = GetSheetAt(sheets, index);
-            string sheetName = sheet switch
+            var sheetName = sheet switch
             {
                 Excel.Worksheet worksheet => worksheet.Name,
                 _ => (string)sheet.GetType().InvokeMember(
@@ -278,7 +279,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
                     null,
                     sheet,
                     null,
-                    System.Globalization.CultureInfo.InvariantCulture)!,
+                    CultureInfo.InvariantCulture)!,
             };
             if (excludeSheetName is not null
                 && string.Equals(sheetName, excludeSheetName, StringComparison.OrdinalIgnoreCase))
@@ -315,24 +316,20 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// after the sheet has been added but before any content is written.
     /// </summary>
     /// <param name="target">The worksheet to remove.</param>
-    private static void RollBackCreatedSheet(Excel.Worksheet target)
-    {
+    private static void RollBackCreatedSheet(Excel.Worksheet target) =>
         // Delete without prompting: the sheet is empty and was created by this
         // initialiser as a tentative step that did not pass validation.
         target.Delete();
-    }
 
     /// <summary>
     /// Determines whether the worksheet is protected against edits.
     /// </summary>
     /// <param name="worksheet">The worksheet to inspect.</param>
     /// <returns><see langword="true"/> when the worksheet is protected.</returns>
-    private static bool IsWorksheetProtected(Excel.Worksheet worksheet)
-    {
+    private static bool IsWorksheetProtected(Excel.Worksheet worksheet) =>
         // The ProtectContents flag indicates cell-level protection is active.
         // A protected worksheet blocks headerRange.Value2 writes.
-        return worksheet.ProtectContents;
-    }
+        worksheet.ProtectContents;
 
     /// <summary>
     /// Determines whether the workbook structure is protected, which blocks
@@ -340,12 +337,10 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// </summary>
     /// <param name="workbook">The workbook to inspect.</param>
     /// <returns><see langword="true"/> when the workbook structure is protected.</returns>
-    private static bool IsWorkbookStructureProtected(Excel.Workbook workbook)
-    {
+    private static bool IsWorkbookStructureProtected(Excel.Workbook workbook) =>
         // The ProtectStructure flag indicates workbook-structure protection is
         // active, blocking sheet-level structural changes.
-        return workbook.ProtectStructure;
-    }
+        workbook.ProtectStructure;
 
     /// <summary>
     /// Writes the <c>tblGanttData</c> header row from the Core schema, in the
@@ -383,10 +378,10 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
         Excel.ListObjects listObjects = target.ListObjects;
         Excel.ListObject table = listObjects.Add(
-            Excel.XlListObjectSourceType.xlSrcRange,
+            XlListObjectSourceType.xlSrcRange,
             tableRange,
             Type.Missing,
-            Excel.XlYesNoGuess.xlYes,
+            XlYesNoGuess.xlYes,
             Type.Missing);
         table.Name = GanttTableSchema.TableName;
     }
@@ -401,7 +396,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     {
         var config = (Excel.Worksheet)sheets.Add(After: target);
         config.Name = GanttWorkbookContract.ConfigSheetName;
-        config.Visible = Excel.XlSheetVisibility.xlSheetVeryHidden;
+        config.Visible = XlSheetVisibility.xlSheetVeryHidden;
     }
 
     /// <summary>
