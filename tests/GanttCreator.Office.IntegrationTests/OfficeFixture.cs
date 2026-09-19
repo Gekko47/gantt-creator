@@ -36,6 +36,13 @@ internal sealed class OfficeFixture : IAsyncLifetime
     private Workbooks? _workbooks;
     private int _excelProcessId;
     private bool _disposed;
+    /// <summary>
+    /// Workbooks created through <see cref="CreateWorkbook"/>. Closed and
+    /// released here during teardown, before the existing collection sweep, so
+    /// a test that forgets to clean up still leaves no orphan and no double
+    /// close. Each proxy is released exactly once (COM ownership, AGENTS.md).
+    /// </summary>
+    private List<Workbook>? _createdWorkbooks;
 
     /// <summary>
     /// The live Excel Application instance. Valid only between
@@ -81,6 +88,35 @@ internal sealed class OfficeFixture : IAsyncLifetime
         ArgumentException.ThrowIfNullOrWhiteSpace(xllPath);
         Application excel = Excel;
         return excel.RegisterXLL(xllPath);
+    }
+
+    /// <summary>
+    /// Creates a new blank workbook in the owned Excel instance and tracks it
+    /// for deterministic teardown. The returned <see cref="Workbook"/> proxy
+    /// is owned by the caller for the test's lifetime; <see cref="DisposeAsync"/>
+    /// closes and releases it if the test does not, so a test that forgets to
+    /// clean up still leaves no orphan and no double close.
+    /// </summary>
+    /// <remarks>
+    /// <c>Workbooks.Add</c> creates the default sheet set (a blank worksheet
+    /// plus, on some builds, a chart sheet). The Initialise-sheet command
+    /// adopts the blank active worksheet, so a workbook created here is the
+    /// exact pre-state the adopt-path integration test needs. COM ownership:
+    /// the returned proxy crosses no collection boundary, is held in a local
+    /// by the caller, and is released exactly once — here, on teardown.
+    /// </remarks>
+    /// <returns>The created <see cref="Workbook"/> proxy.</returns>
+    public Workbook CreateWorkbook()
+    {
+        Workbooks workbooks = Excel.Workbooks;
+        Workbook created = workbooks.Add();
+        if (_createdWorkbooks is null)
+        {
+            _createdWorkbooks = new List<Workbook>();
+        }
+
+        _createdWorkbooks.Add(created);
+        return created;
     }
 
     /// <inheritdoc />
@@ -145,6 +181,44 @@ internal sealed class OfficeFixture : IAsyncLifetime
         if (_excel == null) return;
 
         Exception? cleanupException = null;
+
+        // Release the proxies CreateWorkbook handed out to tests BEFORE the
+        // collection sweep. The sweep below closes workbooks by index from
+        // _excel.Workbooks and releases the proxies it fetches there; those
+        // are separate RCW wrappers for the same COM objects, so this sweep
+        // must release only its own proxies and must NOT close — closing here
+        // would remove the workbook from the collection and leave the sweep's
+        // pre-counted index stale. Releasing a proxy is safe while the object
+        // is still referenced by the collection; the object stays alive until
+        // the sweep closes it. Every proxy is released exactly once.
+        if (_createdWorkbooks is not null)
+        {
+            foreach (Workbook wb in _createdWorkbooks)
+            {
+                try
+                {
+                    Marshal.ReleaseComObject(wb);
+                }
+                catch (COMException ex)
+                {
+                    if (cleanupException is null)
+                    {
+                        cleanupException = ex;
+                    }
+                }
+#pragma warning disable CA1031
+                catch (Exception ex)
+                {
+                    if (cleanupException is null)
+                    {
+                        cleanupException = ex;
+                    }
+                }
+#pragma warning restore CA1031
+            }
+
+            _createdWorkbooks.Clear();
+        }
 
         try
         {

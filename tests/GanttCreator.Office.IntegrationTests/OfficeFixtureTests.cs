@@ -108,6 +108,45 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task CreateWorkbook_returns_a_non_null_workbook_and_leaves_no_orphan()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            var workbook = fixture.CreateWorkbook();
+            Assert.NotNull(workbook);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task CreateWorkbook_can_be_called_twice_and_both_teardown_cleanly()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            var first = fixture.CreateWorkbook();
+            var second = fixture.CreateWorkbook();
+            Assert.NotNull(first);
+            Assert.NotNull(second);
+            Assert.NotSame(first, second);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Excel_open_close_five_times_no_orphan()
     {
         var pids = new List<int>();
