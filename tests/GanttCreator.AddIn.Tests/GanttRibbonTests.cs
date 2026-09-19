@@ -363,22 +363,26 @@ public class GanttRibbonTests
         // evidence-backed IDs so a typo regresses to a failing test
         // instead of a silently missing icon.
         //
-        // Operative criterion, established empirically: the ID must be a
-        // command present in the Excel 2007 idMso table of
-        // [MS-CUSTOMUI]-250218 (`.microsoft/` reference, git-ignored).
+        // Two bases, both required in practice: the ID must be present in
+        // the Office 2010 Icons Gallery (Office2010IconsGallery.docx, whose
+        // embedded customUI14.xml lists 7344 unique imageMso IDs) and name a
+        // command in the Excel idMso table of [MS-CUSTOMUI]-250218
+        // (`.microsoft/` reference, git-ignored).
         // imageMso="OfficeDiagnostics" was a valid gallery ID but absent
-        // from that table and rendered nothing in F5. FileOpen and Help
-        // are in that table and render (Help glyph confirmed by a human
-        // operator in F5, 2026-09-16).
+        // from the Excel table and rendered nothing in F5. FileOpen and Help
+        // satisfy both and render (Help glyph confirmed by a human operator
+        // in F5, 2026-09-16).
         //
-        // TableInsertExcel was read directly from the same table (row:
-        // idMso=TableInsertExcel, control=button, label="Table") — the
-        // Excel Insert-Table command, whose glyph is the semantically
+        // TableInsertExcel satisfies both: present in the gallery, and the
+        // Excel idMso row idMso=TableInsertExcel, control=button,
+        // label="Table" — the Excel Insert-Table command, the semantically
         // exact match for "Initialise sheet", which creates tblGanttData.
-        // Gallery membership is not independently checkable offline (the
-        // gallery workbook is not in this repository); its F5 glyph
-        // confirmation is tracked in docs/work-items/R2.2-initialise-sheet.md
-        // decision D8.
+        // Note the id is TableInsertExcel, not its UI label "Table", which
+        // is itself absent from the gallery. The gallery check is validated
+        // against the four documented outcomes that file reproduces
+        // (Information absent, OfficeDiagnostics present, Help present,
+        // FileOpen present). Evidence and the remaining F5 glyph step:
+        // docs/work-items/R2.2-initialise-sheet.md decision D8.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
