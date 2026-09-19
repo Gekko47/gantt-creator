@@ -6,7 +6,7 @@ Source-reviewed 2026-09-18; this date does not detect subsequent or uncommitted 
 | Project | Current responsibility and entry points |
 | --- | --- |
 | [AddIn](../src/GanttCreator.AddIn/) | Lifecycle: AddInHost; Ribbon: GanttRibbon / RibbonStateService; diagnostics: DiagnosticsService; errors: CommandBoundary; commands: InitialiseSheetCommand (sheet initialisation) |
-| [Core](../src/GanttCreator.Core/) | PointD, VersionInfo, Logging, workbook schema contract (GanttTableColumns/GanttSchemaVersion, GanttWorkbookContract) and the code-owned EntityTypeCatalog; no Office or UI dependency |
+| [Core](../src/GanttCreator.Core/) | PointD, VersionInfo, Logging, workbook schema contract (GanttTableColumns/GanttSchemaVersion, GanttWorkbookContract), the code-owned EntityTypeCatalog, and stable row identity (GanttRowId); no Office or UI dependency |
 | [Office](../src/GanttCreator.Office/) | IExcelApplicationAdapter / ExcelApplicationAdapter: active-workbook facts and event subscriptions; IWorkbookInitialiser / ExcelWorkbookInitialiser: sheet initialisation (adopt/create, headers, table, config sheet, plot anchor) |
 | [Raster](../src/GanttCreator.Raster/) | ExportSize: width parsing and pixel dimensions, not PNG encoding |
 
