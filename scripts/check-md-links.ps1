@@ -36,10 +36,14 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
     $fenceBuffer = New-Object System.Collections.Generic.List[string]
     foreach ($line in $lines) {
         if ($null -eq $fenceChar) {
-            if ($line -match '^(?<quote>(?: {0,3}> ?)?)(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$') {
+            if ($line -match '^(?:(?<quote> {0,3}> ?)(?<fence>`{3,}|~{3,})(?<info>.*)$|(?: {0,3})(?<fence>`{3,}|~{3,})(?<info>.*)$)$') {
                 $fence = $Matches['fence']
                 $info = $Matches['info']
-                $quotePrefix = $Matches['quote']
+                # Determine quote prefix from which alternation branch matched.
+                # In the quoted branch $Matches['quote'] is populated; in the
+                # unquoted branch it is absent (NullString). Treat an absent
+                # captured group as no quote prefix rather than an empty string.
+                $quotePrefix = if ($Matches.Contains('quote')) { $Matches['quote'] } else { '' }
                 # A backtick info string must not contain a backtick
                 # (CommonMark); a tilde info string has no such rule.
                 if ($fence[0] -eq '`' -and $info -match '`') { $kept.Add($line); continue }
@@ -50,9 +54,11 @@ function Get-MarkdownTextWithoutFencedCodeBlock {
                 continue
             }
             $kept.Add($line)
-        } elseif ($line -match '^(?<quote>(?: {0,3}> ?)?)(?: {0,3})(?<fence>`{3,}|~{3,})\s*$') {
+        } elseif ($line -match '^(?:(?<quote> {0,3}> ?)(?<fence>`{3,}|~{3,})\s*$|(?: {0,3})(?<fence>`{3,}|~{3,})\s*$)$') {
             $fence = $Matches['fence']
-            $quotePrefix = $Matches['quote']
+            # Closing fence quote prefix: use the same nullable check as the opening
+            # fence so an unquoted closing fence does not inherit a stray quote value.
+            $quotePrefix = if ($Matches.Contains('quote')) { $Matches['quote'] } else { '' }
             # Require the same block-quote prefix style as the opening fence.
             if ($fence[0] -eq $fenceChar -and $fence.Length -ge $fenceLen -and ($quotePrefix -ne '') -eq $fenceIsQuoted) {
                 $fenceChar = $null

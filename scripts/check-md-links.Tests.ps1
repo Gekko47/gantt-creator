@@ -157,6 +157,55 @@ Describe 'check-md-links.ps1' {
             $r.Output | Should -Match 'missing\.md'
         }
 
+        It 'does not treat a block-quoted fence with two spaces after the marker as a fence' {
+            # Regression: exactly two spaces after the block-quote marker (>) make the
+            # line NOT a quoted fence, so its link must be validated and (if missing)
+            # break the gate. A quoted fence only allows a single optional space after >.
+            $twoSpaceQuoted = @'
+>  ```
+>  [two-space-quoted-link](./missing.md)
+>  ```
+'@
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\a.md') -Value $twoSpaceQuoted -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'BROKEN LINKS'
+            $r.Output | Should -Match 'missing\.md'
+        }
+
+        It 'does not treat a block-quoted fence with three spaces after the marker as a fence' {
+            # Regression: three spaces after the block-quote marker (>) make the
+            # line NOT a quoted fence, so its link must be validated.
+            $threeSpaceQuoted = @'
+>   ```
+>   [three-space-quoted-link](./missing.md)
+>   ```
+'@
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\a.md') -Value $threeSpaceQuoted -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'BROKEN LINKS'
+            $r.Output | Should -Match 'missing\.md'
+        }
+
+        It 'does not treat a block-quoted fence with four spaces after the marker as a fence' {
+            # Regression: four spaces after the block-quote marker (>) make the
+            # line NOT a quoted fence, so its link must be validated.
+            $fourSpaceQuoted = @'
+>    ```
+>    [four-space-quoted-link](./missing.md)
+>    ```
+'@
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\b.md') -Value 'target' -Encoding utf8
+            Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\\a.md') -Value $fourSpaceQuoted -Encoding utf8
+            $r = Invoke-MdLinksHarness
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match 'BROKEN LINKS'
+            $r.Output | Should -Match 'missing\.md'
+        }
+
         It 'flags a link inside a block-quoted fenced block when the same link is outside any fence (regression test)' {
             # The same link text, when not inside a fence (block-quoted or otherwise),
             # must still be validated. This proves the block-quote fence exclusion is
