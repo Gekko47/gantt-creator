@@ -87,11 +87,12 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
                 $"body.Rows.Count={bodyRowCount}; spanOffset={spanOffset}; " +
                 $"milestoneOffset={milestoneOffset}");
 
-            // Observed live on Excel 16.0 (2026-09-19): after
-            // DataBodyRange.Delete cleared a one-row body, two ListRows.Add
-            // calls produced ListRows.Count=3 with body A2:N4 — the added rows
-            // landed at body offsets 1 and 3 and a blank body row sat between
-            // them. The reader must return one DTO per body row, so the offsets
+            // Observed live on Excel 16.0 (2026-09-19/20): after
+            // DataBodyRange.Delete cleared a one-row body, the first
+            // ListRows.Add can reuse the existing blank body row while
+            // ListRows.Count already reports 2 — the added row lands at body
+            // offset 1 and a blank body row sits between it and the next Add.
+            // The reader must return one DTO per body row, so the offsets
             // that the returned ListRow objects actually occupy locate the
             // written rows; adjacency is not assumed.
             Assert.True(
@@ -161,11 +162,11 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         if (table.DataBodyRange is not null)
         {
             table.DataBodyRange.Delete();
-            return;
         }
 
-        // DataBodyRange null but ListRows may still hold rows on this build.
-        // Delete from the end; re-read .Count each pass.
+        // DataBodyRange may be null either initially or after the Delete above.
+        // ListRows can still hold rows on this build (a COM quirk). Delete from
+        // the end; re-read .Count each pass.
         while (true)
         {
             int count = table.ListRows.Count;
@@ -413,27 +414,28 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             SetBodyCell(body, dataOffset, "LaneId", "L-1");
             SetBodyCell(body, dataOffset, "StackIndex", 3.0);
             SetBodyCell(body, dataOffset, "Type", "As-Planned Activity");
-            SetBodyCell(body, dataOffset, "Start", 44927.0);
+            SetBodyCell(body, dataOffset, "Start", 44927.5); // 2023-01-01 midday — non-whole so Value2 is double
             SetBodyCell(body, dataOffset, "Visible", true);
 
-            errorRow.Range.Cells[1, 1].Value2 = "G-error";
-            errorRow.Range.Cells[1, 2].Value2 = "L-1";
-            errorRow.Range.Cells[1, 3].Value2 = "=NA()";
-            errorRow.Range.Cells[1, 4].Value2 = "=VALUE(\"x\")";
-            errorRow.Range.Cells[1, 5].Value2 = "=NA()";
-            errorRow.Range.Cells[1, 6].Value2 = "=SQRT(-1)";
-            errorRow.Range.Cells[1, 9].Value2 = "=nonexistentName";
+            SetBodyCell(body, errorOffset, "Id", "G-error");
+            SetBodyCell(body, errorOffset, "LaneId", "L-1");
+            SetBodyCellFormula(body, errorOffset, "StackIndex", "=NA()");
+            SetBodyCellFormula(body, errorOffset, "Type", "=VALUE(\"x\")");
+            SetBodyCellFormula(body, errorOffset, "Description", "=NA()");
+            SetBodyCellFormula(body, errorOffset, "Start", "=SQRT(-1)");
+            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0");
+            SetBodyCellFormula(body, errorOffset, "StyleKey", "=nonexistentName");
 
-            fixture.Excel.Application.CalculateFull();
+            fixture.Excel.CalculateFull();
 
-            Excel.Range startErrorCell = body.Cells[errorOffset, 5];
-            Excel.Range finishErrorCell = body.Cells[errorOffset, 6];
-            Excel.Range typeErrorCell = body.Cells[errorOffset, 4];
-            Excel.Range descErrorCell = body.Cells[errorOffset, 9];
-            Excel.Range numericCell = body.Cells[dataOffset, 5];
+            Excel.Range startErrorCell = body.Cells[errorOffset, GetColumnIndex("Start")];
+            Excel.Range finishErrorCell = body.Cells[errorOffset, GetColumnIndex("Finish")];
+            Excel.Range typeErrorCell = body.Cells[errorOffset, GetColumnIndex("Type")];
+            Excel.Range descErrorCell = body.Cells[errorOffset, GetColumnIndex("Description")];
+            Excel.Range numericCell = body.Cells[dataOffset, GetColumnIndex("Start")];
 
             Assert.IsType<double>(numericCell.Value2);
-            Assert.Equal(44927.0, (double)numericCell.Value2);
+            Assert.Equal(44927.5, (double)numericCell.Value2);
 
             int startErr = (int)startErrorCell.Value2;
             int finishErr = (int)finishErrorCell.Value2;
@@ -447,10 +449,10 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
                 $"Description={descErr} (0x{descErr:X8}); " +
                 $"numeric Start={numericCell.Value2} ({numericCell.Value2.GetType().Name})");
 
-            Assert.Equal(-2146826246, startErr);
-            Assert.Equal(-2146826254, finishErr);
-            Assert.Equal(-2146826275, typeErr);
-            Assert.Equal(-2146826261, descErr);
+            Assert.Equal(-2146826252, startErr);
+            Assert.Equal(-2146826281, finishErr);
+            Assert.Equal(-2146826273, typeErr);
+            Assert.Equal(-2146826246, descErr);
 
             var reader = new ExcelGanttTableReader(fixture.Excel);
             GanttTableReadOutcome readOutcome = reader.Read();
@@ -459,40 +461,41 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
                 $"Reader refused: {readOutcome.Refusal}");
             IReadOnlyList<GanttRowDto> rows = readOutcome.Rows;
 
-            Assert.Equal(2, rows.Count);
+            // This build can leave a blank ghost row behind ClearTableBody
+            // (DataBodyRange.Delete leaves ListRows.Count at 1), so anchor on
+            // the live body geometry and locate rows by Id, not by index.
+            Assert.Equal(body.Rows.Count, rows.Count);
 
-            Assert.Equal(dataOffset, rows[0].RowNumber);
-            Assert.Equal(errorOffset, rows[1].RowNumber);
-
-            GanttRowDto data = rows[0];
-            Assert.Equal("G-real", data.Id);
+            GanttRowDto data = rows.Single(r => r.Id == "G-real");
+            GanttRowDto error = rows.Single(r => r.Id == "G-error");
+            Assert.Equal(dataOffset, data.RowNumber);
+            Assert.Equal(errorOffset, error.RowNumber);
             Assert.Equal("L-1", data.LaneId);
             Assert.Equal(3, data.StackIndex);
             Assert.Equal("As-Planned Activity", data.TypeText);
             Assert.Equal(new DateOnly(2023, 1, 1), data.Start);
             Assert.True(data.Visible);
 
-            GanttRowDto error = rows[1];
-            Assert.Equal("G-error", error.Id);
-            Assert.Equal("L-1", error.LaneId);
-            Assert.Null(error.StackIndex);
-            Assert.Null(error.TypeText);
-            Assert.Null(error.Start);
-            Assert.Null(error.Finish);
-            Assert.Null(error.Description);
-            Assert.Null(error.ParentId);
-            Assert.Null(error.StyleKey);
-            Assert.Null(error.LabelPositionText);
-            Assert.Null(error.FillColourText);
-            Assert.Null(error.StrokeColourText);
-            Assert.Null(error.Visible);
-            Assert.Null(error.SortOrder);
+            GanttRowDto errorDto = error;
+            Assert.Equal("L-1", errorDto.LaneId);
+            Assert.Null(errorDto.StackIndex);
+            Assert.Null(errorDto.TypeText);
+            Assert.Null(errorDto.Start);
+            Assert.Null(errorDto.Finish);
+            Assert.Null(errorDto.Description);
+            Assert.Null(errorDto.ParentId);
+            Assert.Null(errorDto.StyleKey);
+            Assert.Null(errorDto.LabelPositionText);
+            Assert.Null(errorDto.FillColourText);
+            Assert.Null(errorDto.StrokeColourText);
+            Assert.Null(errorDto.Visible);
+            Assert.Null(errorDto.SortOrder);
 
             _output.WriteLine(
                 $"reader returned {rows.Count} rows; " +
-                $"error row: Id={error.Id}, Start={error.Start}, " +
-                $"TypeText={error.TypeText}, Finish={error.Finish}, " +
-                $"Description={error.Description}; " +
+                $"error row: Id={errorDto.Id}, Start={errorDto.Start}, " +
+                $"TypeText={errorDto.TypeText}, Finish={errorDto.Finish}, " +
+                $"Description={errorDto.Description}; " +
                 $"data row: Id={data.Id}, Start={data.Start}");
         }
         finally
