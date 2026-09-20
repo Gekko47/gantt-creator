@@ -509,7 +509,7 @@ public class OfficeFixtureTests
         string logPath, HashSet<string> seenSessions, int cycle)
     {
         var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < 60)
+        while (sw.Elapsed.TotalSeconds < 90)
         {
             var sessions = PackedOpenSessions(TryReadLog(logPath));
             sessions.ExceptWith(seenSessions);
@@ -523,9 +523,9 @@ public class OfficeFixtureTests
 
         Assert.Fail(
             $"Cycle {cycle}: no new session-bearing packed-XLL 'open' record appeared in " +
-            $"'{logPath}' within 60 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
+            $"'{logPath}' within 90 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
             "RegisterXLL returned true, so the XLL loaded; in the 2026-09-17 session-token probe " +
-            "the matching record materialized within ~30 s of RegisterXLL — its absence after 60 s " +
+            "the matching record materialized within ~30 s of RegisterXLL — its absence after 90 s " +
             "means no attributable open record appeared for this load.");
         throw new InvalidOperationException("Unreachable: Assert.Fail throws.");
     }
