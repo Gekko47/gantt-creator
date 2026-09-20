@@ -9,6 +9,24 @@ namespace GanttCreator.Core;
 /// routine bad input: unreadable or out-of-range values yield
 /// <see langword="null"/>. Immutable (static only).
 /// </summary>
+/// <remarks>
+/// <para>
+/// Excel reports an error cell (<c>#N/A</c>, <c>#DIV/0!</c>, <c>#VALUE!</c>,
+/// <c>#SPILL!</c>, …) as an <see cref="int"/> in <c>Value2</c>; every other
+/// payload is <see cref="string"/>, <see cref="double"/>, <see cref="bool"/>,
+/// <see cref="DateTime"/>, or <see langword="null"/>. Any <see cref="int"/> is
+/// therefore treated as an unreadable error cell — mapped to
+/// <see langword="null"/> with the row preserved — and the code itself is not
+/// interpreted. A whitelist of codes is deliberately avoided: the error set
+/// grows between Office builds (the installed ExcelDna.Interop 16.0.0 PIA
+/// already declares <c>xlErrSpill</c>, <c>xlErrConnect</c>, <c>xlErrBlocked</c>,
+/// <c>xlErrField</c>, <c>xlErrUnknown</c> and <c>xlErrCalc</c> beyond the
+/// classic seven), and an unrecognised code must still read as unreadable,
+/// never as data. <c>ExcelCellConverterTests</c> pins the layout for all
+/// fourteen codes; the live probe in
+/// <c>GanttTableReaderIntegrationTests</c> proves the runtime payload types.
+/// </para>
+/// </remarks>
 public static class ExcelCellConverter
 {
     /// <summary>

@@ -327,4 +327,43 @@ public class GanttTableReaderTests
         Assert.Null(row.StackIndex);
         Assert.Null(row.Visible);
     }
+    [Fact]
+    public void Read_maps_each_excel_error_cell_to_null_and_keeps_row_order()
+    {
+        // Mixed matrix: the first row writes Excel error ints into three
+        // columns (Start #N/A, Finish #DIV/0!, StackIndex #VALUE! - codes from
+        // the installed PIA layout pinned in ExcelCellConverterTests) while its
+        // text fields stay readable; the second row is clean. Every error field
+        // must read null and the row must survive in body order with its
+        // RowNumber and readable fields intact.
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var sheet = new SheetGraph(table);
+        var matrix = BodyMatrix(
+            FullRow(id: "G-error", stackIndex: -2146826273, type: "As-Planned Activity", start: -2146826246, finish: -2146826281, visible: true),
+            FullRow(id: "G-clean", stackIndex: 2.0, type: "Milestone", start: 44932.0, visible: "TRUE"));
+
+        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);
+
+        var outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, outcome.Rows.Count);
+
+        GanttRowDto errorRow = outcome.Rows[0];
+        Assert.Equal(1, errorRow.RowNumber);
+        Assert.Equal("G-error", errorRow.Id);
+        Assert.Equal("As-Planned Activity", errorRow.TypeText);
+        Assert.Null(errorRow.Start);
+        Assert.Null(errorRow.Finish);
+        Assert.Null(errorRow.StackIndex);
+        Assert.True(errorRow.Visible);
+
+        GanttRowDto cleanRow = outcome.Rows[1];
+        Assert.Equal(2, cleanRow.RowNumber);
+        Assert.Equal("G-clean", cleanRow.Id);
+        Assert.Equal(new DateOnly(2023, 1, 6), cleanRow.Start);
+        Assert.Equal(2, cleanRow.StackIndex);
+    }
+
+
 }

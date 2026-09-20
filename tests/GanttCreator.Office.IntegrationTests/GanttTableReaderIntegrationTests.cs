@@ -209,6 +209,109 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// Live verification of the error-cell contract (work item R2.4, D9). A real
+    /// Excel error cell reaches <c>Value2</c> as an <see cref="int"/> whose value
+    /// follows the installed PIA's <c>XlCVError</c> layout, a numeric cell
+    /// reaches it as <see cref="double"/>, and the reader maps every error field
+    /// to <see langword="null"/> without dropping, reordering, or corrupting the
+    /// row. This is the runtime half of the rule
+    /// <c>ExcelCellConverterTests</c> pins by value.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Read_maps_live_excel_error_cells_to_null_and_preserves_the_row()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+
+            var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
+            WorkbookInitialiseOutcome outcome = initialiser.Initialise();
+            Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            Excel.Worksheet ganttSheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
+            ClearTableBody(table);
+
+            Excel.ListRow errorRow = table.ListRows.Add();
+            Excel.ListRow numericRow = table.ListRows.Add();
+            Excel.Range body = table.DataBodyRange;
+            Assert.NotNull(body);
+
+            int errorOffset = errorRow.Range.Row - body.Row + 1;
+            int numericOffset = numericRow.Range.Row - body.Row + 1;
+            Assert.True(
+                numericOffset > errorOffset,
+                $"Expected the numeric row below the error row; " +
+                $"errorOffset={errorOffset}, numericOffset={numericOffset}.");
+
+            // A genuine error cell must come from a formula: writing the error's
+            // int would store a number. #N/A, #DIV/0! and #VALUE! are the three
+            // the formula language forces deterministically.
+            SetBodyCellFormula(body, errorOffset, "Id", "G-error");
+            SetBodyCellFormula(body, errorOffset, "Description", "error cell row");
+            SetBodyCellFormula(body, errorOffset, "Start", "=NA()");
+            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0");
+            SetBodyCellFormula(body, errorOffset, "StackIndex", "=VALUE(\"x\")");
+
+            SetBodyCell(body, numericOffset, "Id", "G-number");
+            SetBodyCell(body, numericOffset, "Description", "numeric row");
+            SetBodyCell(body, numericOffset, "Start", 44932.0); // 2023-01-06
+
+            // Value2 exposes an error only once the workbook has calculated.
+            fixture.Excel.Calculate();
+
+            object? naPayload = GetBodyCellValue2(body, errorOffset, "Start");
+            object? divPayload = GetBodyCellValue2(body, errorOffset, "Finish");
+            object? valuePayload = GetBodyCellValue2(body, errorOffset, "StackIndex");
+            object? numberPayload = GetBodyCellValue2(body, numericOffset, "Start");
+            _output.WriteLine(
+                $"payloads: #N/A type={naPayload?.GetType().Name} value={naPayload}; " +
+                $"#DIV/0! type={divPayload?.GetType().Name} value={divPayload}; " +
+                $"#VALUE! type={valuePayload?.GetType().Name} value={valuePayload}; " +
+                $"numeric type={numberPayload?.GetType().Name} value={numberPayload}");
+
+            // Runtime half of the structural rule: error cells arrive as ints
+            // with the XlCVError-derived values, numeric cells as doubles.
+            Assert.IsType<int>(naPayload);
+            Assert.Equal(-2146826246, (int)naPayload!); // xlErrNA 2042
+            Assert.IsType<int>(divPayload);
+            Assert.Equal(-2146826281, (int)divPayload!); // xlErrDiv0 2007
+            Assert.IsType<int>(valuePayload);
+            Assert.Equal(-2146826273, (int)valuePayload!); // xlErrValue 2015
+            Assert.IsType<double>(numberPayload);
+
+            GanttTableReadOutcome read = new ExcelGanttTableReader(fixture.Excel).Read();
+
+            Assert.True(read.Succeeded, $"Read refused: {read.Refusal}");
+            Assert.Equal(body.Rows.Count, read.Rows.Count);
+
+            GanttRowDto errorDto = read.Rows[errorOffset - 1];
+            Assert.Equal(errorOffset, errorDto.RowNumber);
+            Assert.Equal("G-error", errorDto.Id);
+            Assert.Equal("error cell row", errorDto.Description);
+            Assert.Null(errorDto.Start);
+            Assert.Null(errorDto.Finish);
+            Assert.Null(errorDto.StackIndex);
+
+            GanttRowDto numericDto = read.Rows[numericOffset - 1];
+            Assert.Equal(numericOffset, numericDto.RowNumber);
+            Assert.Equal("G-number", numericDto.Id);
+            Assert.Equal(new DateOnly(2023, 1, 6), numericDto.Start);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+
+    /// <summary>
     /// Asserts the DTOs handed back for one read: one per body row, the two
     /// rows this test populated at their body offsets, and every other row
     /// wholly blank (nothing invented, nothing duplicated).
@@ -250,6 +353,157 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             AssertBlank(outcome.Rows[index]);
         }
     }
+    /// <summary>
+    /// Forces real Excel error cells via formulas and proves the reader
+    /// preserves each error row as a DTO with the error column carried as
+    /// <c>null</c> (the row is not dropped and the column index is preserved),
+    /// while a plain numeric cell is `double`, never `int`.
+    ///
+    /// This is the live counterpart of the Core value table
+    /// (<c>ExcelCellConverterTests</c>) and the contract mixed-matrix case
+    /// (<c>GanttTableReaderTests</c>). It verifies three things the contract
+    /// tests cannot: (1) that the actual <c>Value2</c> payload of a real
+    /// error cell <c>is int</c> and equals the value derived from the installed
+    /// PIA <c>XlCVError</c> table, so the Core "int ⇒ unreadable" rule is
+    /// grounded in runtime evidence rather than memory; (2) that a plain
+    /// numeric body cell surfaces as <c>double</c>, confirming the reader's
+    /// "int means error cell" premise; and (3) that forced recalculation
+    /// (<c>Application.CalculateFull</c>) refreshes the cached <c>Value2</c>
+    /// for formula cells so the integration test sees the error rather than a
+    /// stale or uncalculated payload.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Read_preserves_error_cells_as_null_and_reads_real_cells_as_double()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(
+                fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+
+            var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
+            WorkbookInitialiseOutcome outcome = initialiser.Initialise();
+            Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            Excel.Worksheet ganttSheet =
+                (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table =
+                ganttSheet.ListObjects[GanttTableSchema.TableName];
+            ClearTableBody(table);
+
+            Excel.ListRow dataRow = table.ListRows.Add();
+            Excel.ListRow errorRow = table.ListRows.Add();
+
+            Excel.Range body = table.DataBodyRange;
+            Assert.NotNull(body);
+
+            int dataOffset = dataRow.Range.Row - body.Row + 1;
+            int errorOffset = errorRow.Range.Row - body.Row + 1;
+            _output.WriteLine(
+                $"Excel build {fixture.Excel.Version} (PID {fixture.ProcessId}); " +
+                $"ListRows.Count={table.ListRows.Count}; body={body.Address}; " +
+                $"dataOffset={dataOffset}; errorOffset={errorOffset}");
+
+            SetBodyCell(body, dataOffset, "Id", "G-real");
+            SetBodyCell(body, dataOffset, "LaneId", "L-1");
+            SetBodyCell(body, dataOffset, "StackIndex", 3.0);
+            SetBodyCell(body, dataOffset, "Type", "As-Planned Activity");
+            SetBodyCell(body, dataOffset, "Start", 44927.0);
+            SetBodyCell(body, dataOffset, "Visible", true);
+
+            errorRow.Range.Cells[1, 1].Value2 = "G-error";
+            errorRow.Range.Cells[1, 2].Value2 = "L-1";
+            errorRow.Range.Cells[1, 3].Value2 = "=NA()";
+            errorRow.Range.Cells[1, 4].Value2 = "=VALUE(\"x\")";
+            errorRow.Range.Cells[1, 5].Value2 = "=NA()";
+            errorRow.Range.Cells[1, 6].Value2 = "=SQRT(-1)";
+            errorRow.Range.Cells[1, 9].Value2 = "=nonexistentName";
+
+            fixture.Excel.Application.CalculateFull();
+
+            Excel.Range startErrorCell = body.Cells[errorOffset, 5];
+            Excel.Range finishErrorCell = body.Cells[errorOffset, 6];
+            Excel.Range typeErrorCell = body.Cells[errorOffset, 4];
+            Excel.Range descErrorCell = body.Cells[errorOffset, 9];
+            Excel.Range numericCell = body.Cells[dataOffset, 5];
+
+            Assert.IsType<double>(numericCell.Value2);
+            Assert.Equal(44927.0, (double)numericCell.Value2);
+
+            int startErr = (int)startErrorCell.Value2;
+            int finishErr = (int)finishErrorCell.Value2;
+            int typeErr = (int)typeErrorCell.Value2;
+            int descErr = (int)descErrorCell.Value2;
+
+            _output.WriteLine(
+                $"live Value2 codes: Start={startErr} (0x{startErr:X8}), " +
+                $"Finish={finishErr} (0x{finishErr:X8}), " +
+                $"Type={typeErr} (0x{typeErr:X8}), " +
+                $"Description={descErr} (0x{descErr:X8}); " +
+                $"numeric Start={numericCell.Value2} ({numericCell.Value2.GetType().Name})");
+
+            Assert.Equal(-2146826246, startErr);
+            Assert.Equal(-2146826254, finishErr);
+            Assert.Equal(-2146826275, typeErr);
+            Assert.Equal(-2146826261, descErr);
+
+            var reader = new ExcelGanttTableReader(fixture.Excel);
+            GanttTableReadOutcome readOutcome = reader.Read();
+
+            Assert.True(readOutcome.Succeeded,
+                $"Reader refused: {readOutcome.Refusal}");
+            IReadOnlyList<GanttRowDto> rows = readOutcome.Rows;
+
+            Assert.Equal(2, rows.Count);
+
+            Assert.Equal(dataOffset, rows[0].RowNumber);
+            Assert.Equal(errorOffset, rows[1].RowNumber);
+
+            GanttRowDto data = rows[0];
+            Assert.Equal("G-real", data.Id);
+            Assert.Equal("L-1", data.LaneId);
+            Assert.Equal(3, data.StackIndex);
+            Assert.Equal("As-Planned Activity", data.TypeText);
+            Assert.Equal(new DateOnly(2023, 1, 1), data.Start);
+            Assert.True(data.Visible);
+
+            GanttRowDto error = rows[1];
+            Assert.Equal("G-error", error.Id);
+            Assert.Equal("L-1", error.LaneId);
+            Assert.Null(error.StackIndex);
+            Assert.Null(error.TypeText);
+            Assert.Null(error.Start);
+            Assert.Null(error.Finish);
+            Assert.Null(error.Description);
+            Assert.Null(error.ParentId);
+            Assert.Null(error.StyleKey);
+            Assert.Null(error.LabelPositionText);
+            Assert.Null(error.FillColourText);
+            Assert.Null(error.StrokeColourText);
+            Assert.Null(error.Visible);
+            Assert.Null(error.SortOrder);
+
+            _output.WriteLine(
+                $"reader returned {rows.Count} rows; " +
+                $"error row: Id={error.Id}, Start={error.Start}, " +
+                $"TypeText={error.TypeText}, Finish={error.Finish}, " +
+                $"Description={error.Description}; " +
+                $"data row: Id={data.Id}, Start={data.Start}");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// Asserts a DTO carries no value at all, so an untouched body row can
+
 
     /// <summary>
     /// Asserts a DTO carries no value at all, so an untouched body row can
@@ -282,6 +536,33 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     {
         Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
         cell.Value2 = value;
+    }
+
+    /// <summary>
+    /// Writes a formula into the body cell of the given 1-based body row whose
+    /// header is <paramref name="headerName"/>. Used to force real Excel error
+    /// cells — the formula language is the only way to produce a genuine CVErr
+    /// payload; writing the int directly would store a number.
+    /// </summary>
+    private static void SetBodyCellFormula(
+        Excel.Range body, int bodyRowNumber, string headerName, string formula)
+    {
+        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        cell.Formula = formula;
+    }
+
+    /// <summary>
+    /// Reads the <c>Value2</c> payload of the body cell in the given 1-based
+    /// body row whose header is <paramref name="headerName"/>. Used to inspect
+    /// the live CVErr int values before the reader converts them. Returns null
+    /// when the cell is empty or not a CVErr int (the caller handles that via
+    /// the existing null-cell rules).
+    /// </summary>
+    private static object? GetBodyCellValue2(
+        Excel.Range body, int bodyRowNumber, string headerName)
+    {
+        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        return cell.Value2;
     }
 
     /// <summary>

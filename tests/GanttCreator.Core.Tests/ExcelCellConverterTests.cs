@@ -77,6 +77,71 @@ public class ExcelCellConverterTests
         Assert.Null(date);
     }
 
+    // Error-cell codes. The PIA ships the symbolic names (Microsoft.Office.Interop.Excel
+    // .XlCVError) and Excel reports the cell through Value2 as 0x800A0000 | code, i.e.
+    // -2146826288 + (code - 2000) as a signed int32. The values below are read from the
+    // installed ExcelDna.Interop 16.0.0 PIA and are verified against real Excel error
+    // cells by Read_maps_live_excel_error_cells_to_null_and_preserves_the_row.
+    [Theory]
+    [InlineData(2000, -2146826288)] // xlErrNull        #NULL!
+    [InlineData(2007, -2146826281)] // xlErrDiv0        #DIV/0!
+    [InlineData(2015, -2146826273)] // xlErrValue       #VALUE!
+    [InlineData(2023, -2146826265)] // xlErrRef         #REF!
+    [InlineData(2029, -2146826259)] // xlErrName        #NAME?
+    [InlineData(2036, -2146826252)] // xlErrNum         #NUM!
+    [InlineData(2042, -2146826246)] // xlErrNA          #N/A
+    [InlineData(2043, -2146826245)] // xlErrGettingData #GETTING_DATA
+    [InlineData(2045, -2146826243)] // xlErrSpill       #SPILL!
+    [InlineData(2046, -2146826242)] // xlErrConnect     #CONNECT!
+    [InlineData(2047, -2146826241)] // xlErrBlocked     #BLOCKED!
+    [InlineData(2048, -2146826240)] // xlErrUnknown     #UNKNOWN!
+    [InlineData(2049, -2146826239)] // xlErrField       #FIELD!
+    [InlineData(2050, -2146826238)] // xlErrCalc        #CALC!
+    public void Every_pia_error_code_reads_as_an_unreadable_cell(int code, int value2)
+    {
+        Assert.Equal(value2, -2146826288 + (code - 2000));
+        AssertAllConvertersReject(value2);
+    }
+
+    [Fact]
+    public void An_unrecognised_int_payload_is_unreadable_rather_than_data()
+    {
+        // The rule is structural (int => error cell), not a code whitelist, so a
+        // future Office error code must never be read as a value.
+        AssertAllConvertersReject(0);
+        AssertAllConvertersReject(-1);
+        AssertAllConvertersReject(int.MaxValue);
+        AssertAllConvertersReject(int.MinValue);
+    }
+
+    [Fact]
+    public void Numeric_cells_are_doubles_so_the_int_rule_cannot_swallow_numbers()
+    {
+        // Value2 reports every numeric cell as double, never int; this pins the
+        // other half of the structural rule above.
+        Assert.Equal("5", ExcelCellConverter.ToText(5.0));
+        Assert.True(ExcelCellConverter.TryConvertDate(5.0, out _));
+        Assert.True(ExcelCellConverter.TryConvertStackIndex(5.0, out var stackIndex));
+        Assert.Equal(5, stackIndex);
+        Assert.True(ExcelCellConverter.TryConvertVisible(1.0, out var visible));
+        Assert.True(visible);
+    }
+
+    /// <summary>
+    /// Asserts every converter treats the payload as unreadable: no value is
+    /// produced and nothing throws.
+    /// </summary>
+    private static void AssertAllConvertersReject(int payload)
+    {
+        Assert.Null(ExcelCellConverter.ToText(payload));
+        Assert.False(ExcelCellConverter.TryConvertDate(payload, out var date));
+        Assert.Null(date);
+        Assert.False(ExcelCellConverter.TryConvertStackIndex(payload, out var stackIndex));
+        Assert.Null(stackIndex);
+        Assert.False(ExcelCellConverter.TryConvertVisible(payload, out var visible));
+        Assert.Null(visible);
+    }
+
     [Theory]
     [InlineData(0.0, 0)]
     [InlineData(1.0, 1)]
