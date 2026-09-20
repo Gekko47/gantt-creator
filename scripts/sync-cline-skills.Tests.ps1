@@ -135,7 +135,7 @@ Just a body, no SKILL-SUMMARY markers anywhere.
             $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
 
             $proc.ExitCode | Should -Not -Be 0
-            $combined | Should -Match 'no SKILL-SUMMARY block'
+            $combined | Should -Match '(?s)no\s+SKILL-SUMMARY\s+block'
         }
         It 'exits non-zero when the canonical doc has an empty SKILL-SUMMARY block' {
             # Positive failure-path test for the empty-summary validator:
