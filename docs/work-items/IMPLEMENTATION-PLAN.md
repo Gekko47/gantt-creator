@@ -100,10 +100,10 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R3.8 | `R3.8-critical-interval-overlay.md` | Authored (Tier A) |
 | R3.9 | `R3.9-multi-event-stack-lanes.md` | Authored (Tier A) |
 | R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
-| R3.11 | `R3.11-table-header-primitives.md` | Pending — Batch 2 |
-| R3.12 | `R3.12-scene-validator-benchmark.md` | Pending — Batch 2 |
-| R3.13 | `R3.13-mutation-testing.md` | Pending — Batch 2 |
-| R3.14 | `R3.14-equivalence-thin-slice.md` | Pending — Batch 2 |
+| R3.11 | `R3.11-table-header-primitives.md` | Authored (Tier A) |
+| R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
+| R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A) |
+| R3.14 | `R3.14-equivalence-thin-slice.md` | Authored (Tier A) |
 
 ### Phase 4 — live renderer (Tier B; upgrade to Tier A at Phase 3 exit)
 
