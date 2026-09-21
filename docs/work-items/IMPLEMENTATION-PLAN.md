@@ -161,19 +161,19 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R7.6 | `R7.6-send-to-powerpoint.md` | Authored (Tier B) |
 | R7.7 | `R7.7-transfer-soak.md` | Authored (Tier B) |
 
-### Phase 8 — raster fidelity and golden images (Tier B; upgrade at Phase 7 exit)
+### Phase 8 — 300-DPI PNG export (Tier B; upgrade at Phase 7 exit; R8.2a precedes R8.3)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R8.1 | `R8.1-width-parsing-residual.md` | Pending — Batch 7 |
-| R8.2 | `R8.2-export-dialog.md` | Pending — Batch 7 |
-| R8.2a | `R8.2a-font-pinning-adr.md` | Pending — Batch 7 |
-| R8.3 | `R8.3-cross-renderer-equivalence.md` | Pending — Batch 7 |
-| R8.4 | `R8.4-golden-images.md` | Pending — Batch 7 |
-| R8.5 | `R8.5-hires-render-verification.md` | Pending — Batch 7 |
-| R8.6 | `R8.6-slow-machine-verification.md` | Pending — Batch 7 |
-| R8.7 | `R8.7-zoom-dpi-evidence.md` | Pending — Batch 7 |
-| R8.8 | `R8.8-phase-exit.md` | Pending — Batch 7 |
+| R8.1 | `R8.1-width-parsing-residual.md` | Authored (Tier B; residual) |
+| R8.2 | `R8.2-skia-primitive-renderer.md` | Authored (Tier B) |
+| R8.2a | `R8.2a-font-pinning-adr.md` | Authored (Tier B; ADR) |
+| R8.3 | `R8.3-text-hatch-rendering.md` | Authored (Tier B) |
+| R8.4 | `R8.4-representative-render.md` | Authored (Tier B) |
+| R8.5 | `R8.5-png-metadata.md` | Authored (Tier B) |
+| R8.6 | `R8.6-atomic-write-validator.md` | Authored (Tier B) |
+| R8.7 | `R8.7-width-controls-preview.md` | Authored (Tier B) |
+| R8.8 | `R8.8-export-png-command.md` | Authored (Tier B) |
 
 ### Phase 9 — startup, performance, hardening, packaging (Tier B; upgrade at Phase 8 exit)
 
