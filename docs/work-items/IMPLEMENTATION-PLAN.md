@@ -82,9 +82,9 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | --- | --- | --- |
 | R2.7 | `R2.7-config-catalogues.md` | Authored (Tier A) |
 | R2.7a | `R2.7a-destructive-command-policy.md` | Authored (Tier A) |
-| R2.8 | `R2.8-add-row-commands.md` | Pending — Batch 1 |
-| R2.9 | `R2.9-type-dropdown-materialisation.md` | Pending — Batch 1 |
-| R2.10 | `R2.10-config-repair-migration.md` | Pending — Batch 1 |
+| R2.8 | `R2.8-add-row-commands.md` | Authored (Tier A) |
+| R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
+| R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A) |
 
 ### Phase 3 — Core scene engine (Tier A)
 
