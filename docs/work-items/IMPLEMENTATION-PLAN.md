@@ -149,17 +149,17 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R6.6 | `R6.6-clipboard-copy.md` | Authored (Tier B) |
 | R6.8 | `R6.8-copy-editable-command.md` | Authored (Tier B) |
 
-### Phase 7 — PNG export (Tier B; upgrade at Phase 6 exit)
+### Phase 7 — direct PowerPoint transfer (Tier B; upgrade at Phase 6 exit)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R7.1 | `R7.1-skia-package.md` | Pending — Batch 6 |
-| R7.2 | `R7.2-raster-scene-renderer.md` | Pending — Batch 6 |
-| R7.3 | `R7.3-png-encode.md` | Pending — Batch 6 |
-| R7.4 | `R7.4-metadata-dpi.md` | Pending — Batch 6 |
-| R7.5 | `R7.5-atomic-write.md` | Pending — Batch 6 |
-| R7.6 | `R7.6-width-verification.md` | Pending — Batch 6 |
-| R7.7 | `R7.7-phase-exit.md` | Pending — Batch 6 |
+| R7.1 | `R7.1-powerpoint-adapters.md` | Authored (Tier B) |
+| R7.2 | `R7.2-attach-slide-cases.md` | Authored (Tier B) |
+| R7.3 | `R7.3-paste-special-verify.md` | Authored (Tier B) |
+| R7.4 | `R7.4-slide-fit-position.md` | Authored (Tier B) |
+| R7.5 | `R7.5-transfer-failures.md` | Authored (Tier B) |
+| R7.6 | `R7.6-send-to-powerpoint.md` | Authored (Tier B) |
+| R7.7 | `R7.7-transfer-soak.md` | Authored (Tier B) |
 
 ### Phase 8 — raster fidelity and golden images (Tier B; upgrade at Phase 7 exit)
 
@@ -210,6 +210,7 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | Open — new test-only dependency; human approval required |
 | D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
+| D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |
 
 ## Known drift to resolve during authoring
 
