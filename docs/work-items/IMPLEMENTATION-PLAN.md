@@ -109,16 +109,16 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R4.1 | `R4.1-excel-adapter-interfaces.md` | Pending — Batch 3 |
-| R4.2 | `R4.2-application-state-scope.md` | Pending — Batch 3 |
-| R4.3 | `R4.3-shape-render-conversion.md` | Pending — Batch 3 |
-| R4.4 | `R4.4-text-alignment-conversion.md` | Pending — Batch 3 |
-| R4.5 | `R4.5-chart-renderer.md` | Pending — Batch 3 |
-| R4.6 | `R4.6-refresh-idempotence.md` | Pending — Batch 3 |
-| R4.7 | `R4.7-zoom-display-scale.md` | Pending — Batch 3 |
-| R4.8 | `R4.8-owned-shape-cleanup.md` | Pending — Batch 3 |
-| R4.9 | `R4.9-thousand-event-performance.md` | Pending — Batch 3 |
-| R4.10 | `R4.10-phase-exit.md` | Pending — Batch 3 |
+| R4.1 | `R4.1-excel-adapter-interfaces.md` | Authored (Tier B) |
+| R4.2 | `R4.2-application-state-scope.md` | Authored (Tier B) |
+| R4.3 | `R4.3-shape-render-conversion.md` | Authored (Tier B) |
+| R4.4 | `R4.4-text-alignment-conversion.md` | Authored (Tier B) |
+| R4.5 | `R4.5-polygons-z-order.md` | Authored (Tier B) |
+| R4.6 | `R4.6-style-token-mapping.md` | Authored (Tier B) |
+| R4.7 | `R4.7-refresh-idempotence.md` | Authored (Tier B) |
+| R4.8 | `R4.8-unowned-content-preservation.md` | Authored (Tier B) |
+| R4.9 | `R4.9-refresh-command.md` | Authored (Tier B) |
+| R4.10 | `R4.10-thousand-event-performance.md` | Authored (Tier B) |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
 
