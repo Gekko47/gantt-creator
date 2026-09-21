@@ -1,4 +1,4 @@
-# Implementation roadmap — revision 3
+# Implementation roadmap — revision 4
 
 
 <!-- SKILL-SUMMARY:START -->
@@ -27,20 +27,25 @@ Do not get wrong:
 - `memra_bootstrap` — recall prior decisions at session start before restating unknowns.
 <!-- SKILL-TOOLS:END -->
 
-> Created 2 September 2026 under a new filename. This revision contains 96 commit-sized work items and adds creation, named-range catalogues, migration, safe repair, and verification for the approved VeryHidden configuration worksheet. When installed, use the path `docs/03-ROADMAP.md`.
+> Created 2 September 2026 under a new filename. Revision 4 (21 September 2026) applies the lead-developer roadmap review: four rows are inserted (`R2.7a`, `R3.13`, `R3.14`, `R8.2a`), the Phase 6 compatibility spike is re-sequenced to run first, rows already satisfied by landed code are re-scoped to their residuals, phase-exit compatibility-matrix obligations are recorded, and the Required Office-gate policy is clarified. This revision contains 100 commit-sized work items. No existing ID was renumbered, reused, or removed, so work-item files, STATUS, and ADR references keep resolving. When installed, use the path `docs/03-ROADMAP.md`.
 
 ## How to use this roadmap
 
-- Complete items in order unless an approved ADR records why order changed.
+- Complete items in order unless an approved ADR records why order changed. Order is table order; row IDs are stable historical labels.
+- Row IDs are never renumbered or reused. A row inserted between two existing rows carries a letter suffix (for example `R2.7a`) so work-item files, STATUS, and ADR references keep resolving.
 - One row is normally one commit. Split a row if the diff becomes difficult to review; do not combine rows merely because they are related.
 - Create a work-item file before implementation. Record the exact acceptance tests and evidence.
 - Every work-item acceptance criterion that names a test count, a command, or an artifact must link to a specific test or script step. Drift between the doc and the code is a defect (see `docs/08-TEST-CHECKLIST.md` section I).
 - Every visual/layout/style/export work item names the affected sections of `docs/07-GANTT-ENTITY-GUIDE.md` and tests the defined cross-renderer contract.
+- A row flagged *landed early* in a phase note was already satisfied by an earlier row's commit; implement only the residual the note describes, and link the acceptance criteria to the existing tests.
+- A phase note's *picks up* clause lists deferrals recorded in earlier work items that the row owes; implementing the row without them is drift.
 - Every code commit must pass `scripts/verify-quick.ps1`; every phase exit and pull request must pass `scripts/verify.ps1`.
 - A phase exits only after its stated demonstration. A screenshot is supporting evidence, not a substitute for automated assertions.
 - Use synthetic construction data. Do not add customer schedule data to tests or examples.
 
 The **Automated gate** is run from the terminal and CI. A **Visual Studio / Office gate** marked `Required` must be demonstrated against desktop Excel or PowerPoint on Windows, normally launched or debugged through Visual Studio. `None` means the commit does not require Office; it does not waive the automated gate. A work item cannot be marked done when a required Office gate was not run.
+
+A Required Office gate is either a **runner gate** — an assertion expressed as an `OfficeIntegration` test wired into `scripts/verify-office.ps1` on the self-hosted runner, following the R2.2/R2.4/R2.6 pattern of Moq contract tests plus a tagged live test — or a **human gate**, which needs a Visual Studio/manual session because it exercises judgement. Every Required gate that can be written as an assertion is a runner gate. A phase exits only when every item-level Required Office gate in the phase is recorded as run in `docs/STATUS.md` — a PASS, or a defect with an owner; pending gates are listed there explicitly rather than left implicit. Office-gate evidence records the host Windows and Office build every time, so the R10.1 supported matrix is assembled from phase-exit records instead of being discovered at the end.
 
 ## Phase 0 — repository and quality foundation
 
@@ -95,9 +100,17 @@ Goal: create/read the visible single-sheet data model without rendering.
 | R2.5 | Map DTOs into Core events with all-errors validation | Table-driven valid, invalid, and all-errors tests | None |
 | R2.6 | Add row-level error reporting without mutating valid input | Fake-worksheet mutation and error-order tests | Required: invalid rows show actionable errors while original cells remain unchanged |
 | R2.7 | Persist versioned workbook settings and style/metric tables on `_GanttCreatorConfig` | Settings/style/metric round-trip plus invalid/missing schema tests | Required: save/reopen and confirm the preserved-original-sheet-or-Gantt-Data visible sheet rule, one VeryHidden helper, and retained settings |
+| R2.7a | Add the destructive-command policy ADR: confirmation, undo-or-no-undo semantics, and protected-sheet typed refusals | Policy contract tests for every mutating command: confirmation before delete, the approved undo semantics, and a typed refusal with no partial mutation when the target sheet or workbook is protected, extending R2.2's `TargetProtected` pattern | Required: exercise one confirmed destructive command and one protected-sheet refusal in Excel |
 | R2.8 | Add add-activity, add-milestone, and add-delineator row commands | Command/contract tests for defaults, IDs, and insertion position | Required: invoke all three Ribbon commands and inspect the resulting visible rows |
 | R2.9 | Materialise the central Type catalogue and apply its named-range dropdown | Catalogue uniqueness/hash, type/style/date/capability mapping, defined-name, and validation tests | Required: full-name dropdown appears on existing/new rows and resolves only through `_GanttCreatorConfig` |
 | R2.10 | Add VeryHidden configuration integrity, migration, and safe-repair workflow | Missing/corrupt/wrong-visibility/version/hash tests preserve valid custom styles or require confirmation | Required: damage/copy/remove configuration in synthetic workbooks and verify detection, repair, and the preserved-original-sheet-or-Gantt-Data visible sheet rule |
+
+> **Phase 2 notes (revision 4):**
+> - **R2.7** must enumerate the complete first-release settings/style/metric catalogue from `docs/07-GANTT-ENTITY-GUIDE.md` — chart title and `ShowTitle`, legend position, export inclusion, plot start/finish modes, time scale, every metric/colour/typography token with its valid range, and the built-in style presets — before the first write, and must settle the configuration-sheet table names (`tblGanttConfig` as written in `src/GanttCreator.Core/GanttSchemaVersion.cs` versus `tblGanttTypes`/`tblGanttStyles`/`tblGanttMetrics` as named in the architecture and entity guide). Phase 3 reads these tables; a settings catalogue discovered piecemeal in Phase 5 forces a mid-release configuration migration.
+> - **R2.7a** precedes R2.8 because R2.8's row commands are the first mutating commands after Initialise. The entity guide already references a "standard confirmation/undo policy" that no document defines, and COM-driven edits do not enter Excel's undo stack.
+> - **R2.8** adds row insertion with catalogue defaults only. The delineator dialog, edit, delete, and ignored-field warnings are **R5.7**; the two rows must not re-implement each other.
+> - **R2.9** picks up the R2.5 deferrals: the style-registry existence checks and the `Custom Activity` label/colour capability gates (R2.5 decision U4; R2.6 surfaced R2.5 issue text verbatim and deferred the same gates).
+> - **R2.10** picks up the R2.2 deferral (stored-versus-derived plot-anchor disagreement is an integrity finding) and the R2.3 deferral (identity repair policy).
 
 Exit demonstration: initialise a blank workbook, enter representative data, use the full-name Type dropdown, validate it, and save/reopen it. Prove there is exactly one visible Gantt worksheet and one valid `_GanttCreatorConfig` worksheet with `xlSheetVeryHidden` visibility and no schedule data.
 
@@ -119,6 +132,14 @@ Goal: generate the complete point-based drawing model with no Office process.
 | R3.10 | Add full-height delineator lines and labels | Plot-height, z-order, clipping, and duplicate-date tests | None |
 | R3.11 | Add visible table/header scene primitives for editable export | Bounds, cell, grid, and text-style snapshots | None |
 | R3.12 | Add scene invariant validator and representative 1,000-event benchmark | Zero invalid geometry and recorded benchmark under the Core budget | None |
+| R3.13 | Add the mutation-testing harness for changed Core code (the R0.5 deferral) | A pinned mutation tool runs the Core suite through a new `scripts/verify.ps1` step with a Pester guard; the first full-Core run is archived as the baseline; the 80% changed-code threshold of `docs/04-TEST-STRATEGY.md` applies from the next Core change onward | None |
+| R3.14 | Prove the scene model with a cross-renderer primitive-equivalence thin slice | A contract test walks one bar, one external label, and one milestone diamond through the built scene and asserts every field the entity-guide equivalence table requires of all four renderers; a missing field is a defect, not a renderer workaround. A gap that serialization alone cannot prove stops for a spike-plus-ADR under the scope-change protocol, with the spike kept outside production code | None |
+
+> **Phase 3 notes (revision 4):**
+> - **R3.1** is landed early: `PointD` already exists in Core with tests. The row completes the value-object set — size, rectangle, colour, tolerance — beside it; it must not re-implement or diverge from `PointD`.
+> - **R3.3** picks up the plot-range policy groundwork deferred from R2.5 (decision U11). **R5.1** later adds the explicit range modes and the user-facing warnings.
+> - **R3.11** header primitives follow the schema display names in `GanttTableSchema.Default`. `Duration` is not a schema v1 column; do not invent one. A derived `Duration` column requires a product-owner entity-guide amendment plus a schema ADR first.
+> - **R3.12**'s artifact is the deterministic scene snapshot and the benchmark only. No PNG renderer exists until Phase 8, so the golden-PNG limitation (L4 in `docs/KNOWN-LIMITATIONS.md`) cannot close at this phase; its replacement gate is the first approved representative render (R8.4). Re-date L4 when `docs/KNOWN-LIMITATIONS.md` is next revised.
 
 Exit demonstration: a command-line/test fixture produces a deterministic scene snapshot containing planned/actual overlaps, three events on one lane, critical segments, milestones, and two labelled delineators.
 
@@ -138,6 +159,12 @@ Goal: render and refresh an owned set of Excel shapes beside the source data.
 | R4.8 | Preserve unowned shapes/cells and active worksheet | Sentinel shape/cell and active-sheet adapter tests | Required: refresh with manual content present and prove it is unchanged |
 | R4.9 | Wire Validate and Refresh Ribbon commands with guarded errors | Command, validation, and error-boundary tests | Required: exercise Validate/Refresh on valid and invalid workbooks |
 | R4.10 | Profile 1,000-event refresh and remove only measured bottlenecks | Automated benchmark and no-regression threshold | Required: measure real Excel refresh on the reference machine and record Office build |
+
+> **Phase 4 notes (revision 4):**
+> - **R4.1** is landed early in part: `IExcelApplicationAdapter` (R1.5), `IWorkbookInitialiser` (R2.2), `IGanttTableReader` (R2.4), and `IGanttValidationReporter` (R2.6) already exist. The row adds the shape/workbook-write adapters the renderer needs, following that pattern; it must not duplicate the existing ports.
+> - **R4.9** is landed early in part: the Validate command, its Ribbon button, and its guarded errors shipped in R2.6. The row wires Refresh.
+> - **R4.10** also measures the 1,000-row Validate/report note-writing path and records both measurements; the performance budgets in `docs/02-ARCHITECTURE.md` are then revised to cover validation in that doc's next revision.
+> - From the first Phase 4 Office gate onward, every Office evidence row records the host Windows/Office build, feeding the R10.1 matrix.
 
 Exit demonstration: one click renders the reference data beside the table, a second click is idempotent, and manually added unrelated worksheet content remains unchanged.
 
@@ -159,6 +186,11 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.10 | Add single-expanded-entity selection and row fill/line/label overrides | Selection-context, capability, colour, label-position, inheritance, and persistence tests | Required: controls enable only for one expanded entity; edit rectangle/diamond fill and label position |
 | R5.11 | Enforce Refresh-only rendering for all worksheet and property edits | Command/event tests prove edits never invoke the renderer; blocking Refresh preserves the last scene | Required: edit Type/dates/colour/label, confirm shapes stay unchanged, then Refresh once to apply all |
 
+> **Phase 5 notes (revision 4):**
+> - **R5.7** extends R2.8's add-delineator row command; it does not replace it. R2.8 is row insertion with defaults; R5.7 is the dialog, edit, delete, and ignored-field warnings.
+> - **R5.8** extends R2.6's cell notes and counts-only summary; it covers scene-level warnings — clipping and the plot-range warnings deferred from R2.5 — and the deterministic warning list. It must not duplicate or re-surface R2.6's row-level notes.
+> - **R5.9** scope check: `docs/07-GANTT-ENTITY-GUIDE.md` defines a dropdown only for the `Type` column. The show/hide property-columns control and any in-cell validation for `StyleKey`/`LabelPosition` are undefined there; each needs a product-owner decision before this row can complete. Until then the Validate command is the only guard for those columns.
+
 Exit demonstration: a user can select Types from the worksheet dropdown, edit one expanded entity's colour and label position, and add a Start-only delineator. No edit changes the chart until Refresh is clicked; one Refresh then produces the representative delay visual with overlapping planned/actual/critical activity, multiple events on a lane, milestones, and labelled vertical lines.
 
 ## Phase 6 — editable composition and clipboard
@@ -167,14 +199,16 @@ Goal: copy the whole selected Gantt as one editable Office shape group.
 
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
+| R6.7 | Run the copy-after-delete/delayed-rendering compatibility spike — first in this phase, ahead of the composition rows it de-risks | Spike records deterministic format/shape assertions and proposed ADR outcome | Required: test copy-after-cleanup on every supported Excel/PowerPoint build |
 | R6.1 | Add export-selection and bounds model without creating shapes | Core tests for chart-only and table-plus-chart bounds | None |
 | R6.2 | Compose table/header cells as native rectangle/text shapes | Shape count, bounds, cell text, style, and z-order contract tests | Required: inspect a real staged table composition in Excel |
 | R6.3 | Compose complete chart scene at a staging origin | Contract proves group bounds equal scene bounds within tolerance | Required: stage beside real content and confirm no cell or view corruption |
 | R6.4 | Group all temporary shapes and preserve stable child order | Contract test inspects group membership and deterministic child order | Required: group and ungroup in Excel; all expected children remain editable |
 | R6.5 | Add staging lifecycle with cleanup after each injected failure point | Fault-injection tests leave zero temporary shapes | Required: force a mid-composition failure and inspect cleanup/state restoration |
 | R6.6 | Copy the group and verify expected clipboard drawing formats | Windows clipboard-format contract test | Required: copy in Excel and inspect actual Office drawing clipboard formats |
-| R6.7 | Run compatibility spike for copy-after-delete/delayed rendering | Spike records deterministic format/shape assertions and proposed ADR outcome | Required: test copy-after-cleanup on every supported Excel/PowerPoint build |
 | R6.8 | Wire one-click Copy Editable and concise success/failure feedback | Command, result, and failure-message tests | Required: one click, manual paste to Excel and PowerPoint, then edit/ungroup children |
+
+> **Phase 6 note (revision 4):** **R6.7** now runs **first** in this phase. A spike that can produce an ADR never follows the work it validates; its ID is unchanged so existing references keep resolving.
 
 Exit demonstration: a user clicks once, pastes into PowerPoint manually, ungroups or edits individual elements, and no staging shapes or extra worksheets remain.
 
@@ -202,12 +236,18 @@ Goal: export an exact-size PNG from the scene without depending on the Excel cli
 | --- | --- | --- | --- |
 | R8.1 | Add width/unit parsing, aspect calculation, rounding, and safety limits | Table-driven cm/in/px, ratio, rounding, and extreme-size tests | None |
 | R8.2 | Add SkiaSharp renderer for rectangles, lines, polygons, clipping, and z-order | Primitive pixel/golden tests and deterministic rerender comparison | None |
+| R8.2a | Decide pinned-font provisioning for raster text and golden images (ADR) | The ADR records installed-versus-bundled-versus-fallback with licence evidence; a font-presence probe reports the exact resolved font on the reference machine; the golden-image policy states what a missing pinned font does — a clear error or approved fallback, never a silent substitution | None |
 | R8.3 | Add deterministic text and hatch/pattern rendering | Pinned-font golden, clipping, and pattern tests | None |
 | R8.4 | Render the complete representative Gantt at several widths | Exact dimensions and visual-diff tests at approved widths | None |
 | R8.5 | Add PNG `pHYs` 300-DPI metadata writer | Chunk order, CRC, unit, and 11811-pixels-per-metre tests | None |
 | R8.6 | Add atomic file writer and post-write validator | Corrupt, locked, invalid, and partial-file failure tests | None |
 | R8.7 | Add width/unit Ribbon controls and calculated-height preview | Parser, Ribbon-state, validation, and preview-value tests | Required: enter cm/in/px widths and confirm displayed height/pixel preview |
 | R8.8 | Wire Export PNG and ensure exact scene crop | Command plus independent dimensions, density, crop, and aspect tests | Required: export from Excel and inspect user flow, selected path, and resulting image |
+
+> **Phase 8 notes (revision 4):**
+> - **R8.1** is landed early: `ExportSize` — added as the R0.5 sample and later hardened with `MaxTotalPixels` — implements width/unit parsing, aspect calculation, rounding, and safety limits, with `tests/GanttCreator.Raster.Tests/ExportSizeTests.cs`. The row verifies only the residual, the R8.7 preview value that will feed `ExportSize`, and links its acceptance criteria to the existing tests.
+> - **R8.2a** precedes R8.3 because deterministic text rendering and every later golden image depend on the font decision.
+> - Phase 8 consumes only the Phase 3 scene and the Raster project; it is independent of Phases 6 and 7. Executing it directly after Phase 4 requires one ADR recording the order change under the scope-change protocol — an order change, not a design change.
 
 Exit demonstration: enter a width in each supported unit, export, and independently verify the exact pixel dimensions, aspect ratio, 300-DPI metadata, and absence of surrounding whitespace.
 
@@ -226,6 +266,10 @@ Goal: make normal failures safe and the transition from the macro tool understan
 | R9.7 | Add crash-recovery test matrix for each export stage | Complete fault-injection suite passes with cleanup assertions | Required: repeat host-specific failure points and inspect workbook/Office state |
 | R9.8 | Complete offline operation audit | Static dependency/network-call audit and package inspection | Required: disconnected-machine Excel, clipboard, PowerPoint, and PNG acceptance run |
 
+> **Phase 9 notes (revision 4):**
+> - **R9.2** is landed early in part: `RollingLog`, `Redactor`, and `IRollingLog` shipped in R0.8 with privacy tests. The row adds structured diagnostics for real command flows and verifies redaction against them; it does not re-create the abstractions.
+> - **R9.3** consumes the R2.10 integrity/safe-repair workflow. It verifies end-to-end recovery from synthetic damage and must not re-specify the repair policy.
+
 Exit demonstration: forced failures at worksheet, clipboard, PowerPoint, and file stages leave the workbook usable, Office state restored, temporary artifacts removed, and diagnostics actionable.
 
 ## Phase 10 — packaging and release candidate
@@ -242,6 +286,8 @@ Goal: produce a signed, installable, reversible release supported by evidence.
 | R10.6 | Run exploratory user workflow from blank workbook to PowerPoint/PNG | Record issues and link every fix/defer decision | Required: human end-to-end authoring, editable transfer, and PNG review |
 | R10.7 | Freeze dependency versions, third-party notices, and SBOM | Locked restore, vulnerability scan, licence checks, and SBOM validation | Required: confirm packaged native/runtime files match the approved inventory |
 | R10.8 | Tag release candidate only after human go/no-go review | Verify commit, version, checksums, evidence links, and clean tree | Required: human accepts all gates and known limitations before tagging |
+
+> **Phase 10 note (revision 4):** **R10.3**'s code-signing certificate is an external procurement with lead time; start it no later than Phase 8 so R10.3 is not blocked on paperwork. **R10.1** finalises the supported Office/Windows matrix from the host-build records that phase-exit Office evidence has carried since Phase 4.
 
 Exit demonstration: a non-developer installs on a clean supported machine, builds a Gantt, transfers editable shapes to PowerPoint, exports a verified 300-DPI PNG, and uninstalls without residual configuration.
 
@@ -261,6 +307,15 @@ Test at phase exits and before release:
 | Gantt size | empty, 1 event, representative, 1,000 events |
 | Date boundaries | leap day, year boundary, one-day activity, same-date events |
 | Failure | invalid row, protected sheet, clipboard unavailable, PowerPoint absent/busy, unwritable PNG path |
+| Multiple open workbooks | commands act only on the active workbook; Ribbon state follows the active workbook (R1.5); no cross-workbook mutation |
+
+Phase-exit subsets: the phase-exit evidence records which matrix rows ran, and a phase cannot exit with an applicable, unexercised row.
+
+- Phase 2 exit: workbook structure, workbook date system, locale, Gantt size (empty, 1 event, representative), failure (invalid row, protected-sheet read paths).
+- Phase 4 exit: adds Excel zoom, Windows display scale, Gantt size 1,000, failure (protected-sheet write paths).
+- Phase 6/7 exit: adds slide size and failure (clipboard unavailable, PowerPoint absent/busy).
+- Phase 8 exit: adds failure (unwritable PNG path) at the approved widths.
+- Phase 9 and R10.5: the complete matrix on every reference machine with the signed evidence manifest.
 
 ## Scope-change protocol
 
