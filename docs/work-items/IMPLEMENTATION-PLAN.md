@@ -124,17 +124,17 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R5.1 | `R5.1-refresh-command.md` | Pending — Batch 4 |
-| R5.2 | `R5.2-selection-service.md` | Pending — Batch 4 |
-| R5.3 | `R5.3-fill-stroke-overrides.md` | Pending — Batch 4 |
-| R5.4 | `R5.4-label-position-editing.md` | Pending — Batch 4 |
-| R5.5 | `R5.5-style-key-picker.md` | Pending — Batch 4 |
-| R5.6 | `R5.6-visibility-controls.md` | Pending — Batch 4 |
-| R5.7 | `R5.7-delineator-add-edit-remove.md` | Pending — Batch 4 |
-| R5.8 | `R5.8-remove-rows-undo.md` | Pending — Batch 4 |
-| R5.9 | `R5.9-show-hide-property-columns.md` | Pending — Batch 4 |
-| R5.10 | `R5.10-style-preset-dialog.md` | Pending — Batch 4 |
-| R5.11 | `R5.11-phase-exit.md` | Pending — Batch 4 |
+| R5.1 | `R5.1-plot-range-modes.md` | Authored (Tier B) |
+| R5.2 | `R5.2-scale-layout-choices.md` | Authored (Tier B) |
+| R5.3 | `R5.3-parent-child-commands.md` | Authored (Tier B) |
+| R5.4 | `R5.4-move-expand-collapse.md` | Authored (Tier B) |
+| R5.5 | `R5.5-label-controls.md` | Authored (Tier B) |
+| R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
+| R5.7 | `R5.7-delineator-workflow.md` | Authored (Tier B) |
+| R5.8 | `R5.8-warnings-panel.md` | Authored (Tier B) |
+| R5.9 | `R5.9-ribbon-completion.md` | Authored (Tier B) |
+| R5.10 | `R5.10-selection-overrides.md` | Authored (Tier B) |
+| R5.11 | `R5.11-refresh-only-enforcement.md` | Authored (Tier B) |
 
 ### Phase 6 — PowerPoint editable export (Tier B; upgrade at Phase 5 exit; R6.7 spike first)
 
