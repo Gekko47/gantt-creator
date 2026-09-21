@@ -94,12 +94,12 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R3.2 | `R3.2-scene-primitives.md` | Authored (Tier A) |
 | R3.3 | `R3.3-time-scale.md` | Authored (Tier A) |
 | R3.4 | `R3.4-lane-stack-geometry.md` | Authored (Tier A) |
-| R3.5 | `R3.5-plot-frame-bands.md` | Pending — Batch 2 |
-| R3.6 | `R3.6-span-bar-label-layout.md` | Pending — Batch 2 |
-| R3.7 | `R3.7-milestone-marker-layout.md` | Pending — Batch 2 |
-| R3.8 | `R3.8-critical-interval-overlay.md` | Pending — Batch 2 |
-| R3.9 | `R3.9-multi-event-stack-lanes.md` | Pending — Batch 2 |
-| R3.10 | `R3.10-delineator-lines-labels.md` | Pending — Batch 2 |
+| R3.5 | `R3.5-plot-frame-bands.md` | Authored (Tier A) |
+| R3.6 | `R3.6-span-bar-label-layout.md` | Authored (Tier A) |
+| R3.7 | `R3.7-milestone-marker-layout.md` | Authored (Tier A) |
+| R3.8 | `R3.8-critical-interval-overlay.md` | Authored (Tier A) |
+| R3.9 | `R3.9-multi-event-stack-lanes.md` | Authored (Tier A) |
+| R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
 | R3.11 | `R3.11-table-header-primitives.md` | Pending — Batch 2 |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Pending — Batch 2 |
 | R3.13 | `R3.13-mutation-testing.md` | Pending — Batch 2 |
