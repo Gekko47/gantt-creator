@@ -61,7 +61,7 @@ internal static class ValidationReportComposer
         ArgumentNullException.ThrowIfNull(issues);
 
         var result = new List<NotePayload>(issues.Count);
-        int index = 0;
+        var index = 0;
         while (index < issues.Count)
         {
             GanttValidationIssue current = issues[index];
@@ -75,7 +75,7 @@ internal static class ValidationReportComposer
                 index++;
             }
 
-            string text = BuildNoteText(current.RowNumber, current.Field, lines);
+            var text = BuildNoteText(current.RowNumber, current.Field, lines);
             if (text.Length > MaxNoteLength)
             {
                 text = text[..MaxNoteLength];
@@ -139,7 +139,7 @@ internal static class ValidationReportComposer
         var sb = new StringBuilder();
         _ = sb.Append(NoteSentinelPrefix).Append(' ');
         _ = sb.AppendFormat(CultureInfo.InvariantCulture, "row {0}, column '{1}':", rowNumber, fieldName);
-        foreach (string line in messageLines)
+        foreach (var line in messageLines)
         {
             _ = sb.Append(' ').Append(line);
         }

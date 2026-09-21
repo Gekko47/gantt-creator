@@ -4,7 +4,7 @@ foreach ($m in $ct.GetMembers()) {
   if ($m.Name -in @('Text','Author','Visible','Delete','Shape')) {
     if ($m -is [System.Reflection.PropertyInfo]) {
       $p = [System.Reflection.PropertyInfo]$m;
-      Write-Host "P  $($m.Name) :: $($p.PropertyType.FullName) get_virtual=$($p.GetMethod?.IsVirtual) set_virtual=$($p.SetMethod -ne $null -and $p.SetMethod.IsVirtual)";
+      Write-Host "P  $($m.Name) :: $($p.PropertyType.FullName) get_virtual=$($p.GetMethod?.IsVirtual) set_virtual=$($null -ne $p.SetMethod -and $p.SetMethod.IsVirtual)";
     } elseif ($m -is [System.Reflection.MethodInfo]) {
       $mi = [System.Reflection.MethodInfo]$m;
       $ps = ($mi.GetParameters() | ForEach-Object { "$($_.Name):$($_.ParameterType.Name)" }) -join ';';

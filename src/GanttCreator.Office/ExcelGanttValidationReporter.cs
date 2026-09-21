@@ -86,7 +86,7 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
                 GanttValidationReportRefusalReason.TableMissing);
         }
 
-        if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
+        if (!TryBuildColumnMap(table, out var columnMap) || columnMap is null)
         {
             return GanttValidationReportOutcome.Refused(
                 GanttValidationReportRefusalReason.TableMissing);
@@ -110,10 +110,10 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
             return GanttValidationReportOutcome.Ok(0);
         }
 
-        int written = 0;
+        var written = 0;
         foreach (NotePayload note in notes)
         {
-            int columnIndex = ResolveColumnIndex(columnMap, note.FieldName);
+            var columnIndex = ResolveColumnIndex(columnMap, note.FieldName);
             if (columnIndex < 1)
             {
                 // Field not present in the table — anchor on the row's Id cell
@@ -163,23 +163,23 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
 
         // SpecialCells may return several disjoint ranges; every cell is visited
         // through the enumeration seam so the decision logic is contract-testable.
-        var toDelete = new List<Excel.Comment>();
-        var toRewrite = new List<(Excel.Comment Comment, string Text)>();
+        var toDelete = new List<Comment>();
+        var toRewrite = new List<(Comment Comment, string Text)>();
         foreach (Excel.Range cell in EnumerateCells(existing))
         {
-            Excel.Comment? comment = cell.Comment;
+            Comment? comment = cell.Comment;
             if (comment is null)
             {
                 continue;
             }
 
-            string current = ReadCommentText(comment);
+            var current = ReadCommentText(comment);
             if (current.IndexOf(ValidationReportComposer.NoteSentinelPrefix, StringComparison.Ordinal) < 0)
             {
                 continue; // A user note we did not write: never touched.
             }
 
-            string userText = ValidationReportComposer.StripOwnedSection(current);
+            var userText = ValidationReportComposer.StripOwnedSection(current);
             if (userText.Length == 0)
             {
                 toDelete.Add(comment);
@@ -190,12 +190,12 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
             }
         }
 
-        foreach (Excel.Comment comment in toDelete)
+        foreach (Comment comment in toDelete)
         {
             comment.Delete();
         }
 
-        foreach ((Excel.Comment comment, string userText) in toRewrite)
+        foreach ((Comment comment, var userText) in toRewrite)
         {
             // Start omitted replaces the whole note text (MS Learn, Comment.Text).
             _ = comment.Text(userText);
@@ -211,7 +211,7 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
     /// <param name="text">The report text (including the ownership marker).</param>
     private static void WriteNote(Excel.Range cell, string text)
     {
-        Excel.Comment? existing = cell.Comment;
+        Comment? existing = cell.Comment;
         if (existing is null)
         {
             // Only valid when the cell has no note: Range.AddComment fails on a
@@ -220,8 +220,8 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
             return;
         }
 
-        string userText = ValidationReportComposer.StripOwnedSection(ReadCommentText(existing));
-        string combined = userText.Length == 0
+        var userText = ValidationReportComposer.StripOwnedSection(ReadCommentText(existing));
+        var combined = userText.Length == 0
             ? text
             : userText + Environment.NewLine + text;
 
@@ -236,7 +236,7 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
     /// </summary>
     /// <param name="comment">The comment.</param>
     /// <returns>The current comment text.</returns>
-    private static string ReadCommentText(Excel.Comment comment)
+    private static string ReadCommentText(Comment comment)
     {
         object? result = comment.Text();
         return result is null ? string.Empty : result.ToString() ?? string.Empty;
@@ -250,7 +250,7 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
     private static int ResolveColumnIndex(int[] columnMap, string fieldName)
     {
         IReadOnlyList<Core.GanttTableColumn> schema = Core.GanttTableSchema.Default.Columns;
-        for (int i = 0; i < schema.Count; i++)
+        for (var i = 0; i < schema.Count; i++)
         {
             if (string.Equals(schema[i].Name, fieldName, StringComparison.Ordinal))
             {
@@ -270,15 +270,15 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
     private bool TryFindTable(Sheets sheets, out ListObject? table)
     {
         table = null;
-        int count = sheets.Count;
-        for (int index = 1; index <= count; index++)
+        var count = sheets.Count;
+        for (var index = 1; index <= count; index++)
         {
-            object sheet = GetSheetAt(sheets, index);
+            var sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
-                int tableCount = listObjects.Count;
-                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                var tableCount = listObjects.Count;
+                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject candidate = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
@@ -310,17 +310,17 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
         var map = new int[schema.Count];
         var byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        int columnCount = columns.Count;
-        for (int index = 1; index <= columnCount; index++)
+        var columnCount = columns.Count;
+        for (var index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetTableAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             Core.GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out int tableIndex))
+            if (!byName.TryGetValue(expected.Name, out var tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -381,7 +381,7 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
     /// <returns>The individual cells in the range, one at a time.</returns>
     internal virtual IEnumerable<Excel.Range> EnumerateCells(Excel.Range range)
     {
-        foreach (object item in range.Cells)
+        foreach (var item in range.Cells)
         {
             if (item is Excel.Range cell)
             {
