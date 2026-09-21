@@ -188,18 +188,18 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R9.7 | `R9.7-crash-recovery-matrix.md` | Authored (Tier B) |
 | R9.8 | `R9.8-offline-audit.md` | Authored (Tier B) |
 
-### Phase 10 — release (Tier B; upgrade at Phase 9 exit)
+### Phase 10 — packaging and release candidate (Tier B; upgrade at Phase 9 exit) — FINAL PHASE
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R10.1 | `R10.1-supported-office-matrix.md` | Pending — Batch 9 |
-| R10.2 | `R10.2-user-docs.md` | Pending — Batch 9 |
-| R10.3 | `R10.3-code-signing.md` | Pending — Batch 9 |
-| R10.4 | `R10.4-install-instructions.md` | Pending — Batch 9 |
-| R10.5 | `R10.5-full-suite-run.md` | Pending — Batch 9 |
-| R10.6 | `R10.6-exploratory-workflow.md` | Pending — Batch 9 |
-| R10.7 | `R10.7-sbom-freeze.md` | Pending — Batch 9 |
-| R10.8 | `R10.8-release-candidate.md` | Pending — Batch 9 |
+| R10.1 | `R10.1-supported-office-matrix.md` | Authored (Tier B) |
+| R10.2 | `R10.2-release-packaging.md` | Authored (Tier B) |
+| R10.3 | `R10.3-code-signing.md` | Authored (Tier B) |
+| R10.4 | `R10.4-install-instructions.md` | Authored (Tier B) |
+| R10.5 | `R10.5-full-suite-run.md` | Authored (Tier B) |
+| R10.6 | `R10.6-exploratory-workflow.md` | Authored (Tier B) |
+| R10.7 | `R10.7-sbom-freeze.md` | Authored (Tier B) |
+| R10.8 | `R10.8-release-candidate.md` | Authored (Tier B; final roadmap row) |
 
 ## Decision register (product decisions a guide may not make alone)
 
@@ -224,12 +224,10 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 ## Authoring verification
 
-Authored in a Linux sandbox without `pwsh` or `dotnet`. Per-batch checks
-actually run: link/reference existence for every authored file (bash
-equivalent of `scripts/check-md-links.ps1` rules), `git diff --check`, and
-this manifest's `Authored` rows verified to exist on disk.
-`scripts/verify-quick.ps1` and the Pester script gates were **Not run
-locally** — they run in CI on the pushed branch. Office gates are by
-definition Not run at authoring time.
+## Authoring verification
+
+**All 80 remaining roadmap rows now have an authored guide** — 19 Tier A (Phase 2 remainder + Phase 3) and 61 Tier B (Phases 4–10) — authored 2026-09-21 in nine batches on branch `cline/vd5dq9wz` from commit `8d53d39`. Tier-B guides are upgraded to Tier A at each phase exit as described above; their slugs were corrected against the actual roadmap rows during authoring (the first-draft index used pre-revision-4 guesses for Phases 4–10 and every such section was retitled/renamed).
+
+Authored in a Linux sandbox without `pwsh` or `dotnet`. Per-batch checks actually run: link/reference existence for every authored file (bash equivalent of `scripts/check-md-links.ps1` rules), the exact `scripts/check-status.ps1` token rule against STATUS.md, `git diff --check`, and this manifest's `Authored` rows verified to exist on disk (80/80). `scripts/verify-quick.ps1` and the Pester script gates were **Not run locally** — CI ran them on every push (green, except one caught-and-fixed check-status violation corrected in commit `6628a60`). Office gates are by definition Not run at authoring time.
 
 
