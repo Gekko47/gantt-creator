@@ -140,14 +140,14 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R6.7 | `R6.7-powerpoint-compatibility-spike.md` | Pending — Batch 5 (spike; runs before R6.1) |
-| R6.1 | `R6.1-staging-shape-composition.md` | Pending — Batch 5 |
-| R6.2 | `R6.2-all-shape-creation.md` | Pending — Batch 5 |
-| R6.3 | `R6.3-grouping.md` | Pending — Batch 5 |
-| R6.4 | `R6.4-clipboard-copy.md` | Pending — Batch 5 |
-| R6.5 | `R6.5-paste-verify.md` | Pending — Batch 5 |
-| R6.6 | `R6.6-failure-cleanup.md` | Pending — Batch 5 |
-| R6.8 | `R6.8-phase-exit.md` | Pending — Batch 5 |
+| R6.7 | `R6.7-powerpoint-compatibility-spike.md` | Authored (Tier B; spike — runs first) |
+| R6.1 | `R6.1-export-bounds-model.md` | Authored (Tier B) |
+| R6.2 | `R6.2-table-composition.md` | Authored (Tier B) |
+| R6.3 | `R6.3-chart-staging.md` | Authored (Tier B) |
+| R6.4 | `R6.4-grouping.md` | Authored (Tier B) |
+| R6.5 | `R6.5-staging-lifecycle.md` | Authored (Tier B) |
+| R6.6 | `R6.6-clipboard-copy.md` | Authored (Tier B) |
+| R6.8 | `R6.8-copy-editable-command.md` | Authored (Tier B) |
 
 ### Phase 7 — PNG export (Tier B; upgrade at Phase 6 exit)
 
