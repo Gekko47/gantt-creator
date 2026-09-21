@@ -175,18 +175,18 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R8.7 | `R8.7-width-controls-preview.md` | Authored (Tier B) |
 | R8.8 | `R8.8-export-png-command.md` | Authored (Tier B) |
 
-### Phase 9 — startup, performance, hardening, packaging (Tier B; upgrade at Phase 8 exit)
+### Phase 9 — resilience, accessibility, and migration support (Tier B; upgrade at Phase 8 exit)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R9.1 | `R9.1-startup-open-refresh.md` | Pending — Batch 8 |
-| R9.2 | `R9.2-performance-budgets.md` | Pending — Batch 8 |
-| R9.3 | `R9.3-failure-hardening.md` | Pending — Batch 8 |
-| R9.4 | `R9.4-workbook-save-open-hardening.md` | Pending — Batch 8 |
-| R9.5 | `R9.5-installer-packaging.md` | Pending — Batch 8 |
-| R9.6 | `R9.6-addin-performance-instrumentation.md` | Pending — Batch 8 |
-| R9.7 | `R9.7-matrix-perf-stability.md` | Pending — Batch 8 |
-| R9.8 | `R9.8-phase-exit.md` | Pending — Batch 8 |
+| R9.1 | `R9.1-cancellation-deadline.md` | Authored (Tier B) |
+| R9.2 | `R9.2-structured-diagnostics.md` | Authored (Tier B; residual) |
+| R9.3 | `R9.3-corrupted-settings-recovery.md` | Authored (Tier B) |
+| R9.4 | `R9.4-shape-ownership-repair.md` | Authored (Tier B) |
+| R9.5 | `R9.5-accessibility-labels.md` | Authored (Tier B) |
+| R9.6 | `R9.6-legacy-mapping-docs.md` | Authored (Tier B; docs-first) |
+| R9.7 | `R9.7-crash-recovery-matrix.md` | Authored (Tier B) |
+| R9.8 | `R9.8-offline-audit.md` | Authored (Tier B) |
 
 ### Phase 10 — release (Tier B; upgrade at Phase 9 exit)
 
