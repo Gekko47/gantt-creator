@@ -202,6 +202,22 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetEnabled_maps_the_validate_control_to_the_workbook_fact()
+    {
+        // R2.6: Validate reads the visible table, so it is gated on the same
+        // workbook fact as Initialise sheet — driven from the cached snapshot.
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var service = Arm(adapter);
+
+        Assert.True(service.GetEnabled(RibbonControlIds.ValidateSheet));
+
+        adapter.WorkbookFact = false;
+        service.Refresh();
+
+        Assert.False(service.GetEnabled(RibbonControlIds.ValidateSheet));
+    }
+
+    [Fact]
     public void GetEnabled_is_enabled_for_unknown_null_and_whitespace_control_ids()
     {
         var service = Arm(new FakeApplicationAdapter { WorkbookFact = false }, () => false);

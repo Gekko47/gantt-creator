@@ -34,6 +34,7 @@ internal sealed record RibbonState(bool HasActiveWorkbook, bool LogAvailable)
         RibbonControlIds.Diagnostics => HasActiveWorkbook,
         RibbonControlIds.OpenLog => LogAvailable,
         RibbonControlIds.InitialiseSheet => HasActiveWorkbook,
+        RibbonControlIds.ValidateSheet => HasActiveWorkbook,
         _ => true,
     };
 }

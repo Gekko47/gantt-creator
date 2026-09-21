@@ -307,12 +307,12 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Ribbon_declares_getEnabled_on_exactly_the_three_gated_controls()
+    public void Ribbon_declares_getEnabled_on_exactly_the_four_gated_controls()
     {
-        // R2.2 adds the Initialise sheet button to the Data group; it is gated
-        // on the same workbook fact as Diagnostics. The count is pinned here so
-        // a fourth gated control (or a dropped one) fails the contract instead
-        // of silently changing the user surface.
+        // R2.2 adds the Initialise sheet button to the Data group and R2.6 adds
+        // Validate beside it; both are gated on the same workbook fact as
+        // Diagnostics. The set is pinned here so adding or dropping a gated
+        // control fails the contract instead of silently changing the surface.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
@@ -323,7 +323,12 @@ public class GanttRibbonTests
             .ToList();
 
         Assert.Equal(
-            [RibbonControlIds.InitialiseSheet, RibbonControlIds.Diagnostics, RibbonControlIds.OpenLog],
+            [
+                RibbonControlIds.InitialiseSheet,
+                RibbonControlIds.ValidateSheet,
+                RibbonControlIds.Diagnostics,
+                RibbonControlIds.OpenLog,
+            ],
             gatedIds);
     }
 
@@ -342,6 +347,7 @@ public class GanttRibbonTests
             RibbonControlIds.Diagnostics,
             RibbonControlIds.OpenLog,
             RibbonControlIds.InitialiseSheet,
+            RibbonControlIds.ValidateSheet,
         })
         {
             var matches = doc.Descendants(ns + "button")
@@ -395,6 +401,7 @@ public class GanttRibbonTests
         Assert.Equal("Help", ImageMso(RibbonControlIds.Diagnostics));
         Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
         Assert.Equal("TableInsertExcel", ImageMso(RibbonControlIds.InitialiseSheet));
+        Assert.Equal("Spelling", ImageMso(RibbonControlIds.ValidateSheet));
     }
 
     [Fact]
@@ -515,6 +522,7 @@ public class GanttRibbonTests
         var diagnosticsRefreshes = 0;
         var openLogRefreshes = 0;
         var initialiseRefreshes = 0;
+        var validateRefreshes = 0;
         var boundary = new CommandBoundary(presenter: _ => { });
 
         GanttRibbon.OnDiagnosticsClick(null, boundary, () => { }, () => diagnosticsRefreshes++);
@@ -526,10 +534,88 @@ public class GanttRibbonTests
         GanttRibbon.OnInitialiseSheetClick(null, boundary, () => { }, () => initialiseRefreshes++);
         GanttRibbon.OnInitialiseSheetClick(
             null, boundary, () => throw new InvalidOperationException("simulated"), () => initialiseRefreshes++);
+        GanttRibbon.OnValidateSheetClick(null, boundary, () => { }, () => validateRefreshes++);
+        GanttRibbon.OnValidateSheetClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"), () => validateRefreshes++);
 
         Assert.Equal(2, diagnosticsRefreshes);
         Assert.Equal(2, openLogRefreshes);
         Assert.Equal(2, initialiseRefreshes);
+        Assert.Equal(2, validateRefreshes);
+    }
+
+    [Fact]
+    public void OnValidateSheetClick_routes_through_the_command_boundary()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+        var executed = false;
+
+        GanttRibbon.OnValidateSheetClick(null, boundary, () => executed = true);
+
+        Assert.True(executed, "The validate command must run.");
+        Assert.Empty(written);
+        Assert.Empty(shown);
+    }
+
+    [Fact]
+    public void OnValidateSheetClick_failure_produces_one_record_one_dialog_and_the_fallback_name()
+    {
+        var shown = new List<string>();
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+
+        GanttRibbon.OnValidateSheetClick(
+            null, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("CommandError", record, StringComparison.Ordinal);
+        Assert.Contains("command=OnValidateSheetClick", record, StringComparison.Ordinal);
+        Assert.Single(shown);
+    }
+
+    [Fact]
+    public void OnValidateSheetClick_uses_the_control_id_as_the_command_name_when_available()
+    {
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log.Object);
+
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.ValidateSheet);
+        GanttRibbon.OnValidateSheetClick(
+            control.Object, boundary, () => throw new InvalidOperationException("simulated"));
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=btnValidateSheet", record, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnValidateSheetClick_throws_for_a_null_boundary_or_command()
+    {
+        Assert.IsType<ArgumentNullException>(
+            Record.Exception(() => GanttRibbon.OnValidateSheetClick(null, null!, () => { })));
+        Assert.IsType<ArgumentNullException>(
+            Record.Exception(() => GanttRibbon.OnValidateSheetClick(
+                null, new CommandBoundary(presenter: _ => { }), null!)));
     }
 
     /// <summary>

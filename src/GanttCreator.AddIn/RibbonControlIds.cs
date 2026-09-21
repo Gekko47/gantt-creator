@@ -21,4 +21,7 @@ internal static class RibbonControlIds
 
     /// <summary>The Initialise sheet button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string InitialiseSheet = "btnInitialiseSheet";
+
+    /// <summary>The Validate button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string ValidateSheet = "btnValidateSheet";
 }
