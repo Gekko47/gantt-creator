@@ -254,6 +254,44 @@ public class ConfigCatalogueWriterTests
         Assert.Equal("Bottom", read.Settings["LegendPosition"]);
     }
 
+    [Fact]
+    public void Write_regenerates_from_one_based_body_matrices()
+    {
+        // The regeneration path re-reads existing table bodies (D4
+        // preservation, workbook-id stability) through the same Value2 shape
+        // the reader sees: one-based lower bounds, live-proven. The first
+        // Write seeds the tables; the second must read them back through
+        // ConvertMatrix without IndexOutOfRangeException and leave the
+        // catalogues readable.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var outcome = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void Write_preserves_live_coerced_boolean_settings_as_canonical_true_false_text()
+    {
+        // Live probe (2026-09-22): Value2 reads boolean setting cells back
+        // as Boolean. D4 preservation runs those cells through the writer's
+        // ToText, which must emit the canonical "TRUE"/"FALSE" (ADR-0007
+        // D3) — otherwise the regenerated table stores "True" and the reader
+        // refuses it, breaking read-after-regenerate.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "ShowTitle");
+        fake.Tables[3].Body[index][1] = true;
+
+        var outcome = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal("TRUE", CellText(fake.Tables[3].Body[index][1]));
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
     private static void AssertContractTable(
         ConfigSheetFake.TableFake table,
         string[] expectedHeaders,
@@ -268,6 +306,7 @@ public class ConfigCatalogueWriterTests
         {
             null => string.Empty,
             string text => text,
+            bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(cell, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
         };
 }

@@ -201,16 +201,21 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         var raw = GetBodyValues(body);
         if (raw is object[,] matrix)
         {
-            var rowCount = matrix.GetLength(0);
+            // Live Excel returns DataBodyRange.Value2 as a one-based
+            // SAFEARRAY (the R2.7 live gate crashed indexing [0, ...]; the
+            // R2.4 reader and both contract fakes pin the same shape), but
+            // iterate by lower bound so zero-based payloads convert too and
+            // the two shapes stay indistinguishable to callers.
+            var rowLower = matrix.GetLowerBound(0);
+            var rowUpper = matrix.GetUpperBound(0);
+            var columnLower = matrix.GetLowerBound(1);
             var payloadColumns = matrix.GetLength(1);
-            // DataBodyRange.Value2 returns only the data rows (no header row),
-            // so body rows start at row 0.
-            for (var row = 0; row < rowCount; row++)
+            for (var row = rowLower; row <= rowUpper; row++)
             {
                 var cells = new object?[payloadColumns];
                 for (var column = 0; column < payloadColumns; column++)
                 {
-                    cells[column] = matrix[row, column];
+                    cells[column] = matrix[row, columnLower + column];
                 }
 
                 rows.Add(cells);
@@ -619,6 +624,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             null => string.Empty,
             string text => text,
             double number when double.IsNaN(number) || double.IsInfinity(number) => string.Empty,
+            bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
         };
 

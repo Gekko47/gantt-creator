@@ -249,7 +249,9 @@ internal sealed class ConfigSheetFake
 
     /// <summary>
     /// Converts body rows into the <c>Value2</c> payload Excel returns for a
-    /// table's <c>DataBodyRange</c> (body rows only, no header row).
+    /// table's <c>DataBodyRange</c> (body rows only, no header row): a
+    /// rectangular SAFEARRAY with one-based lower bounds, matching live
+    /// Excel.
     /// </summary>
     /// <param name="body">The body rows.</param>
     /// <returns>The payload.</returns>
@@ -259,19 +261,20 @@ internal sealed class ConfigSheetFake
         var columns = body.Count > 0 ? body[0].Length : 0;
         if (rows == 0 || columns == 0)
         {
-#pragma warning disable CA1814 // COM interop requires a rectangular SAFEARRAY; jagged arrays do not marshal.
-            return new object[0, 0];
-#pragma warning restore CA1814
+            return Array.CreateInstance(typeof(object), [0, 0], [1, 1]);
         }
 
-#pragma warning disable CA1814 // COM interop requires a rectangular SAFEARRAY; jagged arrays do not marshal.
-        var matrix = new object[rows, columns];
-#pragma warning restore CA1814
-        for (var row = 0; row < rows; row++)
+        // Live DataBodyRange.Value2 is indexed from 1 (the R2.7 live office
+        // gate crashed on matrix[0, ...] in a 0-based-only reader loop, and
+        // ExcelGanttTableReader's contract fake already pins the same
+        // one-based shape). Serving one-based matrices here keeps that whole
+        // bug class a contract-test failure instead of a live-only failure.
+        var matrix = (object[,])Array.CreateInstance(typeof(object), [rows, columns], [1, 1]);
+        for (var row = 1; row <= rows; row++)
         {
-            for (var column = 0; column < columns; column++)
+            for (var column = 1; column <= columns; column++)
             {
-                matrix[row, column] = body[row][column] ?? string.Empty;
+                matrix[row, column] = body[row - 1][column - 1] ?? string.Empty;
             }
         }
 

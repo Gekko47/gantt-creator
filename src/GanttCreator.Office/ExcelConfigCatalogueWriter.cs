@@ -274,7 +274,9 @@ public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueW
 
     /// <summary>
     /// Converts a <c>Value2</c> payload into 0-based row arrays. Handles the
-    /// 2D SAFEARRAY (the normal case) and degrades other shapes to empty.
+    /// 2D SAFEARRAY (the normal case, one-based from live Excel — iterated
+    /// by lower bound like <see cref="ExcelConfigCatalogueReader"/>) and
+    /// degrades other shapes to empty.
     /// </summary>
     /// <param name="raw">The <c>Value2</c> payload.</param>
     /// <returns>The rows.</returns>
@@ -286,14 +288,16 @@ public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueW
             return rows;
         }
 
-        var rowCount = matrix.GetLength(0);
+        var rowLower = matrix.GetLowerBound(0);
+        var rowUpper = matrix.GetUpperBound(0);
+        var columnLower = matrix.GetLowerBound(1);
         var columnCount = matrix.GetLength(1);
-        for (var row = 0; row < rowCount; row++)
+        for (var row = rowLower; row <= rowUpper; row++)
         {
             var cells = new object?[columnCount];
             for (var column = 0; column < columnCount; column++)
             {
-                cells[column] = matrix[row, column];
+                cells[column] = matrix[row, columnLower + column];
             }
 
             rows.Add(cells);
@@ -508,6 +512,7 @@ public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueW
             null => string.Empty,
             string text => text,
             double number when double.IsNaN(number) || double.IsInfinity(number) => string.Empty,
+            bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
         };
 

@@ -240,4 +240,45 @@ public class ConfigCatalogueReaderTests
         Assert.True(outcome.Succeeded);
         Assert.Equal("Bottom", outcome.Settings["LegendPosition"]);
     }
+
+    [Fact]
+    public void Read_iterates_one_based_body_matrices_like_live_excel()
+    {
+        // Live DataBodyRange.Value2 is a one-based SAFEARRAY: the R2.7 live
+        // office gate crashed on matrix[0, ...] inside a 0-based-only read
+        // loop, while ExcelGanttTableReader's contract fake already pins
+        // Array.CreateInstance(..., [1, 1]) for the same shape. This pins
+        // both halves — the config fake serves one-based matrices and the
+        // reader converts them — so the bug stays a contract-test failure.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var served = Assert.IsType<object[,]>(fake.Tables[0].BodyMock.Object.Value2);
+        Assert.Equal(1, served.GetLowerBound(0));
+        Assert.Equal(1, served.GetLowerBound(1));
+
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void Read_accepts_live_coerced_boolean_setting_cells()
+    {
+        // Live probe (2026-09-22, Microsoft 365 x64): Value2 coerces the
+        // string "TRUE" on write and reads back a Boolean, whose invariant
+        // text is "True" — not "TRUE". The R2.7a office gate refused with
+        // ValueOutOfRange until ToText normalised bool cells to the ADR-0007
+        // D3 canonical "TRUE"/"FALSE" (the shape CellMatches already
+        // handles). Contract fakes keep raw strings, so only an injected
+        // Boolean fixture exercises the live cell shape.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var settings = GanttCatalogues.Settings.ToList();
+        fake.Tables[3].Body[settings.FindIndex(s => s.Key == "ShowTitle")][1] = true;
+        fake.Tables[3].Body[settings.FindIndex(s => s.Key == "ExportIncludeLegend")][1] = false;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("TRUE", outcome.Settings["ShowTitle"]);
+        Assert.Equal("FALSE", outcome.Settings["ExportIncludeLegend"]);
+    }
 }
