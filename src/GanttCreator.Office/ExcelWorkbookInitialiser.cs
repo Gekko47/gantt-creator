@@ -15,6 +15,12 @@ namespace GanttCreator.Office;
 /// host). A foreign object fails the interface cast and degrades to the
 /// no-active-workbook refusal with no mutation.
 /// </param>
+/// <param name="catalogueWriter">
+/// The catalogue writer that materialises the <c>_GanttCreatorConfig</c>
+/// tables (R2.7); a production default is created when <see langword="null"/>.
+/// Tests pass a stub to isolate the sheet contract from the catalogue
+/// contract.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -27,11 +33,15 @@ namespace GanttCreator.Office;
 /// enumerator.
 /// </para>
 /// <para>
-/// Mutation order (work item R2.2 decision D4): all read-only checks first,
-/// then rename, header row, table, configuration sheet, defined name. A
-/// failure before the rename mutates nothing; a failure after it leaves at
-/// most a renamed blank worksheet (cosmetic) and propagates to the command
-/// boundary, which translates it to one safe message.
+/// Mutation order (work item R2.2 decision D4, extended by R2.7): all
+/// read-only checks first, then rename, header row, table (with the R2.7
+/// appearance settings), configuration sheet, catalogue tables, defined
+/// name. A failure before the rename mutates nothing; a failure after it
+/// leaves at most a renamed blank worksheet (cosmetic) and propagates to
+/// the command boundary, which translates it to one safe message. The
+/// catalogues live only on the configuration sheet, so the configuration
+/// rollback removes them with the sheet; a typed catalogue refusal rolls
+/// back every mutation above and returns the matching initialise refusal.
 /// </para>
 /// <para>
 /// The three <c>internal virtual</c> accessors (<see cref="GetSheetAt"/>,
@@ -42,9 +52,12 @@ namespace GanttCreator.Office;
 /// the tagged live-Office integration test.
 /// </para>
 /// </remarks>
-public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialiser
+public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWriter? catalogueWriter = null) : IWorkbookInitialiser
 {
     private readonly Application? _application = application as Application;
+
+    private readonly IConfigCatalogueWriter _catalogueWriter =
+        catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
 
     /// <inheritdoc />
     public WorkbookInitialiseOutcome Initialise()
@@ -166,6 +179,21 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             createdTable = true;
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
+            ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();
+            if (!catalogueOutcome.Succeeded)
+            {
+                RollBackForCatalogueRefusal(
+                    target,
+                    sheets,
+                    catalogueOutcome,
+                    wroteHeader,
+                    createdTable,
+                    createdConfigSheet);
+                return catalogueOutcome.Refusal == ConfigWriteRefusalReason.NoActiveWorkbook
+                    ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
+                    : WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+            }
+
             WritePlotAnchorName(target);
             wrotePlotAnchor = true;
         }
@@ -197,6 +225,45 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
         return adopt
             ? WorkbookInitialiseOutcome.Adopted(label)
             : WorkbookInitialiseOutcome.CreatedNew(label);
+    }
+
+    /// <summary>
+    /// Rolls back every mutation above when the catalogue writer returns a
+    /// typed refusal: the configuration sheet (with any part-written
+    /// catalogues), the data table, and the header row. The plot anchor was
+    /// not written yet, so there is nothing to roll back there.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <param name="sheets">The workbook's sheets.</param>
+    /// <param name="catalogueOutcome">The refusing catalogue outcome (for parity, not surfaced).</param>
+    /// <param name="wroteHeader">Whether the header row was written.</param>
+    /// <param name="createdTable">Whether the data table was created.</param>
+    /// <param name="createdConfigSheet">Whether the configuration sheet was created.</param>
+    private void RollBackForCatalogueRefusal(
+        Worksheet target,
+        Sheets sheets,
+        ConfigWriteOutcome catalogueOutcome,
+        bool wroteHeader,
+        bool createdTable,
+        bool createdConfigSheet)
+    {
+        // The refusal is translated by the caller; the parameter keeps the
+        // refusal's evidence attached to the rollback for debugging.
+        _ = catalogueOutcome;
+        if (createdConfigSheet)
+        {
+            RollBackConfigurationSheet(sheets);
+        }
+
+        if (createdTable)
+        {
+            RollBackDataTable(target);
+        }
+
+        if (wroteHeader)
+        {
+            RollBackHeaderRow(target);
+        }
     }
 
     /// <summary>
@@ -409,7 +476,7 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             var count = sheets.Count;
             for (var index = 1; index <= count; index++)
             {
-                object sheet = sheets[index];
+                var sheet = GetSheetAt(sheets, index);
                 var sheetName = sheet switch
                 {
                     Worksheet worksheet => worksheet.Name,
@@ -544,6 +611,9 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
     /// <summary>
     /// Creates the <c>tblGanttData</c> table over the header row with
     /// header-name behaviour, then names it from the Core schema constant.
+    /// The R2.7 appearance settings (no autofilter dropdowns, no banded
+    /// rows) keep the data panel visually neutral for the live Gantt
+    /// (ADR-0007 D8).
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
     private void CreateDataTable(Worksheet target)
@@ -558,6 +628,9 @@ public class ExcelWorkbookInitialiser(object? application) : IWorkbookInitialise
             XlYesNoGuess.xlYes,
             Type.Missing);
         table.Name = GanttTableSchema.TableName;
+        table.ShowAutoFilter = false;
+        table.ShowTableStyleRowStripes = false;
+        table.ShowTableStyleColumnStripes = false;
     }
 
     /// <summary>

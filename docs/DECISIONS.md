@@ -11,6 +11,7 @@
 | ADR-0003 | Visual Studio 2026 is the verification IDE; Visual Studio 2022 baseline is relaxed | Accepted | 2026-09-04 | [`adr/0003-visual-studio-2026.md`](adr/0003-visual-studio-2026.md) |
 | ADR-0004 | Pin Excel-DNA packages to AddIn 1.9.0, Integration 1.9.0, Interop 16.0.0 | Accepted | 2026-09-04 | [`adr/0004-exceldna-package-versions.md`](adr/0004-exceldna-package-versions.md) |
 | ADR-0005 | Document the actual host as Windows 11 25H2 (build 26200) | Accepted | 2026-09-04 | [`adr/0005-windows-host-build-number.md`](adr/0005-windows-host-build-number.md) |
+| ADR-0007 | Configuration-sheet catalogues: Excel Tables, `tblGanttSettings`, and the catalogue hash | Accepted | 2026-09-21 | [`adr/0007-config-sheet-catalogues.md`](adr/0007-config-sheet-catalogues.md) |
 
 ## ADR template
 

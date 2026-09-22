@@ -37,6 +37,9 @@ public class WorkbookInitialiserTests
         public List<object> WrittenValues { get; } = new();
         public List<string> AssignedTableNames { get; } = new();
         public List<Excel.XlSheetVisibility> VisibleValues { get; } = new();
+        public List<bool> AutoFilterSettings { get; } = new();
+        public List<bool> RowStripeSettings { get; } = new();
+        public List<bool> ColumnStripeSettings { get; } = new();
 
         private string _name;
         private string? _existingTableName;
@@ -59,6 +62,15 @@ public class WorkbookInitialiserTests
 
             _ = Table.SetupSet(t => t.Name = It.IsAny<string>())
                 .Callback<string>(value => AssignedTableNames.Add(value));
+
+            // R2.7 appearance settings (ADR-0007 D8): plain bool properties,
+            // captured so the mutation set can assert them.
+            _ = Table.SetupSet(t => t.ShowAutoFilter = It.IsAny<bool>())
+                .Callback<bool>(value => AutoFilterSettings.Add(value));
+            _ = Table.SetupSet(t => t.ShowTableStyleRowStripes = It.IsAny<bool>())
+                .Callback<bool>(value => RowStripeSettings.Add(value));
+            _ = Table.SetupSet(t => t.ShowTableStyleColumnStripes = It.IsAny<bool>())
+                .Callback<bool>(value => ColumnStripeSettings.Add(value));
             _ = ListObjects.Setup(l => l.Add(
                     It.IsAny<Excel.XlListObjectSourceType>(),
                     It.IsAny<object>(),
@@ -139,8 +151,9 @@ public class WorkbookInitialiserTests
             object? application,
             Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
             Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
-            Func<Excel.Worksheet, Excel.Range> headerRangeAt)
-            : base(application)
+            Func<Excel.Worksheet, Excel.Range> headerRangeAt,
+            IConfigCatalogueWriter catalogueWriter)
+            : base(application, catalogueWriter)
         {
             SheetAt = sheetAt;
             TableAt = tableAt;
@@ -189,7 +202,16 @@ public class WorkbookInitialiserTests
             _ = Sheets.Setup(s => s.Add(
                     It.IsAny<object>(), It.IsAny<object>(),
                     It.IsAny<object>(), It.IsAny<object>()))
-                .Returns(() => SheetsAdded.Dequeue());
+                .Returns(() =>
+                {
+                    // Dequeuing and registering must be one atomic step:
+                    // Moq executes a Returns factory before any Callback
+                    // behaviour, so a separate Callback cannot Peek the
+                    // sheet this call is about to consume.
+                    var sheet = SheetsAdded.Dequeue();
+                    SheetsByIndex[SheetsByIndex.Count + 1] = sheet;
+                    return sheet;
+                });
         }
 
         /// <summary>
@@ -208,14 +230,21 @@ public class WorkbookInitialiserTests
         /// <summary>
         /// Registers a sheet created during the test (the created Gantt sheet
         /// or the configuration sheet) so the seam delegates resolve its
-        /// members, and queues it as the next <c>Sheets.Add</c> result. It is
-        /// not part of the initial <c>SheetsByIndex</c> mapping.
+        /// members, and queues it as the next <c>Sheets.Add</c> result. The
+        /// sheet is also added to <c>SheetsByIndex</c> so iteration-based
+        /// operations (e.g. <see cref="RollBackConfigurationSheet"/>) can
+        /// find it by index.
         /// </summary>
         /// <param name="sheet">The graph of the sheet Excel will return.</param>
         public void EnqueueCreated(WorksheetGraph sheet)
         {
             Graphs.Add(sheet);
             SheetsAdded.Enqueue(sheet.Worksheet.Object);
+            // The sheet is added to SheetsByIndex via the sheets.Add mock callback
+            // when the sheet is actually created (sheets.Add is called by
+            // Initialise). This keeps the timing accurate: the sheet is not visible
+            // to iteration-based operations (like NameTakenByOtherSheet or
+            // RollBackConfigurationSheet) until after it has been created.
         }
 
         /// <summary>
@@ -236,6 +265,8 @@ public class WorkbookInitialiserTests
 
             var graphs = Graphs;
             var byIndex = SheetsByIndex;
+            var catalogueWriter = new Mock<IConfigCatalogueWriter>();
+            _ = catalogueWriter.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
             return new TestableInitialiser(
                 Application.Object,
                 sheetAt: (_, index) => byIndex[index],
@@ -244,7 +275,40 @@ public class WorkbookInitialiserTests
                         .TableAt(index),
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
-                        .HeaderRange.Object);
+                        .HeaderRange.Object,
+                catalogueWriter: catalogueWriter.Object);
+        }
+
+        /// <summary>
+        /// Completes the graph with an explicit catalogue writer instead of
+        /// the default no-op stub: the given writer's outcome drives the
+        /// catalogue step of the mutation order.
+        /// </summary>
+        /// <param name="activeSheet">The active worksheet graph, or <see langword="null"/> for a non-worksheet active object.</param>
+        /// <param name="catalogueWriter">The writer the initialiser under test uses.</param>
+        /// <returns>The initialiser over the mocked application.</returns>
+        public TestableInitialiser BuildWithWriter(WorksheetGraph? activeSheet, IConfigCatalogueWriter catalogueWriter)
+        {
+            _ = Workbook.SetupGet(w => w.ActiveSheet)
+                .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
+            if (activeSheet is not null)
+            {
+                var nonEmpty = activeSheet.NonEmptyCellCount;
+                _ = Functions.Setup(f => f.CountA(It.IsAny<object>())).Returns(nonEmpty);
+            }
+
+            var graphs = Graphs;
+            var byIndex = SheetsByIndex;
+            return new TestableInitialiser(
+                Application.Object,
+                sheetAt: (_, index) => byIndex[index],
+                tableAt: (listObjects, index) =>
+                    graphs.Single(g => ReferenceEquals(g.ListObjects.Object, listObjects))
+                        .TableAt(index),
+                headerRangeAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .HeaderRange.Object,
+                catalogueWriter: catalogueWriter);
         }
     }
 
@@ -268,6 +332,61 @@ public class WorkbookInitialiserTests
         Assert.Equal(GanttWorkbookContract.GanttSheetLabel, active.Name);
         active.VerifyTableCreated(Times.Once());
         Assert.Equal(new[] { GanttTableSchema.TableName }, active.AssignedTableNames);
+    }
+
+    [Fact]
+    public void Initialise_sets_the_neutral_table_appearance_on_the_visible_table()
+    {
+        // ADR-0007 D8: no autofilter dropdowns and no banded rows; the three
+        // flags are the complete visible-table appearance contract.
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        Assert.Equal(FalseSettings, active.AutoFilterSettings);
+        Assert.Equal(FalseSettings, active.RowStripeSettings);
+        Assert.Equal(FalseSettings, active.ColumnStripeSettings);
+    }
+
+    [Fact]
+    public void Initialise_materialises_the_catalogues_after_the_config_sheet()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.True(outcome.Succeeded);
+        writer.Verify(w => w.Write(), Times.Once());
+        active.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+    }
+
+    [Fact]
+    public void Initialise_rolls_back_everything_when_the_catalogue_write_refuses()
+    {
+        // The writer's typed refusal (e.g. a protection race after the
+        // read-only checks) leaves no header, no table, and no config
+        // sheet: the refusal is transactional (AGENTS.md; R2.2 D4).
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.Equal(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+            outcome);
+        active.VerifyAnchorName(null, Times.Never());
     }
 
     [Fact]
@@ -485,6 +604,9 @@ public class WorkbookInitialiserTests
         graph.VerifySheetsAdded(Times.Never());
         active.VerifyTableCreated(Times.Never());
     }
+
+    /// <summary>A single <c>false</c> setting (the neutral-appearance contract).</summary>
+    private static readonly bool[] FalseSettings = [false];
 
     /// <summary>A blank active worksheet named <c>Sheet1</c> with no existing table.</summary>
     /// <returns>The configured worksheet graph.</returns>

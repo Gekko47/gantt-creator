@@ -105,9 +105,11 @@ The configuration worksheet contains versioned tables/ranges only:
 | `tblGanttTypes` | Materialised built-in Type values, display names, entity kind, date mode, default style and capability flags |
 | `tblGanttStyles` | Workbook style presets and user-approved custom named styles |
 | `tblGanttMetrics` | Rectangle heights, milestone size, gaps, line widths and other named geometry tokens |
-| `tblGanttLabelPositions` | Valid label choices grouped by entity capability |
+| `tblGanttSettings` | First-release chart/export/plot settings as key/value rows; written by approved dialogs only (ADR-0007 D3) |
 | `tblGanttConfig` | Schema version, catalogue hash, workbook ID and add-in version last used |
 | `GanttCreator.TypeOptions` | Workbook name referring to the active Type display-name range used by data validation |
+
+In the first release the valid label choices grouped by entity capability are carried by the `AllowedLabelPositions` column of `tblGanttTypes` (ADR-0007 D2); a separate `tblGanttLabelPositions` table is deferred until a consumer needs it.
 
 Built-in Type definitions remain code-owned and are materialised deterministically. The helper worksheet is the workbook-scoped validation/configuration representation, not a second competing type catalogue.
 
