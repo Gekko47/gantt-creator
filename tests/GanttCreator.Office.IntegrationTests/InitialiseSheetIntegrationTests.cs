@@ -219,4 +219,106 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// The R2.7a live acceptance gate (ADR-0008 D5): a protected active
+    /// worksheet refuses with <c>TargetProtected</c> and zero partial
+    /// mutation. The guard itself (<see cref="ExcelWorksheetProtectionGuard"/>)
+    /// is read-only, so this test drives it directly against live Excel and
+    /// proves the outcome the mutating adapters must honour first.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task ProtectionGuard_refuses_and_mutates_nothing_when_the_active_sheet_is_protected()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var sheetCountBefore = workbook.Sheets.Count;
+            var sheetNameBefore = active.Name;
+
+            // Live protection: the no-password Protect() overload leaves
+            // ProtectContents true for the Query() below; the finally
+            // unprotects so teardown closes a clean workbook.
+            active.Protect();
+            try
+            {
+                Assert.True(active.ProtectContents);
+
+                ProtectionGuardOutcome outcome =
+                    new ExcelWorksheetProtectionGuard(fixture.Excel).Query();
+                _output.WriteLine($"Guard outcome={outcome}");
+                Assert.Equal(ProtectionGuardOutcome.SheetProtected, outcome);
+            }
+            finally
+            {
+                active.Unprotect();
+            }
+
+            // Zero-mutation assertion: the guard queried only, so the workbook
+            // still has exactly the sheets it started with, unchanged.
+            Assert.Equal(sheetCountBefore, workbook.Sheets.Count);
+            Assert.Equal(sheetNameBefore, active.Name);
+            Assert.False(active.ProtectContents);
+            _output.WriteLine("Guard refused on the protected sheet and mutated nothing.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The R2.7a live refusal path end to end (ADR-0008 D4/D5): Initialise on
+    /// a protected active worksheet returns the typed
+    /// <c>TargetProtected</c> refusal and leaves the workbook unmutated — no
+    /// table, no config sheet, no rename.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Initialise_refuses_and_mutates_nothing_when_the_active_sheet_is_protected()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var sheetNameBefore = active.Name;
+
+            active.Protect();
+            WorkbookInitialiseOutcome outcome;
+            try
+            {
+                Assert.True(active.ProtectContents);
+                outcome = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+                _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
+            }
+            finally
+            {
+                active.Unprotect();
+            }
+
+            Assert.Equal(
+                WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+                outcome);
+            Assert.Equal(sheetNameBefore, active.Name);
+            Assert.Equal(0, active.ListObjects.Count);
+            Assert.Equal(1, workbook.Sheets.Count);
+            _output.WriteLine("Initialise refused on the protected sheet and mutated nothing.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
 }

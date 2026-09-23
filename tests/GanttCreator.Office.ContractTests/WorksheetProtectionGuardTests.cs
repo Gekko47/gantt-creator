@@ -22,7 +22,7 @@ public class WorksheetProtectionGuardTests
     public void Query_returns_NoActiveWorkbook_when_the_application_is_absent()
     {
         // A guard constructed with a null application is the absent-host case.
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(null);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(null);
 
         Assert.Equal(
             ProtectionGuardOutcome.NoActiveWorkbook,
@@ -35,7 +35,7 @@ public class WorksheetProtectionGuardTests
         var application = new Mock<Excel.Application>();
         application.SetupGet(a => a.ActiveWorkbook).Returns((Excel.Workbook)null!);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.NoActiveWorkbook,
@@ -51,7 +51,7 @@ public class WorksheetProtectionGuardTests
         // The active sheet resolves to null (foreign/empty host state).
         workbook.SetupGet(w => w.ActiveSheet).Returns((Excel.Worksheet)null!);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.NoActiveWorkbook,
@@ -69,7 +69,7 @@ public class WorksheetProtectionGuardTests
         // Sheet contents are protected: the guard must refuse.
         sheet.SetupGet(s => s.ProtectContents).Returns(true);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.SheetProtected,
@@ -91,7 +91,7 @@ public class WorksheetProtectionGuardTests
         workbook.SetupGet(w => w.ProtectStructure).Returns(false);
         sheet.SetupGet(s => s.ProtectContents).Returns(true);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.SheetProtected,
@@ -110,7 +110,7 @@ public class WorksheetProtectionGuardTests
         // even before inspecting the sheet.
         workbook.SetupGet(w => w.ProtectStructure).Returns(true);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.WorkbookStructureProtected,
@@ -130,7 +130,7 @@ public class WorksheetProtectionGuardTests
         workbook.SetupGet(w => w.ProtectStructure).Returns(true);
         sheet.SetupGet(s => s.ProtectContents).Returns(false);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.WorkbookStructureProtected,
@@ -148,7 +148,7 @@ public class WorksheetProtectionGuardTests
         workbook.SetupGet(w => w.ProtectStructure).Returns(false);
         sheet.SetupGet(s => s.ProtectContents).Returns(false);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.NotProtected,
@@ -170,7 +170,7 @@ public class WorksheetProtectionGuardTests
 
         // Strict mocks: any unexpected call throws. The guard is read-only, so
         // no setter should be invoked.
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
         _ = guard.Query();
 
         // No setup setter was configured; if the guard mutated anything the
@@ -192,7 +192,7 @@ public class WorksheetProtectionGuardTests
         workbook.SetupGet(w => w.ProtectStructure).Returns(false);
         sheet.SetupGet(s => s.ProtectContents).Returns(true);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
         _ = guard.Query();
     }
 
@@ -206,7 +206,7 @@ public class WorksheetProtectionGuardTests
         workbook.SetupGet(w => w.ActiveSheet).Returns(sheet.Object);
         workbook.SetupGet(w => w.ProtectStructure).Returns(true);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
         _ = guard.Query();
     }
 
@@ -229,7 +229,7 @@ public class WorksheetProtectionGuardTests
         // report NoActiveWorkbook, not reach the sheet-protection check.
         workbook.SetupGet(w => w.ActiveSheet).Returns((Excel.Worksheet)null!);
 
-        IWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
 
         Assert.Equal(
             ProtectionGuardOutcome.NoActiveWorkbook,

@@ -87,14 +87,11 @@ public class ExcelWorksheetProtectionGuard(object? application) : IWorksheetProt
 
         // Read-only check 3 — sheet content protection. ProtectContents is a
         // read-only Boolean on _Worksheet; the guard queries it, never writes
-        // it.
-#pragma warning disable IDE0046 // 'if' statement can be simplified
-        if (IsWorksheetProtected(sheet))
-        {
-            return ProtectionGuardOutcome.SheetProtected;
-        }
-
-        return ProtectionGuardOutcome.NotProtected;
+        // it. Ternary form: IDE0046 ('if' can be simplified) is enforced as an
+        // error repo-wide, so the branch is expressed without a suppression.
+        return IsWorksheetProtected(sheet)
+            ? ProtectionGuardOutcome.SheetProtected
+            : ProtectionGuardOutcome.NotProtected;
     }
 
     /// <summary>
