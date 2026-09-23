@@ -37,6 +37,26 @@ $report = Join-Path $artifacts 'verify-office.txt'
 
 function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value $s }
 
+# Per-run trx retention: dotnet test overwrites office.trx on every run, so a
+# failing run's results were destroyed by the next invocation and failures
+# could not be attributed after the fact. Archive a timestamped copy into the
+# ignored evidence directory on every verdict path (timeout, fail, pass).
+function Save-Trx {
+    $trxSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
+    if (-not (Test-Path -LiteralPath $trxSource)) {
+        Log "WARN: trx not found at $trxSource; no per-run archive."
+        return
+    }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmssfff'
+    $archivePath = Join-Path $evidence "office-$stamp.trx"
+    try {
+        Copy-Item -LiteralPath $trxSource -Destination $archivePath -Force
+        Log "Archived trx: $archivePath"
+    } catch {
+        Log "WARN: trx archive failed: $($_.Exception.Message)"
+    }
+}
+
 function Test-HarnessProcessTreeActive {
     param(
         [Parameter(Mandatory)][int]$RootProcessId,
@@ -261,9 +281,11 @@ if (-not $testProc.HasExited)
     # recorded PID, with parentage as a fallback; user-owned Office is never
     # killed.
     Remove-HarnessOwnedOfficeProcesses $officeBeforeSnapshot $ownedTreePids $fixtureOwnedPids
+    Save-Trx
     Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
     exit 124
 }
+Save-Trx
 if ($testProc.ExitCode -ne 0) {
     Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."
     exit $testProc.ExitCode

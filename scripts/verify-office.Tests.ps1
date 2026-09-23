@@ -223,5 +223,37 @@ exit /b 0
             $proc.ExitCode | Should -Be 0
             $output | Should -Match 'verify-office: PASS'
         }
+
+        It 'archives the per-run trx before the verdict (positive control)' {
+            # dotnet test overwrites office.trx every run; without the archive
+            # a failing run's results are destroyed by the next invocation.
+            $trxSrc = Join-Path $script:harnessRoot 'tests\GanttCreator.Office.IntegrationTests\TestResults\office.trx'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $trxSrc) -Force | Out-Null
+            Set-Content -LiteralPath $trxSrc -Value '<TestRun>harness-fake</TestRun>'
+            $outFile = Join-Path $script:harnessRoot 'out.txt'
+            $errFile = Join-Path $script:harnessRoot 'err.txt'
+            $sep = [System.IO.Path]::PathSeparator
+            $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                '-NoProfile', '-File', $script:harnessScript,
+                '-DeadlineSeconds', '60'
+            ) -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                -Environment @{ VERIFY_OFFICE_STUB_BEHAVIOR = 'pass'; PATH = ($script:stubDir + $sep + $env:PATH) }
+            $output = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
+            $proc.ExitCode | Should -Be 0
+            $output | Should -Match 'Archived trx'
+            $archives = @(Get-ChildItem -LiteralPath (Join-Path $script:harnessScripts '_artifacts\office-evidence') -Filter 'office-*.trx' -ErrorAction SilentlyContinue)
+            $archives.Count | Should -Be 1
+            Get-Content -LiteralPath $archives[0].FullName -Raw | Should -BeLike '*harness-fake*'
+        }
+
+        It 'invokes the trx archive on both verdict paths (timeout and normal)' {
+            # One function definition + one call on the timeout path (before
+            # exit 124) + one call covering the fail/pass verdict. The count
+            # fires if a call site is deleted.
+            $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+            $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+            ([regex]::Matches($codeOnly, 'Save-Trx')).Count | Should -Be 3
+        }
     }
 }
