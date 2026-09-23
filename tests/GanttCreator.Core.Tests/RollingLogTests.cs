@@ -621,4 +621,35 @@ public sealed class RollingLogTests : IDisposable
             CultureInfo.CurrentCulture = previous;
         }
     }
+
+    [Fact]
+    public void Second_concurrent_writer_to_the_same_log_does_not_latch_failure()
+    {
+        // Regression (bidirectional Windows share checks; R2.7a Five_cycles
+        // XLL failure): the first RollingLog's writer handle must permit a
+        // second writer. With FileShare.Read the second instance's
+        // constructor append-open throws, RotateIfNeeded latches
+        // MarkFailed, and every subsequent write — including the session
+        // 'open' record the Five_cycles test polls for — is discarded.
+        using (var first = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 4096, maxFileCount: 3))
+        {
+            first.Write("first writer record");
+            Assert.False(first.IsFailed);
+
+            using (var second = new RollingLog(_testLogDir, _baseName, maxFileSizeBytes: 4096, maxFileCount: 3))
+            {
+                Assert.False(second.IsFailed,
+                    "A second RollingLog opened against a live log must not latch failure: " +
+                    "the first writer's share mode must permit write sharing.");
+                second.Write("second writer record");
+                Assert.False(second.IsFailed);
+            }
+        }
+
+        var files = Directory.GetFiles(_testLogDir, $"{_baseName}*.log");
+        _ = Assert.Single(files);
+        var content = File.ReadAllText(files[0]);
+        Assert.Contains("first writer record", content, StringComparison.Ordinal);
+        Assert.Contains("second writer record", content, StringComparison.Ordinal);
+    }
 }

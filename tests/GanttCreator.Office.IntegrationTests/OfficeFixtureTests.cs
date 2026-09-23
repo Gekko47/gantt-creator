@@ -487,7 +487,16 @@ public class OfficeFixtureTests
     {
         try
         {
-            return File.ReadAllText(path);
+            // FileShare.ReadWrite: Windows share checks are bidirectional, so a
+            // reader requesting FileShare.Read (what File.ReadAllText uses) is
+            // rejected while any Excel instance still holds RollingLog's writer
+            // handle (FileAccess.Write). The swallowed IOException would
+            // silently zero the pre-existing session baseline (Five_cycles XLL
+            // failure, R2.7a risk closure).
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -579,5 +588,49 @@ public class OfficeFixtureTests
         Assert.Equal(0, CountPackedOpenRecords(string.Empty));
         Assert.Empty(PackedOpenSessions(null));
         Assert.Empty(PackedOpenSessions(string.Empty));
+    }
+
+    [Fact]
+    public void TryReadLog_reads_the_log_while_a_writer_holds_it_open()
+    {
+        // Regression (bidirectional Windows share checks; R2.7a Five_cycles
+        // XLL failure): the poll reads the add-in log while an Excel
+        // instance still holds RollingLog's writer handle (FileAccess.Write).
+        // A reader opening with FileShare.Read is rejected by that write
+        // access, the exception is swallowed to string.Empty, and the
+        // pre-existing session baseline silently becomes 0.
+        var path = Path.Combine(
+            Path.GetTempPath(), $"gantt-creator-logread-{Guid.NewGuid():N}.log");
+        try
+        {
+            const string record =
+                "2026-09-23T00:00:00.000Z open addin-version=0.0.0 " +
+                "xll=GanttCreator.AddIn-AddIn64-packed.xll session=s-read-probe\r\n";
+            File.WriteAllText(path, record);
+
+            using (var writer = new FileStream(
+                path, FileMode.Append, FileAccess.Write, FileShare.Read))
+            {
+                _ = writer;
+                var content = TryReadLog(path);
+                Assert.Contains(
+                    "session=s-read-probe", content, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort cleanup.
+            }
+        }
     }
 }

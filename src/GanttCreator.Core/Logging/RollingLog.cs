@@ -281,7 +281,16 @@ public sealed class RollingLog : IRollingLog
                     // The active file exists on disk but is empty. An oversized single
                     // message must be written directly here — rotating an empty file
                     // would just produce an empty .1.log with no benefit.
-                    var emptyStream = new FileStream(activeLogPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                    // FileShare.ReadWrite on every writer site below: Windows
+                    // share checks are bidirectional, so FileShare.Read rejects
+                    // any later opener that requests FileAccess.Write — a second
+                    // RollingLog's empty-create/append-open throws, RotateIfNeeded
+                    // latches MarkFailed, and every subsequent write (including
+                    // the session 'open' record the Five_cycles XLL test polls
+                    // for) is silently discarded. Regression Facts:
+                    // RollingLogTests.Second_concurrent_writer… and
+                    // OfficeFixtureTests.TryReadLog_reads_the_log_while_a_writer…
+                    var emptyStream = new FileStream(activeLogPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
                     _currentWriter = new StreamWriter(emptyStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                     _currentFileSize = 0;
                     return;
@@ -289,7 +298,7 @@ public sealed class RollingLog : IRollingLog
                 if (fileInfo.Length + incomingBytes <= _maxFileSizeBytes)
                 {
                     // File exists and has room - open in append mode
-                    var appendStream = new FileStream(activeLogPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    var appendStream = new FileStream(activeLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
                     // UTF-8 without a BOM so the reopened file stays byte-exact with
                     // the tracked _currentFileSize; Encoding.UTF8 would emit a preamble.
                     _currentWriter = new StreamWriter(appendStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -349,7 +358,7 @@ public sealed class RollingLog : IRollingLog
 
             // Create new active log file
             var newActivePath = Path.Combine(_logDirectory, $"{_baseName}.log");
-            var fileStream = new FileStream(newActivePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            var fileStream = new FileStream(newActivePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
             // UTF-8 without a BOM so the created file's size equals the tracked
             // Encoding.UTF8 byte count and rotation remains byte-exact.
             _currentWriter = new StreamWriter(fileStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
