@@ -76,7 +76,7 @@
     `StrokeColour`, `HatchPattern` (`None`, `ForwardDiagonal`,
     `BackwardDiagonal`, `Cross`), `HatchPitchPt`, `HatchLinePt`,
     `TextColour`, `StandardOutlinePt`, `ActivityHeightPt`,
-    `MilestoneSizePt`. `tblGanttTypes` columns: `TypeName`, `DisplayName`,
+    `MilestoneSizePt`. **ADR-0009 (2026-09-23) appends `DefaultLabelPosition`, `AllowedLabelPositions`, and `ColourCapability` so Custom Activity and R3 style resolution have explicit named-style capabilities.** `tblGanttTypes` columns: `TypeName`, `DisplayName`,
     `Kind`, `DateMode`, `DefaultStyleKey`, `ColourCapability`,
     `RequiresStyleKey`, `AllowedLabelPositions` (space-joined).
     `tblGanttMetrics` columns: `MetricName`, `DefaultValue`, `Minimum`,

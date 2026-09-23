@@ -103,7 +103,7 @@ The configuration worksheet contains versioned tables/ranges only:
 | Item | Purpose |
 | --- | --- |
 | `tblGanttTypes` | Materialised built-in Type values, display names, entity kind, date mode, default style and capability flags |
-| `tblGanttStyles` | Workbook style presets and user-approved custom named styles |
+| `tblGanttStyles` | Workbook style presets and user-approved custom named styles, including explicit default/allowed label positions and colour-override capability (ADR-0009) |
 | `tblGanttMetrics` | Rectangle heights, milestone size, gaps, line widths and other named geometry tokens |
 | `tblGanttSettings` | First-release chart/export/plot settings as key/value rows; written by approved dialogs only (ADR-0007 D3) |
 | `tblGanttConfig` | Schema version, catalogue hash, workbook ID and add-in version last used |

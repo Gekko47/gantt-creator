@@ -6,16 +6,18 @@ namespace GanttCreator.Core;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This catalogue is the authoritative definition of the 16 user-selectable
-/// row types; the entity guide's "26 entity types" counts the guide's own
-/// sections (chart frame through validation indicators), not this catalogue.
-/// No other component maintains its own type list.
+/// This catalogue is the authoritative definition of the 16 selectable Types;
+/// the entity guide's broader visual/entity sections (chart frame through
+/// validation indicators) are not additional workbook Type values. No other
+/// component maintains its own type list.
 /// </para>
 /// <para>
 /// The exact workbook display names form part of the workbook schema:
 /// renaming or localising a display name is a schema migration that bumps
-/// <see cref="GanttSchemaVersion.CurrentSchemaVersion"/>. The catalogue is
-/// materialised deterministically to <c>tblGanttTypes</c> on
+/// <see cref="GanttSchemaVersion.CurrentSchemaVersion"/>. Such a migration
+/// does not rename or renumber the durable <see cref="GanttEntityType"/>
+/// identity. The catalogue is materialised deterministically to
+/// <c>tblGanttTypes</c> on
 /// <c>_GanttCreatorConfig</c> (R2.9); the domain parser, worksheet validation,
 /// Ribbon controls, and tests all use these same definitions.
 /// </para>

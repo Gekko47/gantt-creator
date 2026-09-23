@@ -1,22 +1,13 @@
 # Implementation guides manifest and execution plan
 
-> Authored 21 September 2026 on branch `cline/vd5dq9wz` from `stage-inspect`
-> commit `8d53d39`. This manifest records the product owner's approved
-> two-tier plan: every remaining roadmap work item — 80 of the 100 rows in
-> [`../03-ROADMAP.md`](../03-ROADMAP.md) (R0.1–R0.8, R1.1–R1.6, R2.1–R2.6 are
-> landed) — gets an individual implementation guide in this directory.
-> The guides are the pre-created work-item files the roadmap requires
-> ("Create a work-item file before implementation"); none of them records
-> implementation state. [`../STATUS.md`](../STATUS.md) remains the record of
-> what has actually landed, and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 88 roadmap-guide records: 26 Tier A and 62 Tier B. R2.7 and R2.7a are landed; the new R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a/R2.7b hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
-- **Tier A — prescriptive.** 19 guides for the Phase 2 remainder
-  (R2.7–R2.10) and Phase 3 (R3.1–R3.14), verified against the source tree as
-  of commit `8d53d39`. They name exact files, types, seams, test files,
-  `[Fact]` names, and evidence commands.
-- **Tier B — binding contract.** 61 guides for Phases 4–10. They fix the
+- **Tier A — prescriptive.** 26 guides: the Phase 2 remainder plus seven R2
+  hardening rows, and Phase 3. They name exact files, types, seams, tests, and
+  evidence commands; each is re-verified at implementation time.
+- **Tier B — binding contract.** 62 guides for Phases 4–10. They fix the
   behaviour, acceptance criteria, governing document sections, design
   decisions, stop-points, and evidence commands, while implementation steps
   reference predecessor artifacts by work-item ID plus a mandatory Step 0
@@ -67,24 +58,34 @@ Each phase exit must satisfy the roadmap row's stated automated
 demonstration and its compatibility-matrix subset
 ([`../03-ROADMAP.md`](../03-ROADMAP.md) "Cross-phase compatibility matrix"),
 and additionally **upgrade the next phase's guides to Tier A** as described
-above. Phase 3's guides are Tier A from initial authoring.
+above. Phase 3's guides are Tier A from initial authoring. ADR-0010 is the
+only approved exception to table-order execution: after R4.9, execute R2.10,
+then R3.13, before R4.10.
 
-## Index of guides (80)
+## Index of guides (88)
 
-One row per remaining roadmap row, in roadmap order. Status values:
-`Authored` (file exists; tier as stated), `Pending` (next authoring batch).
+One row per roadmap-guide record. Status values: `Landed`, `Implemented`
+(working-tree implementation with observed gates; pending commit), `Approved`
+(file and decision exist; not implemented), or `Authored` (binding contract).
 Filenames are backticked, not linked, so link checking stays on authored
-files only; the authoring audit verifies every `Authored` row's file exists.
+files only; the local audit verifies every file exists.
 
-### Phase 2 remainder — configuration and data commands (Tier A)
+### Phase 2 remainder — configuration, hardening, and data commands (Tier A)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R2.7 | `R2.7-config-catalogues.md` | Authored (Tier A) |
-| R2.7a | `R2.7a-destructive-command-policy.md` | Authored (Tier A) |
+| R2.7 | `R2.7-config-catalogues.md` | Landed |
+| R2.7a | `R2.7a-destructive-command-policy.md` | Landed |
+| R2.1a | `R2.1a-type-identity-contract.md` | Implemented (pending commit) |
+| R2.2a | `R2.2a-safe-worksheet-adoption.md` | Approved (Tier A; next) |
+| R2.4a | `R2.4a-date-system-boundary.md` | Approved (Tier A) |
+| R2.4b | `R2.4b-neutral-cell-state.md` | Approved (Tier A) |
+| R2.5a | `R2.5a-validation-normalisation.md` | Approved (Tier A) |
+| R2.6a | `R2.6a-validation-reporter-boundary.md` | Approved (Tier A) |
+| R2.7b | `R2.7b-style-capability-schema.md` | Approved (Tier A; ADR-0009) |
 | R2.8 | `R2.8-add-row-commands.md` | Authored (Tier A) |
 | R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
-| R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A) |
+| R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |
 
 ### Phase 3 — Core scene engine (Tier A)
 
@@ -102,7 +103,7 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
 | R3.11 | `R3.11-table-header-primitives.md` | Authored (Tier A) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
-| R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A) |
+| R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Authored (Tier A) |
 
 ### Phase 4 — live renderer (Tier B; upgrade to Tier A at Phase 3 exit)
@@ -117,7 +118,7 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R4.6 | `R4.6-style-token-mapping.md` | Authored (Tier B) |
 | R4.7 | `R4.7-refresh-idempotence.md` | Authored (Tier B) |
 | R4.8 | `R4.8-unowned-content-preservation.md` | Authored (Tier B) |
-| R4.9 | `R4.9-refresh-command.md` | Authored (Tier B) |
+| R4.9 | `R4.9-refresh-command.md` | Authored (Tier B; first live slice) |
 | R4.10 | `R4.10-thousand-event-performance.md` | Authored (Tier B) |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
@@ -130,6 +131,7 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R5.4 | `R5.4-move-expand-collapse.md` | Authored (Tier B) |
 | R5.5 | `R5.5-label-controls.md` | Authored (Tier B) |
 | R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
+| R5.6a | `R5.6a-named-style-presets.md` | Authored (Tier B; added 2026-09-23) |
 | R5.7 | `R5.7-delineator-workflow.md` | Authored (Tier B) |
 | R5.8 | `R5.8-warnings-panel.md` | Authored (Tier B) |
 | R5.9 | `R5.9-ribbon-completion.md` | Authored (Tier B) |
@@ -165,7 +167,7 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R8.1 | `R8.1-width-parsing-residual.md` | Authored (Tier B; residual) |
+| R8.1 | `R8.1-width-parsing-residual.md` | Authored (Tier B) |
 | R8.2 | `R8.2-skia-primitive-renderer.md` | Authored (Tier B) |
 | R8.2a | `R8.2a-font-pinning-adr.md` | Authored (Tier B; ADR) |
 | R8.3 | `R8.3-text-hatch-rendering.md` | Authored (Tier B) |
@@ -175,12 +177,12 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 | R8.7 | `R8.7-width-controls-preview.md` | Authored (Tier B) |
 | R8.8 | `R8.8-export-png-command.md` | Authored (Tier B) |
 
-### Phase 9 — resilience, accessibility, and migration support (Tier B; upgrade at Phase 8 exit)
+### Phase 9 — recovery, resilience, and maintenance (Tier B; upgrade at Phase 8 exit)
 
 | ID | Guide | Status |
 | --- | --- | --- |
 | R9.1 | `R9.1-cancellation-deadline.md` | Authored (Tier B) |
-| R9.2 | `R9.2-structured-diagnostics.md` | Authored (Tier B; residual) |
+| R9.2 | `R9.2-structured-diagnostics.md` | Authored (Tier B) |
 | R9.3 | `R9.3-corrupted-settings-recovery.md` | Authored (Tier B) |
 | R9.4 | `R9.4-shape-ownership-repair.md` | Authored (Tier B) |
 | R9.5 | `R9.5-accessibility-labels.md` | Authored (Tier B) |
@@ -205,29 +207,20 @@ files only; the authoring audit verifies every `Authored` row's file exists.
 
 | ID | Decision | First needed by | Where recorded | Status |
 | --- | --- | --- | --- | --- |
-| D-G1 | Configuration-sheet table set, settings storage, and storage format (R2.7 ADR) | R2.7 | R2.7 guide decisions D1–D3; ADR-0007 draft | Open — options + recommendation; human approval before first write |
-| D-G2 | Destructive-command undo semantics (R2.7a ADR) | R2.7a | R2.7a guide; ADR-0008 draft | Open — human choice required |
+| D-G1 | Configuration-sheet table set, settings storage, and storage format | R2.7 | ADR-0007 | Accepted and landed |
+| D-G2 | Destructive-command undo semantics | R2.7a | ADR-0008 | Accepted and landed |
 | D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | Open — new test-only dependency; human approval required |
 | D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
 | D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |
+| D-G7 | Named-style label/colour capability schema | R2.7b | ADR-0009 | Accepted 2026-09-23 |
+| D-G8 | Defer R2.10 and R3.13 until after the R4.9 first-live slice | R2.9/R3.12 | ADR-0010 | Accepted 2026-09-23 |
 
-## Known drift to resolve during authoring
+## Known drift resolved by revision 5
 
-- [`../KNOWN-LIMITATIONS.md`](../KNOWN-LIMITATIONS.md) L4 still names R3.12
-  as the first approved-PNG gate; roadmap revision 4 moved that obligation
-  to R8.4. Re-date L4 when KNOWN-LIMITATIONS is next revised.
-- The roadmap R5.9 note calls the Show-Properties control undefined in the
-  entity guide; entity guide revision 3 "Required worksheet fields" defines
-  it. The R5.9 guide resolves which text is current; escalate only if a
-  real gap remains.
+- KNOWN-LIMITATIONS L4 now names R8.4 as the first approved-PNG gate; R3.12 produces only the deterministic scene snapshot.
+- The Show-Properties contract is defined by entity-guide revision 3. R5.9 still owns the separate undefined in-cell validation scope for `StyleKey`/`LabelPosition`.
 
-## Authoring verification
+## Authoring and reconciliation verification
 
-## Authoring verification
-
-**All 80 remaining roadmap rows now have an authored guide** — 19 Tier A (Phase 2 remainder + Phase 3) and 61 Tier B (Phases 4–10) — authored 2026-09-21 in nine batches on branch `cline/vd5dq9wz` from commit `8d53d39`. Tier-B guides are upgraded to Tier A at each phase exit as described above; their slugs were corrected against the actual roadmap rows during authoring (the first-draft index used pre-revision-4 guesses for Phases 4–10 and every such section was retitled/renamed).
-
-Authored in a Linux sandbox without `pwsh` or `dotnet`. Per-batch checks actually run: link/reference existence for every authored file (bash equivalent of `scripts/check-md-links.ps1` rules), the exact `scripts/check-status.ps1` token rule against STATUS.md, `git diff --check`, and this manifest's `Authored` rows verified to exist on disk (80/80). `scripts/verify-quick.ps1` and the Pester script gates were **Not run locally** — CI ran them on every push (green, except one caught-and-fixed check-status violation corrected in commit `6628a60`). Office gates are by definition Not run at authoring time.
-
-
+The original 80-guide corpus was authored on 21 September 2026. Revision 5 added eight roadmap-guide records (seven R2 hardening rows and R5.6a), bringing the manifest to 88. The current local reconciliation is verified by Markdown link checking, roadmap-ID/guide existence checks, `git diff --check`, and the relevant automated test/gate commands as work items land. Office-host gates are never inferred from documentation-only authoring.

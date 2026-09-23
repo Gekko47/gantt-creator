@@ -1,5 +1,5 @@
-# Implementation roadmap — revision 4
 
+# Implementation roadmap — revision 5
 
 <!-- SKILL-SUMMARY:START -->
 Phase-by-phase work-item list (R0.x .. R10.8), the cross-phase
@@ -27,7 +27,7 @@ Do not get wrong:
 - `memra_bootstrap` — recall prior decisions at session start before restating unknowns.
 <!-- SKILL-TOOLS:END -->
 
-> Created 2 September 2026 under a new filename. Revision 4 (21 September 2026) applies the lead-developer roadmap review: four rows are inserted (`R2.7a`, `R3.13`, `R3.14`, `R8.2a`), the Phase 6 compatibility spike is re-sequenced to run first, rows already satisfied by landed code are re-scoped to their residuals, phase-exit compatibility-matrix obligations are recorded, and the Required Office-gate policy is clarified. This revision contains 100 commit-sized work items. No existing ID was renumbered, reused, or removed, so work-item files, STATUS, and ADR references keep resolving. When installed, use the path `docs/03-ROADMAP.md`.
+> Created 2 September 2026 under a new filename. Revision 5 (23 September 2026) applies the approved R2 findings implementation plan: eight rows are inserted (`R2.1a`, `R2.2a`, `R2.4a`, `R2.4b`, `R2.5a`, `R2.6a`, `R2.7b`, `R5.6a`), ADR-0009 defines named-style capability columns, and ADR-0010 records the first-live-slice sequencing exception that moves R2.10 and R3.13 after R4.9 without removing or weakening either row. This revision contains 108 commit-sized work items. No existing ID was renumbered, reused, or removed, so work-item files, STATUS, and ADR references keep resolving. Revision 4 (21 September 2026) remains the historical basis for all unchanged rows and gates.
 
 ## How to use this roadmap
 
@@ -94,23 +94,34 @@ Goal: create/read the visible single-sheet data model without rendering.
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
 | R2.1 | Define table column names, event types, and schema version in Core | Enum, schema, and serialization round-trip tests | None |
+| R2.1a | Pin stable Type machine identity separately from the 16 persisted display labels; clarify selectable Types versus visual guide sections | Exact enum name/value pins plus existing catalogue/display/schema tests | None |
 | R2.2 | Implement `Initialise Sheet` to bring a workbook into the supported state: adopt the blank active worksheet as `tblGanttData`'s home, or create one, plus `_GanttCreatorConfig` | Adapter tests assert exact names, the adopted-blank path leaves one visible sheet and one `xlSheetVeryHidden` sheet and no others, the create path leaves two visible sheets (the preserved original and the new Gantt Data) and one `xlSheetVeryHidden` sheet, and typed refusals mutate nothing | Required: initialise a blank workbook and inspect table, plot anchor, helper visibility, and sheet count |
+| R2.2a | Restrict worksheet adoption to pristine sheets; preserve cell-empty sheets containing non-cell user state and create a new Gantt sheet | Contract matrix for A1-only used range, shapes, comments/threaded comments, names, tables, pivots, queries, and hyperlinks proves preserved original plus exact create mutation set | Required: create a blank cell-only sheet with real shape/comment/name state and prove it remains unchanged |
 | R2.3 | Add stable ID generation and preservation independent of row number | Insert, sort, move, and delete contract tests | Required: sort and insert rows in Excel; IDs remain stable and unique |
 | R2.4 | Read cell values into neutral row DTOs without locale display parsing | 1900 date-system and multiple-culture conversion tests | Required: read representative real Excel dates under both supported locale formats |
+| R2.4a | Isolate date-system support/refusal behind an Office-free converter while retaining ADR-0006's 1904 rejection | Converter support/serial tests and reader refusal-before-body tests | Required: existing live 1904 refusal remains deterministic |
+| R2.4b | Preserve blank/value/Excel-error/unsupported states in neutral typed DTO cells | Known and future Excel error mapping, unsupported typed-value tests, and live error-cell round-trip | Required: real Excel error cells remain distinguishable from blanks |
 | R2.5 | Map DTOs into Core events with all-errors validation | Table-driven valid, invalid, and all-errors tests | None |
+| R2.5a | Make validation the deterministic cell-state normalizer and require Critical Interval parents to be valid mapped spans | Relevant/irrelevant cell-state matrix, new-validator positives, warning-event inclusion, and deterministic cross-row tests | None |
 | R2.6 | Add row-level error reporting without mutating valid input | Fake-worksheet mutation and error-order tests | Required: invalid rows show actionable errors while original cells remain unchanged |
+| R2.6a | Keep Notes a replaceable reporter and enforce protection-guard-first note mutation | Zero-mutation protected refusal, ownership preservation, and architecture mutation-discovery tests | Required: protected-sheet Validate changes no user or owned notes |
 | R2.7 | Persist versioned workbook settings and style/metric tables on `_GanttCreatorConfig` | Settings/style/metric round-trip plus invalid/missing schema tests | Required: save/reopen and confirm the preserved-original-sheet-or-Gantt-Data visible sheet rule, one VeryHidden helper, and retained settings |
 | R2.7a | Add the destructive-command policy ADR: confirmation, undo-or-no-undo semantics, and protected-sheet typed refusals | Policy contract tests for every mutating command: confirmation before delete, the approved undo semantics, and a typed refusal with no partial mutation when the target sheet or workbook is protected, extending R2.2's `TargetProtected` pattern | Required: exercise one confirmed destructive command and one protected-sheet refusal in Excel |
+| R2.7b | Materialise each named style's default/allowed label positions and colour-override capability | Built-in projection, user-row round-trip, capability validation, and catalogue-hash tests | Required: save/reopen preserves custom style capabilities and hash |
 | R2.8 | Add add-activity, add-milestone, and add-delineator row commands | Command/contract tests for defaults, IDs, and insertion position | Required: invoke all three Ribbon commands and inspect the resulting visible rows |
 | R2.9 | Materialise the central Type catalogue and apply its named-range dropdown | Catalogue uniqueness/hash, type/style/date/capability mapping, defined-name, and validation tests | Required: full-name dropdown appears on existing/new rows and resolves only through `_GanttCreatorConfig` |
 | R2.10 | Add VeryHidden configuration integrity, migration, and safe-repair workflow | Missing/corrupt/wrong-visibility/version/hash tests preserve valid custom styles or require confirmation | Required: damage/copy/remove configuration in synthetic workbooks and verify detection, repair, and the preserved-original-sheet-or-Gantt-Data visible sheet rule |
 
-> **Phase 2 notes (revision 4):**
-> - **R2.7** must enumerate the complete first-release settings/style/metric catalogue from `docs/07-GANTT-ENTITY-GUIDE.md` — chart title and `ShowTitle`, legend position, export inclusion, plot start/finish modes, time scale, every metric/colour/typography token with its valid range, and the built-in style presets — before the first write, and must settle the configuration-sheet table names (`tblGanttConfig` as written in `src/GanttCreator.Core/GanttSchemaVersion.cs` versus `tblGanttTypes`/`tblGanttStyles`/`tblGanttMetrics` as named in the architecture and entity guide). Phase 3 reads these tables; a settings catalogue discovered piecemeal in Phase 5 forces a mid-release configuration migration.
-> - **R2.7a** precedes R2.8 because R2.8's row commands are the first mutating commands after Initialise. The entity guide already references a "standard confirmation/undo policy" that no document defines, and COM-driven edits do not enter Excel's undo stack.
-> - **R2.8** adds row insertion with catalogue defaults only. The delineator dialog, edit, delete, and ignored-field warnings are **R5.7**; the two rows must not re-implement each other.
-> - **R2.9** picks up the R2.5 deferrals: the style-registry existence checks and the `Custom Activity` label/colour capability gates (R2.5 decision U4; R2.6 surfaced R2.5 issue text verbatim and deferred the same gates).
-> - **R2.10** picks up the R2.2 deferral (stored-versus-derived plot-anchor disagreement is an integrity finding) and the R2.3 deferral (identity repair policy).
+> **Phase 2 notes (revision 5):**
+> - **R2.1a** pins the durable enum identity separately from persisted display labels; it adds no Type and no localisation.
+> - **R2.2a** narrows adoption to pristine worksheets. A cell-empty sheet with non-cell artefacts is preserved and the create path is used.
+> - **R2.4a/R2.4b** isolate date-system policy and preserve neutral Excel error/unsupported cell states; ADR-0006 keeps 1904 rejected.
+> - **R2.5a/R2.6a** make the validator the deterministic normalizer and Notes a guarded, replaceable reporter.
+> - **R2.7** must enumerate the complete first-release settings/style/metric catalogue from `docs/07-GANTT-ENTITY-GUIDE.md` before the first write. **R2.7b**, under ADR-0009, adds explicit named-style label/colour capabilities required by Custom Activity and R2.9.
+> - **R2.7a** precedes R2.8 because R2.8's row commands are the first mutating commands after Initialise. COM-driven edits do not enter Excel's undo stack.
+> - **R2.8** adds row insertion with catalogue defaults only. The delineator dialog, edit, delete, and ignored-field warnings are **R5.7**.
+> - **R2.9** picks up the R2.5 deferrals: style-registry existence checks and the `Custom Activity` label/colour capability gates, now made representable by R2.7b.
+> - **R2.10** picks up the R2.2 plot-anchor and R2.3 identity-repair deferrals. ADR-0010 moves it after R4.9; it remains mandatory and still requires its own approved safe-repair ADR before code.
 
 Exit demonstration: initialise a blank workbook, enter representative data, use the full-name Type dropdown, validate it, and save/reopen it. Prove there is exactly one visible Gantt worksheet and one valid `_GanttCreatorConfig` worksheet with `xlSheetVeryHidden` visibility and no schedule data.
 
@@ -135,7 +146,7 @@ Goal: generate the complete point-based drawing model with no Office process.
 | R3.13 | Add the mutation-testing harness for changed Core code (the R0.5 deferral) | A pinned mutation tool runs the Core suite through a new `scripts/verify.ps1` step with a Pester guard; the first full-Core run is archived as the baseline; the 80% changed-code threshold of `docs/04-TEST-STRATEGY.md` applies from the next Core change onward | None |
 | R3.14 | Prove the scene model with a cross-renderer primitive-equivalence thin slice | A contract test walks one bar, one external label, and one milestone diamond through the built scene and asserts every field the entity-guide equivalence table requires of all four renderers; a missing field is a defect, not a renderer workaround. A gap that serialization alone cannot prove stops for a spike-plus-ADR under the scope-change protocol, with the spike kept outside production code | None |
 
-> **Phase 3 notes (revision 4):**
+> **Phase 3 notes (revision 5):**
 > - **R3.1** is landed early: `PointD` already exists in Core with tests. The row completes the value-object set — size, rectangle, colour, tolerance — beside it; it must not re-implement or diverge from `PointD`.
 > - **R3.3** picks up the plot-range policy groundwork deferred from R2.5 (decision U11). **R5.1** later adds the explicit range modes and the user-facing warnings.
 > - **R3.11** header primitives follow the schema display names in `GanttTableSchema.Default`. `Duration` is not a schema v1 column; do not invent one. A derived `Duration` column requires a product-owner entity-guide amendment plus a schema ADR first.
@@ -160,13 +171,13 @@ Goal: render and refresh an owned set of Excel shapes beside the source data.
 | R4.9 | Wire Validate and Refresh Ribbon commands with guarded errors | Command, validation, and error-boundary tests | Required: exercise Validate/Refresh on valid and invalid workbooks |
 | R4.10 | Profile 1,000-event refresh and remove only measured bottlenecks | Automated benchmark and no-regression threshold | Required: measure real Excel refresh on the reference machine and record Office build |
 
-> **Phase 4 notes (revision 4):**
-> - **R4.1** is landed early in part: `IExcelApplicationAdapter` (R1.5), `IWorkbookInitialiser` (R2.2), `IGanttTableReader` (R2.4), and `IGanttValidationReporter` (R2.6) already exist. The row adds the shape/workbook-write adapters the renderer needs, following that pattern; it must not duplicate the existing ports.
-> - **R4.9** is landed early in part: the Validate command, its Ribbon button, and its guarded errors shipped in R2.6. The row wires Refresh.
-> - **R4.10** also measures the 1,000-row Validate/report note-writing path and records both measurements; the performance budgets in `docs/02-ARCHITECTURE.md` are then revised to cover validation in that doc's next revision.
-> - From the first Phase 4 Office gate onward, every Office evidence row records the host Windows/Office build, feeding the R10.1 matrix.
+> **Phase 4 notes (revision 5):**
+> - **R4.1** is landed early in part through the existing application/workbook/table/config/reporter ports. The row adds only missing narrow shape/render ports and must not duplicate them.
+> - **R4.9** is the first-live-slice demonstration and the Phase 3 guide-upgrade gate. Blocking Refresh preserves the previous valid scene; normal worksheet/property edits never invoke rendering.
+> - ADR-0010 moves **R2.10**, then **R3.13**, immediately after R4.9. **R4.10** follows them and profiles both 1,000-event scene/refresh and the existing 1,000-row Validate/report path.
+> - From this phase onward, every Office evidence row records the host Windows/Office build, feeding the R10.1 matrix.
 
-Exit demonstration: one click renders the reference data beside the table, a second click is idempotent, and manually added unrelated worksheet content remains unchanged.
+Exit demonstration: after R4.9, a valid workbook with the canonical construction-delay fixture renders a real owned Gantt beside `tblGanttData`; a blocking Refresh leaves it unchanged, and a second successful Refresh is idempotent. R2.10 and R3.13 then close their mandatory deferred gates before R4.10 performance evidence.
 
 ## Phase 5 — chart controls and construction-delay cases
 
@@ -180,6 +191,7 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.4 | Add move-up/down and expand/collapse display commands | Deterministic ordering and visibility tests | Required: exercise controls and confirm visible rows/shapes remain aligned |
 | R5.5 | Add label visibility/position controls | Scene snapshots and Type-specific allowed-position tests for every option | Required: inspect label placement, clipping, and retained settings after Refresh |
 | R5.6 | Add style/theme settings using explicit local defaults | Style round-trip, validation, and offline-dependency tests | Required: edit colours/heights/diamond size and compare Excel output with approved tokens |
+| R5.6a | Create, rename, and delete approved user named-style presets with explicit label/colour capabilities | Unique-key, capability, built-in protection, cancel-before-write, save/reopen, and Custom Activity consumption tests | Required: create a custom style, assign it to Custom Activity, Refresh, and compare the live result |
 | R5.7 | Add Start-only delineator create/edit/delete workflow | Type/dialog creation, ignored-field warning, same-date, label, visibility, edit, and delete tests | Required: create from dropdown and Add Vertical Line dialog; chart changes only after Refresh |
 | R5.8 | Add warnings panel/dialog for clipped, missing, and conflicting data | Deterministic grouping, severity, and message tests | Required: provoke each warning in Excel and confirm it does not mutate data |
 | R5.9 | Complete Ribbon layout, icons, keytips, accessibility labels, and offline help | Ribbon XML/callback, resource, and offline-link contract tests | Required: keyboard, screen-reader label, high-contrast, and screenshot-layout review |

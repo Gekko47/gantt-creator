@@ -1,5 +1,7 @@
 # GanttCreator — R2 Implementation Findings and Required Changes
 
+> **Disposition:** Reconciled 2026-09-23. This document records the original R2.6-era findings. Implement through [`GanttCreator_R2_Implementation_Plan.md`](GanttCreator_R2_Implementation_Plan.md) and the individual work items; do not use stale “current implementation” labels as proof of current source state.
+
 ## Purpose
 
 This document is an implementation brief for an LLM/coding agent working on the `stage-inspect` branch of the GanttCreator repository.
@@ -11,7 +13,7 @@ It consolidates the actionable findings from a code-level review of the R2 imple
 - what should be deferred to later roadmap work;
 - what constraints the agent must observe when extending the codebase.
 
-The agent should treat the existing production code as authoritative for current behaviour and use the repository's architecture/roadmap documents as supporting intent, not as evidence that a feature exists.
+This R2.6-era review is an implementation input, not a source of authority. Current requirements and execution order are controlled by `AGENTS.md`, roadmap revision 5, architecture/ADRs, the entity guide, and the approved [`GanttCreator_R2_Implementation_Plan.md`](GanttCreator_R2_Implementation_Plan.md). Current source and tests establish landed behaviour. Sections below retain the original review evidence; the plan records the approved disposition of every required change.
 
 ---
 
