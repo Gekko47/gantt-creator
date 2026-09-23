@@ -76,7 +76,7 @@ files only; the local audit verifies every file exists.
 | --- | --- | --- |
 | R2.7 | `R2.7-config-catalogues.md` | Landed |
 | R2.7a | `R2.7a-destructive-command-policy.md` | Landed |
-| R2.1a | `R2.1a-type-identity-contract.md` | Implemented (pending commit) |
+| R2.1a | `R2.1a-type-identity-contract.md` | Landed (`3ef29b6`) |
 | R2.2a | `R2.2a-safe-worksheet-adoption.md` | Approved (Tier A; next) |
 | R2.4a | `R2.4a-date-system-boundary.md` | Approved (Tier A) |
 | R2.4b | `R2.4b-neutral-cell-state.md` | Approved (Tier A) |
