@@ -31,9 +31,16 @@ public class WorkbookInitialiserTests
     {
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
         public Mock<Excel.Range> HeaderRange { get; } = new();
+        public Mock<Excel.Range> UsedRange { get; } = new();
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
         public Mock<Excel.Names> Names { get; } = new();
+        public Mock<Excel.Shapes> Shapes { get; } = new();
+        public Mock<Excel.Comments> Comments { get; } = new();
+        public Mock<Excel.CommentsThreaded> ThreadedComments { get; } = new();
+        public Mock<Excel.PivotTables> PivotTables { get; } = new();
+        public Mock<Excel.QueryTables> QueryTables { get; } = new();
+        public Mock<Excel.Hyperlinks> Hyperlinks { get; } = new();
         public List<object> WrittenValues { get; } = new();
         public List<string> AssignedTableNames { get; } = new();
         public List<Excel.XlSheetVisibility> VisibleValues { get; } = new();
@@ -50,9 +57,22 @@ public class WorkbookInitialiserTests
             _ = Worksheet.SetupGet(w => w.Name).Returns(() => _name);
             _ = Worksheet.SetupSet(w => w.Name = It.IsAny<string>())
                 .Callback<string>(value => _name = value);
-            _ = Worksheet.SetupGet(w => w.UsedRange).Returns(new Mock<Excel.Range>().Object);
+            _ = Worksheet.SetupGet(w => w.UsedRange).Returns(UsedRange.Object);
             _ = Worksheet.SetupGet(w => w.ListObjects).Returns(ListObjects.Object);
             _ = Worksheet.SetupGet(w => w.Names).Returns(Names.Object);
+            _ = Worksheet.SetupGet(w => w.Shapes).Returns(Shapes.Object);
+            _ = Worksheet.SetupGet(w => w.Comments).Returns(Comments.Object);
+            _ = Worksheet.SetupGet(w => w.CommentsThreaded).Returns(ThreadedComments.Object);
+            _ = Worksheet.SetupGet(w => w.QueryTables).Returns(QueryTables.Object);
+            _ = Worksheet.SetupGet(w => w.Hyperlinks).Returns(Hyperlinks.Object);
+            _ = Shapes.SetupGet(s => s.Count).Returns(() => ShapeCount);
+            _ = Comments.SetupGet(c => c.Count).Returns(() => CommentCount);
+            _ = ThreadedComments.SetupGet(c => c.Count).Returns(() => ThreadedCommentCount);
+            _ = Names.SetupGet(n => n.Count).Returns(() => SheetNameCount);
+            _ = ListObjects.SetupGet(l => l.Count).Returns(() => ListObjectCount);
+            _ = PivotTables.SetupGet(p => p.Count).Returns(() => PivotTableCount);
+            _ = QueryTables.SetupGet(q => q.Count).Returns(() => QueryTableCount);
+            _ = Hyperlinks.SetupGet(h => h.Count).Returns(() => HyperlinkCount);
 
             _ = HeaderRange.SetupSet(r => r.Value2 = It.IsAny<object>())
                 .Callback<object>(value => WrittenValues.Add(value));
@@ -85,13 +105,22 @@ public class WorkbookInitialiserTests
 
         /// <summary>Gets or sets the mocked <c>WorksheetFunction.CountA</c> value for this sheet.</summary>
         public double NonEmptyCellCount { get; set; }
+        public int ShapeCount { get; set; }
+        public int CommentCount { get; set; }
+        public int ThreadedCommentCount { get; set; }
+        public int SheetNameCount { get; set; }
+        public int PivotTableCount { get; set; }
+        public int QueryTableCount { get; set; }
+        public int HyperlinkCount { get; set; }
+        public string UsedRangeAddress { get; set; } = "$A$1";
+        public int ListObjectCount { get; set; }
 
         /// <summary>Wires the list-object collection to contain exactly one named table, or nothing.</summary>
         /// <param name="tableName">The existing table name, or <see langword="null"/> for none.</param>
         public void WithExistingTable(string? tableName)
         {
             _existingTableName = tableName;
-            _ = ListObjects.SetupGet(l => l.Count).Returns(tableName is null ? 0 : 1);
+            ListObjectCount = tableName is null ? 0 : 1;
             if (tableName is not null)
             {
                 _ = Table.SetupGet(t => t.Name).Returns(tableName);
@@ -152,19 +181,27 @@ public class WorkbookInitialiserTests
             Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
             Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
             Func<Excel.Worksheet, Excel.Range> headerRangeAt,
+            Func<Excel.Range, string> usedRangeAddressAt,
+            Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter)
             : base(application, catalogueWriter)
         {
             SheetAt = sheetAt;
             TableAt = tableAt;
             HeaderRangeAt = headerRangeAt;
+            UsedRangeAddressAt = usedRangeAddressAt;
+            PivotTableCountAt = pivotTableCountAt;
         }
+
+        private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
+
+        private Func<Excel.Range, string> UsedRangeAddressAt { get; }
+
+        private Func<Excel.Worksheet, int> PivotTableCountAt { get; }
 
         private Func<Excel.Sheets, int, Excel.Worksheet> SheetAt { get; }
 
         private Func<Excel.ListObjects, int, Excel.ListObject> TableAt { get; }
-
-        private Func<Excel.Worksheet, Excel.Range> HeaderRangeAt { get; }
 
         internal override object GetSheetAt(Excel.Sheets sheets, int index)
             => SheetAt(sheets, index);
@@ -174,6 +211,12 @@ public class WorkbookInitialiserTests
 
         internal override Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
             => HeaderRangeAt(target);
+
+        internal override string GetUsedRangeAddress(Excel.Range usedRange)
+            => UsedRangeAddressAt(usedRange);
+
+        internal override int GetPivotTableCount(Excel.Worksheet worksheet)
+            => PivotTableCountAt(worksheet);
     }
 
     /// <summary>The workbook-level graph: application, workbook, sheets, worksheet function.</summary>
@@ -183,6 +226,8 @@ public class WorkbookInitialiserTests
         public Mock<Excel.Workbook> Workbook { get; } = new();
         public Mock<Excel.Sheets> Sheets { get; } = new();
         public Mock<Excel.WorksheetFunction> Functions { get; } = new();
+        public Mock<Excel.Names> WorkbookNames { get; } = new();
+        public int WorkbookNameCount { get; set; }
         public List<WorksheetGraph> Graphs { get; } = new();
         public Dictionary<int, Excel.Worksheet> SheetsByIndex { get; } = new();
         public Queue<Excel.Worksheet> SheetsAdded { get; } = new();
@@ -198,6 +243,8 @@ public class WorkbookInitialiserTests
             _ = Application.SetupGet(a => a.ActiveWorkbook).Returns(Workbook.Object);
             _ = Application.SetupGet(a => a.WorksheetFunction).Returns(Functions.Object);
             _ = Workbook.SetupGet(w => w.Sheets).Returns(Sheets.Object);
+            _ = Workbook.SetupGet(w => w.Names).Returns(WorkbookNames.Object);
+            _ = WorkbookNames.SetupGet(n => n.Count).Returns(() => WorkbookNameCount);
             _ = Sheets.SetupGet(s => s.Count).Returns(() => SheetsByIndex.Count);
             _ = Sheets.Setup(s => s.Add(
                     It.IsAny<object>(), It.IsAny<object>(),
@@ -276,6 +323,12 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                usedRangeAddressAt: usedRange =>
+                    graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
+                        .UsedRangeAddress,
+                pivotTableCountAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .PivotTableCount,
                 catalogueWriter: catalogueWriter.Object);
         }
 
@@ -308,6 +361,12 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                usedRangeAddressAt: usedRange =>
+                    graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
+                        .UsedRangeAddress,
+                pivotTableCountAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .PivotTableCount,
                 catalogueWriter: catalogueWriter);
         }
     }
@@ -460,6 +519,43 @@ public class WorkbookInitialiserTests
         graph.VerifySheetsAdded(Times.Once());
     }
 
+    /// <summary>A non-pristine active worksheet must be preserved on create.</summary>
+    private enum NonPristineArtefact
+    {
+        /// <summary>Used range extends beyond A1.</summary>
+        UsedRange,
+
+        /// <summary>Cell content exists.</summary>
+        CellContent,
+
+        /// <summary>A drawing shape exists.</summary>
+        Shape,
+
+        /// <summary>A legacy note exists.</summary>
+        Comment,
+
+        /// <summary>A threaded comment exists.</summary>
+        ThreadedComment,
+
+        /// <summary>A worksheet-scoped name exists.</summary>
+        SheetName,
+
+        /// <summary>A workbook-scoped name exists.</summary>
+        WorkbookName,
+
+        /// <summary>A non-Gantt table exists.</summary>
+        Table,
+
+        /// <summary>A pivot table exists.</summary>
+        PivotTable,
+
+        /// <summary>A query table exists.</summary>
+        QueryTable,
+
+        /// <summary>A hyperlink exists.</summary>
+        Hyperlink,
+    }
+
     // ---------------------------------------------------------------------
     // Create path (non-blank active worksheet)
     // ---------------------------------------------------------------------
@@ -485,6 +581,83 @@ public class WorkbookInitialiserTests
         created.VerifyTableCreated(Times.Once());
         Assert.Equal(new[] { GanttTableSchema.TableName }, created.AssignedTableNames);
         created.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+    }
+
+    [Theory]
+    [InlineData("UsedRange")]
+    [InlineData("CellContent")]
+    [InlineData("Shape")]
+    [InlineData("Comment")]
+    [InlineData("ThreadedComment")]
+    [InlineData("SheetName")]
+    [InlineData("WorkbookName")]
+    [InlineData("Table")]
+    [InlineData("PivotTable")]
+    [InlineData("QueryTable")]
+    [InlineData("Hyperlink")]
+    public void Initialise_preserves_a_cell_empty_sheet_with_non_cell_state(
+        string artefactName)
+    {
+        var artefact = Enum.Parse<NonPristineArtefact>(artefactName);
+        var active = BlankActiveSheet();
+        switch (artefact)
+        {
+            case NonPristineArtefact.UsedRange:
+                active.UsedRangeAddress = "$B$1";
+                break;
+            case NonPristineArtefact.CellContent:
+                active.NonEmptyCellCount = 1;
+                break;
+            case NonPristineArtefact.Shape:
+                active.ShapeCount = 1;
+                break;
+            case NonPristineArtefact.Comment:
+                active.CommentCount = 1;
+                break;
+            case NonPristineArtefact.ThreadedComment:
+                active.ThreadedCommentCount = 1;
+                break;
+            case NonPristineArtefact.SheetName:
+                active.SheetNameCount = 1;
+                break;
+            case NonPristineArtefact.WorkbookName:
+                break;
+            case NonPristineArtefact.Table:
+                active.WithExistingTable("ForeignTable");
+                break;
+            case NonPristineArtefact.PivotTable:
+                active.PivotTableCount = 1;
+                break;
+            case NonPristineArtefact.QueryTable:
+                active.QueryTableCount = 1;
+                break;
+            case NonPristineArtefact.Hyperlink:
+                active.HyperlinkCount = 1;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(artefactName));
+        }
+
+        var created = new WorksheetGraph("Sheet2");
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        if (artefact == NonPristineArtefact.WorkbookName)
+        {
+            graph.WorkbookNameCount = 1;
+        }
+
+        graph.EnqueueCreated(created);
+        graph.EnqueueCreated(config);
+
+        var outcome = graph.Build(active).Initialise();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(WorkbookInitialisePath.CreatedNew, outcome.Path);
+        Assert.Equal("Sheet1", active.Name);
+        Assert.Empty(active.WrittenValues);
+        active.VerifyTableCreated(Times.Never());
+        created.VerifyTableCreated(Times.Once());
+        graph.VerifySheetsAdded(Times.Exactly(2));
     }
 
     [Fact]

@@ -95,15 +95,12 @@ public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWrite
         }
 
         // Read-only check 3: select the target. The active worksheet is
-        // adopted only when it is blank; a chart sheet or any non-empty
-        // worksheet causes a fresh sheet to be created. A chart sheet is not
+        // adopted only when it is pristine; a chart sheet or any cell/non-cell
+        // user state causes a fresh sheet to be created. A chart sheet is not
         // an Excel.Worksheet, so the cast selects the create path for it.
         var activeWorksheet = workbook.ActiveSheet as Worksheet;
-        var adopt = false;
-        if (activeWorksheet is not null && IsBlank(activeWorksheet, application))
-        {
-            adopt = true;
-        }
+        var adopt = activeWorksheet is not null
+            && IsPristy(activeWorksheet, workbook, application);
 
         // Read-only check 3: resolve the label against every other sheet
         // (OrdinalIgnoreCase, matching Excel's own case-insensitive sheet-name
@@ -267,22 +264,50 @@ public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWrite
     }
 
     /// <summary>
-    /// Determines whether the worksheet is blank: no cell in its used range
-    /// holds a value.
+    /// Determines whether the worksheet is pristine enough for GanttCreator to
+    /// take over in place. The cell checks use the underlying used range, not
+    /// formatted display text. Every collection is read once through a local
+    /// COM proxy; the predicate never mutates workbook state.
     /// </summary>
     /// <param name="worksheet">The candidate target worksheet.</param>
-    /// <param name="application">The Excel application (for the worksheet function).</param>
-    /// <returns><see langword="true"/> when the used range contains no values.</returns>
-    private static bool IsBlank(Worksheet worksheet, Application application)
+    /// <param name="workbook">The workbook that owns the candidate.</param>
+    /// <param name="application">The Excel application used for <c>CountA</c>.</param>
+    /// <returns><see langword="true"/> when the worksheet is pristine.</returns>
+    private bool IsPristy(Worksheet worksheet, Workbook workbook, Application application)
     {
         Excel.Range? usedRange = worksheet.UsedRange;
-        if (usedRange is null)
+        if (usedRange is not null)
         {
-            return true;
+            if (!string.Equals(GetUsedRangeAddress(usedRange), "$A$1", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            WorksheetFunction functions = application.WorksheetFunction;
+            if (functions.CountA(usedRange) != 0)
+            {
+                return false;
+            }
         }
 
-        WorksheetFunction functions = application.WorksheetFunction;
-        return functions.CountA(usedRange) == 0;
+        Shapes shapes = worksheet.Shapes;
+        Comments comments = worksheet.Comments;
+        CommentsThreaded threadedComments = worksheet.CommentsThreaded;
+        Names sheetNames = worksheet.Names;
+        ListObjects listObjects = worksheet.ListObjects;
+        QueryTables queryTables = worksheet.QueryTables;
+        Hyperlinks hyperlinks = worksheet.Hyperlinks;
+        Names workbookNames = workbook.Names;
+
+        return shapes.Count == 0
+            && comments.Count == 0
+            && threadedComments.Count == 0
+            && sheetNames.Count == 0
+            && workbookNames.Count == 0
+            && listObjects.Count == 0
+            && GetPivotTableCount(worksheet) == 0
+            && queryTables.Count == 0
+            && hyperlinks.Count == 0;
     }
 
     /// <summary>
@@ -706,6 +731,24 @@ public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWrite
     /// <returns>The worksheet at the index.</returns>
     internal virtual object GetSheetAt(Sheets sheets, int index)
         => sheets[index];
+
+    /// <summary>
+    /// Returns the used-range address. This indexed COM property cannot be
+    /// used from a Moq expression tree, so contract tests substitute this
+    /// seam and live Office proves the real call.
+    /// </summary>
+    /// <param name="usedRange">The used range to inspect.</param>
+    /// <returns>The Excel A1-style address.</returns>
+    internal virtual string GetUsedRangeAddress(Excel.Range usedRange) => usedRange.Address;
+
+    /// <summary>
+    /// Returns the number of pivot tables on the worksheet. This indexed COM
+    /// method cannot be used from a Moq expression tree, so contract tests
+    /// substitute this seam and live Office proves the real call.
+    /// </summary>
+    /// <param name="worksheet">The worksheet to inspect.</param>
+    /// <returns>The pivot-table count.</returns>
+    internal virtual int GetPivotTableCount(Worksheet worksheet) => worksheet.PivotTables().Count;
 
     /// <summary>
     /// Returns the list object at the one-based index. Test seam over the COM

@@ -1,4 +1,5 @@
 using System.Linq;
+using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
 using GanttCreator.Office;
@@ -27,6 +28,19 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
         private readonly ITestOutputHelper _output = output;
 
         private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
+
+    /// <summary>The real worksheet objects that force the create path in R2.2a.</summary>
+    private enum NonPristineArtefact
+    {
+        /// <summary>A drawing shape.</summary>
+        Shape,
+
+        /// <summary>A legacy note.</summary>
+        Comment,
+
+        /// <summary>A threaded comment.</summary>
+        ThreadedComment,
+    }
 
     /// <summary>
     /// The adopt path: a blank workbook created through the fixture becomes
@@ -157,6 +171,99 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             // prepared state — the test had never been run against live Excel).
             Assert.Equal(1, workbook.Sheets.Count);
             _output.WriteLine("Refusal path left the workbook unchanged (1 sheet) and the existing table intact.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    [Theory]
+    [Trait("Category", "OfficeIntegration")]
+    [InlineData("Shape")]
+    [InlineData("Comment")]
+    [InlineData("ThreadedComment")]
+    public async Task Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state(
+        string artefactName)
+    {
+        var artefact = Enum.Parse<NonPristineArtefact>(artefactName);
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var originalName = active.Name;
+            int originalCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+
+            switch (artefact)
+            {
+                case NonPristineArtefact.Shape:
+                    _ = active.Shapes.AddShape(
+                        MsoAutoShapeType.msoShapeRectangle,
+                        10,
+                        10,
+                        20,
+                        20);
+                    break;
+                case NonPristineArtefact.Comment:
+                    _ = active.Cells[1, 1].AddComment("R2.2a user note");
+                    break;
+                case NonPristineArtefact.ThreadedComment:
+                    _ = active.Cells[1, 1].AddCommentThreaded("R2.2a user thread");
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(artefactName));
+            }
+
+            int preservedCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+            Assert.Equal(1, preservedCount);
+
+            WorkbookInitialiseOutcome outcome =
+                new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine(
+                $"R2.2a artefact={artefact} path={outcome.Path} sheetName={outcome.SheetName}");
+
+            Assert.True(outcome.Succeeded);
+            Assert.Equal(WorkbookInitialisePath.CreatedNew, outcome.Path);
+            Assert.Equal(originalName, active.Name, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(0, active.ListObjects.Count);
+            Assert.Equal(3, workbook.Sheets.Count);
+            Assert.Equal(
+                GanttWorkbookContract.GanttSheetLabel,
+                workbook.Sheets[2].Name,
+                StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(
+                GanttWorkbookContract.ConfigSheetName,
+                workbook.Sheets[3].Name,
+                StringComparer.OrdinalIgnoreCase);
+
+            int finalCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+            Assert.Equal(preservedCount, finalCount);
+
+            Assert.Equal(0, originalCount);
         }
         finally
         {
