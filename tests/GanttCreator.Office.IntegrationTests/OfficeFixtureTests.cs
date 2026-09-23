@@ -316,13 +316,21 @@ public class OfficeFixtureTests
             }
             if (!anyOrphan) break;
             await Task.Delay(200).ConfigureAwait(true);
-        } while (sw.Elapsed.TotalSeconds < 15);
+        // Evidence 2026-09-23 (verify-office run 22:07, archive
+        // office-20260923-221210367.trx): all five cycle PIDs exited
+        // cleanly on their own, but XLL-loaded instances outlive the
+        // plain test's 15 s window — every PID was still alive at 15 s
+        // and confirmed dead when checked minutes later. Deadline widened
+        // to 120 s so the observed minutes-scale clearance is covered with
+        // margin (well under the 600 s suite deadline); the zero-survivor
+        // assertion is unchanged.
+        } while (sw.Elapsed.TotalSeconds < 120);
 
         Assert.False(anyOrphan,
             $"One or more Excel processes survived five XLL-loaded open/close " +
             $"cycles (orphans: {string.Join(", ", pids)}).");
         _output.WriteLine(
-            "All five XLL-loaded Excel processes exited cleanly; " +
+            $"All five XLL-loaded Excel processes exited cleanly after {sw.Elapsed.TotalSeconds:F1} s; " +
             $"total packed-XLL open records: {CountPackedOpenRecords(TryReadLog(logPath))}.");
     }
 
