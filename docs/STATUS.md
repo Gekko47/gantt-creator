@@ -7,6 +7,9 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
+
+- **R2.8 — Add scaffold row commands (commit `61e67f9`)** — Added `GanttRowDefaults`, guarded `ExcelGanttRowInserter`, `AddRowCommand`, and three Ribbon controls/callbacks for As-Planned Activity, As-Planned Milestone, and Delineator. Rows append by exact header name with one bulk `Value2` write, generated stable IDs, catalogue default style keys, no rendering/dialog, and protection/table-missing refusals. Core: 403/403 PASS; Office contract: 158/158 PASS; AddIn: 171/171 PASS; Architecture: 78/78 PASS; Release build: 0 warnings/0 errors; `verify-quick.ps1`: PASS (11/11). The two new live `AddRowIntegrationTests` passed; the full Office harness was blocked only by the pre-existing `OfficeFixtureTests.CreateWorkbook_returns_a_non_null_workbook_and_leaves_no_orphan` assertion, with the archived TRX recorded in `docs/work-items/R2.8-add-row-commands.md`. Checklist: C, F, G, I, J, K. Next: R2.9.
+
 ## Recently completed
 
 - **R2.7a guard-adoption closure (commit `d2bb479`)** — `ExcelWorkbookInitialiser` and `ExcelConfigCatalogueWriter` now inject and query the shared `IWorksheetProtectionGuard` before workbook/sheet access and before mutation; target-specific configuration-sheet protection checks remain for the VeryHidden target. `ProtectionGuardFirstTests` pending-adoption set is empty. Office contract: 152/152 PASS; Architecture: 78/78 PASS; Release build: 0 warnings/0 errors; `verify-quick.ps1`: PASS (11/11). The required live Office gate was previously observed PASS at 23/23; the post-closure retry hit only the known OfficeFixture orphan assertion and was not retried again under the bounded retry rule. Checklist: C, F, G, I, J, K. Next: R2.8.
