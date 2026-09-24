@@ -183,8 +183,9 @@ public class WorkbookInitialiserTests
             Func<Excel.Worksheet, Excel.Range> headerRangeAt,
             Func<Excel.Range, string> usedRangeAddressAt,
             Func<Excel.Worksheet, int> pivotTableCountAt,
-            IConfigCatalogueWriter catalogueWriter)
-            : base(application, catalogueWriter)
+            IConfigCatalogueWriter catalogueWriter,
+            IWorksheetProtectionGuard? protectionGuard = null)
+            : base(application, catalogueWriter, protectionGuard)
         {
             SheetAt = sheetAt;
             TableAt = tableAt;
@@ -244,6 +245,7 @@ public class WorkbookInitialiserTests
             _ = Application.SetupGet(a => a.WorksheetFunction).Returns(Functions.Object);
             _ = Workbook.SetupGet(w => w.Sheets).Returns(Sheets.Object);
             _ = Workbook.SetupGet(w => w.Names).Returns(WorkbookNames.Object);
+            _ = Workbook.SetupGet(w => w.ActiveSheet).Returns(Graphs[0].Worksheet.Object);
             _ = WorkbookNames.SetupGet(n => n.Count).Returns(() => WorkbookNameCount);
             _ = Sheets.SetupGet(s => s.Count).Returns(() => SheetsByIndex.Count);
             _ = Sheets.Setup(s => s.Add(
@@ -340,7 +342,10 @@ public class WorkbookInitialiserTests
         /// <param name="activeSheet">The active worksheet graph, or <see langword="null"/> for a non-worksheet active object.</param>
         /// <param name="catalogueWriter">The writer the initialiser under test uses.</param>
         /// <returns>The initialiser over the mocked application.</returns>
-        public TestableInitialiser BuildWithWriter(WorksheetGraph? activeSheet, IConfigCatalogueWriter catalogueWriter)
+        public TestableInitialiser BuildWithWriter(
+            WorksheetGraph? activeSheet,
+            IConfigCatalogueWriter catalogueWriter,
+            IWorksheetProtectionGuard? protectionGuard = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -367,7 +372,8 @@ public class WorkbookInitialiserTests
                 pivotTableCountAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .PivotTableCount,
-                catalogueWriter: catalogueWriter);
+                catalogueWriter: catalogueWriter,
+                protectionGuard: protectionGuard);
         }
     }
 
@@ -425,6 +431,29 @@ public class WorkbookInitialiserTests
         Assert.True(outcome.Succeeded);
         writer.Verify(w => w.Write(), Times.Once());
         active.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+    }
+
+    [Theory]
+    [InlineData(ProtectionGuardOutcome.SheetProtected)]
+    [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected)]
+    public void Initialise_shared_guard_refusal_does_not_mutate(ProtectionGuardOutcome protection)
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(protection);
+
+        var outcome = graph.BuildWithWriter(active, writer.Object, guard.Object).Initialise();
+
+        Assert.Equal(WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected), outcome);
+        guard.Verify(g => g.Query(), Times.Once);
+        writer.Verify(w => w.Write(), Times.Never);
+        active.VerifyTableCreated(Times.Never());
+        graph.VerifySheetsAdded(Times.Never());
+        Assert.Empty(active.WrittenValues);
     }
 
     [Fact]

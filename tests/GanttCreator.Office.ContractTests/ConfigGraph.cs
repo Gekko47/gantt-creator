@@ -16,8 +16,8 @@ internal static class ConfigGraph
 {
     private sealed class TestableWriter : ExcelConfigCatalogueWriter
     {
-        public TestableWriter(object? application, ConfigSheetFake fake)
-            : base(application)
+        public TestableWriter(object? application, ConfigSheetFake fake, IWorksheetProtectionGuard? protectionGuard = null)
+            : base(application, protectionGuard)
         {
             Fake = fake;
         }
@@ -85,17 +85,21 @@ internal static class ConfigGraph
     /// <param name="fake">The config sheet fake.</param>
     /// <param name="structureProtected">The mocked <c>Workbook.ProtectStructure</c>.</param>
     /// <returns>The writer under test.</returns>
-    public static ExcelConfigCatalogueWriter BuildWriter(ConfigSheetFake fake, bool structureProtected = false)
+    public static ExcelConfigCatalogueWriter BuildWriter(
+        ConfigSheetFake fake,
+        bool structureProtected = false,
+        IWorksheetProtectionGuard? protectionGuard = null)
     {
         var application = new Mock<Excel.Application>();
         var workbook = new Mock<Excel.Workbook>();
         var sheets = new Mock<Excel.Sheets>();
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
         _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+        _ = workbook.SetupGet(w => w.ActiveSheet).Returns(fake.Worksheet);
         _ = workbook.SetupGet(w => w.ProtectStructure).Returns(structureProtected);
         _ = sheets.SetupGet(s => s.Count).Returns(1);
         _ = application.SetupGet(a => a.DisplayAlerts).Returns(true);
-        return new TestableWriter(application.Object, fake);
+        return new TestableWriter(application.Object, fake, protectionGuard);
     }
 
     /// <summary>

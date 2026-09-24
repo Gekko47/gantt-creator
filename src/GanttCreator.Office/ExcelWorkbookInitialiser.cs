@@ -21,6 +21,7 @@ namespace GanttCreator.Office;
 /// Tests pass a stub to isolate the sheet contract from the catalogue
 /// contract.
 /// </param>
+/// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -52,9 +53,14 @@ namespace GanttCreator.Office;
 /// the tagged live-Office integration test.
 /// </para>
 /// </remarks>
-public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWriter? catalogueWriter = null) : IWorkbookInitialiser
+public class ExcelWorkbookInitialiser(
+    object? application,
+    IConfigCatalogueWriter? catalogueWriter = null,
+    IWorksheetProtectionGuard? protectionGuard = null) : IWorkbookInitialiser
 {
     private readonly Application? _application = application as Application;
+    private readonly IWorksheetProtectionGuard _protectionGuard =
+        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     private readonly IConfigCatalogueWriter _catalogueWriter =
         catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
@@ -66,6 +72,18 @@ public class ExcelWorkbookInitialiser(object? application, IConfigCatalogueWrite
         if (application is null)
         {
             return WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook);
+        }
+
+        // ADR-0008 D4: the shared protection guard is the first read-only check
+        // for every mutating adapter. The target-specific checks below remain
+        // authoritative for the sheet this command actually writes.
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookInitialiseOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? InitialiseRefusalReason.NoActiveWorkbook
+                    : InitialiseRefusalReason.TargetProtected);
         }
 
         // One proxy per local: no chained `app.ActiveWorkbook.Worksheets[…]`

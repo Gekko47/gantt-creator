@@ -126,8 +126,11 @@ public class ConfigCatalogueWriterTests
         var application = new Mock<Excel.Application>();
         var workbook = new Mock<Excel.Workbook>();
         var sheets = new Mock<Excel.Sheets>();
+        var activeSheet = new Mock<Excel._Worksheet>();
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
         _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+        _ = workbook.SetupGet(w => w.ActiveSheet).Returns(activeSheet.Object);
+        _ = activeSheet.SetupGet(w => w.ProtectContents).Returns(false);
         _ = sheets.SetupGet(s => s.Count).Returns(0);
 
         Assert.Equal(
@@ -160,6 +163,23 @@ public class ConfigCatalogueWriterTests
         Assert.Equal(
             ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected),
             outcome);
+        Assert.Empty(fake.Tables);
+    }
+
+    [Theory]
+    [InlineData(ProtectionGuardOutcome.SheetProtected)]
+    [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected)]
+    public void Write_shared_guard_refusal_does_not_mutate(ProtectionGuardOutcome protection)
+    {
+        var fake = new ConfigSheetFake();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(protection);
+        var writer = ConfigGraph.BuildWriter(fake, protectionGuard: guard.Object);
+
+        var outcome = writer.Write();
+
+        Assert.Equal(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected), outcome);
+        guard.Verify(g => g.Query(), Times.Once);
         Assert.Empty(fake.Tables);
     }
 

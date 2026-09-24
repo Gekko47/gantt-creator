@@ -17,6 +17,7 @@ namespace GanttCreator.Office;
 /// host). A foreign object fails the interface cast and degrades to the
 /// no-active-workbook refusal with no mutation.
 /// </param>
+/// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <remarks>
 /// <para>
 /// COM ownership: every proxy is held in a local and used without chained
@@ -37,9 +38,13 @@ namespace GanttCreator.Office;
 /// sheet.
 /// </para>
 /// </remarks>
-public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueWriter
+public class ExcelConfigCatalogueWriter(
+    object? application,
+    IWorksheetProtectionGuard? protectionGuard = null) : IConfigCatalogueWriter
 {
     private readonly Application? _application = application as Application;
+    private readonly IWorksheetProtectionGuard _protectionGuard =
+        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <summary>
     /// The preservation data captured before any mutation: existing setting
@@ -63,6 +68,19 @@ public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueW
         if (application is null)
         {
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        // ADR-0008 D4: the shared protection guard is the first read-only check
+        // for every mutating adapter. The configuration-sheet probe below is
+        // still required because the guard checks the active sheet, while this
+        // writer may target the VeryHidden configuration sheet.
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
         }
 
         // One proxy per local: no chained member expressions

@@ -74,11 +74,7 @@ public sealed class ProtectionGuardFirstTests
     /// test fails until the declaration is updated, so the ratchet only
     /// tightens deliberately.
     /// </summary>
-    private static readonly string[] PendingGuardPortAdoption =
-    [
-        "src/GanttCreator.Office/ExcelWorkbookInitialiser.cs",
-        "src/GanttCreator.Office/ExcelConfigCatalogueWriter.cs",
-    ];
+    private static readonly string[] PendingGuardPortAdoption = [];
 
     /// <summary>
     /// The remaining Office sources: ports, outcome types, readers, and the
