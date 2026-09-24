@@ -19,7 +19,7 @@ namespace GanttCreator.Core;
 /// critical intervals when the parent supplies it), optional for milestones,
 /// and warned-not-read for delineators, splitters, and spacers;
 /// <c>Critical Interval</c> requires a <c>ParentId</c> present in the same
-/// batch whose target is a span; <c>Custom Activity</c> requires a
+/// batch whose target is a span, with an acyclic parent relationship; <c>Custom Activity</c> requires a
 /// <c>StyleKey</c> whose existence is deferred to R2.9; label positions and
 /// colour overrides are checked against the type's catalogue capabilities
 /// (skipped for Custom); <c>Description</c> is optional for every type;
@@ -126,7 +126,8 @@ public static class GanttRowValidator
         string field,
         GanttCellState state,
         bool relevant,
-        Action<string, string, GanttValidationSeverity, string> add)
+        Action<string, string, GanttValidationSeverity, string> add
+    )
     {
         if (state == GanttCellState.Empty)
         {
@@ -481,11 +482,16 @@ public static class GanttRowValidator
 
         // LabelPosition: blank resolves later; otherwise exact-enum plus catalogue capability (skipped for Custom).
         GanttLabelPosition? labelPosition = null;
-        if (!labelBlocked && row.LabelPositionText is not null && type is not null && type != GanttEntityType.CustomActivity && definition is not null)
+        if (
+            !labelBlocked
+            && row.LabelPositionText is not null
+            && type is not null
+            && type != GanttEntityType.CustomActivity
+            && definition is not null
+        )
         {
             if (
-                !Enum.TryParse(row.LabelPositionText, ignoreCase: false, out GanttLabelPosition parsedLabel)
-                || !Enum.IsDefined(parsedLabel)
+                !Enum.TryParse(row.LabelPositionText, ignoreCase: false, out GanttLabelPosition parsedLabel) || !Enum.IsDefined(parsedLabel)
             )
             {
                 Add(
@@ -716,7 +722,7 @@ public static class GanttRowValidator
 
         for (var start = 0; start < rows.Count; start++)
         {
-            if (perRow[start]?.Type != GanttEntityType.CriticalInterval)
+            if (!IsUsableCriticalInterval(start, perRow, canonicalById))
             {
                 continue;
             }
@@ -724,7 +730,7 @@ public static class GanttRowValidator
             path.Clear();
             pathIndexByRow.Clear();
             var current = start;
-            while (current >= 0 && perRow[current]?.Type == GanttEntityType.CriticalInterval)
+            while (current >= 0 && IsUsableCriticalInterval(current, perRow, canonicalById))
             {
                 if (pathIndexByRow.TryGetValue(current, out var cycleStart))
                 {
@@ -739,8 +745,7 @@ public static class GanttRowValidator
                 pathIndexByRow[current] = path.Count;
                 path.Add(current);
                 ValidatedRow? node = perRow[current];
-                if (node?.Event?.ParentId is not { } parentId
-                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                if (node?.Event?.ParentId is not { } parentId || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
                 {
                     break;
                 }
@@ -764,5 +769,18 @@ public static class GanttRowValidator
         }
 
         return cycleRows;
+    }
+
+    /// <summary>
+    /// Returns whether a row is a canonical, error-free Critical Interval
+    /// event that can participate in the parent graph.
+    /// </summary>
+    private static bool IsUsableCriticalInterval(int rowIndex, ValidatedRow?[] perRow, Dictionary<string, int> canonicalById)
+    {
+        ValidatedRow? row = perRow[rowIndex];
+        return row is { Type: GanttEntityType.CriticalInterval, Event: not null, HasBlockingError: false }
+            && row.Id is not null
+            && canonicalById.TryGetValue(row.Id.Value, out var canonicalIndex)
+            && canonicalIndex == rowIndex;
     }
 }

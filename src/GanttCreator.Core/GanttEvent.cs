@@ -13,7 +13,7 @@ namespace GanttCreator.Core;
 /// <param name="Description">The trimmed description, or <see langword="null"/> when blank. Blank is permitted for every type (R2.5 U2).</param>
 /// <param name="Start">The inclusive start date, or <see langword="null"/> when the type reads no dates.</param>
 /// <param name="Finish">The inclusive finish date for spans, or <see langword="null"/> for point events and dateless types.</param>
-/// <param name="ParentId">The owning activity for critical intervals, or <see langword="null"/> otherwise.</param>
+/// <param name="ParentId">The owning activity for critical intervals, or <see langword="null"/> otherwise. Critical Interval parent relationships are validated as acyclic by <see cref="GanttRowValidator"/>.</param>
 /// <param name="StyleKey">The trimmed named style key, or <see langword="null"/> when blank (the type default applies).</param>
 /// <param name="LabelPosition">The explicit label position, or <see langword="null"/> when blank (the type default or <c>Auto</c> applies).</param>
 /// <param name="FillColour">The normalised uppercase <c>#RRGGBB</c> fill override, or <see langword="null"/> when blank.</param>
@@ -35,4 +35,5 @@ public sealed record GanttEvent(
     string? FillColour,
     string? StrokeColour,
     bool Visible,
-    int? SortOrder);
+    int? SortOrder
+);

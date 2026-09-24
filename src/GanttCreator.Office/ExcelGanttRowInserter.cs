@@ -49,7 +49,7 @@ public class ExcelGanttRowInserter(
         Excel.ListRow row = AddRow(rows);
         Excel.Range rowRange = GetRowRange(row);
         WriteRow(rowRange, values, columnMap);
-        return GanttRowInsertOutcome.Ok(rows.Count);
+        return GanttRowInsertOutcome.Ok(GetRowIndex(row));
     }
 
     private bool TryFindTable(Excel.Sheets sheets, out Excel.ListObject? table)
@@ -149,6 +149,8 @@ public class ExcelGanttRowInserter(
     internal virtual Excel.ListRows GetListRows(Excel.ListObject table) => table.ListRows;
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
+
+    internal virtual int GetRowIndex(Excel.ListRow row) => row.Index;
 
     internal virtual Excel.Range GetRowRange(Excel.ListRow row) => row.Range;
 }

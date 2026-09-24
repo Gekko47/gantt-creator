@@ -48,7 +48,8 @@ public class GanttRowValidatorTests
         );
 
     [Fact]
-    public void Validate_rejects_null_input_without_swallowing_programmer_error() => _ = Assert.Throws<ArgumentNullException>(() => GanttRowValidator.Validate(null!));
+    public void Validate_rejects_null_input_without_swallowing_programmer_error() =>
+        _ = Assert.Throws<ArgumentNullException>(() => GanttRowValidator.Validate(null!));
 
     [Fact]
     public void Valid_span_row_maps_to_event_with_defaults()
@@ -762,16 +763,16 @@ public class GanttRowValidatorTests
     [Fact]
     public void Relevant_excel_error_is_one_blocking_issue_without_duplicate_required_issue()
     {
-        GanttRowDto row = ValidSpan() with
-        {
-            StartCell = GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.NotAvailable),
-        };
+        GanttRowDto row = ValidSpan() with { StartCell = GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.NotAvailable) };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
         Assert.False(outcome.IsValid);
         Assert.Empty(outcome.Events);
-        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Field == "Start" && i.Code == GanttValidationCodes.CellContainsExcelError);
+        GanttValidationIssue issue = Assert.Single(
+            outcome.Issues,
+            i => i.Field == "Start" && i.Code == GanttValidationCodes.CellContainsExcelError
+        );
         Assert.Equal(GanttValidationSeverity.Error, issue.Severity);
         Assert.DoesNotContain(outcome.Issues, i => i.Field == "Start" && i.Code == GanttValidationCodes.StartRequired);
     }
@@ -779,10 +780,7 @@ public class GanttRowValidatorTests
     [Fact]
     public void Relevant_unsupported_value_is_one_blocking_issue_without_duplicate_format_issue()
     {
-        GanttRowDto row = ValidSpan() with
-        {
-            FillColourCell = GanttCells.Unsupported<string>(),
-        };
+        GanttRowDto row = ValidSpan() with { FillColourCell = GanttCells.Unsupported<string>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
@@ -841,7 +839,8 @@ public class GanttRowValidatorTests
             stackIndex: 0,
             start: new DateOnly(2026, 9, 2),
             finish: new DateOnly(2026, 9, 3),
-            parentId: parentId) with
+            parentId: parentId
+        ) with
         {
             LaneIdCell = GanttCells.Empty<string>(),
         };
@@ -1007,8 +1006,7 @@ public class GanttRowValidatorTests
     {
         string firstId = NewId();
         string secondId = NewId();
-        GanttValidationOutcome outcome = GanttRowValidator.Validate(
-        [
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([
             CriticalIntervalRow(2, firstId, secondId),
             CriticalIntervalRow(3, secondId, firstId),
         ]);
@@ -1024,8 +1022,7 @@ public class GanttRowValidatorTests
         string firstId = NewId();
         string secondId = NewId();
         string thirdId = NewId();
-        GanttValidationOutcome outcome = GanttRowValidator.Validate(
-        [
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([
             CriticalIntervalRow(2, firstId, secondId),
             CriticalIntervalRow(3, secondId, thirdId),
             CriticalIntervalRow(4, thirdId, firstId),
@@ -1044,8 +1041,7 @@ public class GanttRowValidatorTests
         string childId = NewId();
         GanttRowDto child = CriticalIntervalRow(4, childId, firstId);
 
-        GanttValidationOutcome outcome = GanttRowValidator.Validate(
-        [
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([
             CriticalIntervalRow(2, firstId, secondId),
             CriticalIntervalRow(3, secondId, firstId),
             child,
@@ -1056,7 +1052,42 @@ public class GanttRowValidatorTests
         Assert.DoesNotContain(outcome.Events, e => e.Id.Value == childId);
     }
 
-    private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string parentId) =>
+    [Fact]
+    public void Critical_interval_cycle_member_with_a_field_error_is_not_reported_as_a_cycle()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([
+            CriticalIntervalRow(2, firstId, secondId, "#ff0000"),
+            CriticalIntervalRow(3, secondId, firstId),
+        ]);
+
+        Assert.False(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentCycle);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
+    }
+
+    [Fact]
+    public void Critical_interval_cycle_reports_are_identical_under_shuffled_input()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        string thirdId = NewId();
+        GanttRowDto[] rows =
+        [
+            CriticalIntervalRow(2, firstId, secondId),
+            CriticalIntervalRow(3, secondId, thirdId),
+            CriticalIntervalRow(4, thirdId, firstId),
+        ];
+
+        GanttValidationOutcome ordered = GanttRowValidator.Validate(rows);
+        GanttValidationOutcome shuffled = GanttRowValidator.Validate([rows[2], rows[0], rows[1]]);
+
+        Assert.Equal(ordered.Issues, shuffled.Issues);
+    }
+
+    private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string parentId, string? fillColourText = null) =>
         new(
             rowNumber,
             id,
@@ -1069,20 +1100,23 @@ public class GanttRowValidatorTests
             parentId,
             null,
             null,
-            null,
+            fillColourText,
             null,
             true,
-            null);
-
+            null
+        );
 
     [Fact]
-    public void Validation_is_culture_invariant_under_tr_tr()
+    public void Validation_preserves_exact_type_case_and_accepts_valid_label_under_tr_tr()
     {
         CultureInfo originalCulture = CultureInfo.CurrentCulture;
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
 
+            // The #RRGGBB contract has no i/I, so this pins exact label and
+            // type behaviour plus colour normalization; it does not claim to
+            // distinguish Turkish casing for hex colours.
             GanttRowDto row = ValidSpan(fillColourText: "#ff0000", sortOrder: "3", labelPositionText: "Inside");
             GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 

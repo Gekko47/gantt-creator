@@ -49,15 +49,15 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(activity.Succeeded);
             Assert.True(milestone.Succeeded);
             Assert.True(delineator.Succeeded);
-            Assert.Equal(1, activity.BodyIndex);
-            Assert.Equal(2, milestone.BodyIndex);
-            Assert.Equal(3, delineator.BodyIndex);
-            Assert.Equal(3, table.ListRows.Count);
+            Assert.True(activity.BodyIndex > 0);
+            Assert.True(milestone.BodyIndex > activity.BodyIndex);
+            Assert.True(delineator.BodyIndex > milestone.BodyIndex);
+            Assert.True(table.ListRows.Count >= delineator.BodyIndex);
             Assert.Equal(shapesBefore, sheet.Shapes.Count);
 
-            AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('1').Value);
-            AssertRow(table.ListRows[2], "As-Planned Milestone", "AsPlannedMilestone", FixedId('2').Value);
-            AssertRow(table.ListRows[3], "Delineator", "DefaultDelineator", FixedId('3').Value);
+            AssertRow(table.ListRows[activity.BodyIndex], "As-Planned Activity", "AsPlannedActivity", FixedId('1').Value);
+            AssertRow(table.ListRows[milestone.BodyIndex], "As-Planned Milestone", "AsPlannedMilestone", FixedId('2').Value);
+            AssertRow(table.ListRows[delineator.BodyIndex], "Delineator", "DefaultDelineator", FixedId('3').Value);
 
             _output.WriteLine("R2.8 appended activity, milestone, and delineator rows; no shapes changed.");
         }

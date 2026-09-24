@@ -1,6 +1,6 @@
-using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
 using Moq;
+using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office.ContractTests;
 
@@ -66,7 +66,8 @@ public class GanttTableReaderTests
             Func<Excel.ListColumns, int, Excel.ListColumn>? columnAt = null,
             Func<Excel.Workbook, bool>? date1904 = null,
             Func<Excel.Range, object?>? bodyValues = null,
-            IExcelDateSystemConverter? dateSystemConverter = null)
+            IExcelDateSystemConverter? dateSystemConverter = null
+        )
             : base(application, dateSystemConverter)
         {
             SheetAt = sheetAt ?? ((_, _) => throw new InvalidOperationException("should not be called"));
@@ -83,14 +84,17 @@ public class GanttTableReaderTests
         public Func<Excel.Range, object?> BodyValue { get; }
 
         internal override bool GetDate1904(Excel.Workbook workbook) => Date1904(workbook);
+
         internal override object GetSheetAt(Excel.Sheets sheets, int index) => SheetAt(sheets, index);
+
         internal override Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => TableAt(listObjects, index);
+
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => ColumnAt(columns, index);
+
         internal override object? GetBodyValues(Excel.Range body) => BodyValue(body);
     }
 
-    private static List<string> SchemaHeaders() =>
-        GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
+    private static List<string> SchemaHeaders() => GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
 
     private static Array BodyMatrix(params object?[][] rows)
     {
@@ -114,11 +118,8 @@ public class GanttTableReaderTests
         object? type = null,
         object? start = null,
         object? finish = null,
-        object? visible = null) =>
-        [
-            id, null, stackIndex, type, null, start, finish,
-            null, null, null, null, null, visible, null,
-        ];
+        object? visible = null
+    ) => [id, null, stackIndex, type, null, start, finish, null, null, null, null, null, visible, null];
 
     private static Mock<Excel.Sheets> CreateSheetsMock(IReadOnlyList<SheetGraph> sheets)
     {
@@ -137,7 +138,8 @@ public class GanttTableReaderTests
         Mock<Excel.Application> application,
         Mock<Excel.Workbook> workbook,
         IReadOnlyList<SheetGraph> sheets,
-        Func<Excel.Range, object?> bodyValues)
+        Func<Excel.Range, object?> bodyValues
+    )
     {
         var sheetsMock = CreateSheetsMock(sheets);
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
@@ -158,7 +160,8 @@ public class GanttTableReaderTests
             (listObjects, index) => firstTable.Table.Object,
             (columns, index) => firstTable.ColumnAt(index),
             (wb) => false,
-            bodyValues);
+            bodyValues
+        );
     }
 
     [Fact]
@@ -200,7 +203,8 @@ public class GanttTableReaderTests
             (listObjects, index) => table.Table.Object,
             (columns, index) => table.ColumnAt(index),
             (wb) => true,
-            (body) => throw new InvalidOperationException("should not be called"));
+            (body) => throw new InvalidOperationException("should not be called")
+        );
 
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
         _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([sheet]).Object);
@@ -230,7 +234,8 @@ public class GanttTableReaderTests
             },
             date1904: _ => false,
             bodyValues: _ => throw new InvalidOperationException("body must not be read"),
-            dateSystemConverter: converter.Object);
+            dateSystemConverter: converter.Object
+        );
         _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
 
         GanttTableReadOutcome outcome = reader.Read();
@@ -246,7 +251,12 @@ public class GanttTableReaderTests
         var table = new TableGraph("SomeOtherTable", SchemaHeaders());
         var sheet = new SheetGraph(table);
 
-        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => throw new InvalidOperationException("should not be called"));
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => throw new InvalidOperationException("should not be called")
+        );
 
         GanttTableReadOutcome outcome = reader.Read();
 
@@ -263,7 +273,12 @@ public class GanttTableReaderTests
         var table = new TableGraph(GanttTableSchema.TableName, headers);
         var sheet = new SheetGraph(table);
 
-        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => throw new InvalidOperationException("should not be called"));
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => throw new InvalidOperationException("should not be called")
+        );
 
         GanttTableReadOutcome outcome = reader.Read();
 
@@ -287,6 +302,34 @@ public class GanttTableReaderTests
 
         Assert.Equal(zeroBasedRows, oneBasedRows);
         Assert.Equal(["one", 2.0], oneBasedRows[0]);
+    }
+
+    [Fact]
+    public void ExcelValue2Matrix_normalizes_nonstandard_positive_lower_bounds()
+    {
+        var matrix = Array.CreateInstance(typeof(object), [2, 2], [2, 3]);
+        matrix.SetValue("a", 2, 3);
+        matrix.SetValue("b", 2, 4);
+        matrix.SetValue("c", 3, 3);
+        matrix.SetValue("d", 3, 4);
+
+        List<object?[]> rows = ExcelValue2Matrix.ReadRows(matrix);
+
+        Assert.Equal(
+            [
+                ["a", "b"],
+                ["c", "d"],
+            ],
+            rows
+        );
+    }
+
+    [Fact]
+    public void ExcelValue2Matrix_returns_no_rows_for_empty_one_based_matrix()
+    {
+        var matrix = Array.CreateInstance(typeof(object), [0, 0], [1, 1]);
+
+        Assert.Empty(ExcelValue2Matrix.ReadRows(matrix));
     }
 
     [Fact]
@@ -324,7 +367,6 @@ public class GanttTableReaderTests
         Assert.Equal(new DateOnly(2023, 1, 1), row.Start);
     }
 
-
     [Fact]
     public void Read_returns_an_empty_list_when_the_table_has_no_body()
     {
@@ -332,7 +374,12 @@ public class GanttTableReaderTests
         table.WithNoBody();
         var sheet = new SheetGraph(table);
 
-        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => throw new InvalidOperationException("should not be called"));
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => throw new InvalidOperationException("should not be called")
+        );
 
         GanttTableReadOutcome outcome = reader.Read();
 
@@ -348,7 +395,8 @@ public class GanttTableReaderTests
         var sheet = new SheetGraph(table);
         var matrix = BodyMatrix(
             FullRow(id: "  G-1  ", stackIndex: 1.0, type: "As-Planned Activity", start: 44927.0, finish: 44931.0, visible: true),
-            FullRow(id: "G-2", stackIndex: "2", type: "Delineator", start: 44932.0, visible: "TRUE"));
+            FullRow(id: "G-2", stackIndex: "2", type: "Delineator", start: 44932.0, visible: "TRUE")
+        );
 
         var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);
 
@@ -412,6 +460,7 @@ public class GanttTableReaderTests
         Assert.Null(row.StackIndex);
         Assert.Null(row.Visible);
     }
+
     [Fact]
     public void Read_maps_each_excel_error_cell_to_null_and_keeps_row_order()
     {
@@ -424,8 +473,16 @@ public class GanttTableReaderTests
         var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
         var sheet = new SheetGraph(table);
         var matrix = BodyMatrix(
-            FullRow(id: "G-error", stackIndex: -2146826273, type: "As-Planned Activity", start: -2146826246, finish: -2146826281, visible: true),
-            FullRow(id: "G-clean", stackIndex: 2.0, type: "Milestone", start: 44932.0, visible: "TRUE"));
+            FullRow(
+                id: "G-error",
+                stackIndex: -2146826273,
+                type: "As-Planned Activity",
+                start: -2146826246,
+                finish: -2146826281,
+                visible: true
+            ),
+            FullRow(id: "G-clean", stackIndex: 2.0, type: "Milestone", start: 44932.0, visible: "TRUE")
+        );
 
         var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);
 
@@ -455,6 +512,4 @@ public class GanttTableReaderTests
         Assert.Equal(new DateOnly(2023, 1, 6), cleanRow.Start);
         Assert.Equal(2, cleanRow.StackIndex);
     }
-
-
 }

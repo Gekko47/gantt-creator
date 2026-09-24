@@ -15,6 +15,7 @@ public class GanttRowInserterTests
         private readonly Func<Excel.ListColumns, int, Excel.ListColumn> _columnAt;
         private readonly Func<Excel.ListObject, Excel.ListRows> _rowsAt;
         private readonly Func<Excel.ListRows, Excel.ListRow> _addRow;
+        private readonly Func<Excel.ListRow, int> _rowIndex;
         private readonly Func<Excel.ListRow, Excel.Range> _rowRange;
 
         public TestableInserter(
@@ -25,6 +26,7 @@ public class GanttRowInserterTests
             Func<Excel.ListColumns, int, Excel.ListColumn> columnAt,
             Func<Excel.ListObject, Excel.ListRows> rowsAt,
             Func<Excel.ListRows, Excel.ListRow> addRow,
+            Func<Excel.ListRow, int> rowIndex,
             Func<Excel.ListRow, Excel.Range> rowRange)
             : base(application, guard)
         {
@@ -33,6 +35,7 @@ public class GanttRowInserterTests
             _columnAt = columnAt;
             _rowsAt = rowsAt;
             _addRow = addRow;
+            _rowIndex = rowIndex;
             _rowRange = rowRange;
         }
 
@@ -41,6 +44,7 @@ public class GanttRowInserterTests
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => _columnAt(columns, index);
         internal override Excel.ListRows GetListRows(Excel.ListObject table) => _rowsAt(table);
         internal override Excel.ListRow AddRow(Excel.ListRows rows) => _addRow(rows);
+        internal override int GetRowIndex(Excel.ListRow row) => _rowIndex(row);
         internal override Excel.Range GetRowRange(Excel.ListRow row) => _rowRange(row);
     }
 
@@ -76,6 +80,7 @@ public class GanttRowInserterTests
             }
             _ = Table.SetupGet(t => t.ListRows).Returns(ListRows.Object);
             _ = ListRows.SetupGet(r => r.Count).Returns(1);
+            _ = NewRow.SetupGet(r => r.Index).Returns(2);
             _ = NewRow.SetupGet(r => r.Range).Returns(RowRange.Object);
             _ = RowRange.SetupSet(r => r.Value2 = It.IsAny<object>())
                 .Callback<object>(value => WrittenValue = value);
@@ -107,6 +112,11 @@ public class GanttRowInserterTests
             row =>
             {
                 Assert.Same(NewRow.Object, row);
+                return 2;
+            },
+            row =>
+            {
+                Assert.Same(NewRow.Object, row);
                 return RowRange.Object;
             });
     }
@@ -124,7 +134,7 @@ public class GanttRowInserterTests
             () => id);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(1, outcome.BodyIndex);
+        Assert.Equal(2, outcome.BodyIndex);
         Assert.Equal(1, graph.AddRowCalls);
         guard.Verify(g => g.Query(), Times.Once);
         var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
