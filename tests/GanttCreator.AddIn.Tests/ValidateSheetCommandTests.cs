@@ -71,6 +71,13 @@ public class ValidateSheetCommandTests
 
     private static readonly Mock<IGanttTableReader> UnusedReader = new();
 
+    private static Mock<IConfigCatalogueReader> CatalogueWith(ConfigReadOutcome outcome)
+    {
+        var reader = new Mock<IConfigCatalogueReader>();
+        _ = reader.Setup(r => r.Read()).Returns(outcome);
+        return reader;
+    }
+
     private static readonly Mock<IGanttValidationReporter> UnusedReporter = new();
 
     [Fact]
@@ -101,6 +108,29 @@ public class ValidateSheetCommandTests
     }
 
     [Fact]
+    public void Catalogue_refusal_stops_validation_and_presents_one_message()
+    {
+        var messages = new List<string>();
+        var reader = ReaderWith(GanttTableReadOutcome.Ok([ValidRow(1, '9')]));
+        var catalogue = CatalogueWith(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ConfigSheetMissing));
+        var reporter = ReporterWith(GanttValidationReportOutcome.Ok(0));
+
+        ValidateSheetCommand.Run(reader.Object, catalogue.Object, reporter.Object, messages.Add);
+
+        Assert.Single(messages);
+        reporter.Verify(r => r.Report(It.IsAny<IReadOnlyList<GanttValidationIssue>>()), Times.Never);
+    }
+
+    [Fact]
+    public void Every_catalogue_refusal_has_a_nonempty_message()
+    {
+        foreach (ConfigReadRefusalReason reason in Enum.GetValues<ConfigReadRefusalReason>())
+        {
+            Assert.False(string.IsNullOrWhiteSpace(ValidateSheetCommand.TranslateCatalogueRefusal(reason)));
+        }
+    }
+
+    [Fact]
     public void A_valid_table_presents_all_rows_valid_and_writes_no_note()
     {
         var messages = new List<string>();
@@ -115,6 +145,7 @@ public class ValidateSheetCommandTests
             r => r.Report(It.IsAny<IReadOnlyList<GanttValidationIssue>>()),
             Times.Once);
     }
+
 
     [Fact]
     public void An_invalid_table_presents_the_counts_and_forwards_every_validator_issue()

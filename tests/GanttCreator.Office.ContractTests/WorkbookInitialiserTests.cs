@@ -174,6 +174,11 @@ public class WorkbookInitialiserTests
     /// indexer seams with delegates backed by the graphs, and exercises every
     /// other member through the Moq proxies.
     /// </summary>
+    private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
+    {
+        public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
+    }
+
     private sealed class TestableInitialiser : ExcelWorkbookInitialiser
     {
         public TestableInitialiser(
@@ -185,7 +190,7 @@ public class WorkbookInitialiserTests
             Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter,
             IWorksheetProtectionGuard? protectionGuard = null)
-            : base(application, catalogueWriter, protectionGuard)
+            : base(application, catalogueWriter, protectionGuard, new StubTypeOptionsMaterialiser())
         {
             SheetAt = sheetAt;
             TableAt = tableAt;

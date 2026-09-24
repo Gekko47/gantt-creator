@@ -28,7 +28,7 @@ public interface IGanttValidationReporter
     /// <param name="issues">
     /// The validation findings to report. Must already be in the deterministic
     /// <c>Severity → Row → Field → Code</c> order produced by
-    /// <see cref="Core.GanttRowValidator.Validate"/>.
+    /// <see cref="Core.GanttRowValidator.Validate(IReadOnlyList{Core.GanttRowDto})"/>.
     /// </param>
     /// <returns>
     /// The typed outcome: the count of notes written on success, or the refusal

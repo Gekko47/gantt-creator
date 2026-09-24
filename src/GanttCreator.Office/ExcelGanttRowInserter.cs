@@ -10,11 +10,14 @@ namespace GanttCreator.Office;
 /// </summary>
 public class ExcelGanttRowInserter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IGanttRowInserter
+    IWorksheetProtectionGuard? protectionGuard = null,
+    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : IGanttRowInserter
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+    private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
+        typeOptionsMaterialiser ?? new ExcelTypeOptionsMaterialiser(application);
 
     /// <inheritdoc />
     public GanttRowInsertOutcome Insert(GanttEntityType type, Func<GanttRowId> nextId)
@@ -49,6 +52,13 @@ public class ExcelGanttRowInserter(
         Excel.ListRow row = AddRow(rows);
         Excel.Range rowRange = GetRowRange(row);
         WriteRow(rowRange, values, columnMap);
+        TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.Materialise();
+        if (!typeOptions.Succeeded)
+        {
+            DeleteRow(row);
+            return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable);
+        }
+
         return GanttRowInsertOutcome.Ok(GetRowIndex(row));
     }
 
@@ -153,4 +163,6 @@ public class ExcelGanttRowInserter(
     internal virtual int GetRowIndex(Excel.ListRow row) => row.Index;
 
     internal virtual Excel.Range GetRowRange(Excel.ListRow row) => row.Range;
+
+    internal virtual void DeleteRow(Excel.ListRow row) => row.Delete();
 }

@@ -9,8 +9,11 @@ public enum GanttRowInsertRefusalReason
     /// <summary>The visible <c>tblGanttData</c> table was not found.</summary>
     TableMissing = 1,
 
-    /// <summary>The active worksheet is protected.</summary>
+    /// <summary>The target worksheet or workbook is protected.</summary>
     TargetProtected = 2,
+
+    /// <summary>Type validation could not be prepared after the row was added.</summary>
+    TypeOptionsUnavailable = 3,
 }
 
 /// <summary>The typed result of a row insertion.</summary>

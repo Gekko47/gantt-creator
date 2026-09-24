@@ -8,6 +8,11 @@ namespace GanttCreator.Office.ContractTests;
 /// <summary>Contract tests for the R2.8 row insertion adapter.</summary>
 public class GanttRowInserterTests
 {
+    private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
+    {
+        public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
+    }
+
     private sealed class TestableInserter : ExcelGanttRowInserter
     {
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt;
@@ -27,8 +32,9 @@ public class GanttRowInserterTests
             Func<Excel.ListObject, Excel.ListRows> rowsAt,
             Func<Excel.ListRows, Excel.ListRow> addRow,
             Func<Excel.ListRow, int> rowIndex,
-            Func<Excel.ListRow, Excel.Range> rowRange)
-            : base(application, guard)
+            Func<Excel.ListRow, Excel.Range> rowRange,
+            ITypeOptionsMaterialiser? typeOptionsMaterialiser = null)
+            : base(application, guard, typeOptionsMaterialiser)
         {
             _sheetAt = sheetAt;
             _tableAt = tableAt;
@@ -88,7 +94,9 @@ public class GanttRowInserterTests
             _ = ListRows.Setup(r => r.Add(It.IsAny<object>())).Callback(() => AddRowCalls++).Returns(NewRow.Object);
         }
 
-        public TestableInserter Build(IWorksheetProtectionGuard guard) => new(
+        public TestableInserter Build(
+            IWorksheetProtectionGuard guard,
+            ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) => new(
             Application.Object,
             guard,
             (_, _) => Worksheet.Object,
@@ -118,7 +126,8 @@ public class GanttRowInserterTests
             {
                 Assert.Same(NewRow.Object, row);
                 return RowRange.Object;
-            });
+            },
+            typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser());
     }
 
     [Fact]
@@ -216,5 +225,23 @@ public class GanttRowInserterTests
         Assert.Equal(GanttRowInsertRefusalReason.TableMissing, outcome.Refusal);
         Assert.Equal(0, graph.AddRowCalls);
         Assert.Null(graph.WrittenValue);
+    }
+
+    [Fact]
+    public void Insert_deletes_the_new_row_when_type_options_refuses()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var materialiser = new Mock<ITypeOptionsMaterialiser>();
+        _ = materialiser.Setup(m => m.Materialise())
+            .Returns(TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.CatalogueHashMismatch));
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object, materialiser.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.Equal(GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable), outcome);
+        graph.NewRow.Verify(r => r.Delete(), Times.Once);
     }
 }

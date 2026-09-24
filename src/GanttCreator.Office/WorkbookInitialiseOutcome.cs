@@ -25,6 +25,9 @@ public enum InitialiseRefusalReason
 
     /// <summary>The target worksheet is protected; renaming or populating it is not possible.</summary>
     TargetProtected = 3,
+
+    /// <summary>The catalogue or TypeOptions materialisation could not be validated.</summary>
+    CatalogueDrift = 4,
 }
 
 /// <summary>

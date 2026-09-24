@@ -1,7 +1,7 @@
 namespace GanttCreator.Core;
 
 /// <summary>
-/// The result of <see cref="GanttRowValidator.Validate"/>: the valid events
+/// The result of <see cref="GanttRowValidator.Validate(IReadOnlyList{GanttRowDto})"/>: the valid events
 /// in input table order plus every blocking error and non-blocking warning in
 /// deterministic <c>Severity → Row → Field → Code</c> order. Immutable.
 /// </summary>

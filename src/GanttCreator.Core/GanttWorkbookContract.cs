@@ -31,4 +31,10 @@ public static class GanttWorkbookContract
     /// name migration.
     /// </summary>
     public const string PlotAnchorDefinedName = "GanttCreator.PlotAnchor";
+
+    /// <summary>
+    /// The workbook-scoped defined name containing the exact Type display-name
+    /// cells materialised in <c>tblGanttTypes</c>.
+    /// </summary>
+    public const string TypeOptionsDefinedName = "GanttCreator.TypeOptions";
 }

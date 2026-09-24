@@ -22,6 +22,7 @@ namespace GanttCreator.Office;
 /// contract.
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
+/// <param name="typeOptionsMaterialiser">The TypeOptions name and validation materialiser.</param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -56,7 +57,8 @@ namespace GanttCreator.Office;
 public class ExcelWorkbookInitialiser(
     object? application,
     IConfigCatalogueWriter? catalogueWriter = null,
-    IWorksheetProtectionGuard? protectionGuard = null) : IWorkbookInitialiser
+    IWorksheetProtectionGuard? protectionGuard = null,
+    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : IWorkbookInitialiser
 {
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
@@ -64,6 +66,9 @@ public class ExcelWorkbookInitialiser(
 
     private readonly IConfigCatalogueWriter _catalogueWriter =
         catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
+
+    private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
+        typeOptionsMaterialiser ?? new ExcelTypeOptionsMaterialiser(application);
 
     /// <inheritdoc />
     public WorkbookInitialiseOutcome Initialise()
@@ -211,6 +216,19 @@ public class ExcelWorkbookInitialiser(
 
             WritePlotAnchorName(target);
             wrotePlotAnchor = true;
+            TypeOptionsMaterialiseOutcome typeOptionsOutcome = _typeOptionsMaterialiser.Materialise();
+            if (!typeOptionsOutcome.Succeeded)
+            {
+                RollBackPlotAnchorName(target);
+                RollBackConfigurationSheet(sheets);
+                RollBackDataTable(target);
+                RollBackHeaderRow(target);
+                return typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.NoActiveWorkbook
+                    ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
+                    : typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.TargetProtected
+                        ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected)
+                        : WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.CatalogueDrift);
+            }
         }
         catch
         {

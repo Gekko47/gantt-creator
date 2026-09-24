@@ -92,14 +92,15 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadOutcome.Refused(configFound);
         }
 
+        GanttStyleRegistry? styles = null;
         ConfigReadRefusalReason? refusal = ValidateTypes(typeRows)
-            ?? ValidateStyles(styleRows)
+            ?? ValidateStyles(styleRows, out styles)
             ?? ValidateMetrics(metricRows)
             ?? ValidateSettings(settingRows, out settings)
             ?? ValidateConfig(configRows, out workbookId);
         return refusal is not null
             ? ConfigReadOutcome.Refused(refusal.Value)
-            : ConfigReadOutcome.Ok(workbookId!, settings!);
+            : ConfigReadOutcome.Ok(workbookId!, settings!, styles!);
     }
 
     /// <summary>
@@ -249,9 +250,13 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
     /// built-ins are permitted (ADR-0007 D4).
     /// </summary>
     /// <param name="rows">The body rows.</param>
+    /// <param name="styles">The projected style registry on success.</param>
     /// <returns>The first mismatch, or <see langword="null"/> when valid.</returns>
-    private static ConfigReadRefusalReason? ValidateStyles(List<object?[]> rows)
+    private static ConfigReadRefusalReason? ValidateStyles(
+        List<object?[]> rows,
+        out GanttStyleRegistry? styles)
     {
+        styles = null;
         if (rows.Count < GanttCatalogues.StylePresets.Count)
         {
             return ConfigReadRefusalReason.RowCountMismatch;
@@ -335,14 +340,44 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             }
         }
 
+        var seenStyleKeys = GanttCatalogues.StylePresets
+            .Select(preset => preset.StyleKey)
+            .ToHashSet(StringComparer.Ordinal);
         for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
         {
             if (ValidateUserStyleCapabilities(rows[index]) is { } userStyleRefusal)
             {
                 return userStyleRefusal;
             }
+
+            var styleKey = ToText(rows[index][0]);
+            if (styleKey.Length == 0 || !seenStyleKeys.Add(styleKey))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
         }
 
+        var definitions = new List<GanttStyleDefinition>();
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            definitions.Add(new GanttStyleDefinition(
+                preset.StyleKey,
+                preset.AllowedLabelPositions,
+                preset.ColourCapability));
+        }
+
+        for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            var allowed = ToText(row[12])
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(text => Enum.Parse<GanttLabelPosition>(text, ignoreCase: false))
+                .ToHashSet();
+            EntityColourCapability colour = Enum.Parse<EntityColourCapability>(ToText(row[13]), ignoreCase: false);
+            definitions.Add(new GanttStyleDefinition(ToText(row[0]), allowed, colour));
+        }
+
+        styles = new GanttStyleRegistry(definitions);
         return null;
     }
 

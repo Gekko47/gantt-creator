@@ -37,6 +37,7 @@ internal static class ValidateSheetCommand
     internal static void RunForExcel()
         => Run(
             new ExcelGanttTableReader(ExcelDna.Integration.ExcelDnaUtil.Application),
+            new ExcelConfigCatalogueReader(ExcelDna.Integration.ExcelDnaUtil.Application),
             new ExcelGanttValidationReporter(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
                 new ExcelWorksheetProtectionGuard(ExcelDna.Integration.ExcelDnaUtil.Application)),
@@ -56,6 +57,20 @@ internal static class ValidateSheetCommand
     internal static void Run(
         IGanttTableReader reader,
         IGanttValidationReporter reporter,
+        Action<string> presenter) =>
+        Run(reader, null, reporter, presenter);
+
+    /// <summary>
+    /// Runs one validate pass with an optional validated style registry.
+    /// </summary>
+    /// <param name="reader">The table-read port.</param>
+    /// <param name="catalogueReader">The optional style-catalogue read port.</param>
+    /// <param name="reporter">The validation-report port.</param>
+    /// <param name="presenter">Receives the translated message.</param>
+    internal static void Run(
+        IGanttTableReader reader,
+        IConfigCatalogueReader? catalogueReader,
+        IGanttValidationReporter reporter,
         Action<string> presenter)
     {
         ArgumentNullException.ThrowIfNull(reader);
@@ -69,7 +84,20 @@ internal static class ValidateSheetCommand
             return;
         }
 
-        GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows);
+        GanttStyleRegistry? styles = null;
+        if (catalogueReader is not null)
+        {
+            ConfigReadOutcome catalogue = catalogueReader.Read();
+            if (!catalogue.Succeeded)
+            {
+                SafePresent(presenter, TranslateCatalogueRefusal(catalogue.Refusal!.Value));
+                return;
+            }
+
+            styles = catalogue.Styles;
+        }
+
+        GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows, styles);
         GanttValidationReportOutcome report = reporter.Report(validation.Issues);
         if (!report.Succeeded)
         {
@@ -117,6 +145,32 @@ internal static class ValidateSheetCommand
         GanttTableReadRefusalReason.DateSystemUnsupported =>
             "This workbook uses the 1904 date system, which Gantt Creator does not support. Use a 1900-date workbook and run Validate again.",
         _ => "Validate could not run. Try again; if it keeps failing, see the Diagnostics dialog.",
+    };
+
+    /// <summary>Translates a configuration-catalogue refusal to a safe message.</summary>
+    /// <param name="refusal">The catalogue refusal.</param>
+    /// <returns>The user-safe message.</returns>
+    internal static string TranslateCatalogueRefusal(ConfigReadRefusalReason refusal) => refusal switch
+    {
+        ConfigReadRefusalReason.NoActiveWorkbook =>
+            "Gantt Creator needs an open workbook. Open a workbook, then run Validate again.",
+        ConfigReadRefusalReason.ConfigSheetMissing =>
+            "Validate could not find the Gantt Creator configuration. Run Initialise sheet first.",
+        ConfigReadRefusalReason.TableMissing =>
+            "Validate could not find the Gantt Creator configuration tables. Run Initialise sheet first.",
+        ConfigReadRefusalReason.CatalogueHashMismatch =>
+            "The Gantt Creator configuration is out of date. Repair or recreate it, then run Validate again.",
+        ConfigReadRefusalReason.BadColourFormat =>
+            "Validate found an invalid named-style colour. Repair the configuration and run Validate again.",
+        ConfigReadRefusalReason.CatalogueMismatch =>
+            "The Gantt Creator configuration does not match this add-in. Repair or recreate it, then run Validate again.",
+        ConfigReadRefusalReason.RowCountMismatch =>
+            "The Gantt Creator configuration is incomplete. Repair or recreate it, then run Validate again.",
+        ConfigReadRefusalReason.HeaderMismatch =>
+            "The Gantt Creator configuration is incomplete. Repair or recreate it, then run Validate again.",
+        ConfigReadRefusalReason.ValueOutOfRange =>
+            "The Gantt Creator configuration contains an invalid value. Repair or recreate it, then run Validate again.",
+        _ => "Validate could not read the Gantt Creator configuration. See the Diagnostics dialog.",
     };
 
     /// <summary>

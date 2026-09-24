@@ -64,6 +64,8 @@ internal static class AddRowCommand
             "Gantt Creator could not find tblGanttData. Run Initialise sheet before adding a row.",
         GanttRowInsertRefusalReason.TargetProtected =>
             "The worksheet or workbook is protected, so no Gantt row was added. Remove protection and try again.",
+        GanttRowInsertRefusalReason.TypeOptionsUnavailable =>
+            "The row was not added because the Type dropdown could not be prepared. Repair the configuration and try again.",
         _ => "Gantt Creator could not add the row. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 }

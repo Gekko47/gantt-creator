@@ -35,7 +35,19 @@ public static class GanttRowValidator
     /// <param name="rows">The neutral body rows in table order.</param>
     /// <returns>The valid events plus every error and warning in deterministic order.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="rows"/> is <see langword="null"/>.</exception>
-    public static GanttValidationOutcome Validate(IReadOnlyList<GanttRowDto> rows)
+    public static GanttValidationOutcome Validate(IReadOnlyList<GanttRowDto> rows) =>
+        Validate(rows, null);
+
+    /// <summary>
+    /// Validates every row using the optional named-style registry. A null
+    /// registry preserves the pre-R2.9 validation behaviour.
+    /// </summary>
+    /// <param name="rows">The neutral body rows in table order.</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null for compatibility.</param>
+    /// <returns>The valid events plus every error and warning in deterministic order.</returns>
+    public static GanttValidationOutcome Validate(
+        IReadOnlyList<GanttRowDto> rows,
+        GanttStyleRegistry? styleRegistry)
     {
         ArgumentNullException.ThrowIfNull(rows);
 
@@ -44,7 +56,7 @@ public static class GanttRowValidator
 
         for (var i = 0; i < rows.Count; i++)
         {
-            perRow[i] = ValidateFields(rows[i], issues);
+            perRow[i] = ValidateFields(rows[i], issues, styleRegistry);
         }
 
         // Index first-canonical IDs: the first row carrying well-formed text wins,
@@ -170,7 +182,10 @@ public static class GanttRowValidator
         return false;
     }
 
-    private static ValidatedRow? ValidateFields(GanttRowDto row, List<GanttValidationIssue> issues)
+    private static ValidatedRow? ValidateFields(
+        GanttRowDto row,
+        List<GanttValidationIssue> issues,
+        GanttStyleRegistry? styleRegistry)
     {
         var rowNumber = row.RowNumber;
         var hasError = false;
@@ -468,26 +483,40 @@ public static class GanttRowValidator
             }
         }
 
-        // StyleKey: Custom Activity requires one (existence deferred to R2.9).
+        // StyleKey: Custom Activity requires one; a supplied key must resolve
+        // when the caller supplies the validated style registry.
         var styleKey = row.StyleKey;
+        GanttStyleDefinition? styleDefinition = null;
         if (!styleBlocked && type == GanttEntityType.CustomActivity && styleKey is null)
         {
             Add(
                 "StyleKey",
                 GanttValidationCodes.StyleKeyRequired,
                 GanttValidationSeverity.Error,
-                "Custom Activity requires a StyleKey; named-style resolution lands in R2.9."
+                "Custom Activity requires a StyleKey."
             );
         }
+        else if (!styleBlocked && styleKey is not null && styleRegistry is not null)
+        {
+            if (!styleRegistry.TryGet(styleKey, out styleDefinition))
+            {
+                Add(
+                    "StyleKey",
+                    GanttValidationCodes.StyleKeyUnknown,
+                    GanttValidationSeverity.Error,
+                    $"StyleKey '{styleKey}' is not in the configured style catalogue."
+                );
+            }
+        }
 
-        // LabelPosition: blank resolves later; otherwise exact-enum plus catalogue capability (skipped for Custom).
+        // LabelPosition: blank resolves later; otherwise exact-enum plus the
+        // selected type's or Custom Activity style's capability set.
         GanttLabelPosition? labelPosition = null;
         if (
             !labelBlocked
             && row.LabelPositionText is not null
             && type is not null
-            && type != GanttEntityType.CustomActivity
-            && definition is not null
+            && (type != GanttEntityType.CustomActivity || styleDefinition is not null)
         )
         {
             if (
@@ -501,24 +530,36 @@ public static class GanttRowValidator
                     $"Unknown LabelPosition '{row.LabelPositionText}'."
                 );
             }
-            else if (!definition.AllowedLabelPositions.Contains(parsedLabel))
-            {
-                Add(
-                    "LabelPosition",
-                    GanttValidationCodes.LabelNotAllowedForType,
-                    GanttValidationSeverity.Error,
-                    $"LabelPosition '{row.LabelPositionText}' is not allowed for Type '{definition.DisplayName}'."
-                );
-            }
             else
             {
-                labelPosition = parsedLabel;
+                IReadOnlySet<GanttLabelPosition> allowedLabels = type == GanttEntityType.CustomActivity
+                    ? styleDefinition!.AllowedLabelPositions
+                    : definition!.AllowedLabelPositions;
+                if (!allowedLabels.Contains(parsedLabel))
+                {
+                    Add(
+                        "LabelPosition",
+                        GanttValidationCodes.LabelNotAllowedForType,
+                        GanttValidationSeverity.Error,
+                        $"LabelPosition '{row.LabelPositionText}' is not allowed for this Type."
+                    );
+                }
+                else
+                {
+                    labelPosition = parsedLabel;
+                }
             }
         }
 
-        // Colours: format plus capability (skipped for Custom; deferred to R2.9).
-        var fill = fillBlocked ? null : ValidateColour(row.FillColourText, isFill: true, type, definition, Add);
-        var stroke = strokeBlocked ? null : ValidateColour(row.StrokeColourText, isFill: false, type, definition, Add);
+        // Colours: format plus type capability, or the selected Custom style's
+        // capability. A Custom row with an unresolved style remains blocked by
+        // StyleKeyUnknown and receives no colour-capability finding.
+        var fill = fillBlocked
+            ? null
+            : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, styleRegistry is not null, Add);
+        var stroke = strokeBlocked
+            ? null
+            : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, styleRegistry is not null, Add);
 
         // SortOrder: blank or invariant non-negative int.
         int? sortOrder = null;
@@ -573,18 +614,13 @@ public static class GanttRowValidator
         bool isFill,
         GanttEntityType? type,
         EntityTypeDefinition? definition,
-        Action<string, string, GanttValidationSeverity, string> add
-    )
+        GanttStyleDefinition? styleDefinition,
+        bool styleRegistryProvided,
+        Action<string, string, GanttValidationSeverity, string> add)
     {
         if (text is null || type is null || definition is null)
         {
             return null;
-        }
-
-        // R2.5 U4: Custom Activity defers all colour resolution to R2.9.
-        if (type == GanttEntityType.CustomActivity)
-        {
-            return text.ToUpperInvariant();
         }
 
         var field = isFill ? "FillColour" : "StrokeColour";
@@ -594,7 +630,22 @@ public static class GanttRowValidator
             return null;
         }
 
-        EntityColourCapability capability = definition.ColourCapability;
+        if (type == GanttEntityType.CustomActivity && styleDefinition is null)
+        {
+            return null;
+        }
+
+        // Preserve the pre-R2.9 compatibility path when no registry was
+        // supplied. With a registry, Custom Activity resolves strictly from
+        // its selected named style.
+        if (type == GanttEntityType.CustomActivity && !styleRegistryProvided)
+        {
+            return text.ToUpperInvariant();
+        }
+
+        EntityColourCapability capability = type == GanttEntityType.CustomActivity
+            ? styleDefinition?.ColourCapability ?? EntityColourCapability.None
+            : definition.ColourCapability;
         var allowed = isFill
             ? capability.HasFlag(EntityColourCapability.Fill)
             : capability.HasFlag(EntityColourCapability.Stroke) || capability.HasFlag(EntityColourCapability.Hatch);

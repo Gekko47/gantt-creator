@@ -54,6 +54,19 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(delineator.BodyIndex > milestone.BodyIndex);
             Assert.True(table.ListRows.Count >= delineator.BodyIndex);
             Assert.Equal(shapesBefore, sheet.Shapes.Count);
+            Assert.Contains(
+                workbook.Names.Cast<Excel.Name>(),
+                name => string.Equals(name.Name, GanttWorkbookContract.TypeOptionsDefinedName, StringComparison.OrdinalIgnoreCase));
+            Excel.Name typeOptions = workbook.Names.Item(GanttWorkbookContract.TypeOptionsDefinedName);
+            Assert.Contains(GanttWorkbookContract.ConfigSheetName, typeOptions.RefersTo, StringComparison.Ordinal);
+            Assert.Contains("$B$2:$B$17", typeOptions.RefersTo, StringComparison.Ordinal);
+            Excel.ListColumn typeColumn = table.ListColumns["Type"];
+            Assert.NotNull(typeColumn.DataBodyRange);
+            Excel.Validation validation = typeColumn.DataBodyRange.Validation;
+            Assert.Equal((int)Excel.XlDVType.xlValidateList, (int)validation.Type);
+            Assert.Equal($"={GanttWorkbookContract.TypeOptionsDefinedName}", validation.Formula1);
+            Assert.True(validation.InCellDropdown);
+            _output.WriteLine("R2.9 TypeOptions name and Type-column validation are present after add-row fallback.");
 
             AssertRow(table.ListRows[activity.BodyIndex], "As-Planned Activity", "AsPlannedActivity", FixedId('1').Value);
             AssertRow(table.ListRows[milestone.BodyIndex], "As-Planned Milestone", "AsPlannedMilestone", FixedId('2').Value);

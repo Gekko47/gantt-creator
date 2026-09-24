@@ -1,3 +1,5 @@
+using GanttCreator.Core;
+
 namespace GanttCreator.Office;
 
 /// <summary>
@@ -60,6 +62,7 @@ public enum ConfigReadRefusalReason
 /// The effective <c>tblGanttSettings</c> key/value map on success; empty on
 /// a refusal.
 /// </param>
+/// <param name="Styles">The validated named-style capabilities; empty on a refusal.</param>
 /// <param name="Refusal">
 /// The refusal reason when <paramref name="Succeeded"/> is
 /// <see langword="false"/>; otherwise <see langword="null"/>.
@@ -68,19 +71,25 @@ public sealed record ConfigReadOutcome(
     bool Succeeded,
     string? WorkbookId,
     IReadOnlyDictionary<string, string> Settings,
+    GanttStyleRegistry Styles,
     ConfigReadRefusalReason? Refusal)
 {
     private static readonly IReadOnlyDictionary<string, string> _emptySettings =
         new Dictionary<string, string>();
+    private static readonly GanttStyleRegistry _emptyStyles = GanttStyleRegistry.Empty;
 
     /// <summary>
     /// Creates a success outcome.
     /// </summary>
     /// <param name="workbookId">The workbook's stable ID.</param>
     /// <param name="settings">The effective settings key/value map.</param>
+    /// <param name="styles">The validated named-style capabilities.</param>
     /// <returns>The success outcome.</returns>
-    public static ConfigReadOutcome Ok(string workbookId, IReadOnlyDictionary<string, string> settings) =>
-        new(true, workbookId, settings, null);
+    public static ConfigReadOutcome Ok(
+        string workbookId,
+        IReadOnlyDictionary<string, string> settings,
+        GanttStyleRegistry styles) =>
+        new(true, workbookId, settings, styles, null);
 
     /// <summary>
     /// Creates a refusal outcome. Nothing was mutated.
@@ -88,7 +97,7 @@ public sealed record ConfigReadOutcome(
     /// <param name="refusal">Why nothing was returned.</param>
     /// <returns>The refusal outcome.</returns>
     public static ConfigReadOutcome Refused(ConfigReadRefusalReason refusal) =>
-        new(false, null, _emptySettings, refusal);
+        new(false, null, _emptySettings, _emptyStyles, refusal);
 }
 
 /// <summary>

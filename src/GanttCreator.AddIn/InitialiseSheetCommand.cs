@@ -95,6 +95,8 @@ internal static class InitialiseSheetCommand
         InitialiseRefusalReason.TargetProtected =>
             "The target worksheet is protected, so Initialise sheet cannot populate it. "
             + "Unprotect the worksheet and try again.",
+        InitialiseRefusalReason.CatalogueDrift =>
+            "Initialise sheet could not verify the Gantt Creator configuration. Repair the configuration and try again.",
         _ => "Initialise sheet could not run. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 #pragma warning restore IDE0060 // Remove unused parameter

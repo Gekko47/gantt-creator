@@ -539,6 +539,41 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Custom_activity_with_registry_rejects_unknown_style_key()
+    {
+        GanttRowDto row = ValidSpan(typeText: "Custom Activity", styleKey: "MissingStyle");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row], GanttStyleRegistry.Empty);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.StyleKeyUnknown);
+    }
+
+    [Fact]
+    public void Custom_activity_uses_style_label_and_colour_capabilities()
+    {
+        var style = new GanttStyleDefinition(
+            "MyStyle",
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
+            EntityColourCapability.Fill);
+        var registry = new GanttStyleRegistry([style]);
+        GanttRowDto badLabel = ValidSpan(
+            typeText: "Custom Activity",
+            styleKey: "MyStyle",
+            labelPositionText: "Above");
+        GanttRowDto badColour = ValidSpan(
+            typeText: "Custom Activity",
+            styleKey: "MyStyle",
+            strokeColourText: "#FF0000");
+
+        GanttValidationOutcome labelOutcome = GanttRowValidator.Validate([badLabel], registry);
+        GanttValidationOutcome colourOutcome = GanttRowValidator.Validate([badColour], registry);
+
+        Assert.Contains(labelOutcome.Issues, i => i.Code == GanttValidationCodes.LabelNotAllowedForType);
+        Assert.Contains(colourOutcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+    }
+
+    [Fact]
     public void Unknown_label_position_is_a_blocking_error()
     {
         GanttRowDto row = ValidSpan(labelPositionText: "Sideways");
@@ -548,6 +583,7 @@ public class GanttRowValidatorTests
         Assert.False(outcome.IsValid);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.UnknownLabelPosition);
     }
+
 
     [Fact]
     public void Label_inside_is_not_allowed_for_milestones()
