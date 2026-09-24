@@ -1,7 +1,6 @@
-using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
-using GanttCreator.Office;
 using Xunit.Abstractions;
+using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office.IntegrationTests;
 
@@ -31,8 +30,8 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
-            Excel.Worksheet sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            var table = sheet.ListObjects[GanttTableSchema.TableName];
             int shapesBefore = sheet.Shapes.Count;
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
@@ -63,16 +62,57 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Excel.ListColumn typeColumn = table.ListColumns["Type"];
             Assert.NotNull(typeColumn.DataBodyRange);
             Excel.Validation validation = typeColumn.DataBodyRange.Validation;
-            Assert.Equal((int)Excel.XlDVType.xlValidateList, (int)validation.Type);
+            Assert.Equal((int)Excel.XlDVType.xlValidateList, validation.Type);
             Assert.Equal($"={GanttWorkbookContract.TypeOptionsDefinedName}", validation.Formula1);
             Assert.True(validation.InCellDropdown);
             _output.WriteLine("R2.9 TypeOptions name and Type-column validation are present after add-row fallback.");
 
             AssertRow(table.ListRows[activity.BodyIndex], "As-Planned Activity", "AsPlannedActivity", FixedId('1').Value);
             AssertRow(table.ListRows[milestone.BodyIndex], "As-Planned Milestone", "AsPlannedMilestone", FixedId('2').Value);
+            Assert.Equal(3, table.DataBodyRange.Rows.Count);
+            Assert.Equal(4, table.Range.Rows.Count);
             AssertRow(table.ListRows[delineator.BodyIndex], "Delineator", "DefaultDelineator", FixedId('3').Value);
 
-            _output.WriteLine("R2.8 appended activity, milestone, and delineator rows; no shapes changed.");
+            _output.WriteLine("R2.8 appended activity, milestone, and delineator rows; no trailing blank row or shapes changed.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Insert_first_activity_reuses_the_initial_blank_row()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+
+            Assert.Equal(0, table.ListRows.Count);
+            Assert.Equal(2, table.Range.Rows.Count);
+            Assert.Null(table.DataBodyRange);
+
+            GanttRowInsertOutcome outcome = new ExcelGanttRowInserter(fixture.Excel).Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('0'));
+
+            Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");
+            Assert.Equal(1, outcome.BodyIndex);
+            Assert.Equal(1, table.ListRows.Count);
+            Assert.Equal(2, table.Range.Rows.Count);
+            Assert.NotNull(table.DataBodyRange);
+            Assert.Equal(1, table.DataBodyRange.Rows.Count);
+            Assert.Equal(14, table.DataBodyRange.Columns.Count);
+            AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('0').Value);
         }
         finally
         {
@@ -95,8 +135,8 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome initialised = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
-            Excel.Worksheet sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            var table = sheet.ListObjects[GanttTableSchema.TableName];
             int rowsBefore = table.ListRows.Count;
             sheet.Protect(Type.Missing, true, Type.Missing, true, true, false, false);
 

@@ -1,7 +1,6 @@
-using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
-using GanttCreator.Office;
 using Moq;
+using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office.ContractTests;
 
@@ -13,42 +12,48 @@ public class GanttRowInserterTests
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
-    private sealed class TestableInserter : ExcelGanttRowInserter
+    private sealed class TestableInserter(
+        Excel.Application application,
+        IWorksheetProtectionGuard guard,
+        Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
+        Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
+        Func<Excel.ListColumns, int, Excel.ListColumn> columnAt,
+        Func<Excel.ListObject, Excel.ListRows> rowsAt,
+        Func<Excel.ListObject, Excel.Range> tableRangeAt,
+        Func<Excel.Range, Excel.Range> rangeRowsAt,
+        Func<Excel.Range, int> rangeRowCountAt,
+        Func<Excel.Range, int, Excel.Range> rangeAt,
+        Func<Excel.Range, object?> rangeValueAt,
+        Action<Excel.Range> clearRange,
+        Func<Excel.ListRows, Excel.ListRow> addRow,
+        Func<Excel.ListRow, int> rowIndex,
+        Func<Excel.ListRow, Excel.Range> rowRange,
+        ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser)
     {
-        private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt;
-        private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt;
-        private readonly Func<Excel.ListColumns, int, Excel.ListColumn> _columnAt;
-        private readonly Func<Excel.ListObject, Excel.ListRows> _rowsAt;
-        private readonly Func<Excel.ListRows, Excel.ListRow> _addRow;
-        private readonly Func<Excel.ListRow, int> _rowIndex;
-        private readonly Func<Excel.ListRow, Excel.Range> _rowRange;
-
-        public TestableInserter(
-            Excel.Application application,
-            IWorksheetProtectionGuard guard,
-            Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
-            Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
-            Func<Excel.ListColumns, int, Excel.ListColumn> columnAt,
-            Func<Excel.ListObject, Excel.ListRows> rowsAt,
-            Func<Excel.ListRows, Excel.ListRow> addRow,
-            Func<Excel.ListRow, int> rowIndex,
-            Func<Excel.ListRow, Excel.Range> rowRange,
-            ITypeOptionsMaterialiser? typeOptionsMaterialiser = null)
-            : base(application, guard, typeOptionsMaterialiser)
-        {
-            _sheetAt = sheetAt;
-            _tableAt = tableAt;
-            _columnAt = columnAt;
-            _rowsAt = rowsAt;
-            _addRow = addRow;
-            _rowIndex = rowIndex;
-            _rowRange = rowRange;
-        }
+        private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
+        private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt = tableAt;
+        private readonly Func<Excel.ListColumns, int, Excel.ListColumn> _columnAt = columnAt;
+        private readonly Func<Excel.ListObject, Excel.ListRows> _rowsAt = rowsAt;
+        private readonly Func<Excel.ListObject, Excel.Range> _tableRangeAt = tableRangeAt;
+        private readonly Func<Excel.Range, Excel.Range> _rangeRowsAt = rangeRowsAt;
+        private readonly Func<Excel.Range, int> _rangeRowCountAt = rangeRowCountAt;
+        private readonly Func<Excel.Range, int, Excel.Range> _rangeAt = rangeAt;
+        private readonly Func<Excel.Range, object?> _rangeValueAt = rangeValueAt;
+        private readonly Action<Excel.Range> _clearRange = clearRange;
+        private readonly Func<Excel.ListRows, Excel.ListRow> _addRow = addRow;
+        private readonly Func<Excel.ListRow, int> _rowIndex = rowIndex;
+        private readonly Func<Excel.ListRow, Excel.Range> _rowRange = rowRange;
 
         internal override Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => _sheetAt(sheets, index);
         internal override Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => _tableAt(listObjects, index);
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => _columnAt(columns, index);
         internal override Excel.ListRows GetListRows(Excel.ListObject table) => _rowsAt(table);
+        internal override Excel.Range GetTableRange(Excel.ListObject table) => _tableRangeAt(table);
+        internal override Excel.Range GetRangeRows(Excel.Range range) => _rangeRowsAt(range);
+        internal override int GetRangeRowCount(Excel.Range rows) => _rangeRowCountAt(rows);
+        internal override Excel.Range GetRangeAt(Excel.Range rows, int index) => _rangeAt(rows, index);
+        internal override object? GetRangeValue2(Excel.Range range) => _rangeValueAt(range);
+        internal override void ClearRange(Excel.Range range) => _clearRange(range);
         internal override Excel.ListRow AddRow(Excel.ListRows rows) => _addRow(rows);
         internal override int GetRowIndex(Excel.ListRow row) => _rowIndex(row);
         internal override Excel.Range GetRowRange(Excel.ListRow row) => _rowRange(row);
@@ -63,12 +68,22 @@ public class GanttRowInserterTests
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
         public Mock<Excel.ListColumns> ListColumns { get; } = new();
-        public Mock<Excel.ListColumn>[] Columns { get; } = Enumerable.Range(0, 14).Select(_ => new Mock<Excel.ListColumn>()).ToArray();
+        public Mock<Excel.ListColumn>[] Columns { get; } = [.. Enumerable.Range(0, 14).Select(_ => new Mock<Excel.ListColumn>())];
         public Mock<Excel.ListRows> ListRows { get; } = new();
         public Mock<Excel.ListRow> NewRow { get; } = new();
         public Mock<Excel.Range> RowRange { get; } = new();
+        public Mock<Excel.Range> TableRange { get; } = new();
+        public Mock<Excel.Range> TableRows { get; } = new();
+        public Mock<Excel.Range> InitialBlankRow { get; } = new();
         public object? WrittenValue { get; private set; }
         public int AddRowCalls { get; private set; }
+        public int ClearRangeCalls { get; private set; }
+
+        public void RecordWrittenValue(object value) => WrittenValue = value;
+
+        public void RecordAddRow() => AddRowCalls++;
+
+        public void RecordClearRange() => ClearRangeCalls++;
 
         public Graph()
         {
@@ -82,16 +97,25 @@ public class GanttRowInserterTests
             _ = ListColumns.SetupGet(c => c.Count).Returns(Columns.Length);
             for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
             {
-                Columns[index].SetupGet(c => c.Name).Returns(GanttTableSchema.Default.Columns[index].Name);
+                _ = Columns[index].SetupGet(c => c.Name).Returns(GanttTableSchema.Default.Columns[index].Name);
             }
             _ = Table.SetupGet(t => t.ListRows).Returns(ListRows.Object);
+            _ = Table.SetupGet(t => t.Range).Returns(TableRange.Object);
+            _ = TableRange.SetupGet(r => r.Rows).Returns(TableRows.Object);
+            _ = TableRows.SetupGet(r => r.Count).Returns(2);
+            _ = TableRows.SetupGet(r => r[2]).Returns(InitialBlankRow.Object);
+            _ = InitialBlankRow.SetupGet(r => r.Value2)
+                .Returns(Array.CreateInstance(typeof(object), [1, 14], [1, 1]));
             _ = ListRows.SetupGet(r => r.Count).Returns(1);
             _ = NewRow.SetupGet(r => r.Index).Returns(2);
             _ = NewRow.SetupGet(r => r.Range).Returns(RowRange.Object);
             _ = RowRange.SetupSet(r => r.Value2 = It.IsAny<object>())
-                .Callback<object>(value => WrittenValue = value);
-            _ = ListRows.Setup(r => r.Add(Type.Missing)).Callback(() => AddRowCalls++).Returns(NewRow.Object);
-            _ = ListRows.Setup(r => r.Add(It.IsAny<object>())).Callback(() => AddRowCalls++).Returns(NewRow.Object);
+                .Callback<object>(RecordWrittenValue);
+            _ = InitialBlankRow.SetupSet(r => r.Value2 = It.IsAny<object>())
+                .Callback<object>(RecordWrittenValue);
+            _ = InitialBlankRow.Setup(r => r.ClearContents()).Callback(RecordClearRange);
+            _ = ListRows.Setup(r => r.Add(Type.Missing)).Callback(RecordAddRow).Returns(NewRow.Object);
+            _ = ListRows.Setup(r => r.Add(It.IsAny<object>())).Callback(RecordAddRow).Returns(NewRow.Object);
         }
 
         public TestableInserter Build(
@@ -111,6 +135,29 @@ public class GanttRowInserterTests
                 Assert.Same(Table.Object, table);
                 return ListRows.Object;
             },
+            table =>
+            {
+                Assert.Same(Table.Object, table);
+                return TableRange.Object;
+            },
+            range =>
+            {
+                Assert.Same(TableRange.Object, range);
+                return TableRows.Object;
+            },
+            rows =>
+            {
+                Assert.Same(TableRows.Object, rows);
+                return 2;
+            },
+            (rows, index) =>
+            {
+                Assert.Same(TableRows.Object, rows);
+                Assert.Equal(2, index);
+                return InitialBlankRow.Object;
+            },
+            range => range == InitialBlankRow.Object ? range.Value2 : null,
+            range => ClearRangeCalls++,
             rows =>
             {
                 Assert.Same(ListRows.Object, rows);
@@ -135,8 +182,8 @@ public class GanttRowInserterTests
     {
         var graph = new Graph();
         var guard = new Mock<IWorksheetProtectionGuard>();
-        guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
-        GanttRowId id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
             GanttEntityType.AsPlannedActivity,
@@ -156,25 +203,68 @@ public class GanttRowInserterTests
     }
 
     [Fact]
+    public void Insert_reuses_the_initial_blank_row_without_appending_a_second_row()
+    {
+        var graph = new Graph();
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(0);
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => id);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.BodyIndex);
+        Assert.Equal(0, graph.AddRowCalls);
+        var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
+        Assert.Equal(id.Value, matrix[0, 0]);
+        Assert.Equal("As-Planned Activity", matrix[0, 3]);
+        Assert.Equal(0, graph.ClearRangeCalls);
+    }
+
+    [Fact]
+    public void Insert_clears_the_reused_blank_row_when_type_options_refuses()
+    {
+        var graph = new Graph();
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(0);
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var materialiser = new Mock<ITypeOptionsMaterialiser>();
+        _ = materialiser.Setup(m => m.Materialise())
+            .Returns(TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.CatalogueHashMismatch));
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object, materialiser.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.Equal(GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable), outcome);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Equal(1, graph.ClearRangeCalls);
+        graph.NewRow.Verify(r => r.Delete(), Times.Never);
+    }
+
+    [Fact]
     public void Insert_maps_columns_by_header_name_not_position()
     {
         var graph = new Graph();
         var guard = new Mock<IWorksheetProtectionGuard>();
-        guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
-        var names = GanttTableSchema.Default.Columns.Select((column, index) => (column, index)).ToArray();
-        for (var index = 0; index < names.Length; index++)
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+        for (var index = 0; index < columns.Count; index++)
         {
-            graph.Columns[index].SetupGet(c => c.Name).Returns(names[index].column.Name);
+            _ = graph.Columns[index].SetupGet(c => c.Name).Returns(columns[index].Name);
         }
         // Reverse the table's physical order; the logical scaffold still lands
         // in the correct header-named cells.
-        for (var index = 0; index < names.Length; index++)
+        for (var index = 0; index < columns.Count; index++)
         {
-            var schemaIndex = names.Length - index - 1;
-            graph.Columns[index].SetupGet(c => c.Name).Returns(names[schemaIndex].column.Name);
+            var schemaIndex = columns.Count - index - 1;
+            _ = graph.Columns[index].SetupGet(c => c.Name).Returns(columns[schemaIndex].Name);
         }
 
-        GanttRowId id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(GanttEntityType.Delineator, () => id);
 
         Assert.True(outcome.Succeeded);
@@ -195,7 +285,7 @@ public class GanttRowInserterTests
     {
         var graph = new Graph();
         var guard = new Mock<IWorksheetProtectionGuard>();
-        guard.Setup(g => g.Query()).Returns(guardOutcome);
+        _ = guard.Setup(g => g.Query()).Returns(guardOutcome);
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
             GanttEntityType.AsPlannedActivity,
@@ -213,9 +303,9 @@ public class GanttRowInserterTests
     public void Insert_returns_table_missing_when_no_table_is_found()
     {
         var graph = new Graph();
-        graph.ListObjects.SetupGet(l => l.Count).Returns(0);
+        _ = graph.ListObjects.SetupGet(l => l.Count).Returns(0);
         var guard = new Mock<IWorksheetProtectionGuard>();
-        guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
             GanttEntityType.AsPlannedActivity,

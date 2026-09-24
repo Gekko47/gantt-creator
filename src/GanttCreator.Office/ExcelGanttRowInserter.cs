@@ -1,3 +1,4 @@
+using System.Reflection;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -49,17 +50,66 @@ public class ExcelGanttRowInserter(
 
         IReadOnlyList<object?> values = GanttRowDefaults.Build(type, nextId);
         Excel.ListRows rows = GetListRows(table);
-        Excel.ListRow row = AddRow(rows);
-        Excel.Range rowRange = GetRowRange(row);
+        Excel.Range? reusableRow = null;
+        Excel.ListRow? newRow = null;
+        if (GetListRowCount(rows) == 0)
+        {
+            reusableRow = GetReusableInitialBlankRow(table);
+        }
+
+        Excel.Range rowRange;
+        if (reusableRow is not null)
+        {
+            rowRange = reusableRow;
+        }
+        else
+        {
+            newRow = AddRow(rows);
+            rowRange = GetRowRange(newRow);
+        }
+
         WriteRow(rowRange, values, columnMap);
         TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.Materialise();
         if (!typeOptions.Succeeded)
         {
-            DeleteRow(row);
+            if (newRow is not null)
+            {
+                DeleteRow(newRow);
+            }
+            else
+            {
+                ClearRange(rowRange);
+            }
+
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable);
         }
 
-        return GanttRowInsertOutcome.Ok(GetRowIndex(row));
+        return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow));
+    }
+
+    private static bool IsBlankValue(object? value) =>
+        value is null
+        || value is Missing
+        || value is DBNull
+        || (value is string text && string.IsNullOrWhiteSpace(text));
+
+    private Excel.Range? GetReusableInitialBlankRow(Excel.ListObject table)
+    {
+        Excel.Range tableRange = GetTableRange(table);
+        Excel.Range tableRows = GetRangeRows(tableRange);
+        var rowCount = GetRangeRowCount(tableRows);
+        if (rowCount <= 1)
+        {
+            return null;
+        }
+
+        Excel.Range candidate = GetRangeAt(tableRows, rowCount);
+        List<object?[]> values = ExcelValue2Matrix.ReadRows(GetRangeValue2(candidate));
+        return values.Count == 1
+            && values[0].Length > 0
+            && values[0].All(IsBlankValue)
+            ? candidate
+            : null;
     }
 
     private bool TryFindTable(Excel.Sheets sheets, out Excel.ListObject? table)
@@ -157,6 +207,32 @@ public class ExcelGanttRowInserter(
         columns[index];
 
     internal virtual Excel.ListRows GetListRows(Excel.ListObject table) => table.ListRows;
+
+    internal virtual int GetListRowCount(Excel.ListRows rows) => rows.Count;
+
+    internal virtual Excel.Range GetTableRange(Excel.ListObject table) => table.Range;
+
+    internal virtual Excel.Range GetRangeRows(Excel.Range range)
+    {
+        Excel.Range rows = range.Rows;
+        return rows;
+    }
+
+    internal virtual int GetRangeRowCount(Excel.Range rows)
+    {
+        var count = rows.Count;
+        return count;
+    }
+
+    internal virtual Excel.Range GetRangeAt(Excel.Range rows, int index)
+    {
+        Excel.Range row = rows[index];
+        return row;
+    }
+
+    internal virtual object? GetRangeValue2(Excel.Range range) => range.Value2;
+
+    internal virtual void ClearRange(Excel.Range range) => range.ClearContents();
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
 
