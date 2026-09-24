@@ -24,7 +24,7 @@ Do not get wrong:
 - `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — trace a renderer implementation back to its entity contract.
 - `symbols_outline` — index a file or directory to find where geometry tokens and style keys are defined.
 - `search_codebase` / `grep_files` — find all usages of a token, z-order constant, or renderer-equivalence entry.
-- `read_files` on `docs/07-GANTT-ENTITY-GUIDE.md` — confirm a behaviour is defined before implementing; classify absence as `unknown`.
+- `combined-mcp-server__read_file` on `docs/07-GANTT-ENTITY-GUIDE.md` — confirm a behaviour is defined before implementing; classify absence as `unknown`.
 - `dotnet_test` on golden-image tests — verify cross-renderer equivalence after any visual change.
 <!-- SKILL-TOOLS:END -->
 
@@ -100,7 +100,7 @@ Initial catalogue:
 | `Critical Milestone` | Critical milestone | Start only | CriticalMilestone | Fill + outline | Auto, Left, Right, Above, Below, None |
 | `Delineator` | Full-height vertical date line | Start only | DefaultDelineator | Stroke | Auto, TopLeft, TopRight, BottomLeft, BottomRight, None |
 
-Full display names are used because the VeryHidden range removes the direct-list length limitation. These exact values form part of the workbook schema; localisation or renaming requires a schema migration.
+Full display names are used because the VeryHidden range removes the direct-list length limitation. These exact values form part of the workbook schema; localisation or renaming requires a schema migration. The `GanttEntityType` enum values and names are the separate durable machine identity: a display-name migration must not renumber or rename the domain enum. The catalogue has exactly **16 selectable Types**; this guide's other sections describe the broader visual/entity taxonomy and do not add dropdown values.
 
 Dropdown implementation requirements:
 
@@ -119,8 +119,8 @@ Dropdown implementation requirements:
 `_GanttCreatorConfig` materialises the built-in catalogue and stores workbook style/metric presets so data validation and user customisation remain portable and offline.
 
 - `tblGanttTypes` is regenerated only from the code-owned catalogue and is not user-editable through ordinary UI.
-- `tblGanttStyles` and `tblGanttMetrics` are changed through approved Ribbon dialogs; the add-in writes and validates the underlying rows.
-- Built-in style keys cannot be deleted. A user may create a named custom style with a unique key through the style dialog.
+- `tblGanttStyles` and `tblGanttMetrics` are changed through approved Ribbon dialogs; the add-in writes and validates the underlying rows. Every style carries an explicit `DefaultLabelPosition`, `AllowedLabelPositions`, and `ColourCapability` (ADR-0009); `Custom Activity` resolves these from its required named `StyleKey`.
+- Built-in style keys cannot be deleted. R5.6a owns approved user named-style creation/rename/delete with those capability fields.
 - Per-row `FillColour`, `StrokeColour`, and `LabelPosition` remain on the visible event row and override the resolved helper-sheet style.
 - The helper sheet contains no schedule/event data and is never used as an export or rendering surface.
 - Sheet protection and `xlSheetVeryHidden` reduce accidental edits but provide no confidentiality or tamper-security guarantee.
@@ -511,7 +511,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Labels:** none by default. A critical milestone is a milestone subtype, not a zero-length interval.
 
-**Validation:** parent exists and is a span; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
+**Validation:** parent exists and is a span; the Critical Interval parent relationship is acyclic; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
 
 **Tests:** multiple disjoint/adjacent/overlapping children, parent clipping, top-edge position, thickness, z-order, missing parent.
 

@@ -2,11 +2,13 @@ namespace GanttCreator.Core;
 
 /// <summary>
 /// A user-selectable row type in the <c>Type</c> column of the visible
-/// <c>tblGanttData</c> table. The enum carries the code identity only; the
-/// exact workbook display names (which contain spaces and hyphens and cannot
-/// be enum identifiers) are owned by <see cref="EntityTypeCatalog"/> and form
-/// part of the workbook schema — renaming or localising a display name is a
-/// schema migration (see <see cref="GanttSchemaVersion"/>).
+/// <c>tblGanttData</c> table. The enum member names and numeric values are the
+/// durable code identity. The exact workbook display names (which contain
+/// spaces and hyphens and cannot be enum identifiers) are owned by
+/// <see cref="EntityTypeCatalog"/> and form part of the workbook schema.
+/// Renaming or localising a display name is a schema migration, but that
+/// migration must not renumber or rename this machine identity (see
+/// <see cref="GanttSchemaVersion"/>).
 /// </summary>
 public enum GanttEntityType
 {

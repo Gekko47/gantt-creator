@@ -28,8 +28,8 @@ Do not get wrong:
 - `github__get_pull_request` / `github__get_pull_request_files` / `github__get_pull_request_reviews` — execute the review checklist against actual PR content.
 - `github__get_pull_request_status` — verify CI is green before merging (W-12 rule).
 - `github__create_pull_request_review` — submit structured reviews.
-- `pwsh_run` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
-- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
+- `combined-mcp-server__run_commands` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
+- `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
 
 ---
 

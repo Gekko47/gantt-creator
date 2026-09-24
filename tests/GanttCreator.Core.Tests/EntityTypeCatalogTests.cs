@@ -41,6 +41,20 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
+    public void Every_enum_value_has_a_catalogue_definition_and_counts_match()
+    {
+        var enumValues = Enum.GetValues<GanttEntityType>();
+        Assert.Equal(enumValues.Length, EntityTypeCatalog.Entries.Count);
+
+        foreach (var value in enumValues)
+        {
+            var definition = EntityTypeCatalog.GetDefinition(value);
+            Assert.NotNull(definition);
+            Assert.Equal(value, definition!.Type);
+        }
+    }
+
+    [Fact]
     public void Default_catalogue_matches_the_entity_guide_display_names_in_order()
     {
         Assert.Equal(16, s_guideDisplayNames.Length);
@@ -197,7 +211,7 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
-    public void Critical_interval_has_no_label_positions()
+    public void CriticalInterval_permits_only_None_label_position()
     {
         var critical = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == GanttEntityType.CriticalInterval);
 

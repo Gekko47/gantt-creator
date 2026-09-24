@@ -27,7 +27,7 @@ Do not get wrong:
 - `vscode-mcp__get_diagnostics` — get compiler-grade diagnostics faster than `tsc --noEmit` / raw build.
 - `ast_grep_search` — find anti-patterns (`Thread.Sleep`, arbitrary delays, catch-and-ignore) across the codebase.
 - `search_codebase` / `grep_files` — trace acceptance criterion IDs to specific test names (traceability map).
-- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — the authoritative local gates.
+- `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — the authoritative local gates.
 
 ---
 

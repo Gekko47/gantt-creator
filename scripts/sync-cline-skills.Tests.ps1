@@ -135,7 +135,8 @@ Just a body, no SKILL-SUMMARY markers anywhere.
             $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
 
             $proc.ExitCode | Should -Not -Be 0
-            $combined | Should -Match 'no SKILL-SUMMARY block'
+            $lettersA = (($combined -replace '\x1b\[[0-9;]*[A-Za-z]', '') -replace '[^A-Za-z]', '')
+            $lettersA | Should -Match 'noSKILLSUMMARYblock'
         }
         It 'exits non-zero when the canonical doc has an empty SKILL-SUMMARY block' {
             # Positive failure-path test for the empty-summary validator:
@@ -159,7 +160,8 @@ Body content follows.
             $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
 
             $proc.ExitCode | Should -Not -Be 0
-            $combined | Should -Match 'empty SKILL-SUMMARY block'
+            $lettersB = (($combined -replace '\x1b\[[0-9;]*[A-Za-z]', '') -replace '[^A-Za-z]', '')
+            $lettersB | Should -Match 'emptySKILLSUMMARYblock'
         }
         It 'exits non-zero when the canonical doc has no SKILL-TOOLS block' {
             # Regression guard: a mapped doc without the required
@@ -183,7 +185,8 @@ Just a body, no SKILL-TOOLS markers anywhere.
             $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
 
             $proc.ExitCode | Should -Not -Be 0
-            $combined | Should -Match 'no SKILL-TOOLS block'
+            $lettersC = (($combined -replace '\x1b\[[0-9;]*[A-Za-z]', '') -replace '[^A-Za-z]', '')
+            $lettersC | Should -Match 'noSKILLTOOLSblock'
         }
         It 'exits non-zero when the canonical doc has an empty SKILL-TOOLS block' {
             # Positive failure-path test for the empty-tools validator:
@@ -211,7 +214,8 @@ Body content follows.
             $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
 
             $proc.ExitCode | Should -Not -Be 0
-            $combined | Should -Match 'empty SKILL-TOOLS block'
+            $lettersD = (($combined -replace '\x1b\[[0-9;]*[A-Za-z]', '') -replace '[^A-Za-z]', '')
+            $lettersD | Should -Match 'emptySKILLTOOLSblock'
         }
     }
 }

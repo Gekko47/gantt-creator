@@ -109,6 +109,27 @@ References the missing file ``nonexistent/path.md``.
             $r.Output | Should -Match "STATUS references path 'nonexistent/path.md'"
         }
 
+        It 'exits 1 when STATUS references a generated artifact file' {
+            $body = @"
+# Status
+
+References the local artifact ``scripts/_artifacts/office-evidence/office-20260923-223234842.trx``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "STATUS references generated/ignored artifact path 'scripts/_artifacts/office-evidence/office-20260923-223234842.trx'"
+        }
+
+        It 'exits 1 when STATUS references a generated artifact directory' {
+            $body = @"
+# Status
+
+References the local artifact directory ``scripts/_artifacts/mutation/``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "STATUS references generated/ignored artifact path 'scripts/_artifacts/mutation/'"
+        }
         It 'exits 1 when STATUS references a roadmap id that is not in the roadmap' {
             $body = @"
 # Status

@@ -23,10 +23,11 @@ Do not get wrong:
 <!-- SKILL-SUMMARY:END -->
 
 <!-- SKILL-TOOLS:START -->
-- `memra_add` / `memra_add_decision` — persist evidence-ledger rows and irreversible decisions across turns.
-- `memra_bootstrap` — recall prior decisions and patterns at session start.
+- `memra_add` — persist a work-item completion fact, tooling gotcha, or live/Office evidence row (not commit text, test counts, or file lists — see "Persisting the ledger").
+- `memra_add_decision` — persist an irreversible decision with the context that made it irreversible; the highest-value entry type.
+- `memra_bootstrap` — recall prior decisions and patterns at session start before restating unknowns.
 - `memra_add_pattern` — store reusable methodologies (e.g. the full-repo review phases).
-- `memra_search` / `memra_recall` — retrieve prior evidence by semantic similarity.
+- `memra_search` / `memra_recall` — retrieve prior evidence by tag or semantic similarity.
 - `memra_supersede` — update an evidence-ledger row when its status changes, preserving the history chain.
 - `sequential-thinking__sequentialthinking` — structure multi-step reasoning (review methodology, failure classification).
 - `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — get compiler-grade type/symbol info instead of guessing APIs.
@@ -34,7 +35,7 @@ Do not get wrong:
 - `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
 - `context7__query-docs` / `microsoft-learn__microsoft_docs_search` / `microsoft-learn__microsoft_docs_fetch` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
 - `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
-- `pwsh_run` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
+- `combined-mcp-server__run_commands` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
 - `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
 <!-- SKILL-TOOLS:END -->
 
@@ -70,13 +71,62 @@ Allowed statuses are `fact`, `inference`, `proposal`, and `unknown`. An inferenc
 
 ### Persisting the ledger
 
-The evidence ledger is a cross-turn record. Persist every row so it survives session restarts:
+The evidence ledger is a cross-turn record. Persist rows so they survive
+session restarts, but **do not store what the repository already holds** —
+`git log`, source code, `docs/`, script output files, and CI reports are all
+durable. memra is for the *judgement calls* and *environment traps* that are
+not visible anywhere else.
 
-- Every `fact` row → `memra_add` with `type: "fact"`, `importance: 8`, and the evidence URL or command in metadata.
-- Every irreversible decision → `memra_add_decision` with the context that made it irreversible.
-- Every reusable methodology (e.g. the full-repo review phases) → `memra_add_pattern`.
+#### Save (four categories)
+
+**1. Work-item completion facts** — one per work item, when the item lands.
+
+- What: work item ID, commit hash, branch, which gates passed/failed, Office gate status, next item.
+- Keep it to 3-5 lines. State the *status*, not a copy of the commit message.
+- Tag with the work item ID (e.g. `R2.1`).
+
+**2. Irreversible decisions** — when a design choice is locked and re-litigating it wastes time.
+
+- What: the decision, the context that made it irreversible, alternatives rejected.
+- Use `memra_add_decision` with that context.
+- These are the highest-value entries — they prevent re-litigating settled questions.
+
+**3. Tooling gotchas** — things that cost time to re-discover.
+
+- Environment quirks, tool bugs, PowerShell/.NET traps.
+- Tag them so they surface when relevant (e.g. `crlf`, `mcp-server`, `dotnet`).
+- One gotcha per entry. If it's already in `docs/01-ENVIRONMENT.md`, it does not belong here.
+
+**4. Live/Office evidence** — things only verifiable on the host machine.
+
+- Office version, specific PID/parentage behaviour, user-verified outcomes with honest gaps noted.
+- These cannot be reproduced from a clean CI runner. Record the *exact* environment and the *exact* gap.
+- A "versions unknown" note is valuable negative evidence — do not pad it with guesses.
+
+#### Do not save
+
+| Category | Why |
+| --- | --- |
+| Commit message text | Already in `git log`. |
+| Test counts already in CI | The fact worth saving is the *status* (passed/failed/not-run), not the *number*. |
+| File lists, type enumerations, schemas | Already in source code and `docs/`. |
+| Step-by-step gate transcripts | `verify-quick.ps1` / `verify.ps1` write their own reports to `scripts/_artifacts/`. |
+| Routine environment facts | Already in `docs/01-ENVIRONMENT.md`. |
+| Transient debugging sessions | Breakpoint misses, XLL load failures — per-session artifacts, not project knowledge. |
+| `inference` rows | Working hypotheses. Save only if they later become facts (via `memra_supersede`), not as permanent entries. |
+
+#### Rule of thumb
+
+> Save what you would have to re-derive or re-discover across a session restart, and what would change how you approach the next work item.
+
+#### Tool mapping
+
+- New fact → `memra_add` with `type: "fact"`, `importance: 8`, tags for the work item, and the evidence URL or command in metadata.
+- New irreversible decision → `memra_add_decision` with the context that made it irreversible.
+- New reusable methodology → `memra_add_pattern`.
 - Session start → `memra_bootstrap` to recall prior decisions before restating unknowns.
-- When a statement's status changes → `memra_supersede` to keep the history chain intact.
+- Status change → `memra_supersede` to keep the history chain intact.
+- Retrieve by tag or similarity → `memra_search` / `memra_recall`.
 
 ## Anti-drift controls
 
@@ -381,15 +431,16 @@ This is intentionally short. The code, tests, work item, and Git diff are the du
 Before declaring a work item done, run these tools and observe their output:
 
 1. `dotnet_test` on the targeted project — must PASS.
-2. `pwsh_run` with `scripts/verify-quick.ps1` — must PASS (the every-commit
+2. `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` — must PASS (the every-commit
    gate; run it with the work staged — it accepts staged changes).
-3. `pwsh_run` with `scripts/verify.ps1` — the branch-final gate, run once
+3. `combined-mcp-server__run_commands` with `scripts/verify.ps1` — the branch-final gate, run once
    after the LAST commit for the branch; requires a clean tree (its first
    step fails in under a second otherwise). The agent never pushes and
    never opens a pull request without explicit human instruction; the
    human creates the PR after the CodeRabbit review stage (see
    `docs/05-GIT-QUALITY.md`, "Branch and review policy").
 4. `vscode-mcp__get_diagnostics` on modified files — must show zero errors.
-5. `memra_add` — persist the evidence ledger rows for this session.
-6. `memra_add_decision` (if an irreversible decision was made) — persist it with context.
+5. `memra_add` — persist one work-item completion fact per landed item (3-5 lines: ID, commit, gates, Office status, next item). Do not store commit text, test counts, or file lists — see "Persisting the ledger".
+6. `memra_add_decision` (if an irreversible decision was made) — persist it with the context that made it irreversible.
+7. `memra_bootstrap` — recall prior decisions before restating unknowns at session start.
 7. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.

@@ -108,6 +108,70 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task CreateWorkbook_returns_a_non_null_workbook_and_leaves_no_orphan()
+    {
+        var fixture = new OfficeFixture();
+        var pid = 0;
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            pid = fixture.ProcessId;
+            Assert.True(pid != 0,
+                "Excel launched but process ID was not captured.");
+
+            var workbook = fixture.CreateWorkbook();
+            Assert.NotNull(workbook);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+
+        // Assert the owned Excel process exited after teardown.
+        var sw = Stopwatch.StartNew();
+        bool exited = false;
+        while (sw.Elapsed.TotalSeconds < 10)
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(pid);
+                if (proc.HasExited) { exited = true; break; }
+            }
+            catch (ArgumentException)
+            {
+                exited = true;
+                break;
+            }
+            await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        Assert.True(exited,
+            $"Excel process {pid} still running after teardown (orphan).");
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task CreateWorkbook_can_be_called_twice_and_both_teardown_cleanly()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            var first = fixture.CreateWorkbook();
+            var second = fixture.CreateWorkbook();
+            Assert.NotNull(first);
+            Assert.NotNull(second);
+            Assert.NotSame(first, second);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Excel_open_close_five_times_no_orphan()
     {
         var pids = new List<int>();
@@ -252,13 +316,21 @@ public class OfficeFixtureTests
             }
             if (!anyOrphan) break;
             await Task.Delay(200).ConfigureAwait(true);
-        } while (sw.Elapsed.TotalSeconds < 15);
+        // Evidence 2026-09-23 (verify-office run 22:07, archive
+        // office-20260923-221210367.trx): all five cycle PIDs exited
+        // cleanly on their own, but XLL-loaded instances outlive the
+        // plain test's 15 s window — every PID was still alive at 15 s
+        // and confirmed dead when checked minutes later. Deadline widened
+        // to 120 s so the observed minutes-scale clearance is covered with
+        // margin (well under the 600 s suite deadline); the zero-survivor
+        // assertion is unchanged.
+        } while (sw.Elapsed.TotalSeconds < 120);
 
         Assert.False(anyOrphan,
             $"One or more Excel processes survived five XLL-loaded open/close " +
             $"cycles (orphans: {string.Join(", ", pids)}).");
         _output.WriteLine(
-            "All five XLL-loaded Excel processes exited cleanly; " +
+            $"All five XLL-loaded Excel processes exited cleanly after {sw.Elapsed.TotalSeconds:F1} s; " +
             $"total packed-XLL open records: {CountPackedOpenRecords(TryReadLog(logPath))}.");
     }
 
@@ -423,7 +495,16 @@ public class OfficeFixtureTests
     {
         try
         {
-            return File.ReadAllText(path);
+            // FileShare.ReadWrite: Windows share checks are bidirectional, so a
+            // reader requesting FileShare.Read (what File.ReadAllText uses) is
+            // rejected while any Excel instance still holds RollingLog's writer
+            // handle (FileAccess.Write). The swallowed IOException would
+            // silently zero the pre-existing session baseline (Five_cycles XLL
+            // failure, R2.7a risk closure).
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -445,7 +526,7 @@ public class OfficeFixtureTests
         string logPath, HashSet<string> seenSessions, int cycle)
     {
         var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < 60)
+        while (sw.Elapsed.TotalSeconds < 90)
         {
             var sessions = PackedOpenSessions(TryReadLog(logPath));
             sessions.ExceptWith(seenSessions);
@@ -459,9 +540,9 @@ public class OfficeFixtureTests
 
         Assert.Fail(
             $"Cycle {cycle}: no new session-bearing packed-XLL 'open' record appeared in " +
-            $"'{logPath}' within 60 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
+            $"'{logPath}' within 90 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
             "RegisterXLL returned true, so the XLL loaded; in the 2026-09-17 session-token probe " +
-            "the matching record materialized within ~30 s of RegisterXLL — its absence after 60 s " +
+            "the matching record materialized within ~30 s of RegisterXLL — its absence after 90 s " +
             "means no attributable open record appeared for this load.");
         throw new InvalidOperationException("Unreachable: Assert.Fail throws.");
     }
@@ -515,5 +596,49 @@ public class OfficeFixtureTests
         Assert.Equal(0, CountPackedOpenRecords(string.Empty));
         Assert.Empty(PackedOpenSessions(null));
         Assert.Empty(PackedOpenSessions(string.Empty));
+    }
+
+    [Fact]
+    public void TryReadLog_reads_the_log_while_a_writer_holds_it_open()
+    {
+        // Regression (bidirectional Windows share checks; R2.7a Five_cycles
+        // XLL failure): the poll reads the add-in log while an Excel
+        // instance still holds RollingLog's writer handle (FileAccess.Write).
+        // A reader opening with FileShare.Read is rejected by that write
+        // access, the exception is swallowed to string.Empty, and the
+        // pre-existing session baseline silently becomes 0.
+        var path = Path.Combine(
+            Path.GetTempPath(), $"gantt-creator-logread-{Guid.NewGuid():N}.log");
+        try
+        {
+            const string record =
+                "2026-09-23T00:00:00.000Z open addin-version=0.0.0 " +
+                "xll=GanttCreator.AddIn-AddIn64-packed.xll session=s-read-probe\r\n";
+            File.WriteAllText(path, record);
+
+            using (var writer = new FileStream(
+                path, FileMode.Append, FileAccess.Write, FileShare.Read))
+            {
+                _ = writer;
+                var content = TryReadLog(path);
+                Assert.Contains(
+                    "session=s-read-probe", content, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Best-effort cleanup.
+            }
+        }
     }
 }

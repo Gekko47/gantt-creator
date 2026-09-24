@@ -24,8 +24,10 @@ Do not get wrong:
 - `github__get_pull_request_status` — verify green CI before declaring a phase exit (the W-12 rule).
 - `github__get_pull_request_files` — check the diff links to a specific test or script step.
 - `dotnet_test` — run the named test or script step an acceptance criterion references.
-- `read_files` on `docs/work-items/` — confirm a work-item file exists before implementation.
-- `memra_add` — record green CI evidence (commit hash + run URL) as a fact.
+- `combined-mcp-server__read_file` on `docs/work-items/` — confirm a work-item file exists before implementation.
+- `memra_add` — record one work-item completion fact per landed item (3-5 lines: ID, commit, gates, Office status, next item). Not commit text or test counts — see `docs/06-LLM-PROTOCOL.md` "Persisting the ledger".
+- `memra_add_decision` — record an irreversible design decision with the context that made it irreversible.
+- `memra_bootstrap` — recall prior decisions at session start before restating unknowns.
 
 ---
 

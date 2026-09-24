@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 
 namespace GanttCreator.AddIn;
 
@@ -141,6 +142,164 @@ public class GanttRibbon : ExcelRibbon
         {
             DiagnosticsService.OpenLogFile(path);
         }
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Initialise sheet button. The callback is
+    /// a thin error boundary exactly like the Diagnostics callback: the
+    /// initialise command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed
+    /// afterwards (work item R1.5 decision D3). The initialise command itself
+    /// surfaces typed refusals; unexpected failures are translated here.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnInitialiseSheetClick(IRibbonControl control)
+        => OnInitialiseSheetClick(control, CommandBoundary.Instance, RunInitialiseSheet, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Initialise-sheet command across an injected boundary. Internal
+    /// so contract tests can verify the routing without the singletons and the
+    /// real workbook mutation.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The initialise command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnInitialiseSheetClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, nameof(OnInitialiseSheetClick)), command, nameof(OnInitialiseSheetClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// The Initialise-sheet command: runs the workbook initialiser for the
+    /// current Excel session via the application command.
+    /// </summary>
+    private static void RunInitialiseSheet() => InitialiseSheetCommand.RunForExcel();
+
+    /// <summary>
+    /// Called when the user clicks the Validate button. The callback is a
+    /// thin error boundary exactly like the Initialise-sheet callback: the
+    /// validate command runs across the project-wide
+    /// <see cref="CommandBoundary"/> and the ribbon state is refreshed
+    /// afterwards (work item R1.5 decision D3). The validate command itself
+    /// surfaces typed refusals; unexpected failures are translated here.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnValidateSheetClick(IRibbonControl control)
+        => OnValidateSheetClick(control, CommandBoundary.Instance, RunValidateSheet, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Validate-sheet command across an injected boundary. Internal so
+    /// contract tests can verify the routing without the singletons and the real
+    /// workbook mutation.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The validate command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    internal static void OnValidateSheetClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, nameof(OnValidateSheetClick)), command, nameof(OnValidateSheetClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// The Validate-sheet command: runs the reader → validator → reporter
+    /// pipeline for the current Excel session via the application command.
+    /// </summary>
+    private static void RunValidateSheet() => ValidateSheetCommand.RunForExcel();
+
+    /// <summary>Called when the user clicks the Repair configuration button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnRepairConfigClick(IRibbonControl control)
+        => OnRepairConfigClick(control, CommandBoundary.Instance, RunRepairConfig, NotifyRibbonStateChanged);
+
+    /// <summary>Runs the Repair configuration command across an injected boundary.</summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The repair command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnRepairConfigClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(
+            () => ResolveCommandName(control, nameof(OnRepairConfigClick)),
+            command,
+            nameof(OnRepairConfigClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>Runs the production repair command.</summary>
+    private static void RunRepairConfig() => RepairConfigCommand.RunForExcel();
+
+    /// <summary>Called when the user clicks the Add activity button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddActivityClick(IRibbonControl control)
+        => OnAddActivityClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedActivity), NotifyRibbonStateChanged);
+
+    /// <summary>Called when the user clicks the Add milestone button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddMilestoneClick(IRibbonControl control)
+        => OnAddMilestoneClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedMilestone), NotifyRibbonStateChanged);
+
+    /// <summary>Called when the user clicks the Add delineator button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddDelineatorClick(IRibbonControl control)
+        => OnAddDelineatorClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.Delineator), NotifyRibbonStateChanged);
+
+    /// <summary>Runs the Add activity callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddActivityClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddActivityClick), onCompleted);
+
+    /// <summary>Runs the Add milestone callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddMilestoneClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddMilestoneClick), onCompleted);
+
+    /// <summary>Runs the Add delineator callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddDelineatorClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddDelineatorClick), onCompleted);
+
+    private static void OnAddRowClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        string fallbackCommandName,
+        Action? onCompleted)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, fallbackCommandName), command, fallbackCommandName);
+        onCompleted?.Invoke();
     }
 
     /// <summary>

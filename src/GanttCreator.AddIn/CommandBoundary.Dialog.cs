@@ -27,9 +27,6 @@ internal static class CommandErrorDialog
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        // CA1031: the dialog must always degrade — first to the MessageBox
-        // fallback, then (via the boundary's own guard) to no dialog. A
-        // failure here must never propagate into Excel.
 #pragma warning disable CA1031
         try
         {
@@ -37,16 +34,51 @@ internal static class CommandErrorDialog
         }
         catch
         {
-            // The managed TaskDialog can fail outside the Excel main STA
-            // thread or on a malformed page configuration. Fall back to a
-            // plain MessageBox carrying the same information.
-            _ = MessageBox.Show(
-                message,
-                _title,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            _ = MessageBox.Show(message, _title, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 #pragma warning restore CA1031
+    }
+
+    /// <summary>Shows a yes/no confirmation and returns true only for Yes.</summary>
+    /// <param name="message">The count-only confirmation message.</param>
+    /// <returns>Whether the user selected Yes.</returns>
+    internal static bool Confirm(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+#pragma warning disable CA1031
+        try
+        {
+            TaskDialogButton result = TaskDialog.ShowDialog(CreateConfirmationPage(message));
+            return result == TaskDialogButton.Yes;
+        }
+        catch
+        {
+            return MessageBox.Show(
+                message,
+                _title,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) == DialogResult.Yes;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Builds the confirmation task-dialog page.</summary>
+    /// <param name="message">The count-only confirmation message.</param>
+    /// <returns>The configured page.</returns>
+    internal static TaskDialogPage CreateConfirmationPage(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        var page = new TaskDialogPage
+        {
+            Caption = _title,
+            Heading = "Repair Gantt Creator configuration?",
+            Text = message,
+            Icon = TaskDialogIcon.Information,
+        };
+        page.Buttons.Add(TaskDialogButton.Yes);
+        page.Buttons.Add(TaskDialogButton.No);
+        return page;
     }
 
     /// <summary>

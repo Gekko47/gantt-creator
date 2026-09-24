@@ -174,6 +174,50 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetEnabled_maps_the_initialise_sheet_control_to_the_workbook_fact()
+    {
+        // R2.2: the Initialise sheet button is gated on the same workbook fact
+        // as Diagnostics — it only makes sense to initialise a workbook that
+        // exists. Driven from the cached snapshot, never from a live probe.
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var service = Arm(adapter);
+
+        Assert.True(service.GetEnabled(RibbonControlIds.InitialiseSheet));
+
+        adapter.WorkbookFact = false;
+        service.Refresh();
+
+        Assert.False(service.GetEnabled(RibbonControlIds.InitialiseSheet));
+    }
+
+    [Fact]
+    public void GetEnabled_initialise_sheet_starts_disabled_before_the_first_capture()
+    {
+        // The initial snapshot knows no facts, so every gated control —
+        // including the R2.2 Initialise sheet button — starts grey. A control
+        // that is enabled before the host arms the service is a regression.
+        var fresh = RibbonStateService.Instance;
+
+        Assert.False(fresh.GetEnabled(RibbonControlIds.InitialiseSheet));
+    }
+
+    [Fact]
+    public void GetEnabled_maps_the_validate_control_to_the_workbook_fact()
+    {
+        // R2.6: Validate reads the visible table, so it is gated on the same
+        // workbook fact as Initialise sheet — driven from the cached snapshot.
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var service = Arm(adapter);
+
+        Assert.True(service.GetEnabled(RibbonControlIds.ValidateSheet));
+
+        adapter.WorkbookFact = false;
+        service.Refresh();
+
+        Assert.False(service.GetEnabled(RibbonControlIds.ValidateSheet));
+    }
+
+    [Fact]
     public void GetEnabled_is_enabled_for_unknown_null_and_whitespace_control_ids()
     {
         var service = Arm(new FakeApplicationAdapter { WorkbookFact = false }, () => false);

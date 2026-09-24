@@ -116,8 +116,11 @@ Use the highest-fidelity tool for the job. Per-skill tool lists live in each `SK
 | Run tests / check coverage | `dotnet_test`, `dotnet_build` |
 | Verify a NuGet package claim | `dotnet_packages` |
 | Verify green CI on a branch | `github__get_pull_request_status` |
-| Persist a decision or evidence across turns | `memra_add_decision`, `memra_add` |
+| Persist a work-item completion fact (3-5 lines, not commit text) | `memra_add` |
+| Persist an irreversible design decision | `memra_add_decision` |
+| Persist a tooling gotcha or live/Office evidence row | `memra_add` (type: fact, tag it) |
 | Recall prior decisions at session start | `memra_bootstrap` |
+| Retrieve prior evidence by tag or similarity | `memra_search` / `memra_recall` |
 | Structure multi-step reasoning | `sequential-thinking__sequentialthinking` |
 | Check an architecture invariant | `roslyn_analyze`, `dotnet_test` on `*.Architecture.Tests` |
 | Find a pattern violation across the codebase | `ast_grep_search`, `semgrep_scan` |

@@ -12,8 +12,9 @@ namespace GanttCreator.Core;
 /// any of the following changes: a column name or column order, a catalogue
 /// display name, or catalogue contract metadata (date mode, kind, default
 /// style key, colour capability, required-style flag, allowed label
-/// positions). Renaming or localising a display name is a schema migration,
-/// not a compatible change.
+/// positions). Renaming or localising a display name is a workbook schema
+/// migration, not a change to the durable <see cref="GanttEntityType"/>
+/// member name or numeric value.
 /// </para>
 /// </remarks>
 public static class GanttSchemaVersion

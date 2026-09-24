@@ -1,0 +1,431 @@
+using System.Linq;
+using Microsoft.Office.Core;
+using Excel = Microsoft.Office.Interop.Excel;
+using GanttCreator.Core;
+using GanttCreator.Office;
+using Xunit.Abstractions;
+
+namespace GanttCreator.Office.IntegrationTests;
+
+/// <summary>
+/// Live-Excel gate for the workbook initialiser (work item R2.2). Tagged
+/// <c>[Trait("Category","OfficeIntegration")]</c> so <c>verify-quick.ps1</c>
+/// and <c>verify.ps1</c> exclude them; run via
+/// <c>pwsh ./scripts/verify-office.ps1</c> on the self-hosted runner.
+/// </summary>
+/// <remarks>
+/// Driven through the <see cref="IWorkbookInitialiser"/> port rather than the
+/// AddIn command layer: this project references Core and Office but not
+/// AddIn, so the command boundary stays behind the AddIn assembly. The
+/// packed XLL is still loaded so the add-in's production adapter runs inside
+/// Excel; the contract assertions mirror <see cref="WorkbookInitialiserTests"/>
+/// (Moq PIA, no live Office) so a drift between the port and the live path is
+/// caught. The typed-refusal translation itself is gated by
+/// <c>InitialiseSheetCommandTests</c> (AddIn contract, no Office).
+/// </remarks>
+public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
+    {
+        private readonly ITestOutputHelper _output = output;
+
+        private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
+
+    /// <summary>The real worksheet objects that force the create path in R2.2a.</summary>
+    private enum NonPristineArtefact
+    {
+        /// <summary>A drawing shape.</summary>
+        Shape,
+
+        /// <summary>A legacy note.</summary>
+        Comment,
+
+        /// <summary>A threaded comment.</summary>
+        ThreadedComment,
+    }
+
+    /// <summary>
+    /// The adopt path: a blank workbook created through the fixture becomes
+    /// the supported state — one visible worksheet named <c>Gantt Data</c>
+    /// carrying <c>tblGanttData</c>, the sheet-scoped plot anchor, and one
+    /// VeryHidden <c>_GanttCreatorConfig</c> sheet. Nothing else is touched.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Initialise_adopts_a_blank_worksheet_and_builds_the_supported_state()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+
+            WorkbookInitialiseOutcome outcome =
+                new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
+
+            Assert.True(outcome.Succeeded);
+            Assert.Equal(WorkbookInitialisePath.Adopted, outcome.Path);
+            Assert.Equal(
+                GanttWorkbookContract.GanttSheetLabel,
+                outcome.SheetName,
+                StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(
+                GanttWorkbookContract.GanttSheetLabel,
+                active.Name,
+                StringComparer.OrdinalIgnoreCase);
+
+            Excel.ListObject table = active.ListObjects[GanttTableSchema.TableName];
+            Assert.Equal(GanttTableSchema.TableName, table.Name, StringComparer.Ordinal);
+            Assert.Equal(
+                GanttTableSchema.Default.Columns.Count,
+                table.ListColumns.Count);
+
+            for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
+            {
+                Assert.Equal(
+                    GanttTableSchema.Default.Columns[index].Name,
+                    table.ListColumns[index + 1].Name,
+                    StringComparer.Ordinal);
+            }
+
+            var anchor = workbook.Names.Item(GanttWorkbookContract.PlotAnchorDefinedName);
+            Assert.NotNull(anchor);
+            Assert.Equal(
+                $"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1",
+                anchor.RefersTo,
+                StringComparer.Ordinal);
+
+            // Adopted-blank path (roadmap R2.2): one visible sheet (the renamed
+            // target) plus one VeryHidden config sheet — NOT the create path's
+            // two-visible expectation. Live-Excel evidence 2026-09-19: the old
+            // expectation of 2 visible sheets contradicted the contract.
+            var visibleSheets = workbook.Sheets
+                .Cast<Excel.Worksheet>()
+                .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVisible);
+            var veryHiddenSheets = workbook.Sheets
+                .Cast<Excel.Worksheet>()
+                .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
+            Assert.Equal(1, visibleSheets);
+            Assert.Equal(1, veryHiddenSheets);
+            Assert.Equal(
+                GanttWorkbookContract.ConfigSheetName,
+                workbook.Sheets[2].Name,
+                StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// A workbook that already carries <c>tblGanttData</c> is refused and left
+    /// unchanged — the typed-refusal surface exercised by the contract tests,
+    /// now against live Excel.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Initialise_refuses_and_mutates_nothing_when_the_table_already_exists()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            active.Name = GanttWorkbookContract.GanttSheetLabel;
+
+            // Create a real ListObject named GanttTableSchema.TableName on the
+            // renamed worksheet so the TableExists refusal path is exercised.
+            Excel.Range headerRange = active.Cells[1, 1].Resize[1, 1];
+            Excel.ListObject existingTable = active.ListObjects.Add(
+                Excel.XlListObjectSourceType.xlSrcRange,
+                headerRange,
+                Type.Missing,
+                Excel.XlYesNoGuess.xlYes,
+                Type.Missing);
+            existingTable.Name = GanttTableSchema.TableName;
+
+            WorkbookInitialiseOutcome outcome =
+                new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
+
+            Assert.Equal(
+                WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TableExists),
+                outcome);
+            Assert.Equal(
+                GanttWorkbookContract.GanttSheetLabel,
+                active.Name,
+                StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(1, active.ListObjects.Count);
+            Assert.Equal(GanttTableSchema.TableName, active.ListObjects[1].Name, StringComparer.Ordinal);
+            // The prepared workbook has one sheet and the TableExists refusal
+            // mutates nothing (contract tests prove no-mutation; live evidence
+            // 2026-09-19: the old expectation of 2 sheets never matched the
+            // prepared state — the test had never been run against live Excel).
+            Assert.Equal(1, workbook.Sheets.Count);
+            _output.WriteLine("Refusal path left the workbook unchanged (1 sheet) and the existing table intact.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    [Theory]
+    [Trait("Category", "OfficeIntegration")]
+    [InlineData("Shape")]
+    [InlineData("Comment")]
+    [InlineData("ThreadedComment")]
+    public async Task Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state(
+        string artefactName)
+    {
+        var artefact = Enum.Parse<NonPristineArtefact>(artefactName);
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var originalName = active.Name;
+            int originalCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+
+            switch (artefact)
+            {
+                case NonPristineArtefact.Shape:
+                    _ = active.Shapes.AddShape(
+                        MsoAutoShapeType.msoShapeRectangle,
+                        10,
+                        10,
+                        20,
+                        20);
+                    break;
+                case NonPristineArtefact.Comment:
+                    _ = active.Cells[1, 1].AddComment("R2.2a user note");
+                    break;
+                case NonPristineArtefact.ThreadedComment:
+                    _ = active.Cells[1, 1].AddCommentThreaded("R2.2a user thread");
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(artefactName));
+            }
+
+            int preservedCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+            Assert.Equal(1, preservedCount);
+
+            WorkbookInitialiseOutcome outcome =
+                new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine(
+                $"R2.2a artefact={artefact} path={outcome.Path} sheetName={outcome.SheetName}");
+
+            Assert.True(outcome.Succeeded);
+            Assert.Equal(WorkbookInitialisePath.CreatedNew, outcome.Path);
+            Assert.Equal(originalName, active.Name, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(0, active.ListObjects.Count);
+            Assert.Equal(3, workbook.Sheets.Count);
+            Assert.Equal(
+                GanttWorkbookContract.GanttSheetLabel,
+                workbook.Sheets[2].Name,
+                StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(
+                GanttWorkbookContract.ConfigSheetName,
+                workbook.Sheets[3].Name,
+                StringComparer.OrdinalIgnoreCase);
+
+            int finalCount = artefact switch
+            {
+                NonPristineArtefact.Shape => active.Shapes.Count,
+                NonPristineArtefact.Comment => active.Comments.Count,
+                NonPristineArtefact.ThreadedComment => active.CommentsThreaded.Count,
+                _ => throw new ArgumentOutOfRangeException(nameof(artefactName)),
+            };
+            Assert.Equal(preservedCount, finalCount);
+
+            Assert.Equal(0, originalCount);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The non-blank active worksheet is left untouched and a fresh
+    /// <c>Gantt Data</c> sheet is created — the create path of the hybrid
+    /// sheet-selection rule (work item R2.2 decision D4).
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Initialise_creates_a_new_sheet_and_leaves_the_non_blank_active_one_untouched()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            active.Range["A1", "C1"].Value2 = new object[3] { "pre", "existing", "content" };
+
+            WorkbookInitialiseOutcome outcome =
+                new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+            _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
+
+            Assert.True(outcome.Succeeded);
+            Assert.Equal(WorkbookInitialisePath.CreatedNew, outcome.Path);
+            Assert.Equal("Sheet1", active.Name, StringComparer.Ordinal);
+            Assert.Equal("pre", active.Range["A1"].Value2);
+
+            var ganttSheet = workbook.Sheets
+                .Cast<Excel.Worksheet>()
+                .First(s => string.Equals(
+                    s.Name,
+                    GanttWorkbookContract.GanttSheetLabel,
+                    StringComparison.OrdinalIgnoreCase));
+            Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
+            Assert.Equal(GanttTableSchema.TableName, table.Name, StringComparer.Ordinal);
+            Assert.Equal(14, table.ListColumns.Count);
+
+            var visibleSheets = workbook.Sheets
+                .Cast<Excel.Worksheet>()
+                .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVisible);
+            var veryHiddenSheets = workbook.Sheets
+                .Cast<Excel.Worksheet>()
+                .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
+            Assert.Equal(2, visibleSheets);
+            Assert.Equal(1, veryHiddenSheets);
+            Assert.Equal(3, workbook.Sheets.Count);
+            _output.WriteLine("Create path left the non-blank active sheet untouched and added Gantt Data + config.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The R2.7a live acceptance gate (ADR-0008 D5): a protected active
+    /// worksheet refuses with <c>TargetProtected</c> and zero partial
+    /// mutation. The guard itself (<see cref="ExcelWorksheetProtectionGuard"/>)
+    /// is read-only, so this test drives it directly against live Excel and
+    /// proves the outcome the mutating adapters must honour first.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task ProtectionGuard_refuses_and_mutates_nothing_when_the_active_sheet_is_protected()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var sheetCountBefore = workbook.Sheets.Count;
+            var sheetNameBefore = active.Name;
+
+            // Live protection: the no-password Protect() overload leaves
+            // ProtectContents true for the Query() below; the finally
+            // unprotects so teardown closes a clean workbook.
+            active.Protect();
+            try
+            {
+                Assert.True(active.ProtectContents);
+
+                ProtectionGuardOutcome outcome =
+                    new ExcelWorksheetProtectionGuard(fixture.Excel).Query();
+                _output.WriteLine($"Guard outcome={outcome}");
+                Assert.Equal(ProtectionGuardOutcome.SheetProtected, outcome);
+            }
+            finally
+            {
+                active.Unprotect();
+            }
+
+            // Zero-mutation assertion: the guard queried only, so the workbook
+            // still has exactly the sheets it started with, unchanged.
+            Assert.Equal(sheetCountBefore, workbook.Sheets.Count);
+            Assert.Equal(sheetNameBefore, active.Name);
+            Assert.False(active.ProtectContents);
+            _output.WriteLine("Guard refused on the protected sheet and mutated nothing.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The R2.7a live refusal path end to end (ADR-0008 D4/D5): Initialise on
+    /// a protected active worksheet returns the typed
+    /// <c>TargetProtected</c> refusal and leaves the workbook unmutated — no
+    /// table, no config sheet, no rename.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Initialise_refuses_and_mutates_nothing_when_the_active_sheet_is_protected()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Excel.Worksheet active = (Excel.Worksheet)workbook.ActiveSheet;
+            var sheetNameBefore = active.Name;
+
+            active.Protect();
+            WorkbookInitialiseOutcome outcome;
+            try
+            {
+                Assert.True(active.ProtectContents);
+                outcome = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
+                _output.WriteLine($"Initialise path={outcome.Path} sheetName={outcome.SheetName} refusal={outcome.Refusal}");
+            }
+            finally
+            {
+                active.Unprotect();
+            }
+
+            Assert.Equal(
+                WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+                outcome);
+            Assert.Equal(sheetNameBefore, active.Name);
+            Assert.Equal(0, active.ListObjects.Count);
+            Assert.Equal(1, workbook.Sheets.Count);
+            _output.WriteLine("Initialise refused on the protected sheet and mutated nothing.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+}

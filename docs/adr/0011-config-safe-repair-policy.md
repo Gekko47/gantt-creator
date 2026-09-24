@@ -1,0 +1,17 @@
+# ADR-0011 — Safe configuration and identity repair
+
+- **Status**: Accepted
+- **Date**: 2026-09-24
+- **Context**: R2.7/R2.9 materialise `_GanttCreatorConfig` and R2.2/R2.3 defer plot-anchor integrity and visible row-identity repair. Configuration damage can be detected by the existing catalogue reader, but its single typed refusal cannot classify several simultaneous damage classes. Repair can also touch user-authored style/settings or visible `Id` cells, so a blind rewrite would violate the configuration and user-data preservation contracts.
+- **Decision**:
+  - Repair is an explicit **Repair configuration** command. It is never run on workbook open, normal cell edits, Type changes, or Validate.
+  - The command performs check → pure Core plan → ordered repair. Cancellation before the first mutation writes nothing.
+  - Auto-repair is limited to add-in-owned, loss-free damage: wrong `_GanttCreatorConfig` visibility; missing/corrupt code-owned type or metric catalogues; stale catalogue hash; plot-anchor disagreement; and missing/invalid `GanttCreator.TypeOptions` after the catalogue is valid.
+  - Confirm-required is limited to older-version migration, possible user-authored style damage, and visible `tblGanttData` identity repair. Confirmation text contains counts/categories only, never schedule content.
+  - A schema newer than the running add-in, a second helper sheet, schedule data on `_GanttCreatorConfig`, protection that blocks repair, and unclassified damage are refused. Unknown damage defaults to `Refuse`.
+  - Migration preserves parseable user style rows and present settings, preserves the workbook ID, regenerates built-ins, bumps the stored version, and re-hashes. Unparseable user style rows are quarantined in the finding/result model and are never silently dropped. If the table cannot be read safely, it is confirm-required or refused; the repairer does not guess.
+  - Identity repair follows R2.5's first-occurrence-canonical rule: a later duplicate ID receives a newly generated ID; malformed or missing IDs are generated. A `ParentId` containing the ambiguous original duplicate text is left unchanged and reported for normal validation; repair never guesses which duplicate row a reference meant.
+  - Repair never creates or deletes a worksheet, never renders, never saves/closes the workbook, and restores any application state it changes in `try/finally`.
+  - Every outcome preserves the existing visible-sheet topology: the supported Gantt worksheet remains visible, any create-path original remains visible, and `_GanttCreatorConfig` remains `xlSheetVeryHidden`.
+- **Consequences**: R2.10 can recover add-in-owned drift without exposing a destructive rewrite. User-authored data paths require an explicit user decision and may remain quarantined. The repair command is deliberately not a transactional Excel undo operation; its mutation plan, typed outcomes, failure-injection tests, and refusal boundary provide the safety contract.
+- **Alternatives considered**: automatic repair on open (rejected: violates explicit-command and refresh-only philosophy); silent catalogue regeneration (rejected: can destroy user rows or mask drift); deleting suspicious configuration or helper sheets (rejected: violates ownership and sheet invariants); guessing duplicate-ID references (rejected: can silently retarget user data); JSON configuration (rejected: ADR-0007 already requires inspectable tables for the named Type range).

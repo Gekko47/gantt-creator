@@ -8,8 +8,12 @@ and COM/error-handling rules for the add-in.
 
 Do not get wrong:
 - Exactly one visible worksheet plus one `xlSheetVeryHidden`
-  `_GanttCreatorConfig` worksheet — never a second helper sheet, and
-  never schedule rows, shapes, or logs on the VeryHidden sheet.
+  `_GanttCreatorConfig` worksheet for the adopted-blank target, or two
+  visible worksheets for the create path (the preserved original worksheet
+  plus the new `Gantt Data` sheet) plus one `xlSheetVeryHidden`
+  `_GanttCreatorConfig` worksheet — never a second helper sheet, never
+  schedule rows, shapes, or logs on the VeryHidden sheet, and never hiding
+  an existing worksheet during initialization.
 - `verify-quick.ps1`/`verify.ps1` are the only authoritative producers
   of `bin/`, `publish/`, and `coverage/` — a test that reads one of
   these artifacts without naming the producing step is a drift risk
@@ -76,6 +80,17 @@ Optional columns can be added only by an approved schema ADR, initially `SortOrd
 
 Workbook-level configuration uses one worksheet named `_GanttCreatorConfig` with `Visible = xlSheetVeryHidden`, plus workbook-defined names prefixed `GanttCreator.` that point to its validation ranges. Shape ownership uses a deterministic shape name plus tags/alternative text.
 
+### Sheet initialisation (R2.2)
+
+The Initialise-sheet command brings a workbook into the supported state in one action. It creates the `_GanttCreatorConfig` helper worksheet but no additional helper sheets, and never modifies any sheet other than the target:
+
+- **Hybrid sheet selection.** The active worksheet is adopted when it is blank and is an `Excel.Worksheet` (a chart sheet is not, so it takes the create path); otherwise a new worksheet is created immediately after the active sheet. "Blank" means `WorksheetFunction.CountA(UsedRange) = 0`. Non-target sheets are never modified, hidden, or deleted by this command. An adopted target worksheet may be renamed and receive the table.
+- **Uniform labelling.** The target is always labelled `Gantt Data`, whether it was adopted in place or created. On a name collision Excel's own `" (n)"` suffix convention applies (`OrdinalIgnoreCase`, first free `n`, starting at 2). Sheet-name uniqueness is case-insensitive in Excel, so collision detection is `OrdinalIgnoreCase`.
+- **Mutation order.** All read-only checks run first (configuration sheet present? target blank? target already carries `tblGanttData`?), then rename, header row, table, configuration sheet, defined name. A failure before the rename mutates nothing; a failure after it leaves at most a renamed blank worksheet (cosmetic) and surfaces through the command boundary. A protected target is detected at the rename, the first mutation.
+- **Plot anchor.** Initialise writes the sheet-scoped defined name `GanttCreator.PlotAnchor` referring to the cell one column right of the table's last column on the header row (default `$O$1`, since the schema has 14 columns). Sheet-scoping, not workbook-scoping, leaves a future multi-Gantt-sheet extension needing no name migration. The Phase-4 renderer always derives the anchor from the live table and treats stored-vs-derived disagreement as an integrity finding (R2.10); the stored name is a claim, not the source of truth.
+
+See `docs/work-items/R2.2-initialise-sheet.md` decisions D1/D2/D3/D4/D7.
+
 ## VeryHidden configuration worksheet contract
 
 The workbook contains exactly:
@@ -88,11 +103,13 @@ The configuration worksheet contains versioned tables/ranges only:
 | Item | Purpose |
 | --- | --- |
 | `tblGanttTypes` | Materialised built-in Type values, display names, entity kind, date mode, default style and capability flags |
-| `tblGanttStyles` | Workbook style presets and user-approved custom named styles |
+| `tblGanttStyles` | Workbook style presets and user-approved custom named styles, including explicit default/allowed label positions and colour-override capability (ADR-0009) |
 | `tblGanttMetrics` | Rectangle heights, milestone size, gaps, line widths and other named geometry tokens |
-| `tblGanttLabelPositions` | Valid label choices grouped by entity capability |
+| `tblGanttSettings` | First-release chart/export/plot settings as key/value rows; written by approved dialogs only (ADR-0007 D3) |
 | `tblGanttConfig` | Schema version, catalogue hash, workbook ID and add-in version last used |
 | `GanttCreator.TypeOptions` | Workbook name referring to the active Type display-name range used by data validation |
+
+In the first release the valid label choices grouped by entity capability are carried by the `AllowedLabelPositions` column of `tblGanttTypes` (ADR-0007 D2); a separate `tblGanttLabelPositions` table is deferred until a consumer needs it.
 
 Built-in Type definitions remain code-owned and are materialised deterministically. The helper worksheet is the workbook-scoped validation/configuration representation, not a second competing type catalogue.
 

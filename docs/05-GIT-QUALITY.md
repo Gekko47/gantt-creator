@@ -25,8 +25,8 @@ Do not get wrong:
 - `github__get_pull_request` / `github__get_pull_request_files` / `github__get_pull_request_reviews` — execute the review checklist against actual PR content.
 - `github__get_pull_request_status` — verify CI is green before merging (W-12 rule).
 - `github__create_pull_request_review` — submit structured reviews.
-- `pwsh_run` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
-- `pwsh_run` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
+- `combined-mcp-server__run_commands` with `scripts/install-pre-commit.ps1` — install the pre-commit hook.
+- `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` / `scripts/verify.ps1` — run local gates before commit/PR.
 <!-- SKILL-TOOLS:END -->
 
 ## Branch and review policy
@@ -116,11 +116,11 @@ git diff --cached
 Before declaring a commit or PR green, run these tools and observe their output:
 
 1. `dotnet_test` on the targeted project — must PASS.
-2. `pwsh_run` with `scripts/verify-quick.ps1` (during editing) or `scripts/verify.ps1` (before PR) — must PASS.
+2. `combined-mcp-server__run_commands` with `scripts/verify-quick.ps1` (during editing) or `scripts/verify.ps1` (before PR) — must PASS.
 3. `git_tool` with `diff --check` — must show no conflict markers or whitespace drift.
 4. `git_tool` with `log --oneline -1` — verify Conventional Commit prefix.
 5. `github__get_pull_request_status` (if a PR exists) — must show `success` (W-12 rule).
-6. `memra_add` — record the green state as a fact with the commit hash and CI run URL.
+6. `memra_add` — record one work-item completion fact (3-5 lines: ID, commit, gates, Office status, next item). Not commit text or test counts — see `docs/06-LLM-PROTOCOL.md` "Persisting the ledger".
 
 Pre-commit safety net (optional, recommended):
 

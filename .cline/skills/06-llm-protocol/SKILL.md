@@ -26,10 +26,11 @@ Do not get wrong:
 
 ## Tools
 
-- `memra_add` / `memra_add_decision` — persist evidence-ledger rows and irreversible decisions across turns.
-- `memra_bootstrap` — recall prior decisions and patterns at session start.
+- `memra_add` — persist a work-item completion fact, tooling gotcha, or live/Office evidence row (not commit text, test counts, or file lists — see "Persisting the ledger").
+- `memra_add_decision` — persist an irreversible decision with the context that made it irreversible; the highest-value entry type.
+- `memra_bootstrap` — recall prior decisions and patterns at session start before restating unknowns.
 - `memra_add_pattern` — store reusable methodologies (e.g. the full-repo review phases).
-- `memra_search` / `memra_recall` — retrieve prior evidence by semantic similarity.
+- `memra_search` / `memra_recall` — retrieve prior evidence by tag or semantic similarity.
 - `memra_supersede` — update an evidence-ledger row when its status changes, preserving the history chain.
 - `sequential-thinking__sequentialthinking` — structure multi-step reasoning (review methodology, failure classification).
 - `vscode-mcp__get_symbol_lsp_info` / `vscode-mcp__get_references` — get compiler-grade type/symbol info instead of guessing APIs.
@@ -37,7 +38,7 @@ Do not get wrong:
 - `ilspy_decompile` — inspect installed assembly metadata when source is unavailable.
 - `context7__query-docs` / `microsoft-learn__microsoft_docs_search` / `microsoft-learn__microsoft_docs_fetch` — look up unfamiliar .NET / Excel-DNA / SkiaSharp APIs; preferred over memory.
 - `dotnet_build` / `dotnet_test` — compile and run tests; "Not run" must be stated if skipped.
-- `pwsh_run` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
+- `combined-mcp-server__run_commands` — execute PowerShell scripts and commands (verify gates, lint, sync) with observed output.
 - `semgrep_scan` / `ast_grep_search` — find pattern violations during review.
 
 ---
