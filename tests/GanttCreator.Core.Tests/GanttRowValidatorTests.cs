@@ -760,6 +760,115 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Relevant_excel_error_is_one_blocking_issue_without_duplicate_required_issue()
+    {
+        GanttRowDto row = ValidSpan() with
+        {
+            StartCell = GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.NotAvailable),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Empty(outcome.Events);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Field == "Start" && i.Code == GanttValidationCodes.CellContainsExcelError);
+        Assert.Equal(GanttValidationSeverity.Error, issue.Severity);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "Start" && i.Code == GanttValidationCodes.StartRequired);
+    }
+
+    [Fact]
+    public void Relevant_unsupported_value_is_one_blocking_issue_without_duplicate_format_issue()
+    {
+        GanttRowDto row = ValidSpan() with
+        {
+            FillColourCell = GanttCells.Unsupported<string>(),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Empty(outcome.Events);
+        Assert.Contains(outcome.Issues, i => i.Field == "FillColour" && i.Code == GanttValidationCodes.CellValueUnsupported);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "FillColour" && i.Code == GanttValidationCodes.BadColourFormat);
+    }
+
+    [Fact]
+    public void Irrelevant_populated_cell_warns_once_and_is_not_a_format_error()
+    {
+        GanttRowDto row = ValidSpan(typeText: "As-Built Milestone") with
+        {
+            FinishCell = GanttCells.Value<DateOnly?>(new DateOnly(2026, 9, 9)),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Single(outcome.Events);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Field == "Finish");
+        Assert.Equal(GanttValidationCodes.NotUsedByType, issue.Code);
+        Assert.Equal(GanttValidationSeverity.Warning, issue.Severity);
+        Assert.Null(Assert.Single(outcome.Events).Finish);
+    }
+
+    [Fact]
+    public void Irrelevant_excel_error_warns_once_and_is_not_blocking()
+    {
+        GanttRowDto row = ValidSpan(typeText: "As-Built Milestone") with
+        {
+            FinishCell = GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.Value),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Single(outcome.Events);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Field == "Finish");
+        Assert.Equal(GanttValidationCodes.NotUsedByType, issue.Code);
+        Assert.Equal(GanttValidationSeverity.Warning, issue.Severity);
+        Assert.Null(Assert.Single(outcome.Events).Finish);
+    }
+
+    [Fact]
+    public void Critical_interval_with_invalid_parent_event_is_a_blocking_parent_invalid_issue()
+    {
+        var parentId = NewId();
+        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, laneId: null);
+        GanttRowDto child = ValidSpan(
+            rowNumber: 3,
+            typeText: "Critical Interval",
+            id: NewId(),
+            laneId: null,
+            stackIndex: 0,
+            start: new DateOnly(2026, 9, 2),
+            finish: new DateOnly(2026, 9, 3),
+            parentId: parentId) with
+        {
+            LaneIdCell = GanttCells.Empty<string>(),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
+        Assert.DoesNotContain(outcome.Events, e => e.RowNumber == 3);
+    }
+
+    [Fact]
+    public void Custom_activity_style_key_error_is_blocking_and_not_missing_style_key()
+    {
+        GanttRowDto row = ValidSpan(typeText: "Custom Activity", styleKey: "MyStyle") with
+        {
+            StyleKeyCell = GanttCells.ExcelError<string>(GanttExcelErrorCode.Value),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.CellContainsExcelError);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.StyleKeyRequired);
+    }
+
+    [Fact]
     public void All_errors_returns_every_independent_fault()
     {
         var row = new GanttRowDto(

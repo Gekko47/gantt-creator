@@ -37,6 +37,12 @@ public static class GanttValidationCodes
     /// <summary>A <c>StackIndex</c> value is negative.</summary>
     public const string StackIndexNegative = nameof(StackIndexNegative);
 
+    /// <summary>A relevant cell contains an Excel error value.</summary>
+    public const string CellContainsExcelError = nameof(CellContainsExcelError);
+
+    /// <summary>A relevant cell contains a payload unsupported by its column type.</summary>
+    public const string CellValueUnsupported = nameof(CellValueUnsupported);
+
     /// <summary>A field carries a value the row's type never reads for geometry; the value is retained.</summary>
     public const string NotUsedByType = nameof(NotUsedByType);
 
@@ -48,6 +54,9 @@ public static class GanttValidationCodes
 
     /// <summary>A <c>Critical Interval</c> references a parent that is not a span event.</summary>
     public const string ParentNotSpan = nameof(ParentNotSpan);
+
+    /// <summary>A <c>Critical Interval</c> references a parent row that is not valid.</summary>
+    public const string ParentInvalid = nameof(ParentInvalid);
 
     /// <summary>A <c>Custom Activity</c> row is missing its required <c>StyleKey</c>.</summary>
     public const string StyleKeyRequired = nameof(StyleKeyRequired);

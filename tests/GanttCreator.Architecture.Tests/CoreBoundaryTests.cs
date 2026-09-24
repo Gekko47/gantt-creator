@@ -72,6 +72,50 @@ public sealed class CoreBoundaryTests
     }
 
     [Fact]
+    public void Core_scene_boundary_does_not_consume_row_dtos()
+    {
+        var coreSourceRoot = LocateCoreSourceRoot();
+        var sceneRoot = Path.Combine(coreSourceRoot, "Scene");
+        if (!Directory.Exists(sceneRoot))
+        {
+            return;
+        }
+
+        var offenders = Directory.EnumerateFiles(sceneRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !HasGeneratedSegment(path))
+            .Where(path => File.ReadAllText(path).Contains("GanttRowDto", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(coreSourceRoot, path).Replace('\\', '/'))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(offenders.Length == 0,
+            "Core scene/domain files must consume GanttEvent rather than GanttRowDto: "
+            + string.Join(", ", offenders));
+    }
+
+    private static bool HasGeneratedSegment(string path)
+        => path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                || segment.Equals("obj", StringComparison.OrdinalIgnoreCase));
+
+    private static string LocateCoreSourceRoot()
+    {
+        var dir = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "GanttCreator.Core");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate src/GanttCreator.Core from the test binary.");
+    }
+
+    [Fact]
     public void Core_assembly_targets_net10_0()
     {
         var coreDll = LocateCoreAssembly();

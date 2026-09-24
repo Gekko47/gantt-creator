@@ -116,6 +116,59 @@ public static class GanttRowValidator
         bool HasBlockingError
     );
 
+    /// <summary>Classifies a raw cell once and records its applicability decision.</summary>
+    /// <param name="field">The workbook column name.</param>
+    /// <param name="state">The raw cell state.</param>
+    /// <param name="relevant">Whether the selected type reads the field.</param>
+    /// <param name="add">The row issue sink.</param>
+    /// <returns><see langword="true"/> when the field was non-empty and ignored or blocked.</returns>
+    private static bool ClassifyCellState(
+        string field,
+        GanttCellState state,
+        bool relevant,
+        Action<string, string, GanttValidationSeverity, string> add)
+    {
+        if (state == GanttCellState.Empty)
+        {
+            return false;
+        }
+
+        if (!relevant)
+        {
+            add(
+                field,
+                GanttValidationCodes.NotUsedByType,
+                GanttValidationSeverity.Warning,
+                $"{field} is not used by this Type and is ignored for geometry."
+            );
+            return true;
+        }
+
+        if (state == GanttCellState.ExcelError)
+        {
+            add(
+                field,
+                GanttValidationCodes.CellContainsExcelError,
+                GanttValidationSeverity.Error,
+                $"{field} contains an Excel error value."
+            );
+            return true;
+        }
+
+        if (state == GanttCellState.Unsupported)
+        {
+            add(
+                field,
+                GanttValidationCodes.CellValueUnsupported,
+                GanttValidationSeverity.Error,
+                $"{field} contains a value unsupported by its column type."
+            );
+            return true;
+        }
+
+        return false;
+    }
+
     private static ValidatedRow? ValidateFields(GanttRowDto row, List<GanttValidationIssue> issues)
     {
         var rowNumber = row.RowNumber;
@@ -130,9 +183,13 @@ public static class GanttRowValidator
             }
         }
 
+        var idBlocked = ClassifyCellState("Id", row.IdCell.State, relevant: true, Add);
+        var typeBlocked = ClassifyCellState("Type", row.TypeCell.State, relevant: true, Add);
+
         // Id: required, well-formed. Duplicate detection is cross-row.
         GanttRowId? id = null;
-        if (!GanttRowId.TryParse(row.Id, out GanttRowId? parsedId) || parsedId is null)
+        GanttRowId? parsedId = null;
+        if (!idBlocked && (!GanttRowId.TryParse(row.Id, out parsedId) || parsedId is null))
         {
             Add(
                 "Id",
@@ -141,7 +198,7 @@ public static class GanttRowValidator
                 "Id is blank or malformed; expected 'G-' plus 32 lowercase hex digits."
             );
         }
-        else
+        else if (!idBlocked)
         {
             id = parsedId;
         }
@@ -149,7 +206,8 @@ public static class GanttRowValidator
         // Type: required, exact catalogue display name.
         GanttEntityType? type = null;
         EntityTypeDefinition? definition = null;
-        if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType parsedType))
+        GanttEntityType parsedType = default;
+        if (!typeBlocked && !EntityTypeCatalog.TryParse(row.TypeText, out parsedType))
         {
             Add(
                 "Type",
@@ -158,7 +216,7 @@ public static class GanttRowValidator
                 $"Unknown Type '{row.TypeText}'; use one of the 16 catalogue display names."
             );
         }
-        else
+        else if (!typeBlocked)
         {
             type = parsedType;
             definition = EntityTypeCatalog.GetDefinition(parsedType);
@@ -177,77 +235,105 @@ public static class GanttRowValidator
                 or GanttEntityType.CriticalMilestone;
         var laneRequired = definition is not null && !isSplitterOrSpacer && !isDelineator && !isMilestone && !isCriticalInterval;
         var stackRequired = laneRequired;
+        var laneRelevant = !isSplitterOrSpacer && !isDelineator;
+        var startRelevant = definition?.DateMode != EntityDateMode.None;
+        var finishRelevant = definition?.DateMode == EntityDateMode.StartFinish;
+        var parentRelevant = isCriticalInterval;
+        var styleRelevant = true;
+        var labelRelevant = true;
+        var fillRelevant = true;
+        var strokeRelevant = true;
+        const bool visibleRelevant = true;
+        const bool sortOrderRelevant = true;
+
+        var laneBlocked = ClassifyCellState("LaneId", row.LaneIdCell.State, laneRelevant, Add);
+        var stackBlocked = ClassifyCellState("StackIndex", row.StackIndexCell.State, laneRelevant, Add);
+        var startBlocked = ClassifyCellState("Start", row.StartCell.State, startRelevant, Add);
+        var finishBlocked = ClassifyCellState("Finish", row.FinishCell.State, finishRelevant, Add);
+        var parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
+        var styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
+        var labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
+        var fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
+        var strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
+        _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
+        _ = ClassifyCellState("SortOrder", row.SortOrderCell.State, sortOrderRelevant, Add);
 
         GanttRowId? laneId = null;
-        if (row.LaneId is null)
+        if (!laneBlocked)
         {
-            if (laneRequired)
+            if (row.LaneId is null)
+            {
+                if (laneRequired)
+                {
+                    Add(
+                        "LaneId",
+                        GanttValidationCodes.LaneIdMissingOrMalformed,
+                        GanttValidationSeverity.Error,
+                        "LaneId is required for this Type."
+                    );
+                }
+            }
+            else if (isSplitterOrSpacer || isDelineator)
+            {
+                Add(
+                    "LaneId",
+                    GanttValidationCodes.NotUsedByType,
+                    GanttValidationSeverity.Warning,
+                    "LaneId is not used by this Type and is ignored for geometry."
+                );
+            }
+            else if (!GanttRowId.TryParse(row.LaneId, out GanttRowId? laneParsed) || laneParsed is null)
             {
                 Add(
                     "LaneId",
                     GanttValidationCodes.LaneIdMissingOrMalformed,
                     GanttValidationSeverity.Error,
-                    "LaneId is required for this Type."
+                    $"LaneId '{row.LaneId}' is malformed; expected 'G-' plus 32 lowercase hex digits."
                 );
             }
-        }
-        else if (isSplitterOrSpacer || isDelineator)
-        {
-            Add(
-                "LaneId",
-                GanttValidationCodes.NotUsedByType,
-                GanttValidationSeverity.Warning,
-                "LaneId is not used by this Type and is ignored for geometry."
-            );
-        }
-        else if (!GanttRowId.TryParse(row.LaneId, out GanttRowId? laneParsed) || laneParsed is null)
-        {
-            Add(
-                "LaneId",
-                GanttValidationCodes.LaneIdMissingOrMalformed,
-                GanttValidationSeverity.Error,
-                $"LaneId '{row.LaneId}' is malformed; expected 'G-' plus 32 lowercase hex digits."
-            );
-        }
-        else
-        {
-            laneId = laneParsed;
+            else
+            {
+                laneId = laneParsed;
+            }
         }
 
         int? stackIndex = null;
-        if (row.StackIndex is null)
+        if (!stackBlocked)
         {
-            if (stackRequired)
+            if (row.StackIndex is null)
+            {
+                if (stackRequired)
+                {
+                    Add(
+                        "StackIndex",
+                        GanttValidationCodes.StackIndexRequired,
+                        GanttValidationSeverity.Error,
+                        "StackIndex is required for this Type."
+                    );
+                }
+            }
+            else if (isSplitterOrSpacer || isDelineator)
             {
                 Add(
                     "StackIndex",
-                    GanttValidationCodes.StackIndexRequired,
-                    GanttValidationSeverity.Error,
-                    "StackIndex is required for this Type."
+                    GanttValidationCodes.NotUsedByType,
+                    GanttValidationSeverity.Warning,
+                    "StackIndex is not used by this Type and is ignored for geometry."
                 );
             }
-        }
-        else if (isSplitterOrSpacer || isDelineator)
-        {
-            Add(
-                "StackIndex",
-                GanttValidationCodes.NotUsedByType,
-                GanttValidationSeverity.Warning,
-                "StackIndex is not used by this Type and is ignored for geometry."
-            );
-        }
-        else if (row.StackIndex.Value < 0)
-        {
-            Add(
-                "StackIndex",
-                GanttValidationCodes.StackIndexNegative,
-                GanttValidationSeverity.Error,
-                "StackIndex must be zero or greater."
-            );
-        }
-        else
-        {
-            stackIndex = row.StackIndex.Value;
+            else if (row.StackIndex.Value < 0)
+            {
+                Add(
+                    "StackIndex",
+                    GanttValidationCodes.StackIndexNegative,
+                    GanttValidationSeverity.Error,
+                    "StackIndex must be zero or greater."
+                );
+            }
+            else
+            {
+                stackIndex = row.StackIndex.Value;
+            }
         }
 
         // Dates by EntityDateMode.
@@ -258,7 +344,7 @@ public static class GanttRowValidator
             switch (definition.DateMode)
             {
                 case EntityDateMode.None:
-                    if (start is not null)
+                    if (!startBlocked && start is not null)
                     {
                         Add(
                             "Start",
@@ -269,7 +355,7 @@ public static class GanttRowValidator
                         start = null;
                     }
 
-                    if (finish is not null)
+                    if (!finishBlocked && finish is not null)
                     {
                         Add(
                             "Finish",
@@ -282,12 +368,12 @@ public static class GanttRowValidator
 
                     break;
                 case EntityDateMode.StartFinish:
-                    if (start is null)
+                    if (!startBlocked && start is null)
                     {
                         Add("Start", GanttValidationCodes.StartRequired, GanttValidationSeverity.Error, "Start is required for this Type.");
                     }
 
-                    if (finish is null)
+                    if (!finishBlocked && finish is null)
                     {
                         Add(
                             "Finish",
@@ -296,7 +382,7 @@ public static class GanttRowValidator
                             "Finish is required for this Type."
                         );
                     }
-                    else if (start is not null && start.Value > finish.Value)
+                    else if (!finishBlocked && start is not null && finish is not null && start.Value > finish.Value)
                     {
                         Add(
                             "Finish",
@@ -308,7 +394,7 @@ public static class GanttRowValidator
 
                     break;
                 case EntityDateMode.StartOnly:
-                    if (start is null)
+                    if (!startBlocked && start is null)
                     {
                         Add(
                             "Start",
@@ -318,7 +404,7 @@ public static class GanttRowValidator
                         );
                     }
 
-                    if (finish is not null)
+                    if (!finishBlocked && finish is not null)
                     {
                         Add(
                             "Finish",
@@ -335,42 +421,55 @@ public static class GanttRowValidator
             }
         }
 
+        if (!startRelevant)
+        {
+            start = null;
+        }
+
+        if (!finishRelevant)
+        {
+            finish = null;
+        }
+
         // ParentId: required only for Critical Interval; warned elsewhere.
         GanttRowId? parentId = null;
         var parentText = row.ParentId;
-        if (isCriticalInterval)
+        if (!parentBlocked)
         {
-            if (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null)
+            if (isCriticalInterval)
+            {
+                if (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null)
+                {
+                    Add(
+                        "ParentId",
+                        GanttValidationCodes.ParentMissingOrMalformed,
+                        GanttValidationSeverity.Error,
+                        "ParentId is required for Critical Interval and must be a well-formed row Id."
+                    );
+                }
+                else
+                {
+                    parentId = parentParsed;
+                }
+            }
+            else if (parentText is not null)
             {
                 Add(
                     "ParentId",
-                    GanttValidationCodes.ParentMissingOrMalformed,
-                    GanttValidationSeverity.Error,
-                    "ParentId is required for Critical Interval and must be a well-formed row Id."
+                    GanttValidationCodes.NotUsedByType,
+                    GanttValidationSeverity.Warning,
+                    "ParentId is not used by this Type and is ignored for geometry."
                 );
-            }
-            else
-            {
-                parentId = parentParsed;
-            }
-        }
-        else if (parentText is not null)
-        {
-            Add(
-                "ParentId",
-                GanttValidationCodes.NotUsedByType,
-                GanttValidationSeverity.Warning,
-                "ParentId is not used by this Type and is ignored for geometry."
-            );
-            if (GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) && parentParsed is not null)
-            {
-                parentId = parentParsed;
+                if (GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) && parentParsed is not null)
+                {
+                    parentId = parentParsed;
+                }
             }
         }
 
         // StyleKey: Custom Activity requires one (existence deferred to R2.9).
         var styleKey = row.StyleKey;
-        if (type == GanttEntityType.CustomActivity && styleKey is null)
+        if (!styleBlocked && type == GanttEntityType.CustomActivity && styleKey is null)
         {
             Add(
                 "StyleKey",
@@ -382,7 +481,7 @@ public static class GanttRowValidator
 
         // LabelPosition: blank resolves later; otherwise exact-enum plus catalogue capability (skipped for Custom).
         GanttLabelPosition? labelPosition = null;
-        if (row.LabelPositionText is not null && type is not null && type != GanttEntityType.CustomActivity && definition is not null)
+        if (!labelBlocked && row.LabelPositionText is not null && type is not null && type != GanttEntityType.CustomActivity && definition is not null)
         {
             if (
                 !Enum.TryParse(row.LabelPositionText, ignoreCase: false, out GanttLabelPosition parsedLabel)
@@ -412,8 +511,8 @@ public static class GanttRowValidator
         }
 
         // Colours: format plus capability (skipped for Custom; deferred to R2.9).
-        var fill = ValidateColour(row.FillColourText, isFill: true, type, definition, Add);
-        var stroke = ValidateColour(row.StrokeColourText, isFill: false, type, definition, Add);
+        var fill = fillBlocked ? null : ValidateColour(row.FillColourText, isFill: true, type, definition, Add);
+        var stroke = strokeBlocked ? null : ValidateColour(row.StrokeColourText, isFill: false, type, definition, Add);
 
         // SortOrder: blank or invariant non-negative int.
         int? sortOrder = null;
@@ -559,24 +658,23 @@ public static class GanttRowValidator
                 continue;
             }
 
-            GanttEntityType? parentType = perRow[parentIndex]?.Type;
-            if (parentType is null)
+            ValidatedRow? parent = perRow[parentIndex];
+            if (parent is not { Event: not null, HasBlockingError: false })
             {
-                // Parent row itself has an unknown type; the interval cannot attach.
                 issues.Add(
                     new GanttValidationIssue(
                         rows[i].RowNumber,
                         "ParentId",
-                        GanttValidationCodes.ParentNotSpan,
+                        GanttValidationCodes.ParentInvalid,
                         GanttValidationSeverity.Error,
-                        $"ParentId '{key}' does not reference a span event."
+                        $"ParentId '{key}' references a row that did not validate as a usable span event."
                     )
                 );
                 perRow[i] = parsed with { HasBlockingError = true };
                 continue;
             }
 
-            EntityTypeDefinition? parentDefinition = EntityTypeCatalog.GetDefinition(parentType.Value);
+            EntityTypeDefinition? parentDefinition = EntityTypeCatalog.GetDefinition(parent.Type!.Value);
             if (parentDefinition is null || parentDefinition.Kind != EntityKind.Span)
             {
                 issues.Add(
