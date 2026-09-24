@@ -352,6 +352,9 @@ public class GanttTableReaderTests
         Assert.True(outcome.Succeeded);
         var row = Assert.Single(outcome.Rows);
         Assert.Equal("G-blank", row.Id);
+        Assert.Equal(GanttCellState.ExcelError, row.StartCell.State);
+        Assert.Equal(GanttExcelErrorCode.DivisionByZero, row.StartCell.ErrorCode);
+        Assert.Equal(GanttCellState.Empty, row.VisibleCell.State);
         Assert.Null(row.Start);
         Assert.Null(row.StackIndex);
         Assert.Null(row.Visible);
@@ -382,6 +385,12 @@ public class GanttTableReaderTests
         Assert.Equal(1, errorRow.RowNumber);
         Assert.Equal("G-error", errorRow.Id);
         Assert.Equal("As-Planned Activity", errorRow.TypeText);
+        Assert.Equal(GanttCellState.ExcelError, errorRow.StartCell.State);
+        Assert.Equal(GanttExcelErrorCode.NotAvailable, errorRow.StartCell.ErrorCode);
+        Assert.Equal(GanttCellState.ExcelError, errorRow.FinishCell.State);
+        Assert.Equal(GanttExcelErrorCode.DivisionByZero, errorRow.FinishCell.ErrorCode);
+        Assert.Equal(GanttCellState.ExcelError, errorRow.StackIndexCell.State);
+        Assert.Equal(GanttExcelErrorCode.Value, errorRow.StackIndexCell.ErrorCode);
         Assert.Null(errorRow.Start);
         Assert.Null(errorRow.Finish);
         Assert.Null(errorRow.StackIndex);

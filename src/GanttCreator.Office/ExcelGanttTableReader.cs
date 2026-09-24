@@ -231,20 +231,66 @@ public class ExcelGanttTableReader(
 
         return new GanttRowDto(
             rowNumber,
-            ExcelCellConverter.ToText(byName["Id"]),
-            ExcelCellConverter.ToText(byName["LaneId"]),
-            stackIndex,
-            ExcelCellConverter.ToText(byName["Type"]),
-            ExcelCellConverter.ToText(byName["Description"]),
-            start,
-            finish,
-            ExcelCellConverter.ToText(byName["ParentId"]),
-            ExcelCellConverter.ToText(byName["StyleKey"]),
-            ExcelCellConverter.ToText(byName["LabelPosition"]),
-            ExcelCellConverter.ToText(byName["FillColour"]),
-            ExcelCellConverter.ToText(byName["StrokeColour"]),
-            visible,
-            ExcelCellConverter.ToText(byName["SortOrder"]));
+            ToTextCell(byName["Id"]),
+            ToTextCell(byName["LaneId"]),
+            ToIntCell(byName["StackIndex"], stackIndex),
+            ToTextCell(byName["Type"]),
+            ToTextCell(byName["Description"]),
+            ToDateCell(byName["Start"], start),
+            ToDateCell(byName["Finish"], finish),
+            ToTextCell(byName["ParentId"]),
+            ToTextCell(byName["StyleKey"]),
+            ToTextCell(byName["LabelPosition"]),
+            ToTextCell(byName["FillColour"]),
+            ToTextCell(byName["StrokeColour"]),
+            ToBoolCell(byName["Visible"], visible),
+            ToTextCell(byName["SortOrder"]));
+    }
+    private static bool IsBlank(object? value)
+        => value is null || (value is string text && string.IsNullOrWhiteSpace(text));
+
+
+
+    private static GanttCell<string> ToTextCell(object? value) => value switch
+    {
+        _ when IsBlank(value) => GanttCells.Empty<string>(),
+        int errorValue => GanttCells.ExcelError<string>(MapError(errorValue)),
+        _ => ExcelCellConverter.ToText(value) is { } text
+            ? GanttCells.Value(text)
+            : GanttCells.Unsupported<string>(),
+    };
+
+    private static GanttCell<DateOnly?> ToDateCell(object? value, DateOnly? date) => value switch
+    {
+        _ when IsBlank(value) => GanttCells.Empty<DateOnly?>(),
+        int errorValue => GanttCells.ExcelError<DateOnly?>(MapError(errorValue)),
+        _ => date is { } converted
+            ? GanttCells.Value<DateOnly?>(converted)
+            : GanttCells.Unsupported<DateOnly?>(),
+    };
+
+    private static GanttCell<int?> ToIntCell(object? value, int? converted) => value switch
+    {
+        _ when IsBlank(value) => GanttCells.Empty<int?>(),
+        int errorValue => GanttCells.ExcelError<int?>(MapError(errorValue)),
+        _ => converted is { } parsed
+            ? GanttCells.Value<int?>(parsed)
+            : GanttCells.Unsupported<int?>(),
+    };
+
+    private static GanttCell<bool?> ToBoolCell(object? value, bool? converted) => value switch
+    {
+        _ when IsBlank(value) => GanttCells.Empty<bool?>(),
+        int errorValue => GanttCells.ExcelError<bool?>(MapError(errorValue)),
+        _ => converted is { } parsed
+            ? GanttCells.Value<bool?>(parsed)
+            : GanttCells.Unsupported<bool?>(),
+    };
+
+    private static GanttExcelErrorCode MapError(int value)
+    {
+        _ = GanttExcelErrorMapper.TryMap(value, out GanttExcelErrorCode code);
+        return code;
     }
 
     /// <summary>

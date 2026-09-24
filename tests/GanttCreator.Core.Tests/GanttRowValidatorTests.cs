@@ -134,7 +134,7 @@ public class GanttRowValidatorTests
         // Milestones carry no lane/stack here (optional); spans carry both.
         if (definition.Kind == EntityKind.Milestone)
         {
-            row = row with { LaneId = null, StackIndex = null };
+            row = row with { LaneIdCell = GanttCells.Empty<string>(), StackIndexCell = GanttCells.Empty<int?>() };
         }
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
@@ -203,7 +203,7 @@ public class GanttRowValidatorTests
     [Fact]
     public void Span_missing_start_is_a_blocking_error()
     {
-        GanttRowDto row = ValidSpan() with { Start = null };
+        GanttRowDto row = ValidSpan() with { StartCell = GanttCells.Empty<DateOnly?>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
@@ -214,7 +214,7 @@ public class GanttRowValidatorTests
     [Fact]
     public void Span_missing_finish_is_a_blocking_error()
     {
-        GanttRowDto row = ValidSpan() with { Finish = null };
+        GanttRowDto row = ValidSpan() with { FinishCell = GanttCells.Empty<DateOnly?>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
@@ -366,7 +366,7 @@ public class GanttRowValidatorTests
     [Fact]
     public void Span_missing_lane_is_a_blocking_error()
     {
-        GanttRowDto row = ValidSpan() with { LaneId = null };
+        GanttRowDto row = ValidSpan() with { LaneIdCell = GanttCells.Empty<string>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
@@ -751,7 +751,7 @@ public class GanttRowValidatorTests
     [Fact]
     public void Blank_visible_resolves_to_true()
     {
-        GanttRowDto row = ValidSpan() with { Visible = null };
+        GanttRowDto row = ValidSpan() with { VisibleCell = GanttCells.Empty<bool?>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
