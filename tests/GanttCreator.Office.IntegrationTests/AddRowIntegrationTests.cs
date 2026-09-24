@@ -31,16 +31,20 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            var table = sheet.ListObjects[GanttTableSchema.TableName];
-            int shapesBefore = sheet.Shapes.Count;
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var shapesBefore = sheet.Shapes.Count;
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
             GanttRowInsertOutcome activity = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('1'));
+            var activityIndex = RequiredBodyIndex(activity);
+            table.ListRows[activityIndex].Range.Select();
             GanttRowInsertOutcome milestone = inserter.Insert(
                 GanttEntityType.AsPlannedMilestone,
                 () => FixedId('2'));
+            var milestoneIndex = RequiredBodyIndex(milestone);
+            table.ListRows[milestoneIndex].Range.Select();
             GanttRowInsertOutcome delineator = inserter.Insert(
                 GanttEntityType.Delineator,
                 () => FixedId('3'));
@@ -122,6 +126,55 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task Insert_active_row_places_new_row_below_it_and_shifts_following_rows()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('1')).Succeeded);
+            table.ListRows[1].Range.Select();
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedMilestone,
+                () => FixedId('2')).Succeeded);
+            table.ListRows[2].Range.Select();
+            Assert.True(inserter.Insert(
+                GanttEntityType.Delineator,
+                () => FixedId('3')).Succeeded);
+
+            table.ListRows[2].Range.Select();
+            GanttRowInsertOutcome inserted = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('4'));
+
+            Assert.True(inserted.Succeeded, $"Insert refused: {inserted.Refusal}");
+            Assert.Equal(3, inserted.BodyIndex);
+            Assert.Equal(4, table.DataBodyRange.Rows.Count);
+            Assert.Equal(5, table.Range.Rows.Count);
+            AssertId(table.ListRows[1], FixedId('1').Value);
+            AssertId(table.ListRows[2], FixedId('2').Value);
+            AssertId(table.ListRows[3], FixedId('4').Value);
+            AssertId(table.ListRows[4], FixedId('3').Value);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task Insert_refuses_a_protected_sheet_without_adding_a_row()
     {
         var fixture = new OfficeFixture();
@@ -136,8 +189,8 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            var table = sheet.ListObjects[GanttTableSchema.TableName];
-            int rowsBefore = table.ListRows.Count;
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var rowsBefore = table.ListRows.Count;
             sheet.Protect(Type.Missing, true, Type.Missing, true, true, false, false);
 
             GanttRowInsertOutcome outcome = new ExcelGanttRowInserter(fixture.Excel).Insert(
@@ -152,6 +205,20 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         {
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
+    }
+
+    private static int RequiredBodyIndex(GanttRowInsertOutcome outcome)
+    {
+        Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");
+        _ = Assert.NotNull(outcome.BodyIndex);
+        return outcome.BodyIndex.Value;
+    }
+
+    private static void AssertId(Excel.ListRow row, string id)
+    {
+        Assert.Equal(id, Convert.ToString(
+            row.Range.Cells[1, 1].Value2,
+            System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private static void AssertRow(Excel.ListRow row, string type, string styleKey, string id)

@@ -6,8 +6,8 @@ namespace GanttCreator.Office;
 
 /// <summary>
 /// Live guarded row inserter for the visible <c>tblGanttData</c> table.
-/// Appends one scaffold row and never renders or changes any other workbook
-/// state.
+/// Inserts one scaffold row relative to the active table cell, with deterministic
+/// append fallback, and never renders or changes any other workbook state.
 /// </summary>
 public class ExcelGanttRowInserter(
     object? application,
@@ -64,7 +64,10 @@ public class ExcelGanttRowInserter(
         }
         else
         {
-            newRow = AddRow(rows);
+            var position = GetInsertionPosition(application!, table, rows);
+            newRow = position is null
+                ? AddRow(rows)
+                : AddRowAtPosition(rows, position.Value);
             rowRange = GetRowRange(newRow);
         }
 
@@ -85,6 +88,31 @@ public class ExcelGanttRowInserter(
         }
 
         return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow));
+    }
+
+    private int? GetInsertionPosition(
+        Excel.Application application,
+        Excel.ListObject table,
+        Excel.ListRows rows)
+    {
+        Excel.Range? activeCell = GetActiveCell(application);
+        if (!GetTableActive(table) || activeCell is null)
+        {
+            return null;
+        }
+
+        Excel.Range tableRange = GetTableRange(table);
+        var tableFirstRow = GetRangeRow(tableRange);
+        var activeRow = GetRangeRow(activeCell);
+        var bodyIndex = activeRow - tableFirstRow;
+        var rowCount = GetListRowCount(rows);
+        return bodyIndex < 0 || bodyIndex > rowCount
+            ? null
+            : bodyIndex == 0
+                ? 1
+                : bodyIndex == rowCount
+                    ? null
+                    : bodyIndex + 1;
     }
 
     private static bool IsBlankValue(object? value) =>
@@ -235,6 +263,14 @@ public class ExcelGanttRowInserter(
     internal virtual void ClearRange(Excel.Range range) => range.ClearContents();
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
+
+    internal virtual Excel.ListRow AddRowAtPosition(Excel.ListRows rows, int position) => rows.Add(position);
+
+    internal virtual Excel.Range? GetActiveCell(Excel.Application application) => application.ActiveCell;
+
+    internal virtual bool GetTableActive(Excel.ListObject table) => table.Active;
+
+    internal virtual int GetRangeRow(Excel.Range range) => range.Row;
 
     internal virtual int GetRowIndex(Excel.ListRow row) => row.Index;
 
