@@ -174,13 +174,34 @@ public class ConfigCatalogueWriterTests
         var reader = ConfigGraph.BuildReader(fake);
         ConfigReadOutcome before = reader.Read();
         Assert.True(before.Succeeded);
-        Assert.Equal(15, fake.Tables[1].Body.Count);
+        object?[] userStyle =
+        [
+            "UserStyle",
+            "User Style",
+            "#112233",
+            "#445566",
+            "None",
+            4.0,
+            0.5,
+            "#FFFFFF",
+            0.75,
+            8.0,
+            0.0,
+            "Inside",
+            "Auto Inside",
+            "Fill, Stroke",
+        ];
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+        Assert.Equal(16, fake.Tables[1].Body.Count);
 
         var outcome = ConfigGraph.BuildWriter(fake).Write();
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal(5, fake.Tables.Count);
-        Assert.Equal(15, fake.Tables[1].Body.Count);
+        Assert.Equal(16, fake.Tables[1].Body.Count);
+        Assert.Equal(userStyle, fake.Tables[1].Body[^1]);
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }
 
@@ -232,6 +253,15 @@ public class ConfigCatalogueWriterTests
             Assert.Equal(preset.StandardOutlinePt, Assert.IsType<double>(row[8]));
             Assert.Equal(preset.ActivityHeightPt, Assert.IsType<double>(row[9]));
             Assert.Equal(preset.MilestoneSizePt, Assert.IsType<double>(row[10]));
+            Assert.Equal(preset.DefaultLabelPosition.ToString(), CellText(row[11]));
+            Assert.Equal(
+                string.Join(
+                    " ",
+                    preset.AllowedLabelPositions
+                        .Select(position => position.ToString())
+                        .OrderBy(name => name, StringComparer.Ordinal)),
+                CellText(row[12]));
+            Assert.Equal(preset.ColourCapability.ToString(), CellText(row[13]));
         }
     }
 

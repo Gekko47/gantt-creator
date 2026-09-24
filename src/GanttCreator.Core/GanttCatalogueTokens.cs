@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -290,6 +292,15 @@ public sealed record GanttStylePreset
     /// <summary>Gets the diamond tip-to-tip size in points (0 when not a milestone).</summary>
     public double MilestoneSizePt { get; }
 
+    /// <summary>Gets the label position used when a row leaves LabelPosition blank.</summary>
+    public GanttLabelPosition DefaultLabelPosition { get; }
+
+    /// <summary>Gets the ordinal-sorted label positions permitted by the style.</summary>
+    public IReadOnlySet<GanttLabelPosition> AllowedLabelPositions { get; }
+
+    /// <summary>Gets the fill/stroke/hatch override capability of the style.</summary>
+    public EntityColourCapability ColourCapability { get; }
+
     /// <summary>
     /// Initialises a style preset with validation.
     /// </summary>
@@ -304,7 +315,10 @@ public sealed record GanttStylePreset
     /// <param name="standardOutlinePt">The outline width in points (0 when not applicable).</param>
     /// <param name="activityHeightPt">The entity height in points (0 when not applicable).</param>
     /// <param name="milestoneSizePt">The diamond tip-to-tip size in points (0 when not a milestone).</param>
-    /// <exception cref="ArgumentNullException">Thrown when a text argument is null.</exception>
+    /// <param name="defaultLabelPosition">The label position used when the row override is blank.</param>
+    /// <param name="allowedLabelPositions">The label positions permitted by the style.</param>
+    /// <param name="colourCapability">The fill/stroke/hatch override capability.</param>
+    /// <exception cref="ArgumentNullException">Thrown when a text or set argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the style key or display name is empty, a colour is
     /// neither empty nor uppercase <c>#RRGGBB</c>, or a metric is negative
@@ -321,13 +335,17 @@ public sealed record GanttStylePreset
         string textColour,
         double standardOutlinePt,
         double activityHeightPt,
-        double milestoneSizePt)
+        double milestoneSizePt,
+        GanttLabelPosition defaultLabelPosition,
+        IReadOnlySet<GanttLabelPosition> allowedLabelPositions,
+        EntityColourCapability colourCapability)
     {
         ArgumentNullException.ThrowIfNull(styleKey);
         ArgumentNullException.ThrowIfNull(displayName);
         ArgumentNullException.ThrowIfNull(fillColour);
         ArgumentNullException.ThrowIfNull(strokeColour);
         ArgumentNullException.ThrowIfNull(textColour);
+        ArgumentNullException.ThrowIfNull(allowedLabelPositions);
         if (styleKey.Length == 0)
         {
             throw new ArgumentException("Style key must not be empty.", nameof(styleKey));
@@ -346,6 +364,39 @@ public sealed record GanttStylePreset
         ValidateMetric(styleKey, standardOutlinePt, nameof(standardOutlinePt));
         ValidateMetric(styleKey, activityHeightPt, nameof(activityHeightPt));
         ValidateMetric(styleKey, milestoneSizePt, nameof(milestoneSizePt));
+        if (!Enum.IsDefined(defaultLabelPosition))
+        {
+            throw new ArgumentOutOfRangeException(nameof(defaultLabelPosition));
+        }
+
+        if (allowedLabelPositions.Count == 0)
+        {
+            throw new ArgumentException(
+                $"Style '{styleKey}' must allow at least one label position.",
+                nameof(allowedLabelPositions));
+        }
+
+        if (allowedLabelPositions.Any(position => !Enum.IsDefined(position)))
+        {
+            throw new ArgumentException(
+                $"Style '{styleKey}' contains an undefined label position.",
+                nameof(allowedLabelPositions));
+        }
+
+        if (!allowedLabelPositions.Contains(defaultLabelPosition))
+        {
+            throw new ArgumentException(
+                $"Style '{styleKey}' default label position must be in its allowed set.",
+                nameof(defaultLabelPosition));
+        }
+
+        const EntityColourCapability allCapabilities =
+            EntityColourCapability.Fill | EntityColourCapability.Stroke |
+            EntityColourCapability.Hatch | EntityColourCapability.StyleDefined;
+        if ((colourCapability & ~allCapabilities) != EntityColourCapability.None)
+        {
+            throw new ArgumentOutOfRangeException(nameof(colourCapability));
+        }
 
         StyleKey = styleKey;
         DisplayName = displayName;
@@ -358,6 +409,9 @@ public sealed record GanttStylePreset
         StandardOutlinePt = standardOutlinePt;
         ActivityHeightPt = activityHeightPt;
         MilestoneSizePt = milestoneSizePt;
+        DefaultLabelPosition = defaultLabelPosition;
+        AllowedLabelPositions = allowedLabelPositions.ToFrozenSet();
+        ColourCapability = colourCapability;
     }
 
     private static void ValidateOptionalColour(string styleKey, string colour, string parameterName)

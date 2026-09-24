@@ -324,7 +324,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
 
             // The numeric columns are not contiguous: TextColour (7) sits
             // between HatchLinePt (6) and StandardOutlinePt (8), and
-            // MilestoneSizePt (10) closes the row. See StylesHeaders.
+            // MilestoneSizePt (10) closes the original row. See StylesHeaders.
             int[] numberColumns = [5, 6, 8, 9, 10];
             for (var column = 0; column < expectedNumbers.Length; column++)
             {
@@ -333,9 +333,82 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                     return ConfigReadRefusalReason.CatalogueMismatch;
                 }
             }
+
+            string[] capabilityCells =
+            [
+                preset.DefaultLabelPosition.ToString(),
+                string.Join(
+                    " ",
+                    preset.AllowedLabelPositions
+                        .Select(position => position.ToString())
+                        .OrderBy(name => name, StringComparer.Ordinal)),
+                preset.ColourCapability.ToString(),
+            ];
+            for (var column = 0; column < capabilityCells.Length; column++)
+            {
+                if (!CellMatches(rows[index][11 + column], capabilityCells[column]))
+                {
+                    return ConfigReadRefusalReason.CatalogueMismatch;
+                }
+            }
+        }
+
+        for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
+        {
+            if (ValidateUserStyleCapabilities(rows[index]) is { } userStyleRefusal)
+            {
+                return userStyleRefusal;
+            }
         }
 
         return null;
+    }
+
+    private static ConfigReadRefusalReason? ValidateUserStyleCapabilities(object?[] row)
+    {
+        if (row.Length < GanttCatalogues.StylesHeaders.Length)
+        {
+            return ConfigReadRefusalReason.RowCountMismatch;
+        }
+
+        var defaultText = ToText(row[11]);
+        if (!Enum.TryParse(defaultText, ignoreCase: false, out GanttLabelPosition defaultPosition)
+            || !Enum.IsDefined(defaultPosition))
+        {
+            return ConfigReadRefusalReason.ValueOutOfRange;
+        }
+
+        var allowedTexts = ToText(row[12])
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (allowedTexts.Length == 0)
+        {
+            return ConfigReadRefusalReason.ValueOutOfRange;
+        }
+
+        var allowed = new HashSet<GanttLabelPosition>();
+        foreach (var allowedText in allowedTexts)
+        {
+            if (!Enum.TryParse(allowedText, ignoreCase: false, out GanttLabelPosition position)
+                || !Enum.IsDefined(position)
+                || !allowed.Add(position))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+        }
+
+        return !allowed.Contains(defaultPosition)
+            || !Enum.TryParse(ToText(row[13]), ignoreCase: false, out EntityColourCapability colourCapability)
+            || !IsKnownColourCapability(colourCapability)
+            ? ConfigReadRefusalReason.ValueOutOfRange
+            : null;
+    }
+
+    private static bool IsKnownColourCapability(EntityColourCapability capability)
+    {
+        const EntityColourCapability known =
+            EntityColourCapability.Fill | EntityColourCapability.Stroke |
+            EntityColourCapability.Hatch | EntityColourCapability.StyleDefined;
+        return (capability & ~known) == EntityColourCapability.None;
     }
 
     /// <summary>

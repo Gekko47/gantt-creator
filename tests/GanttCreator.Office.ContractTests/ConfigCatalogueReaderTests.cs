@@ -281,4 +281,58 @@ public class ConfigCatalogueReaderTests
         Assert.Equal("TRUE", outcome.Settings["ShowTitle"]);
         Assert.Equal("FALSE", outcome.Settings["ExportIncludeLegend"]);
     }
+    [Fact]
+    public void Read_accepts_a_user_style_with_explicit_valid_capabilities()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[1].Body.Add(UserStyleRow());
+
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Theory]
+    [InlineData("Sideways", "Auto", "Fill")]
+    [InlineData("Auto", "", "Fill")]
+    [InlineData("Auto", "Sideways", "Fill")]
+    [InlineData("Auto", "Auto Auto", "Fill")]
+    [InlineData("Inside", "Auto", "Fill")]
+    [InlineData("Auto", "Auto", "16")]
+    public void Read_refuses_when_a_user_style_capability_is_invalid(
+        string defaultPosition,
+        string allowedPositions,
+        string colourCapability)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        object?[] userStyle = UserStyleRow();
+        userStyle[11] = defaultPosition;
+        userStyle[12] = allowedPositions;
+        userStyle[13] = colourCapability;
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange),
+            ConfigGraph.BuildReader(fake).Read());
+    }
+
+    private static object?[] UserStyleRow() =>
+    [
+        "UserStyle",
+        "User Style",
+        "#112233",
+        "#445566",
+        "None",
+        4.0,
+        0.5,
+        "#FFFFFF",
+        0.75,
+        8.0,
+        0.0,
+        "Inside",
+        "Auto Inside",
+        "Fill, Stroke",
+    ];
+
+
 }

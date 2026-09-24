@@ -89,6 +89,9 @@ public static class GanttCatalogues
         "StandardOutlinePt",
         "ActivityHeightPt",
         "MilestoneSizePt",
+        "DefaultLabelPosition",
+        "AllowedLabelPositions",
+        "ColourCapability",
     ];
 
     /// <summary>The <see cref="MetricsTableName"/> header row, in contract order.</summary>
@@ -335,6 +338,15 @@ public static class GanttCatalogues
         string? heightToken,
         string? milestoneToken)
     {
+        EntityTypeDefinition definition = EntityTypeCatalog.Entries.First(entry =>
+            string.Equals(entry.DefaultStyleKey, styleKey, StringComparison.Ordinal));
+        GanttLabelPosition defaultLabelPosition = styleKey switch
+        {
+            "DelayEvent" => GanttLabelPosition.Inside,
+            "CriticalInterval" or "Spacer" => GanttLabelPosition.None,
+            "Splitter" => GanttLabelPosition.DataPanelLeft,
+            _ => GanttLabelPosition.Auto,
+        };
         var outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);
         var height = heightToken is null ? 0 : ResolveMetric(heightToken);
         var milestone = milestoneToken is null ? 0 : ResolveMetric(milestoneToken);
@@ -349,7 +361,10 @@ public static class GanttCatalogues
             ResolveColour(textToken),
             outline,
             height,
-            milestone);
+            milestone,
+            defaultLabelPosition,
+            definition.AllowedLabelPositions,
+            definition.ColourCapability);
     }
 
     private static string ResolveColour(string tokenName) =>
@@ -387,7 +402,14 @@ public static class GanttCatalogues
                     preset.HatchPattern.ToString(),
                     Format(preset.HatchPitchPt), Format(preset.HatchLinePt), preset.TextColour,
                     Format(preset.StandardOutlinePt), Format(preset.ActivityHeightPt),
-                    Format(preset.MilestoneSizePt)));
+                    Format(preset.MilestoneSizePt),
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString()));
         }
 
         AppendTableHeader(builder, MetricsTableName, MetricsHeaders);

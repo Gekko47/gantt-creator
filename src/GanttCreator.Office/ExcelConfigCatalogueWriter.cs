@@ -425,6 +425,13 @@ public class ExcelConfigCatalogueWriter(object? application) : IConfigCatalogueW
                     preset.StandardOutlinePt,
                     preset.ActivityHeightPt,
                     preset.MilestoneSizePt,
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString(),
                 }),
         ];
         rows.AddRange(userRows);

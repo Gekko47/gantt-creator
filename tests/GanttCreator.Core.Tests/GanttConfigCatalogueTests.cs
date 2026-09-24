@@ -176,6 +176,36 @@ public class GanttConfigCatalogueTests
         Assert.Equal(string.Empty, splitter.StrokeColour);
         Assert.Equal(18, splitter.ActivityHeightPt);
     }
+    [Fact]
+    public void Style_presets_project_label_and_colour_capabilities_from_the_type_catalogue()
+    {
+        GanttStylePreset splitter = GanttCatalogues.GetPreset("Splitter");
+        Assert.Equal(GanttLabelPosition.DataPanelLeft, splitter.DefaultLabelPosition);
+        Assert.Equal(EntityColourCapability.Fill, splitter.ColourCapability);
+
+        GanttStylePreset spacer = GanttCatalogues.GetPreset("Spacer");
+        Assert.Equal(GanttLabelPosition.None, spacer.DefaultLabelPosition);
+        Assert.Equal(EntityColourCapability.None, spacer.ColourCapability);
+
+        GanttStylePreset critical = GanttCatalogues.GetPreset("CriticalInterval");
+        Assert.Equal(GanttLabelPosition.None, critical.DefaultLabelPosition);
+        Assert.Equal(EntityColourCapability.Stroke, critical.ColourCapability);
+
+        GanttStylePreset delay = GanttCatalogues.GetPreset("DelayEvent");
+        Assert.Equal(GanttLabelPosition.Inside, delay.DefaultLabelPosition);
+
+        GanttStylePreset procurement = GanttCatalogues.GetPreset("AsPlannedProcurement");
+        Assert.Equal(
+            EntityColourCapability.Hatch | EntityColourCapability.Stroke,
+            procurement.ColourCapability);
+        Assert.Contains(GanttLabelPosition.Inside, procurement.AllowedLabelPositions);
+
+        GanttStylePreset milestone = GanttCatalogues.GetPreset("AsBuiltMilestone");
+        Assert.Equal(GanttLabelPosition.Auto, milestone.DefaultLabelPosition);
+        Assert.DoesNotContain(GanttLabelPosition.Inside, milestone.AllowedLabelPositions);
+    }
+
+
 
     // ------------------------------------------------------------------
     // Catalogue hash (ADR-0007 D6)
@@ -308,24 +338,101 @@ public class GanttConfigCatalogueTests
     public void Style_preset_rejects_a_bad_fill_colour() =>
         Assert.Throws<ArgumentException>(
             () => _ = new GanttStylePreset("Bad", "Bad", "red", string.Empty,
-                GanttHatchPattern.None, 4, 0.5, "#000000", 0.75, 8, 0));
+                GanttHatchPattern.None, 4, 0.5, "#000000", 0.75, 8, 0,
+                GanttLabelPosition.Auto,
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill));
 
     [Fact]
     public void Style_preset_rejects_a_negative_metric() =>
         Assert.Throws<ArgumentException>(
             () => _ = new GanttStylePreset("Bad", "Bad", string.Empty, string.Empty,
-                GanttHatchPattern.None, -1, 0.5, "#000000", 0.75, 8, 0));
+                GanttHatchPattern.None, -1, 0.5, "#000000", 0.75, 8, 0,
+                GanttLabelPosition.Auto,
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill));
 
     [Fact]
     public void Style_preset_rejects_a_null_style_key() =>
         Assert.Throws<ArgumentNullException>(
             () => _ = new GanttStylePreset(null!, "Bad", string.Empty, string.Empty,
-                GanttHatchPattern.None, 4, 0.5, "#000000", 0.75, 8, 0));
+                GanttHatchPattern.None, 4, 0.5, "#000000", 0.75, 8, 0,
+                GanttLabelPosition.Auto,
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill));
 
     [Fact]
     public void GetPreset_rejects_an_unknown_style_key() =>
         Assert.Throws<ArgumentOutOfRangeException>(
             () => _ = GanttCatalogues.GetPreset("NotABuiltInKey"));
+
+    [Fact]
+    public void Style_preset_rejects_null_allowed_label_positions()
+    {
+        Assert.Throws<ArgumentNullException>(() => _ = new GanttStylePreset(
+            "Bad", "Bad", string.Empty, string.Empty,
+            GanttHatchPattern.None, 4, 0.5, "#000000", 0.75, 8, 0,
+            GanttLabelPosition.Auto,
+            allowedLabelPositions: null!,
+            EntityColourCapability.Fill));
+    }
+
+    [Fact]
+    public void Style_preset_rejects_an_empty_allowed_label_position_set()
+    {
+        Assert.Throws<ArgumentException>(() => _ = NewStylePreset(
+            allowedLabelPositions: new HashSet<GanttLabelPosition>()));
+    }
+
+    [Fact]
+    public void Style_preset_rejects_an_undefined_allowed_label_position()
+    {
+        Assert.Throws<ArgumentException>(() => _ = NewStylePreset(
+            allowedLabelPositions: new HashSet<GanttLabelPosition> { (GanttLabelPosition)999 }));
+    }
+
+    [Fact]
+    public void Style_preset_rejects_an_undefined_default_label_position()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => _ = NewStylePreset(
+            defaultLabelPosition: (GanttLabelPosition)999));
+    }
+
+    [Fact]
+    public void Style_preset_rejects_a_default_label_position_outside_the_allowed_set()
+    {
+        Assert.Throws<ArgumentException>(() => _ = NewStylePreset(
+            defaultLabelPosition: GanttLabelPosition.Inside,
+            allowedLabelPositions: new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto }));
+    }
+
+    [Fact]
+    public void Style_preset_rejects_an_unknown_colour_capability()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => _ = NewStylePreset(
+            colourCapability: (EntityColourCapability)16));
+    }
+
+    private static GanttStylePreset NewStylePreset(
+        GanttLabelPosition defaultLabelPosition = GanttLabelPosition.Auto,
+        IReadOnlySet<GanttLabelPosition>? allowedLabelPositions = null,
+        EntityColourCapability colourCapability = EntityColourCapability.Fill) =>
+        new(
+            "TestStyle",
+            "Test Style",
+            string.Empty,
+            string.Empty,
+            GanttHatchPattern.None,
+            4,
+            0.5,
+            "#000000",
+            0.75,
+            8,
+            0,
+            defaultLabelPosition,
+            allowedLabelPositions
+                ?? new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+            colourCapability);
 
     [Fact]
     public void GetPreset_rejects_a_null_style_key() =>
@@ -346,7 +453,7 @@ public class GanttConfigCatalogueTests
     /// commit (R2.7 guide, count-pin drift rule).
     /// </summary>
     private const string PinnedFirstReleaseHash =
-        "81113312c9d0ceb611a72c997af367530bdd10a7b8cd4fdbe9d6656423730be4";
+        "4a513e1185a8897bd103f29d449f9db9033e06fea4d4f51ab860079ea03efcff";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>
