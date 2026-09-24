@@ -112,7 +112,7 @@ public class ExcelGanttRowInserter(
                 ? 1
                 : bodyIndex == rowCount
                     ? null
-                    : bodyIndex + 1;
+                    : bodyIndex + 2;
     }
 
     private static bool IsBlankValue(object? value) =>
