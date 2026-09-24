@@ -16,6 +16,7 @@ namespace GanttCreator.Office;
 /// host). A foreign object fails the interface cast and degrades to the
 /// no-active-workbook refusal with no mutation.
 /// </param>
+/// <param name="dateSystemConverter">The Office-free date-system converter; defaults to the shared Windows-1900 implementation.</param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -32,9 +33,13 @@ namespace GanttCreator.Office;
 /// live-Office integration test.
 /// </para>
 /// </remarks>
-public class ExcelGanttTableReader(object? application) : IGanttTableReader
+public class ExcelGanttTableReader(
+    object? application,
+    IExcelDateSystemConverter? dateSystemConverter = null) : IGanttTableReader
 {
     private readonly Application? _application = application as Application;
+    private readonly IExcelDateSystemConverter _dateSystemConverter =
+        dateSystemConverter ?? ExcelDateSystemConverter.Instance;
 
     /// <inheritdoc />
     public GanttTableReadOutcome Read()
@@ -51,7 +56,8 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
             return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook);
         }
 
-        if (GetDate1904(workbook))
+        ExcelDateSystemKind dateSystem = GetDateSystem(workbook);
+        if (!_dateSystemConverter.IsSupported(dateSystem))
         {
             return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.DateSystemUnsupported);
         }
@@ -74,7 +80,7 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
         }
 
         var raw = GetBodyValues(body);
-        List<GanttRowDto> rows = ConvertBody(raw, columnMap);
+        List<GanttRowDto> rows = ConvertBody(raw, columnMap, dateSystem);
         return GanttTableReadOutcome.Ok(rows);
     }
 
@@ -166,8 +172,9 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
     /// </summary>
     /// <param name="raw">The <c>Value2</c> payload.</param>
     /// <param name="columnMap">The schema-column to table-column index map.</param>
+    /// <param name="dateSystem">The workbook date system used for date cells.</param>
     /// <returns>The rows in body order.</returns>
-    private static List<GanttRowDto> ConvertBody(object? raw, int[] columnMap)
+    private List<GanttRowDto> ConvertBody(object? raw, int[] columnMap, ExcelDateSystemKind dateSystem)
     {
         if (raw is not Array matrix)
         {
@@ -185,7 +192,7 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
                 cells[schemaIndex] = tableIndex < 1 ? null : CoerceCell(matrix.GetValue(row, tableIndex));
             }
 
-            rows.Add(ConvertRow(row, cells));
+            rows.Add(ConvertRow(row, cells, dateSystem));
         }
 
         return rows;
@@ -206,8 +213,9 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
     /// </summary>
     /// <param name="rowNumber">The one-based body-row index.</param>
     /// <param name="cells">The per-schema-column cell payloads.</param>
+    /// <param name="dateSystem">The workbook date system used for date cells.</param>
     /// <returns>The neutral DTO.</returns>
-    private static GanttRowDto ConvertRow(int rowNumber, object?[] cells)
+    private GanttRowDto ConvertRow(int rowNumber, object?[] cells, ExcelDateSystemKind dateSystem)
     {
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
         var byName = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -216,8 +224,8 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
             byName[schema[index].Name] = cells[index];
         }
 
-        _ = ExcelCellConverter.TryConvertDate(byName["Start"], out DateOnly? start);
-        _ = ExcelCellConverter.TryConvertDate(byName["Finish"], out DateOnly? finish);
+        _ = _dateSystemConverter.TryConvertDate(byName["Start"], dateSystem, out DateOnly? start);
+        _ = _dateSystemConverter.TryConvertDate(byName["Finish"], dateSystem, out DateOnly? finish);
         _ = ExcelCellConverter.TryConvertStackIndex(byName["StackIndex"], out var stackIndex);
         _ = ExcelCellConverter.TryConvertVisible(byName["Visible"], out var visible);
 
@@ -240,7 +248,17 @@ public class ExcelGanttTableReader(object? application) : IGanttTableReader
     }
 
     /// <summary>
-    /// Reads the workbook date-system flag. Test seam over the COM property.
+    /// Reads the workbook date-system kind. The test seam keeps the existing
+    /// Date1904 contract while the conversion decision belongs to Core.
+    /// </summary>
+    /// <param name="workbook">The active workbook.</param>
+    /// <returns>The workbook date-system kind.</returns>
+    internal virtual ExcelDateSystemKind GetDateSystem(Workbook workbook)
+        => GetDate1904(workbook) ? ExcelDateSystemKind.Macintosh1904 : ExcelDateSystemKind.Windows1900;
+
+    /// <summary>
+    /// Reads the raw workbook date-system flag. Retained as a narrow COM seam
+    /// for contract tests; <see cref="GetDateSystem"/> is the reader policy seam.
     /// </summary>
     /// <param name="workbook">The active workbook.</param>
     /// <returns><see langword="true"/> when the workbook uses the 1904 date system.</returns>

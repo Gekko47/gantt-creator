@@ -4,6 +4,45 @@ namespace GanttCreator.Core.Tests;
 
 public class ExcelCellConverterTests
 {
+    [Fact]
+    public void ExcelDateSystemConverter_supports_only_windows_1900()
+    {
+        ExcelDateSystemConverter converter = new();
+
+        Assert.True(converter.IsSupported(ExcelDateSystemKind.Windows1900));
+        Assert.False(converter.IsSupported(ExcelDateSystemKind.Macintosh1904));
+    }
+
+    [Fact]
+    public void ExcelDateSystemConverter_rejects_1904_before_conversion()
+    {
+        ExcelDateSystemConverter converter = new();
+
+        Assert.False(converter.TryConvertDate(
+            44927.0,
+            ExcelDateSystemKind.Macintosh1904,
+            out DateOnly? date));
+        Assert.Null(date);
+    }
+
+    [Fact]
+    public void ExcelDateSystemConverter_converts_supported_1900_values()
+    {
+        ExcelDateSystemConverter converter = new();
+
+        Assert.True(converter.TryConvertDate(
+            60.0,
+            ExcelDateSystemKind.Windows1900,
+            out DateOnly? serialDate));
+        Assert.Equal(DateOnly.FromDateTime(DateTime.FromOADate(60.0)), serialDate);
+
+        Assert.True(converter.TryConvertDate(
+            new DateTime(2026, 9, 19, 15, 30, 0),
+            ExcelDateSystemKind.Windows1900,
+            out DateOnly? dateTimeDate));
+        Assert.Equal(new DateOnly(2026, 9, 19), dateTimeDate);
+    }
+
     [Theory]
     [InlineData(1.0, 1899, 12, 31)]
     [InlineData(61.0, 1900, 3, 1)]

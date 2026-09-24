@@ -64,39 +64,18 @@ public static class ExcelCellConverter
     }
 
     /// <summary>
-    /// Converts a <c>Value2</c> date payload to <see cref="DateOnly"/>.
-    /// Accepts <see cref="double"/> serials (1900 date system) and
-    /// <see cref="DateTime"/>. Strings are never date-parsed (anti-locale
-    /// rule); <see cref="bool"/> and Excel error <see cref="int"/> map to
-    /// <see langword="null"/>. Serial 60 (the inherited 1900 leap-bug phantom
-    /// 1900-02-29) converts via <see cref="DateTime.FromOADate"/> semantics
-    /// and is pinned by test; it is not "fixed" here. Never throws.
+    /// Converts a <c>Value2</c> date payload using the supported Windows 1900
+    /// date system. New code that has a workbook date-system kind should use
+    /// <see cref="IExcelDateSystemConverter"/> directly.
     /// </summary>
     /// <param name="value">The raw <c>Value2</c> cell payload.</param>
     /// <param name="date">The converted date, or <see langword="null"/> when blank or unreadable.</param>
     /// <returns><see langword="true"/> when a date was produced.</returns>
     public static bool TryConvertDate(object? value, out DateOnly? date)
-    {
-        date = null;
-        switch (value)
-        {
-            case null:
-                return false;
-            case double serial:
-                if (!double.IsFinite(serial) || serial < MinSerial || serial > MaxSerial)
-                {
-                    return false;
-                }
-
-                date = DateOnly.FromDateTime(DateTime.FromOADate(serial));
-                return true;
-            case DateTime dateTime:
-                date = DateOnly.FromDateTime(dateTime);
-                return true;
-            default:
-                return false;
-        }
-    }
+        => ExcelDateSystemConverter.Instance.TryConvertDate(
+            value,
+            ExcelDateSystemKind.Windows1900,
+            out date);
 
     /// <summary>
     /// Converts a <c>Value2</c> stack-index payload to <see cref="int"/>.

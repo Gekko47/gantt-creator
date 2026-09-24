@@ -65,8 +65,9 @@ public class GanttTableReaderTests
             Func<Excel.ListObjects, int, Excel.ListObject>? tableAt = null,
             Func<Excel.ListColumns, int, Excel.ListColumn>? columnAt = null,
             Func<Excel.Workbook, bool>? date1904 = null,
-            Func<Excel.Range, object?>? bodyValues = null)
-            : base(application)
+            Func<Excel.Range, object?>? bodyValues = null,
+            IExcelDateSystemConverter? dateSystemConverter = null)
+            : base(application, dateSystemConverter)
         {
             SheetAt = sheetAt ?? ((_, _) => throw new InvalidOperationException("should not be called"));
             TableAt = tableAt ?? ((_, _) => throw new InvalidOperationException("should not be called"));
@@ -209,6 +210,34 @@ public class GanttTableReaderTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttTableReadRefusalReason.DateSystemUnsupported, outcome.Refusal);
         Assert.Empty(outcome.Rows);
+    }
+
+    [Fact]
+    public void Read_asks_the_date_converter_before_accessing_the_table()
+    {
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        var converter = new Mock<IExcelDateSystemConverter>();
+        _ = converter.Setup(c => c.IsSupported(ExcelDateSystemKind.Windows1900)).Returns(false);
+        var sheetAtCalled = false;
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) =>
+            {
+                sheetAtCalled = true;
+                throw new InvalidOperationException("table lookup must not run");
+            },
+            date1904: _ => false,
+            bodyValues: _ => throw new InvalidOperationException("body must not be read"),
+            dateSystemConverter: converter.Object);
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.DateSystemUnsupported), outcome);
+        converter.Verify(c => c.IsSupported(ExcelDateSystemKind.Windows1900), Times.Once);
+        Assert.False(sheetAtCalled);
     }
 
     [Fact]
