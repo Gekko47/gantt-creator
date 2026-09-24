@@ -106,6 +106,11 @@ function Get-RepoPathTokenStatus {
 
 foreach ($t in $tokens)
 {
+    if ($t -match '(?i)^scripts[\\/]_artifacts(?:[\\/]|$)') {
+        $violations.Add("STATUS references generated/ignored artifact path '$t'; document the command or work item instead.")
+        continue
+    }
+
     $pathStatus = Get-RepoPathTokenStatus -Token $t
     if (-not $pathStatus.IsPath) { continue }
 
