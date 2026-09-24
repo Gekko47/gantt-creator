@@ -228,6 +228,41 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void OnRepairConfigClick_routes_through_the_command_boundary()
+    {
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) =>
+                written.Add(string.Format(CultureInfo.InvariantCulture, format, args)));
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log.Object);
+        var executed = false;
+
+        GanttRibbon.OnRepairConfigClick(null, boundary, () => executed = true);
+
+        Assert.True(executed);
+        Assert.Empty(written);
+    }
+
+    [Fact]
+    public void OnRepairConfigClick_failure_routes_to_the_boundary()
+    {
+        var shown = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) => { });
+        var boundary = new CommandBoundary(presenter: shown.Add);
+        boundary.SetLog(log.Object);
+
+        GanttRibbon.OnRepairConfigClick(null, boundary, () => throw new InvalidOperationException("simulated"));
+
+        Assert.Single(shown);
+    }
+
+    [Fact]
     public void ResolveCommandName_uses_control_id_and_falls_back_to_method_name()
     {
         var control = new Mock<IRibbonControl>();
@@ -326,6 +361,7 @@ public class GanttRibbonTests
             [
                 RibbonControlIds.InitialiseSheet,
                 RibbonControlIds.ValidateSheet,
+                RibbonControlIds.RepairConfig,
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
@@ -351,6 +387,7 @@ public class GanttRibbonTests
             RibbonControlIds.OpenLog,
             RibbonControlIds.InitialiseSheet,
             RibbonControlIds.ValidateSheet,
+            RibbonControlIds.RepairConfig,
             RibbonControlIds.AddActivity,
             RibbonControlIds.AddMilestone,
             RibbonControlIds.AddDelineator,

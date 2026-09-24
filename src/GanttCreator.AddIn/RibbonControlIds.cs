@@ -25,6 +25,9 @@ internal static class RibbonControlIds
     /// <summary>The Validate button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string ValidateSheet = "btnValidateSheet";
 
+    /// <summary>The Repair configuration button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string RepairConfig = "btnRepairConfig";
+
     /// <summary>The Add activity button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string AddActivity = "btnAddActivity";
 

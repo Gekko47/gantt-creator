@@ -65,6 +65,10 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelGanttValidationReporter.cs", "Report"),
         new("src/GanttCreator.Office/ExcelGanttRowInserter.cs", "Insert"),
         new("src/GanttCreator.Office/ExcelTypeOptionsMaterialiser.cs", "Materialise"),
+        new("src/GanttCreator.Office/ExcelConfigRepairer.cs", "Repair"),
+        new("src/GanttCreator.Office/ExcelConfigSheetVisibilityRepairer.cs", "Repair"),
+        new("src/GanttCreator.Office/ExcelPlotAnchorRepairer.cs", "Repair"),
+        new("src/GanttCreator.Office/ExcelGanttRowIdentityRepairer.cs", "Repair"),
     ];
 
     /// <summary>
@@ -86,6 +90,7 @@ public sealed class ProtectionGuardFirstTests
     [
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
+        "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
@@ -95,6 +100,11 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
         "src/GanttCreator.Office/IConfigCatalogueReader.cs",
         "src/GanttCreator.Office/IConfigCatalogueWriter.cs",
+        "src/GanttCreator.Office/IConfigIntegrityChecker.cs",
+        "src/GanttCreator.Office/IConfigRepairer.cs",
+        "src/GanttCreator.Office/IConfigSheetVisibilityRepairer.cs",
+        "src/GanttCreator.Office/IPlotAnchorRepairer.cs",
+        "src/GanttCreator.Office/IGanttRowIdentityRepairer.cs",
         "src/GanttCreator.Office/IExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/IGanttTableReader.cs",
         "src/GanttCreator.Office/IGanttValidationReporter.cs",
@@ -137,11 +147,13 @@ public sealed class ProtectionGuardFirstTests
         "sheets.Add(",
         "Names.Add(",
         "names.Add(",
+        "_catalogueWriter.Write(",
         "AddComment(",
         "Comment.Text(",
         "comment.Text(",
         "Comment.Delete(",
         "comment.Delete(",
+        ".Visible=",
     ];
 
     /// <summary>

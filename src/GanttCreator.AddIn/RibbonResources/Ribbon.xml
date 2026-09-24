@@ -6,6 +6,7 @@
         <group id="grpData" label="Data">
           <button id="btnInitialiseSheet" label="Initialise sheet" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
           <button id="btnValidateSheet" label="Validate" imageMso="Spelling" getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
+          <button id="btnRepairConfig" label="Repair configuration" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
           <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>

@@ -17,6 +17,7 @@
 
 | ADR-0009 | Named-style capability columns | Accepted | 2026-09-23 | [`adr/0009-style-capability-schema.md`](adr/0009-style-capability-schema.md) |
 | ADR-0010 | First-live-slice sequencing exception | Accepted | 2026-09-23 | [`adr/0010-first-live-slice-sequencing.md`](adr/0010-first-live-slice-sequencing.md) |
+| ADR-0011 | Safe configuration and identity repair | Accepted | 2026-09-24 | [`adr/0011-config-safe-repair-policy.md`](adr/0011-config-safe-repair-policy.md) |
 
 ## ADR template
 

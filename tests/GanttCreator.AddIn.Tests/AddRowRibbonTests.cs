@@ -26,6 +26,7 @@ public class AddRowRibbonTests
             [
                 RibbonControlIds.InitialiseSheet,
                 RibbonControlIds.ValidateSheet,
+                RibbonControlIds.RepairConfig,
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
@@ -35,6 +36,7 @@ public class AddRowRibbonTests
             [
                 "OnInitialiseSheetClick",
                 "OnValidateSheetClick",
+                "OnRepairConfigClick",
                 "OnAddActivityClick",
                 "OnAddMilestoneClick",
                 "OnAddDelineatorClick",

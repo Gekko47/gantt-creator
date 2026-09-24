@@ -91,7 +91,7 @@ internal static class InitialiseSheetCommand
             "The target worksheet already contains a table named tblGanttData, so Initialise sheet left it unchanged.",
         InitialiseRefusalReason.ConfigSheetExists =>
             "This workbook already contains Gantt Creator configuration (_GanttCreatorConfig), "
-            + "so Initialise sheet left it unchanged.",
+            + "so Initialise sheet left it unchanged. Use Repair configuration to inspect or repair it.",
         InitialiseRefusalReason.TargetProtected =>
             "The target worksheet is protected, so Initialise sheet cannot populate it. "
             + "Unprotect the worksheet and try again.",

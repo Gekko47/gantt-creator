@@ -222,6 +222,34 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunValidateSheet() => ValidateSheetCommand.RunForExcel();
 
+    /// <summary>Called when the user clicks the Repair configuration button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnRepairConfigClick(IRibbonControl control)
+        => OnRepairConfigClick(control, CommandBoundary.Instance, RunRepairConfig, NotifyRibbonStateChanged);
+
+    /// <summary>Runs the Repair configuration command across an injected boundary.</summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The repair command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnRepairConfigClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(
+            () => ResolveCommandName(control, nameof(OnRepairConfigClick)),
+            command,
+            nameof(OnRepairConfigClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>Runs the production repair command.</summary>
+    private static void RunRepairConfig() => RepairConfigCommand.RunForExcel();
+
     /// <summary>Called when the user clicks the Add activity button.</summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnAddActivityClick(IRibbonControl control)
