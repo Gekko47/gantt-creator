@@ -91,7 +91,7 @@ files only; the local audit verifies every file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R3.1 | `R3.1-geometry-value-objects.md` | Authored (Tier A) |
+| R3.1 | `R3.1-geometry-value-objects.md` | Implemented (working tree; observed gates; pending commit) |
 | R3.2 | `R3.2-scene-primitives.md` | Authored (Tier A) |
 | R3.3 | `R3.3-time-scale.md` | Authored (Tier A) |
 | R3.4 | `R3.4-lane-stack-geometry.md` | Authored (Tier A) |
