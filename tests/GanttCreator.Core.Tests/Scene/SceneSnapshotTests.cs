@@ -1,0 +1,94 @@
+using GanttCreator.Core.Scene;
+
+namespace GanttCreator.Core.Tests.Scene;
+
+public sealed class SceneSnapshotTests
+{
+    [Fact]
+    public void Serialize_deserialize_round_trips_to_the_same_canonical_json()
+    {
+        var scene = CreateScene();
+        var json = SceneSnapshot.Serialize(scene);
+        var roundTripped = SceneSnapshot.Deserialize(json);
+
+        Assert.Equal(json, SceneSnapshot.Serialize(roundTripped));
+    }
+
+    [Fact]
+    public void Serialize_is_byte_identical_for_three_shuffled_inputs()
+    {
+        var owner = GanttRowId.New();
+        var first = new SceneRect("row:planned", owner, ZLayer.ActivityBody, new RectD(1, 2, 3, 4), new SceneStyle("Planned"), GanttEntityType.AsPlannedActivity, 1, 0, 1);
+        var second = new SceneRect("row:actual", owner, ZLayer.ActivityBody, new RectD(5, 6, 7, 8), new SceneStyle("Actual"), GanttEntityType.AsBuiltActivity, 1, 0, 1);
+        var line = new SceneLine("row:line", owner, ZLayer.Grid, new PointD(0, 0), new PointD(10, 10), new SceneStyle("Grid"));
+        var polygon = new ScenePolygon(
+            "row:diamond",
+            owner,
+            ZLayer.Milestone,
+            [new(0, 0), new(1, 0), new(0, 1)],
+            new SceneStyle("Milestone"),
+            GanttEntityType.AsBuiltMilestone);
+        var text = new SceneText("row:label", owner, ZLayer.Label, "Activity", new RectD(0, 0, 20, 10), new SceneStyle("Text"), GanttLabelPosition.Auto);
+        var group = new SceneGroup("row:group", owner, ZLayer.Label, ["row:label", "row:diamond"]);
+        ScenePrimitive[] input = [first, second, line, polygon, text, group];
+        var expected = SceneSnapshot.Serialize(CreateScene(input));
+
+        string[] shuffled =
+        [
+            SceneSnapshot.Serialize(CreateScene([group, text, polygon, line, second, first])),
+            SceneSnapshot.Serialize(CreateScene([line, first, group, polygon, text, second])),
+            SceneSnapshot.Serialize(CreateScene([text, second, group, first, polygon, line])),
+        ];
+
+        Assert.All(shuffled, actual => Assert.Equal(expected, actual));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_unknown_fields()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Version\":1", "\"Version\":1,\"Unknown\":true", StringComparison.Ordinal);
+        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_non_finite_numbers()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"X\":0", "\"X\":1e999", StringComparison.Ordinal);
+        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_negative_extents()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Width\":100", "\"Width\":-1", StringComparison.Ordinal);
+        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_unknown_primitive_kind()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Kind\":\"rect\"", "\"Kind\":\"unknown\"", StringComparison.Ordinal);
+        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    private static GanttScene CreateScene() => CreateScene(
+    [
+        new SceneRect(
+            "row:bar",
+            GanttRowId.New(),
+            ZLayer.ActivityBody,
+            new RectD(1, 2, 3, 4),
+            new SceneStyle("Planned"),
+            GanttEntityType.AsPlannedActivity),
+    ]);
+
+    private static GanttScene CreateScene(IReadOnlyList<ScenePrimitive> primitives)
+    {
+        var outcome = GanttScene.TryCreate(
+            new RectD(0, 0, 100, 100),
+            new RectD(10, 10, 90, 90),
+            primitives,
+            []).Scene ?? throw new InvalidOperationException("Fixture scene creation failed.");
+        return outcome;
+    }
+}
