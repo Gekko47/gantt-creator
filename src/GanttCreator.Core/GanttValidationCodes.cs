@@ -58,6 +58,9 @@ public static class GanttValidationCodes
     /// <summary>A <c>Critical Interval</c> references a parent row that is not valid.</summary>
     public const string ParentInvalid = nameof(ParentInvalid);
 
+    /// <summary>A <c>Critical Interval</c> parent relationship contains a cycle.</summary>
+    public const string ParentCycle = nameof(ParentCycle);
+
     /// <summary>A <c>Custom Activity</c> row is missing its required <c>StyleKey</c>.</summary>
     public const string StyleKeyRequired = nameof(StyleKeyRequired);
 

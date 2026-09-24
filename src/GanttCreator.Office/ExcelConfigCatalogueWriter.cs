@@ -282,7 +282,7 @@ public class ExcelConfigCatalogueWriter(
         }
 
         var raw = GetBodyValues(body);
-        foreach (var row in ConvertMatrix(raw))
+        foreach (var row in ExcelValue2Matrix.ReadRows(raw))
         {
             rows.Add(row);
         }
@@ -290,39 +290,6 @@ public class ExcelConfigCatalogueWriter(
         return rows;
     }
 
-    /// <summary>
-    /// Converts a <c>Value2</c> payload into 0-based row arrays. Handles the
-    /// 2D SAFEARRAY (the normal case, one-based from live Excel — iterated
-    /// by lower bound like <see cref="ExcelConfigCatalogueReader"/>) and
-    /// degrades other shapes to empty.
-    /// </summary>
-    /// <param name="raw">The <c>Value2</c> payload.</param>
-    /// <returns>The rows.</returns>
-    private static List<object?[]> ConvertMatrix(object? raw)
-    {
-        List<object?[]> rows = [];
-        if (raw is not object[,] matrix)
-        {
-            return rows;
-        }
-
-        var rowLower = matrix.GetLowerBound(0);
-        var rowUpper = matrix.GetUpperBound(0);
-        var columnLower = matrix.GetLowerBound(1);
-        var columnCount = matrix.GetLength(1);
-        for (var row = rowLower; row <= rowUpper; row++)
-        {
-            var cells = new object?[columnCount];
-            for (var column = 0; column < columnCount; column++)
-            {
-                cells[column] = matrix[row, columnLower + column];
-            }
-
-            rows.Add(cells);
-        }
-
-        return rows;
-    }
 
     /// <summary>
     /// Deletes the named table when it exists, then writes the header row

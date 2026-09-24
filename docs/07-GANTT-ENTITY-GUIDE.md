@@ -511,7 +511,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Labels:** none by default. A critical milestone is a milestone subtype, not a zero-length interval.
 
-**Validation:** parent exists and is a span; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
+**Validation:** parent exists and is a span; the Critical Interval parent relationship is acyclic; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
 
 **Tests:** multiple disjoint/adjacent/overlapping children, parent clipping, top-edge position, thickness, z-order, missing parent.
 

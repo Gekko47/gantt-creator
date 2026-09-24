@@ -633,11 +633,18 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues
     )
     {
+        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, issues);
+
         // Resolve each Critical Interval ParentId against the same batch.
         for (var i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
             if (parsed?.Type != GanttEntityType.CriticalInterval || parsed.Event?.ParentId is null)
+            {
+                continue;
+            }
+
+            if (cycleRows.Contains(i))
             {
                 continue;
             }
@@ -689,5 +696,73 @@ public static class GanttRowValidator
                 perRow[i] = parsed with { HasBlockingError = true };
             }
         }
+    }
+
+    /// <summary>
+    /// Rejects self-references and longer directed cycles formed by
+    /// Critical Interval ParentId values. Ordinary span parents are
+    /// terminal nodes and are not traversed.
+    /// </summary>
+    private static HashSet<int> CheckCriticalParentCycles(
+        IReadOnlyList<GanttRowDto> rows,
+        ValidatedRow?[] perRow,
+        Dictionary<string, int> canonicalById,
+        List<GanttValidationIssue> issues
+    )
+    {
+        var cycleRows = new HashSet<int>();
+        var path = new List<int>();
+        var pathIndexByRow = new Dictionary<int, int>();
+
+        for (var start = 0; start < rows.Count; start++)
+        {
+            if (perRow[start]?.Type != GanttEntityType.CriticalInterval)
+            {
+                continue;
+            }
+
+            path.Clear();
+            pathIndexByRow.Clear();
+            var current = start;
+            while (current >= 0 && perRow[current]?.Type == GanttEntityType.CriticalInterval)
+            {
+                if (pathIndexByRow.TryGetValue(current, out var cycleStart))
+                {
+                    for (var index = cycleStart; index < path.Count; index++)
+                    {
+                        _ = cycleRows.Add(path[index]);
+                    }
+
+                    break;
+                }
+
+                pathIndexByRow[current] = path.Count;
+                path.Add(current);
+                ValidatedRow? node = perRow[current];
+                if (node?.Event?.ParentId is not { } parentId
+                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                {
+                    break;
+                }
+
+                current = parentIndex;
+            }
+        }
+
+        foreach (var rowIndex in cycleRows.OrderBy(index => rows[index].RowNumber))
+        {
+            issues.Add(
+                new GanttValidationIssue(
+                    rows[rowIndex].RowNumber,
+                    "ParentId",
+                    GanttValidationCodes.ParentCycle,
+                    GanttValidationSeverity.Error,
+                    "ParentId forms a Critical Interval parent cycle."
+                )
+            );
+            perRow[rowIndex] = perRow[rowIndex]! with { HasBlockingError = true };
+        }
+
+        return cycleRows;
     }
 }

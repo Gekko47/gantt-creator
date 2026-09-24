@@ -273,6 +273,59 @@ public class GanttTableReaderTests
     }
 
     [Fact]
+    public void ExcelValue2Matrix_normalizes_one_based_and_zero_based_matrices()
+    {
+        var oneBased = Array.CreateInstance(typeof(object), [1, 2], [1, 1]);
+        var zeroBased = Array.CreateInstance(typeof(object), [1, 2]);
+        oneBased.SetValue("one", 1, 1);
+        oneBased.SetValue(2.0, 1, 2);
+        zeroBased.SetValue("one", 0, 0);
+        zeroBased.SetValue(2.0, 0, 1);
+
+        List<object?[]> oneBasedRows = ExcelValue2Matrix.ReadRows(oneBased);
+        List<object?[]> zeroBasedRows = ExcelValue2Matrix.ReadRows(zeroBased);
+
+        Assert.Equal(zeroBasedRows, oneBasedRows);
+        Assert.Equal(["one", 2.0], oneBasedRows[0]);
+    }
+
+    [Fact]
+    public void ExcelValue2Matrix_returns_empty_for_non_two_dimensional_shapes()
+    {
+        Assert.Empty(ExcelValue2Matrix.ReadRows(null));
+        Assert.Empty(ExcelValue2Matrix.ReadRows("not a matrix"));
+        Assert.Empty(ExcelValue2Matrix.ReadRows(Array.CreateInstance(typeof(object), [1])));
+    }
+
+    [Fact]
+    public void Read_accepts_zero_based_body_matrices()
+    {
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var sheet = new SheetGraph(table);
+        var matrix = Array.CreateInstance(typeof(object), [1, GanttTableSchema.Default.Columns.Count]);
+        for (int column = 0; column < GanttTableSchema.Default.Columns.Count; column++)
+        {
+            matrix.SetValue(null, 0, column);
+        }
+
+        matrix.SetValue("G-zero", 0, 0);
+        matrix.SetValue("As-Planned Activity", 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Type"));
+        matrix.SetValue(0.0, 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "StackIndex"));
+        matrix.SetValue(44927.0, 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Start"));
+        matrix.SetValue(44927.0, 0, GanttTableSchema.Default.Columns.ToList().FindIndex(c => c.Name == "Finish"));
+
+        var reader = Build(new Mock<Excel.Application>(), new Mock<Excel.Workbook>(), [sheet], _ => matrix);
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        GanttRowDto row = Assert.Single(outcome.Rows);
+        Assert.Equal("G-zero", row.Id);
+        Assert.Equal("As-Planned Activity", row.TypeText);
+        Assert.Equal(new DateOnly(2023, 1, 1), row.Start);
+    }
+
+
+    [Fact]
     public void Read_returns_an_empty_list_when_the_table_has_no_body()
     {
         var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());

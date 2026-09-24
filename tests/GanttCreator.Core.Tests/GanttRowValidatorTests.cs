@@ -990,6 +990,92 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Critical_interval_with_self_parent_is_a_blocking_cycle_error()
+    {
+        string id = NewId();
+        GanttRowDto row = CriticalIntervalRow(2, id, id);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ParentCycle);
+        Assert.Empty(outcome.Events);
+    }
+
+    [Fact]
+    public void Critical_interval_with_two_node_parent_cycle_is_a_blocking_error()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(
+        [
+            CriticalIntervalRow(2, firstId, secondId),
+            CriticalIntervalRow(3, secondId, firstId),
+        ]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Equal(2, outcome.Issues.Count(i => i.Code == GanttValidationCodes.ParentCycle));
+        Assert.Empty(outcome.Events);
+    }
+
+    [Fact]
+    public void Critical_interval_with_longer_parent_cycle_is_a_blocking_error()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        string thirdId = NewId();
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(
+        [
+            CriticalIntervalRow(2, firstId, secondId),
+            CriticalIntervalRow(3, secondId, thirdId),
+            CriticalIntervalRow(4, thirdId, firstId),
+        ]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Equal(3, outcome.Issues.Count(i => i.Code == GanttValidationCodes.ParentCycle));
+        Assert.Empty(outcome.Events);
+    }
+
+    [Fact]
+    public void Critical_interval_child_of_a_cycle_is_blocked_as_parent_invalid()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        string childId = NewId();
+        GanttRowDto child = CriticalIntervalRow(4, childId, firstId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(
+        [
+            CriticalIntervalRow(2, firstId, secondId),
+            CriticalIntervalRow(3, secondId, firstId),
+            child,
+        ]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 4 && i.Code == GanttValidationCodes.ParentInvalid);
+        Assert.DoesNotContain(outcome.Events, e => e.Id.Value == childId);
+    }
+
+    private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string parentId) =>
+        new(
+            rowNumber,
+            id,
+            NewLaneId(),
+            0,
+            "Critical Interval",
+            "Critical part",
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 1),
+            parentId,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null);
+
+
+    [Fact]
     public void Validation_is_culture_invariant_under_tr_tr()
     {
         CultureInfo originalCulture = CultureInfo.CurrentCulture;
@@ -997,11 +1083,13 @@ public class GanttRowValidatorTests
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
 
-            GanttRowDto row = ValidSpan(fillColourText: "#ff0000", sortOrder: "3", labelPositionText: "Auto");
+            GanttRowDto row = ValidSpan(fillColourText: "#ff0000", sortOrder: "3", labelPositionText: "Inside");
             GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
             Assert.True(outcome.IsValid);
-            Assert.Equal("#FF0000", Assert.Single(outcome.Events).FillColour);
+            GanttEvent @event = Assert.Single(outcome.Events);
+            Assert.Equal("#FF0000", @event.FillColour);
+            Assert.Equal(GanttLabelPosition.Inside, @event.LabelPosition);
             Assert.False(GanttRowValidator.Validate([ValidSpan(typeText: "as-planned activity")]).IsValid);
         }
         finally

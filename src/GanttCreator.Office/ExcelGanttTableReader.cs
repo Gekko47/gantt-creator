@@ -176,23 +176,19 @@ public class ExcelGanttTableReader(
     /// <returns>The rows in body order.</returns>
     private List<GanttRowDto> ConvertBody(object? raw, int[] columnMap, ExcelDateSystemKind dateSystem)
     {
-        if (raw is not Array matrix)
+        List<object?[]> matrixRows = ExcelValue2Matrix.ReadRows(raw);
+        var rows = new List<GanttRowDto>(matrixRows.Count);
+        for (var rowIndex = 0; rowIndex < matrixRows.Count; rowIndex++)
         {
-            return [];
-        }
-
-        var rowCount = matrix.GetLength(0);
-        var rows = new List<GanttRowDto>(rowCount);
-        for (var row = 1; row <= rowCount; row++)
-        {
+            var matrix = matrixRows[rowIndex];
             var cells = new object?[columnMap.Length];
             for (var schemaIndex = 0; schemaIndex < columnMap.Length; schemaIndex++)
             {
                 var tableIndex = columnMap[schemaIndex];
-                cells[schemaIndex] = tableIndex < 1 ? null : CoerceCell(matrix.GetValue(row, tableIndex));
+                cells[schemaIndex] = tableIndex < 1 || tableIndex > matrix.Length ? null : CoerceCell(matrix[tableIndex - 1]);
             }
 
-            rows.Add(ConvertRow(row, cells, dateSystem));
+            rows.Add(ConvertRow(rowIndex + 1, cells, dateSystem));
         }
 
         return rows;

@@ -86,6 +86,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
+        "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IGanttRowInserter.cs",
