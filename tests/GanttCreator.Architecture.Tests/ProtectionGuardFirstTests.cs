@@ -63,6 +63,7 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelWorkbookInitialiser.cs", "Initialise"),
         new("src/GanttCreator.Office/ExcelConfigCatalogueWriter.cs", "Write"),
         new("src/GanttCreator.Office/ExcelGanttValidationReporter.cs", "Report"),
+        new("src/GanttCreator.Office/ExcelGanttRowInserter.cs", "Insert"),
     ];
 
     /// <summary>
@@ -86,6 +87,8 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
+        "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
+        "src/GanttCreator.Office/IGanttRowInserter.cs",
         "src/GanttCreator.Office/GanttTableReadOutcome.cs",
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
         "src/GanttCreator.Office/IConfigCatalogueReader.cs",

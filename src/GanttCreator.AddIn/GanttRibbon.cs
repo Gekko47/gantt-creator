@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 
 namespace GanttCreator.AddIn;
 
@@ -220,6 +221,58 @@ public class GanttRibbon : ExcelRibbon
     /// pipeline for the current Excel session via the application command.
     /// </summary>
     private static void RunValidateSheet() => ValidateSheetCommand.RunForExcel();
+
+    /// <summary>Called when the user clicks the Add activity button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddActivityClick(IRibbonControl control)
+        => OnAddActivityClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedActivity), NotifyRibbonStateChanged);
+
+    /// <summary>Called when the user clicks the Add milestone button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddMilestoneClick(IRibbonControl control)
+        => OnAddMilestoneClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.AsPlannedMilestone), NotifyRibbonStateChanged);
+
+    /// <summary>Called when the user clicks the Add delineator button.</summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddDelineatorClick(IRibbonControl control)
+        => OnAddDelineatorClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.Delineator), NotifyRibbonStateChanged);
+
+    /// <summary>Runs the Add activity callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddActivityClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddActivityClick), onCompleted);
+
+    /// <summary>Runs the Add milestone callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddMilestoneClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddMilestoneClick), onCompleted);
+
+    /// <summary>Runs the Add delineator callback across an injected boundary.</summary>
+    /// <param name="control">The ribbon control.</param>
+    /// <param name="boundary">The command boundary.</param>
+    /// <param name="command">The add-row command.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddDelineatorClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnAddDelineatorClick), onCompleted);
+
+    private static void OnAddRowClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        string fallbackCommandName,
+        Action? onCompleted)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, fallbackCommandName), command, fallbackCommandName);
+        onCompleted?.Invoke();
+    }
 
     /// <summary>
     /// Excel's getEnabled callback for the gated controls. A pure read of the

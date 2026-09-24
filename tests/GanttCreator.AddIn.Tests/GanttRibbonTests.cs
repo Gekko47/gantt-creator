@@ -326,6 +326,9 @@ public class GanttRibbonTests
             [
                 RibbonControlIds.InitialiseSheet,
                 RibbonControlIds.ValidateSheet,
+                RibbonControlIds.AddActivity,
+                RibbonControlIds.AddMilestone,
+                RibbonControlIds.AddDelineator,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
             ],
@@ -348,6 +351,9 @@ public class GanttRibbonTests
             RibbonControlIds.OpenLog,
             RibbonControlIds.InitialiseSheet,
             RibbonControlIds.ValidateSheet,
+            RibbonControlIds.AddActivity,
+            RibbonControlIds.AddMilestone,
+            RibbonControlIds.AddDelineator,
         })
         {
             var matches = doc.Descendants(ns + "button")

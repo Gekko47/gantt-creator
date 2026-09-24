@@ -24,4 +24,13 @@ internal static class RibbonControlIds
 
     /// <summary>The Validate button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string ValidateSheet = "btnValidateSheet";
+
+    /// <summary>The Add activity button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string AddActivity = "btnAddActivity";
+
+    /// <summary>The Add milestone button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string AddMilestone = "btnAddMilestone";
+
+    /// <summary>The Add delineator button (<c>getEnabled</c> driven by workbook presence).</summary>
+    internal const string AddDelineator = "btnAddDelineator";
 }
