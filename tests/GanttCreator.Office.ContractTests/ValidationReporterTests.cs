@@ -166,6 +166,8 @@ public class ValidationReporterTests
 
         public CellGraph Cell(int row, int column) => CellAt(row, column);
 
+        public Excel.ListColumn BuildColumn(int index) => _columns[index - 1].Object;
+
         public bool WasCellRequested(int row, int column) => Cells.ContainsKey((row, column));
 
         /// <summary>Every cell the reporter asked for, as (row, column) pairs.</summary>
@@ -191,12 +193,13 @@ public class ValidationReporterTests
     {
         public TestableReporter(
             object? application,
+            IWorksheetProtectionGuard? protectionGuard = null,
             Func<Excel.Sheets, int, object>? sheetAt = null,
             Func<Excel.ListObjects, int, Excel.ListObject>? tableAt = null,
             Func<Excel.ListColumns, int, Excel.ListColumn>? columnAt = null,
             Func<Excel.Range?, int, int, Excel.Range>? cellAt = null,
             Func<Excel.Range, IEnumerable<Excel.Range>>? enumerate = null)
-            : base(application)
+            : base(application, protectionGuard ?? new AllowProtectionGuard())
         {
             SheetAt = sheetAt ?? ((_, _) => throw new InvalidOperationException("sheet seam not expected"));
             TableAt = tableAt ?? ((_, _) => throw new InvalidOperationException("table seam not expected"));
@@ -227,6 +230,11 @@ public class ValidationReporterTests
             => CellAt(body, rowNumber, columnIndex);
 
         internal override IEnumerable<Excel.Range> EnumerateCells(Excel.Range range) => Enumerate(range);
+    }
+
+    private sealed class AllowProtectionGuard : IWorksheetProtectionGuard
+    {
+        public ProtectionGuardOutcome Query() => ProtectionGuardOutcome.NotProtected;
     }
 
     private static GanttValidationIssue Issue(
@@ -478,6 +486,63 @@ public class ValidationReporterTests
         ]);
 
         Assert.Equal(2, outcome.NotesWritten);
+    }
+
+    [Fact]
+    public void Report_refuses_target_protected_before_touching_any_note()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
+        ReporterGraph graph = Graph();
+        CellGraph cell = graph.Cell(1, ColumnOf("Start"));
+        cell.WithOwnedNote("stale");
+        TestableReporter reporter = new TestableReporter(
+            graph.Application.Object,
+            guard.Object,
+            sheetAt: (_, _) => graph.Worksheet.Object,
+            tableAt: (_, _) => graph.Table.Object,
+            columnAt: (_, index) => graph.BuildColumn(index),
+            cellAt: (_, row, column) => graph.Cell(row, column).Cell.Object,
+            enumerate: _ => graph.CommentedCells.Select(c => c.Cell.Object));
+
+        GanttValidationReportOutcome outcome = reporter.Report(
+            [Issue(1, "Start", GanttValidationSeverity.Error, "Start is invalid.")]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttValidationReportRefusalReason.TargetProtected, outcome.Refusal);
+        Assert.Equal(0, outcome.NotesWritten);
+        guard.Verify(g => g.Query(), Times.Once);
+        Assert.Empty(cell.NotesWritten);
+        Assert.Empty(cell.NoteTextWrites);
+        Assert.Equal(0, cell.NoteDeleteCount);
+        graph.Body.Verify(
+            r => r.SpecialCells(It.IsAny<Excel.XlCellType>(), It.IsAny<object>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void Report_refuses_workbook_structure_protected_before_touching_any_note()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.WorkbookStructureProtected);
+        ReporterGraph graph = Graph();
+        TestableReporter reporter = new TestableReporter(
+            graph.Application.Object,
+            guard.Object,
+            sheetAt: (_, _) => graph.Worksheet.Object,
+            tableAt: (_, _) => graph.Table.Object,
+            columnAt: (_, index) => graph.BuildColumn(index),
+            cellAt: (_, row, column) => graph.Cell(row, column).Cell.Object,
+            enumerate: _ => graph.CommentedCells.Select(c => c.Cell.Object));
+
+        GanttValidationReportOutcome outcome = reporter.Report(
+            [Issue(1, "Start", GanttValidationSeverity.Error, "Start is invalid.")]);
+
+        Assert.Equal(GanttValidationReportRefusalReason.TargetProtected, outcome.Refusal);
+        guard.Verify(g => g.Query(), Times.Once);
+        graph.Body.Verify(
+            r => r.SpecialCells(It.IsAny<Excel.XlCellType>(), It.IsAny<object>()),
+            Times.Never);
     }
 
     [Fact]

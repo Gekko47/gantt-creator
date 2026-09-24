@@ -46,9 +46,14 @@ namespace GanttCreator.Office;
 /// the tagged live-Office integration test.
 /// </para>
 /// </remarks>
-public class ExcelGanttValidationReporter(object? application) : IGanttValidationReporter
+/// <param name="protectionGuard">The shared read-only workbook-protection guard; defaults to a live guard over <paramref name="application"/>.</param>
+public class ExcelGanttValidationReporter(
+    object? application,
+    IWorksheetProtectionGuard? protectionGuard = null) : IGanttValidationReporter
 {
     private readonly Application? _application = application as Application;
+    private readonly IWorksheetProtectionGuard _protectionGuard =
+        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <summary>
     /// Writes cell notes for each issue onto the offending cells of
@@ -77,6 +82,15 @@ public class ExcelGanttValidationReporter(object? application) : IGanttValidatio
         {
             return GanttValidationReportOutcome.Refused(
                 GanttValidationReportRefusalReason.NoActiveWorkbook);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return GanttValidationReportOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? GanttValidationReportRefusalReason.NoActiveWorkbook
+                    : GanttValidationReportRefusalReason.TargetProtected);
         }
 
         Sheets sheets = workbook.Sheets;

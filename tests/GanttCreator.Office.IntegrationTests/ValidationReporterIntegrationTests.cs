@@ -232,6 +232,74 @@ public class ValidationReporterIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// A protected worksheet refuses before any note is changed. The test keeps a
+    /// user-authored note and body snapshot, protects the real worksheet, and
+    /// proves the typed refusal leaves both unchanged.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Report_refuses_a_protected_worksheet_without_touching_notes_or_values()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath), $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            Excel.Worksheet sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            ClearTableBody(table);
+            Excel.ListRow row = table.ListRows.Add();
+            Excel.Range body = table.DataBodyRange;
+            Assert.NotNull(body);
+            int offset = row.Range.Row - body.Row + 1;
+            SetBodyCell(body, offset, "Id", NewId('7'));
+            SetBodyCell(body, offset, "LaneId", NewId('a'));
+            SetBodyCell(body, offset, "StackIndex", 0.0);
+            SetBodyCell(body, offset, "Type", "Not a catalogued type");
+            SetBodyCell(body, offset, "Start", 46266.0);
+            SetBodyCell(body, offset, "Finish", 46270.0);
+            SetBodyCell(body, offset, "Visible", true);
+
+            const string userText = "User note that must survive protection refusal.";
+            Excel.Range typeCell = body.Cells[offset, GetColumnIndex("Type")];
+            _ = typeCell.AddComment(userText);
+            List<string> before = SnapshotFingerprints(body);
+            string beforeNote = typeCell.Comment!.Text();
+
+            sheet.Protect(
+                DrawingObjects: false,
+                Contents: true,
+                Scenarios: false,
+                UserInterfaceOnly: false);
+            try
+            {
+                GanttTableReadOutcome read = new ExcelGanttTableReader(fixture.Excel).Read();
+                Assert.True(read.Succeeded, $"Read refused: {read.Refusal}");
+                GanttValidationOutcome validation = GanttRowValidator.Validate(read.Rows);
+                GanttValidationReportOutcome report = new ExcelGanttValidationReporter(fixture.Excel)
+                    .Report(validation.Issues);
+
+                Assert.False(report.Succeeded);
+                Assert.Equal(GanttValidationReportRefusalReason.TargetProtected, report.Refusal);
+                Assert.Equal(0, report.NotesWritten);
+                AssertValuesIdentical(before, SnapshotFingerprints(body));
+                Assert.Equal(beforeNote, typeCell.Comment!.Text());
+            }
+            finally
+            {
+                sheet.Unprotect();
+            }
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
     private static string Sentinel() => ValidationReportComposer.NoteSentinelPrefix;
 
     /// <summary>A well-formed <see cref="GanttRowId"/>: <c>G-</c> plus 32 hex characters.</summary>

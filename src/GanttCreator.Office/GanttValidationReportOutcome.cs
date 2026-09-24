@@ -15,6 +15,9 @@ public enum GanttValidationReportRefusalReason
 
     /// <summary>No table named <c>tblGanttData</c> was found, so there is no sheet to annotate.</summary>
     TableMissing = 1,
+
+    /// <summary>The active worksheet or workbook structure is protected; no note was changed.</summary>
+    TargetProtected = 2,
 }
 
 /// <summary>

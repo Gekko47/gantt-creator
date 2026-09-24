@@ -62,6 +62,7 @@ public sealed class ProtectionGuardFirstTests
     [
         new("src/GanttCreator.Office/ExcelWorkbookInitialiser.cs", "Initialise"),
         new("src/GanttCreator.Office/ExcelConfigCatalogueWriter.cs", "Write"),
+        new("src/GanttCreator.Office/ExcelGanttValidationReporter.cs", "Report"),
     ];
 
     /// <summary>
@@ -80,18 +81,14 @@ public sealed class ProtectionGuardFirstTests
     ];
 
     /// <summary>
-    /// The remaining Office sources: ports, outcome types, readers, the
-    /// application-state adapter, and the note-writing validation reporter
-    /// (see the type remarks for why it is not in
-    /// <see cref="MutatingAdapters"/>). An unlisted file fails the
-    /// classification rule.
+    /// The remaining Office sources: ports, outcome types, readers, and the
+    /// application-state adapter. An unlisted file fails the classification rule.
     /// </summary>
     private static readonly string[] NoDataMutationOfficeFiles =
     [
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
-        "src/GanttCreator.Office/ExcelGanttValidationReporter.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttTableReadOutcome.cs",
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
@@ -138,6 +135,11 @@ public sealed class ProtectionGuardFirstTests
         "sheets.Add(",
         "Names.Add(",
         "names.Add(",
+        "AddComment(",
+        "Comment.Text(",
+        "comment.Text(",
+        "Comment.Delete(",
+        "comment.Delete(",
     ];
 
     /// <summary>

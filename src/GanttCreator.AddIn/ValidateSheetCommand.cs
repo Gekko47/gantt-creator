@@ -37,7 +37,9 @@ internal static class ValidateSheetCommand
     internal static void RunForExcel()
         => Run(
             new ExcelGanttTableReader(ExcelDna.Integration.ExcelDnaUtil.Application),
-            new ExcelGanttValidationReporter(ExcelDna.Integration.ExcelDnaUtil.Application),
+            new ExcelGanttValidationReporter(
+                ExcelDna.Integration.ExcelDnaUtil.Application,
+                new ExcelWorksheetProtectionGuard(ExcelDna.Integration.ExcelDnaUtil.Application)),
             CommandErrorDialog.Show);
 
     /// <summary>
@@ -128,6 +130,8 @@ internal static class ValidateSheetCommand
             "Gantt Creator needs an active workbook to write validation notes. Open a workbook and try again.",
         GanttValidationReportRefusalReason.TableMissing =>
             "Validate could not locate tblGanttData to write onto. Run Initialise sheet first.",
+        GanttValidationReportRefusalReason.TargetProtected =>
+            "The worksheet or workbook is protected, so validation notes were not changed. Remove protection and run Validate again.",
         _ => "Validate could not write the notes. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 
