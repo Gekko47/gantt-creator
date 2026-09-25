@@ -118,6 +118,37 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
+    public void ChangeStyleKey_keeps_the_per_row_overrides_when_the_style_is_unchanged()
+    {
+        // The overrides are cleared only when the style actually changes. Picking
+        // the row's current style in the dropdown again must not discard the
+        // user's explicit per-row formatting.
+        GanttRowDto row = new(
+            2,
+            "G-0123456789abcdef0123456789abcdef",
+            null,
+            0,
+            "As-Planned Activity",
+            null,
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 2),
+            null,
+            "AsPlannedActivity",
+            "Inside",
+            "#112233",
+            "#445566",
+            true,
+            null);
+
+        GanttRowDto unchanged = GanttStyleChange.ChangeStyleKey(row, "AsPlannedActivity");
+
+        Assert.Equal("AsPlannedActivity", unchanged.StyleKey);
+        Assert.Equal("Inside", unchanged.LabelPositionText);
+        Assert.Equal("#112233", unchanged.FillColourText);
+        Assert.Equal("#445566", unchanged.StrokeColourText);
+    }
+
+    [Fact]
     public void Registry_rejects_null_input() =>
         Assert.Throws<ArgumentNullException>(() => new GanttStyleRegistry(null!));
 

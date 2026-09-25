@@ -693,7 +693,7 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues
     )
     {
-        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, issues);
+        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, duplicateIds, issues);
 
         // Resolve each Critical Interval ParentId against the same batch.
         for (var i = 0; i < rows.Count; i++)
@@ -778,10 +778,17 @@ public static class GanttRowValidator
     /// Critical Interval ParentId values. Ordinary span parents are
     /// terminal nodes and are not traversed.
     /// </summary>
+    /// <remarks>
+    /// An edge whose target Id is duplicated is ambiguous rather than cyclic:
+    /// which row the reference means is unknown, so claiming a cycle through it
+    /// would replace the accurate <see cref="GanttValidationCodes.ParentAmbiguous"/>
+    /// finding. Such an edge terminates the walk instead.
+    /// </remarks>
     private static HashSet<int> CheckCriticalParentCycles(
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
         Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
         List<GanttValidationIssue> issues
     )
     {
@@ -814,7 +821,9 @@ public static class GanttRowValidator
                 pathIndexByRow[current] = path.Count;
                 path.Add(current);
                 ValidatedRow? node = perRow[current];
-                if (node?.Event?.ParentId is not { } parentId || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                if (node?.Event?.ParentId is not { } parentId
+                    || duplicateIds.Contains(parentId.Value)
+                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
                 {
                     break;
                 }

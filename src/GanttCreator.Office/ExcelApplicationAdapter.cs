@@ -83,7 +83,8 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     /// <summary>
     /// The one owned resource: the event connection. It adds exactly one handler
     /// to each of the three workbook-state events and removes exactly those
-    /// instances on the first dispose.
+    /// instances. Callbacks are disabled by the first dispose; a removal that
+    /// failed keeps its delegate so a later <see cref="Dispose"/> can retry it.
     /// </summary>
     /// <param name="events">The Excel application event interface (a shared root; not owned).</param>
     /// <param name="handler">The subscriber's change handler.</param>
@@ -174,11 +175,9 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
         /// <inheritdoc />
         public void Dispose()
         {
-            if (_disposed)
-            {
-                return;
-            }
-
+            // Callbacks stay disabled after the first disposal (the handler
+            // guard reads _disposed), but teardown itself is re-enterable so a
+            // later Dispose retries a removal that previously failed.
             _disposed = true;
 
             // CA1031: teardown runs from AutoClose and must never throw into
@@ -215,14 +214,30 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
                     }
                 });
 
-            // Drop the delegate references unconditionally: the connection is
-            // not retried, and the delegates must not keep the handler alive
-            // after teardown. A handler whose removal failed is already
-            // unreferenced by us; the recorded DetachFailed state is the honest
-            // signal that the event source may still hold it.
-            _onWorkbookActivate = null;
-            _onWorkbookDeactivate = null;
-            _onNewWorkbook = null;
+            // Drop only the delegates whose handler is now detached. A delegate
+            // whose removal failed is retained so a later Dispose can retry the
+            // removal; the recorded DetachFailed state stays the honest signal
+            // that the event source may still hold the handler.
+            Release(ref _onWorkbookActivate, _workbookActivateState);
+            Release(ref _onWorkbookDeactivate, _workbookDeactivateState);
+            Release(ref _onNewWorkbook, _newWorkbookState);
+        }
+
+        /// <summary>
+        /// Clears a delegate reference once its handler is detached, so the
+        /// handler is not kept alive after teardown. A delegate that is still
+        /// attached or whose removal failed is retained for a retry.
+        /// </summary>
+        /// <typeparam name="TDelegate">The COM event delegate type.</typeparam>
+        /// <param name="handler">The delegate reference, cleared in place.</param>
+        /// <param name="state">The handler's recorded state.</param>
+        private static void Release<TDelegate>(ref TDelegate? handler, EventHandlerState state)
+            where TDelegate : Delegate
+        {
+            if (state == EventHandlerState.Detached)
+            {
+                handler = null;
+            }
         }
 
         /// <summary>

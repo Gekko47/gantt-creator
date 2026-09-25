@@ -233,19 +233,34 @@ public static class GanttStyleResolver
 /// <summary>Style-change operations that preserve the approved per-row override rule.</summary>
 public static class GanttStyleChange
 {
-    /// <summary>Returns the row cells after changing StyleKey and clearing all per-row formatting overrides.</summary>
+    /// <summary>
+    /// Returns the row cells after changing StyleKey and clearing all per-row
+    /// formatting overrides. Re-selecting the row's current style key is a no-op:
+    /// the overrides are kept, because the style did not change and clearing them
+    /// would discard the user's explicit per-row formatting.
+    /// </summary>
     /// <param name="row">The existing row.</param>
     /// <param name="newStyleKey">The new named style key.</param>
-    /// <returns>The row with new style and empty override cells.</returns>
+    /// <returns>The row with new style and empty override cells, or the unchanged
+    /// row when the style key is the same.</returns>
     public static GanttRowDto ChangeStyleKey(GanttRowDto row, string? newStyleKey)
     {
         ArgumentNullException.ThrowIfNull(row);
-        return row with
+        return string.Equals(newStyleKey, row.StyleKey, StringComparison.Ordinal)
+            ? row
+            : ApplyStyleKey(row, newStyleKey);
+    }
+
+    /// <summary>Writes the new style key and empties every per-row override cell.</summary>
+    /// <param name="row">The existing row.</param>
+    /// <param name="newStyleKey">The new named style key.</param>
+    /// <returns>The row with new style and empty override cells.</returns>
+    private static GanttRowDto ApplyStyleKey(GanttRowDto row, string? newStyleKey) =>
+        row with
         {
             StyleKeyCell = newStyleKey is null ? GanttCells.Empty<string>() : GanttCells.Value(newStyleKey),
             LabelPositionCell = GanttCells.Empty<string>(),
             FillColourCell = GanttCells.Empty<string>(),
             StrokeColourCell = GanttCells.Empty<string>(),
         };
-    }
 }

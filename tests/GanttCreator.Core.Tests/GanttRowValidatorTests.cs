@@ -445,6 +445,27 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Critical_interval_with_duplicate_parent_is_reported_as_ambiguous_not_as_a_cycle()
+    {
+        // The parent Id is duplicated, so the reference cannot be resolved to one
+        // row. Claiming a cycle through that edge would replace the accurate
+        // ambiguity finding with a diagnosis the data does not support.
+        string duplicatedId = NewId();
+        string childId = NewId();
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([
+            CriticalIntervalRow(2, duplicatedId, childId),
+            ValidSpan(rowNumber: 3, id: duplicatedId),
+            CriticalIntervalRow(4, childId, duplicatedId),
+        ]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, issue =>
+            issue.RowNumber == 4
+            && issue.Code == GanttValidationCodes.ParentAmbiguous);
+        Assert.DoesNotContain(outcome.Issues, issue => issue.Code == GanttValidationCodes.ParentCycle);
+    }
+
+    [Fact]
     public void Critical_interval_with_unknown_parent_is_a_blocking_error()
     {
         var row = new GanttRowDto(

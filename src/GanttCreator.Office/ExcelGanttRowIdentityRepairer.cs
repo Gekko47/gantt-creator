@@ -79,23 +79,6 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
             }
         }
 
-        if (parentIdIndex >= 0)
-        {
-            for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
-            {
-                var parentText = ToText(rows[rowIndex].ElementAtOrDefault(parentIdIndex)).Trim();
-                if (parentText.Length == 0 || !replacements.Any(pair => string.Equals(originalIds[pair.Key], parentText, StringComparison.Ordinal)))
-                {
-                    continue;
-                }
-
-                if (idOccurrences[parentText] > 1)
-                {
-                    continue;
-                }
-            }
-        }
-
         var repaired = 0;
         foreach (KeyValuePair<int, GanttRowId> pair in replacements.OrderBy(pair => pair.Key))
         {
@@ -108,6 +91,17 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
             for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
             {
                 var parentText = ToText(rows[rowIndex].ElementAtOrDefault(parentIdIndex)).Trim();
+
+                // A blank cell is not a reference. A duplicated Id has no single
+                // canonical replacement, so ADR-0011 leaves it unchanged and
+                // GanttRowValidator reports it as ParentAmbiguous instead.
+                if (parentText.Length == 0
+                    || !idOccurrences.TryGetValue(parentText, out var parentOccurrences)
+                    || parentOccurrences > 1)
+                {
+                    continue;
+                }
+
                 if (canonicalIndexes.TryGetValue(parentText, out var parentRowIndex)
                     && replacements.TryGetValue(parentRowIndex, out GanttRowId? replacement)
                     && replacement is not null)
@@ -182,7 +176,12 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
     private static string ToText(object? value) =>
         Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
 
-    private static Excel.Range GetCell(Excel.Range body, int row, int column)
+    /// <summary>
+    /// Returns the cell at the one-based body row and one-based table-column
+    /// index. Test seam over the COM <c>Range.Cells[row, column]</c> dispatch,
+    /// so contract tests can intercept per-cell writes without a worksheet.
+    /// </summary>
+    internal virtual Excel.Range GetCell(Excel.Range body, int row, int column)
     {
         Excel.Range cells = body.Cells;
         return cells[row, column];
