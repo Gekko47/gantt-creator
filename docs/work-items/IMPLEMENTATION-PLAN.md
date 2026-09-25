@@ -93,7 +93,7 @@ files only; the local audit verifies every file exists.
 | --- | --- | --- |
 | R3.1 | `R3.1-geometry-value-objects.md` | Landed (`b5314c7`) |
 | R3.2 | `R3.2-scene-primitives.md` | Landed (`e244d3c`) |
-| R3.3 | `R3.3-time-scale.md` | Authored (Tier A) |
+| R3.3 | `R3.3-time-scale.md` | Implemented (working tree; observed gates; pending commit) |
 | R3.4 | `R3.4-lane-stack-geometry.md` | Authored (Tier A) |
 | R3.5 | `R3.5-plot-frame-bands.md` | Authored (Tier A) |
 | R3.6 | `R3.6-span-bar-label-layout.md` | Authored (Tier A) |
