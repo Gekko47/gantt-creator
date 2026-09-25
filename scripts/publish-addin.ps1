@@ -53,6 +53,9 @@ function Read-OwnedPidManifest {
             $result[[int]$record.ProcessId] = [long]$record.StartTimeUtcTicks
         } catch {
             # A single unreadable line must not discard the rest of the manifest.
+            # It is a partial-record problem, not a run-fatal one: the process it
+            # names simply loses its manifest ownership signal and is skipped.
+            Write-Verbose "Skipping unparseable owned-PID manifest line: $($_.Exception.Message)"
         }
     }
 
