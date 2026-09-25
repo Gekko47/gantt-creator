@@ -7,6 +7,8 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
+- **R3.4/R3.5 final verification (current branch)** — `verify-quick.ps1` PASS in 174.4s; clean-tree `verify.ps1` PASS in 217.4s; production format, Release warnings-as-errors build, packed AddIn publish, non-Office tests, 100% measured line/branch coverage for Core/Office/AddIn/Raster, and package vulnerability scan all PASS. The separate Office gate for the schema-v2 settings prerequisite passed earlier on Office 16.0.20326.20158. Checklist: G, I.
+
 - **R3.5 frame/band geometry (commits `9e088bf`, `0f577bd`)** — Added Core `ChartFrameGeometry`, `BandSequence`, `FrameBandsBuilder`, and injected `ITextWidthMeasurer`; emits chart-owned background, frame, title, year/period headers, alternating bands, and deduplicated grid primitives with exact chart bounds, label suppression, overflow warnings, closed scale/format pairs, and typed refusal positives. Core 561/561 PASS; Architecture 78/78 PASS; Release solution build 0 warnings/0 errors; `verify-quick.ps1` PASS in 174.4s. Office gate not applicable. Checklist: B, C, G, I.
 
 - **R3.4 lane/stack geometry (commit `4ba0601`)** — Added pure Core `LaneLayoutBuilder`, `LaneOrdering`, `LaneGeometry`, `SlotGeometry`, and `LaneEventInput`; effective stack indices derive from row position and ignore visible `StackIndex`, with sparse/duplicate compatibility values compacted, exact growth/centre formulas, splitter/spacer fixed lanes, deterministic shuffle proofs, and typed refusal positives. Core 549/549 PASS; Architecture 78/78 PASS; Release solution build 0 warnings/0 errors; final `verify-quick.ps1` PASS in 174.4s. Office gate not applicable. Checklist: B, G, I.
