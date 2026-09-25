@@ -88,8 +88,7 @@ public class ExcelTypeOptionsMaterialiser(
         Excel.Names names = workbook.Names;
         Excel.Name? existingName = FindName(names, GanttWorkbookContract.TypeOptionsDefinedName);
         var expectedRefersTo = BuildRefersTo(config.Name, optionsRange);
-        if (existingName is not null
-            && !string.Equals(existingName.RefersTo, expectedRefersTo, StringComparison.Ordinal))
+        if (existingName is not null && !RefersToMatches(existingName.RefersTo, expectedRefersTo))
         {
             return TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.NameTargetInvalid);
         }
@@ -119,6 +118,69 @@ public class ExcelTypeOptionsMaterialiser(
         var address = range.Address[true, true]
             ?? throw new InvalidOperationException("TypeOptions range has no address.");
         return $"='{sheetName.Replace("'", "''", StringComparison.Ordinal)}'!{address}";
+    }
+
+    /// <summary>
+    /// Returns whether an existing name designates the same sheet and address this
+    /// materialiser would write.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Excel normalises a stored name's <c>RefersTo</c>: it drops the quotes around
+    /// a sheet name that does not need them, so a name this adapter wrote as
+    /// <c>='_GanttCreatorConfig'!$B$2:$B$17</c> is read back as
+    /// <c>=_GanttCreatorConfig!$B$2:$B$17</c>. Comparing the raw strings with
+    /// <see cref="StringComparison.Ordinal"/> therefore rejected the adapter's own
+    /// correct value on every call and refused every Add Row.
+    /// </para>
+    /// <para>
+    /// The sheet name is compared case-insensitively (Excel treats sheet names that
+    /// way) after unquoting and unescaping; the range address is compared Ordinally,
+    /// so a name pointing at a different range is still refused.
+    /// </para>
+    /// </remarks>
+    /// <param name="existingRefersTo">The stored name's target as Excel reports it.</param>
+    /// <param name="expectedRefersTo">The target this materialiser would write.</param>
+    /// <returns>Whether both designate the same sheet and address.</returns>
+    internal static bool RefersToMatches(string? existingRefersTo, string expectedRefersTo)
+    {
+        if (existingRefersTo is null)
+        {
+            return false;
+        }
+
+        var (existingSheet, existingAddress) = ParseRefersTo(existingRefersTo);
+        var (expectedSheet, expectedAddress) = ParseRefersTo(expectedRefersTo);
+
+        // Both targets must parse; an unparsable one is a mismatch, not a match.
+        return existingSheet.Length > 0
+            && expectedSheet.Length > 0
+            && string.Equals(existingSheet, expectedSheet, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existingAddress, expectedAddress, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Splits a <c>=Sheet!Address</c> name target into its unquoted, unescaped
+    /// sheet name and its range address.
+    /// </summary>
+    /// <param name="refersTo">The name target.</param>
+    /// <returns>The sheet and address parts, both empty when the target cannot be split.</returns>
+    private static (string Sheet, string Address) ParseRefersTo(string refersTo)
+    {
+        var text = refersTo.TrimStart('=').Trim();
+        var separator = text.LastIndexOf('!');
+        if (separator <= 0 || separator == text.Length - 1)
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        var sheetPart = text[..separator].Trim();
+        var address = text[(separator + 1)..].Trim();
+        var sheet = sheetPart.Length >= 2 && sheetPart[0] == '\'' && sheetPart[^1] == '\''
+            ? sheetPart[1..^1].Replace("''", "'", StringComparison.Ordinal)
+            : sheetPart;
+
+        return address.Length == 0 ? (string.Empty, string.Empty) : (sheet, address);
     }
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)
