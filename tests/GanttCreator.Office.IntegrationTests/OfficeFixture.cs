@@ -123,9 +123,19 @@ internal class OfficeFixture : IAsyncLifetime
     /// <remarks>
     /// A non-zero count is the regression signal for unreleased COM proxies: the
     /// escalation stops the leak from breaking the gate, and this counter is what
-    /// makes it visible. The goal is zero, asserted by the residual-process test.
+    /// makes it visible. The goal is zero. A test that forces an escalation on
+    /// purpose (to prove the escalation path works) sets
+    /// <see cref="SuppressLeakSignal"/> so its deliberate kill is not counted
+    /// against the ratchet.
     /// </remarks>
     public int ForcedKillCount { get; private set; }
+
+    /// <summary>
+    /// Whether this fixture's escalation count should be excluded from the leak
+    /// signal. Set only by a test that forces a kill deliberately, never by a
+    /// test that simply leaked.
+    /// </summary>
+    internal bool SuppressLeakSignal { get; set; }
 
     /// <summary>
     /// Records the escalation count to the shell so the gate can report the leak
@@ -138,6 +148,11 @@ internal class OfficeFixture : IAsyncLifetime
     /// </remarks>
     internal void ReportForcedKillCount()
     {
+        if (SuppressLeakSignal)
+        {
+            return;
+        }
+
         var path = Environment.GetEnvironmentVariable("GANTTCREATOR_FORCED_KILLS_PATH");
         if (string.IsNullOrEmpty(path))
         {
@@ -547,14 +562,23 @@ internal class OfficeFixture : IAsyncLifetime
     /// </remarks>
     internal sealed class ComScope : IDisposable
     {
-        private readonly List<System.MarshalByRefObject> _tracked = [];
+        private readonly List<object> _tracked = [];
 
         /// <summary>Tracks a proxy for release when this scope is disposed.</summary>
         /// <typeparam name="T">The proxy type.</typeparam>
         /// <param name="proxy">The proxy to release later.</param>
         /// <returns>The same proxy, so the call can wrap an expression.</returns>
+        /// <remarks>
+        /// The constraint is <c>class</c>, not <see cref="System.MarshalByRefObject"/>:
+        /// the PIA's Excel types are COM <em>interfaces</em> (<c>Range</c>,
+        /// <c>ListObject</c>, ...), so the concrete RCW behind them is what
+        /// <see cref="System.Runtime.InteropServices.Marshal.ReleaseComObject(object)"/>
+        /// accepts. Releasing a plain object that was never a COM proxy throws
+        /// <see cref="ArgumentException"/>, which <see cref="Dispose"/> swallows
+        /// so a non-COM argument cannot fail teardown.
+        /// </remarks>
         public T Track<T>(T proxy)
-            where T : System.MarshalByRefObject
+            where T : class
         {
             ArgumentNullException.ThrowIfNull(proxy);
             _tracked.Add(proxy);

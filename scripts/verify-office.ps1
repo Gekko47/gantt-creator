@@ -23,7 +23,14 @@
 param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
-    [int]$DeadlineSeconds = 600
+    [int]$DeadlineSeconds = 600,
+    # Ratchet on the COM-proxy leak signal: the ceiling on forced kills the run
+    # may contain before the gate fails. It is set to the measured baseline, so
+    # the gate is green today and a regression past the ceiling is red. Each
+    # commit that retires a leaked proxy chain lowers it; the end state is 0.
+    # The number counts real test teardowns only -- a test that forces a kill
+    # deliberately sets OfficeFixture.SuppressLeakSignal and is excluded.
+    [int]$MaxForcedKills = 24
 )
 
 $ErrorActionPreference = 'Stop'
@@ -402,7 +409,7 @@ try {
 } catch {
     Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
 }
-Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (target 0; each one is a test body that left a COM proxy alive)"
+Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (ratchet ceiling $MaxForcedKills, end state 0; each one is a test body that left a COM proxy alive)"
 
 if ($testProc.ExitCode -ne 0) {
     Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."
@@ -415,6 +422,15 @@ if ($testProc.ExitCode -ne 0) {
 if ($straysKilled -gt 0) {
     Log "FAIL: $straysKilled harness-owned Office process(es) survived the test run and had to be killed. Evidence preserved under $evidence."
     exit 3
+}
+
+# Ratchet on the leak signal. The ceiling is the measured baseline, so this is
+# green today; a test that starts leaking again pushes the count past it and the
+# gate goes red. Each commit that retires a leaked proxy chain lowers the
+# ceiling, and the end state is 0 -- no test should need a forced kill at all.
+if ($forcedKills -gt $MaxForcedKills) {
+    Log "FAIL: COM proxy leak signal $forcedKills exceeds the ratchet ceiling $MaxForcedKills. A test that previously released its COM proxies has stopped, or a new test is leaking. Evidence preserved under $evidence."
+    exit 4
 }
 
 Log "verify-office: PASS. Report: $report"

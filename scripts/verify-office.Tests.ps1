@@ -195,6 +195,32 @@ exit /b 0
         $codeOnly | Should -Match 'exit 3'
     }
 
+    It 'fails the gate when the COM-proxy leak ratchet is exceeded' {
+        # The leak is measured, not fixed, so the gate carries a ceiling. It is
+        # set to the measured baseline: green today, red on a regression, and
+        # lowered as each test file stops leaking.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$MaxForcedKills = \d+'
+        $codeOnly | Should -Match '\$forcedKills -gt \$MaxForcedKills'
+        $codeOnly | Should -Match 'exceeds the ratchet ceiling'
+        $codeOnly | Should -Match 'exit 4'
+    }
+
+    It 'excludes a deliberate escalation from the leak signal' {
+        # A test that forces a kill to prove the escalation path works must not
+        # count against the ratchet, or the ceiling can never be reached.
+        $fixture = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests\GanttCreator.Office.IntegrationTests\OfficeFixture.cs') -Raw
+        $fixture | Should -Match 'SuppressLeakSignal'
+        $fixture | Should -Match 'if \(SuppressLeakSignal\)'
+    }
+
+    It 'positive control: the ratchet assertion fires on a flagged stub' {
+        $flagged = "if (`$forcedKills -gt `$MaxForcedKills) { }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'exceeds the ratchet ceiling'
+    }
+
     It 'positive control: the fail-on-stray assertion fires on a flagged stub' {
         # Ensures the negative assertion above can detect a regression where the
         # stray verdict is removed.

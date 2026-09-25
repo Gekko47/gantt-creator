@@ -29,6 +29,28 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
 
     /// <summary>
+    /// Resolves the Gantt sheet and table through a scope that releases every
+    /// proxy it hands out.
+    /// </summary>
+    /// <remarks>
+    /// The <c>Sheets</c> / <c>ListObjects</c> / <c>ListRows</c> / <c>Range</c>
+    /// chain each holds a reference on the Excel Application, so an unreleased
+    /// chain keeps the process alive past <c>Quit()</c> and the fixture has to
+    /// force-kill it. Tracking them here is what retires this file's share of
+    /// the leak; see the ratchet ceiling in <c>verify-office.ps1</c>.
+    /// </remarks>
+    private static (Excel.Worksheet Sheet, Excel.ListObject Table) ResolveGanttTable(
+        Excel.Workbook workbook,
+        OfficeFixture.ComScope scope)
+    {
+        Excel.Sheets sheets = scope.Track(workbook.Sheets);
+        Excel.Worksheet sheet = (Excel.Worksheet)scope.Track(sheets[GanttWorkbookContract.GanttSheetLabel]);
+        Excel.ListObjects objects = scope.Track(sheet.ListObjects);
+        Excel.ListObject table = scope.Track(objects[GanttTableSchema.TableName]);
+        return (sheet, table);
+    }
+
+    /// <summary>
     /// The adopt path produces one visible sheet with <c>tblGanttData</c>.
     /// Write real serial dates into the body, then read the table twice —
     /// once with GB display formatting and once with US — and assert the
@@ -40,6 +62,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     public async Task Read_returns_locale_invariant_dtos_under_gb_and_us_display_formats()
     {
         var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
@@ -61,23 +84,25 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             // targeted through the ListRow object ListRows.Add returned and
             // every assertion is computed from the body offset that row
             // actually occupies.
-            Excel.Worksheet ganttSheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
+            Excel.Worksheet ganttSheet;
+            Excel.ListObject table;
+            (ganttSheet, table) = ResolveGanttTable(workbook, scope);
             ClearTableBody(table);
             Assert.Equal(0, table.ListRows.Count);
 
             // Add the two body rows: a span + a milestone (Start-only geometry
             // is R2.5; here we only prove value reading). Dates as OLE
             // Automation serials are locale-invariant regardless of NumberFormat.
-            Excel.ListRow spanRow = table.ListRows.Add();
-            Excel.ListRow milestoneRow = table.ListRows.Add();
+            Excel.ListRows listRows = scope.Track(table.ListRows);
+            Excel.ListRow spanRow = scope.Track(listRows.Add());
+            Excel.ListRow milestoneRow = scope.Track(listRows.Add());
 
-            Excel.Range body = table.DataBodyRange;
+            Excel.Range body = scope.Track(table.DataBodyRange);
             Assert.NotNull(body);
 
-            Excel.Range bodyRows = body.Rows;
-            Excel.Range spanRange = spanRow.Range;
-            Excel.Range milestoneRange = milestoneRow.Range;
+            Excel.Range bodyRows = scope.Track(body.Rows);
+            Excel.Range spanRange = scope.Track(spanRow.Range);
+            Excel.Range milestoneRange = scope.Track(milestoneRow.Range);
             int bodyRowCount = bodyRows.Count;
             int spanOffset = spanRange.Row - body.Row + 1;
             int milestoneOffset = milestoneRange.Row - body.Row + 1;
@@ -104,25 +129,23 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             const double finishSerial = 44931.0; // 2023-01-05
             const double milestoneSerial = 44932.0; // 2023-01-06
 
-            SetBodyCell(body, spanOffset, "Id", "G-span");
-            SetBodyCell(body, spanOffset, "LaneId", "L-1");
-            SetBodyCell(body, spanOffset, "StackIndex", 1.0);
-            SetBodyCell(body, spanOffset, "Type", "As-Planned Activity");
-            SetBodyCell(body, spanOffset, "Start", startSerial);
-            SetBodyCell(body, spanOffset, "Finish", finishSerial);
-            SetBodyCell(body, spanOffset, "Visible", true);
-
-            SetBodyCell(body, milestoneOffset, "Id", "G-milestone");
-            SetBodyCell(body, milestoneOffset, "LaneId", "L-1");
-            SetBodyCell(body, milestoneOffset, "StackIndex", 2.0);
-            SetBodyCell(body, milestoneOffset, "Type", "Milestone");
-            SetBodyCell(body, milestoneOffset, "Start", milestoneSerial);
-            SetBodyCell(body, milestoneOffset, "Finish", "   ");
-            SetBodyCell(body, milestoneOffset, "Visible", "TRUE");
-
+            SetBodyCell(body, spanOffset, "Id", "G-span", scope);
+            SetBodyCell(body, spanOffset, "LaneId", "L-1", scope);
+            SetBodyCell(body, spanOffset, "StackIndex", 1.0, scope);
+            SetBodyCell(body, spanOffset, "Type", "As-Planned Activity", scope);
+            SetBodyCell(body, spanOffset, "Start", startSerial, scope);
+            SetBodyCell(body, spanOffset, "Finish", finishSerial, scope);
+            SetBodyCell(body, spanOffset, "Visible", true, scope);
+            SetBodyCell(body, milestoneOffset, "Id", "G-milestone", scope);
+            SetBodyCell(body, milestoneOffset, "LaneId", "L-1", scope);
+            SetBodyCell(body, milestoneOffset, "StackIndex", 2.0, scope);
+            SetBodyCell(body, milestoneOffset, "Type", "Milestone", scope);
+            SetBodyCell(body, milestoneOffset, "Start", milestoneSerial, scope);
+            SetBodyCell(body, milestoneOffset, "Finish", "   ", scope);
+            SetBodyCell(body, milestoneOffset, "Visible", "TRUE", scope);
             // Format A: GB DD/MM/YYYY.
             body.NumberFormat = "dd/MM/yyyy";
-            string gbFinishText = GetBodyCellText(body, spanOffset, "Finish");
+            string gbFinishText = GetBodyCellText(body, spanOffset, "Finish", scope);
             GanttTableReadOutcome gb = new ExcelGanttTableReader(fixture.Excel).Read();
             AssertReadCorrect(gb, spanOffset, milestoneOffset, bodyRowCount);
 
@@ -130,7 +153,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             // differently, so identical DTOs prove the reader read the Value2
             // serials and never parsed display text.
             body.NumberFormat = "MM/dd/yyyy";
-            string usFinishText = GetBodyCellText(body, spanOffset, "Finish");
+            string usFinishText = GetBodyCellText(body, spanOffset, "Finish", scope);
             GanttTableReadOutcome us = new ExcelGanttTableReader(fixture.Excel).Read();
             AssertReadCorrect(us, spanOffset, milestoneOffset, bodyRowCount);
 
@@ -146,6 +169,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         }
         finally
         {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
@@ -186,6 +212,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     public async Task Read_refuses_a_1904_workbook()
     {
         var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
@@ -205,6 +232,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         }
         finally
         {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
@@ -223,6 +253,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     public async Task Read_maps_live_excel_error_cells_to_null_and_preserves_the_row()
     {
         var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
@@ -235,17 +266,19 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome outcome = initialiser.Initialise();
             Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
 
-            Excel.Worksheet ganttSheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
+            Excel.Worksheet ganttSheet;
+            Excel.ListObject table;
+            (ganttSheet, table) = ResolveGanttTable(workbook, scope);
             ClearTableBody(table);
 
-            Excel.ListRow errorRow = table.ListRows.Add();
-            Excel.ListRow numericRow = table.ListRows.Add();
-            Excel.Range body = table.DataBodyRange;
+            Excel.ListRows listRows = scope.Track(table.ListRows);
+            Excel.ListRow errorRow = scope.Track(listRows.Add());
+            Excel.ListRow numericRow = scope.Track(listRows.Add());
+            Excel.Range body = scope.Track(table.DataBodyRange);
             Assert.NotNull(body);
 
-            int errorOffset = errorRow.Range.Row - body.Row + 1;
-            int numericOffset = numericRow.Range.Row - body.Row + 1;
+            int errorOffset = scope.Track(errorRow.Range).Row - body.Row + 1;
+            int numericOffset = scope.Track(numericRow.Range).Row - body.Row + 1;
             Assert.True(
                 numericOffset > errorOffset,
                 $"Expected the numeric row below the error row; " +
@@ -254,23 +287,22 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             // A genuine error cell must come from a formula: writing the error's
             // int would store a number. #N/A, #DIV/0! and #VALUE! are the three
             // the formula language forces deterministically.
-            SetBodyCellFormula(body, errorOffset, "Id", "G-error");
-            SetBodyCellFormula(body, errorOffset, "Description", "error cell row");
-            SetBodyCellFormula(body, errorOffset, "Start", "=NA()");
-            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0");
-            SetBodyCellFormula(body, errorOffset, "StackIndex", "=VALUE(\"x\")");
-
-            SetBodyCell(body, numericOffset, "Id", "G-number");
-            SetBodyCell(body, numericOffset, "Description", "numeric row");
-            SetBodyCell(body, numericOffset, "Start", 44932.0); // 2023-01-06
+            SetBodyCellFormula(body, errorOffset, "Id", "G-error", scope);
+            SetBodyCellFormula(body, errorOffset, "Description", "error cell row", scope);
+            SetBodyCellFormula(body, errorOffset, "Start", "=NA()", scope);
+            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0", scope);
+            SetBodyCellFormula(body, errorOffset, "StackIndex", "=VALUE(\"x\")", scope);
+            SetBodyCell(body, numericOffset, "Id", "G-number", scope);
+            SetBodyCell(body, numericOffset, "Description", "numeric row", scope);
+            SetBodyCell(body, numericOffset, "Start", 44932.0, scope); // 2023-01-06
 
             // Value2 exposes an error only once the workbook has calculated.
             fixture.Excel.Calculate();
 
-            object? naPayload = GetBodyCellValue2(body, errorOffset, "Start");
-            object? divPayload = GetBodyCellValue2(body, errorOffset, "Finish");
-            object? valuePayload = GetBodyCellValue2(body, errorOffset, "StackIndex");
-            object? numberPayload = GetBodyCellValue2(body, numericOffset, "Start");
+            object? naPayload = GetBodyCellValue2(body, errorOffset, "Start", scope);
+            object? divPayload = GetBodyCellValue2(body, errorOffset, "Finish", scope);
+            object? valuePayload = GetBodyCellValue2(body, errorOffset, "StackIndex", scope);
+            object? numberPayload = GetBodyCellValue2(body, numericOffset, "Start", scope);
             _output.WriteLine(
                 $"payloads: #N/A type={naPayload?.GetType().Name} value={naPayload}; " +
                 $"#DIV/0! type={divPayload?.GetType().Name} value={divPayload}; " +
@@ -307,6 +339,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         }
         finally
         {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
@@ -378,6 +413,7 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     public async Task Read_preserves_error_cells_as_null_and_reads_real_cells_as_double()
     {
         var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
@@ -391,41 +427,39 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome outcome = initialiser.Initialise();
             Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
 
-            Excel.Worksheet ganttSheet =
-                (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table =
-                ganttSheet.ListObjects[GanttTableSchema.TableName];
+            Excel.Worksheet ganttSheet;
+            Excel.ListObject table;
+            (ganttSheet, table) = ResolveGanttTable(workbook, scope);
             ClearTableBody(table);
 
-            Excel.ListRow dataRow = table.ListRows.Add();
-            Excel.ListRow errorRow = table.ListRows.Add();
+            Excel.ListRows listRows = scope.Track(table.ListRows);
+            Excel.ListRow dataRow = scope.Track(listRows.Add());
+            Excel.ListRow errorRow = scope.Track(listRows.Add());
 
-            Excel.Range body = table.DataBodyRange;
+            Excel.Range body = scope.Track(table.DataBodyRange);
             Assert.NotNull(body);
 
-            int dataOffset = dataRow.Range.Row - body.Row + 1;
-            int errorOffset = errorRow.Range.Row - body.Row + 1;
+            int dataOffset = scope.Track(dataRow.Range).Row - body.Row + 1;
+            int errorOffset = scope.Track(errorRow.Range).Row - body.Row + 1;
             _output.WriteLine(
                 $"Excel build {fixture.Excel.Version} (PID {fixture.ProcessId}); " +
                 $"ListRows.Count={table.ListRows.Count}; body={body.Address}; " +
                 $"dataOffset={dataOffset}; errorOffset={errorOffset}");
 
-            SetBodyCell(body, dataOffset, "Id", "G-real");
-            SetBodyCell(body, dataOffset, "LaneId", "L-1");
-            SetBodyCell(body, dataOffset, "StackIndex", 3.0);
-            SetBodyCell(body, dataOffset, "Type", "As-Planned Activity");
-            SetBodyCell(body, dataOffset, "Start", 44927.5); // 2023-01-01 midday — non-whole so Value2 is double
-            SetBodyCell(body, dataOffset, "Visible", true);
-
-            SetBodyCell(body, errorOffset, "Id", "G-error");
-            SetBodyCell(body, errorOffset, "LaneId", "L-1");
-            SetBodyCellFormula(body, errorOffset, "StackIndex", "=NA()");
-            SetBodyCellFormula(body, errorOffset, "Type", "=VALUE(\"x\")");
-            SetBodyCellFormula(body, errorOffset, "Description", "=NA()");
-            SetBodyCellFormula(body, errorOffset, "Start", "=SQRT(-1)");
-            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0");
-            SetBodyCellFormula(body, errorOffset, "StyleKey", "=nonexistentName");
-
+            SetBodyCell(body, dataOffset, "Id", "G-real", scope);
+            SetBodyCell(body, dataOffset, "LaneId", "L-1", scope);
+            SetBodyCell(body, dataOffset, "StackIndex", 3.0, scope);
+            SetBodyCell(body, dataOffset, "Type", "As-Planned Activity", scope);
+            SetBodyCell(body, dataOffset, "Start", 44927.5, scope); // 2023-01-01 midday — non-whole so Value2 is double
+            SetBodyCell(body, dataOffset, "Visible", true, scope);
+            SetBodyCell(body, errorOffset, "Id", "G-error", scope);
+            SetBodyCell(body, errorOffset, "LaneId", "L-1", scope);
+            SetBodyCellFormula(body, errorOffset, "StackIndex", "=NA()", scope);
+            SetBodyCellFormula(body, errorOffset, "Type", "=VALUE(\"x\")", scope);
+            SetBodyCellFormula(body, errorOffset, "Description", "=NA()", scope);
+            SetBodyCellFormula(body, errorOffset, "Start", "=SQRT(-1)", scope);
+            SetBodyCellFormula(body, errorOffset, "Finish", "=1/0", scope);
+            SetBodyCellFormula(body, errorOffset, "StyleKey", "=nonexistentName", scope);
             fixture.Excel.CalculateFull();
 
             Excel.Range startErrorCell = body.Cells[errorOffset, GetColumnIndex("Start")];
@@ -500,6 +534,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
         }
         finally
         {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
@@ -535,9 +572,10 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     /// header is <paramref name="headerName"/>. Column position is resolved
     /// from the Default schema column order (Ordinal).
     /// </summary>
-    private static void SetBodyCell(Excel.Range body, int bodyRowNumber, string headerName, object value)
+    private static void SetBodyCell(
+        Excel.Range body, int bodyRowNumber, string headerName, object value, OfficeFixture.ComScope scope)
     {
-        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        Excel.Range cell = scope.Track(body.Cells[bodyRowNumber, GetColumnIndex(headerName)]);
         cell.Value2 = value;
     }
 
@@ -548,9 +586,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     /// payload; writing the int directly would store a number.
     /// </summary>
     private static void SetBodyCellFormula(
-        Excel.Range body, int bodyRowNumber, string headerName, string formula)
+        Excel.Range body, int bodyRowNumber, string headerName, string formula, OfficeFixture.ComScope scope)
     {
-        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        Excel.Range cell = scope.Track(body.Cells[bodyRowNumber, GetColumnIndex(headerName)]);
         cell.Formula = formula;
     }
 
@@ -562,9 +600,9 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     /// the existing null-cell rules).
     /// </summary>
     private static object? GetBodyCellValue2(
-        Excel.Range body, int bodyRowNumber, string headerName)
+        Excel.Range body, int bodyRowNumber, string headerName, OfficeFixture.ComScope scope)
     {
-        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        Excel.Range cell = scope.Track(body.Cells[bodyRowNumber, GetColumnIndex(headerName)]);
         return cell.Value2;
     }
 
@@ -573,9 +611,10 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
     /// whose header is <paramref name="headerName"/>. Used to prove the two
     /// locale display formats really render the same serial differently.
     /// </summary>
-    private static string GetBodyCellText(Excel.Range body, int bodyRowNumber, string headerName)
+    private static string GetBodyCellText(
+        Excel.Range body, int bodyRowNumber, string headerName, OfficeFixture.ComScope scope)
     {
-        Excel.Range cell = body.Cells[bodyRowNumber, GetColumnIndex(headerName)];
+        Excel.Range cell = scope.Track(body.Cells[bodyRowNumber, GetColumnIndex(headerName)]);
         return cell.Text;
     }
 

@@ -450,10 +450,12 @@ public class OfficeFixtureTests
         // The scope is the mechanism for retiring the leak at source. It must
         // hold what it was given, hand it back for use, and empty itself on
         // dispose; a proxy left tracked would keep the reference count up and
-        // reintroduce the very leak it exists to prevent.
+        // reintroduce the very leak it exists to prevent. A non-COM argument is
+        // fine here: ReleaseComObject rejects it and the scope swallows that, so
+        // a plain object still proves the track/dispose bookkeeping.
         var scope = new OfficeFixture.ComScope();
 
-        var tracked = scope.Track(new StubProxy());
+        var tracked = scope.Track(new object());
 
         Assert.NotNull(tracked);
         Assert.Equal(1, scope.TrackedCount);
@@ -466,16 +468,7 @@ public class OfficeFixtureTests
     [Fact]
     public void A_com_scope_rejects_a_null_proxy() =>
         Assert.Throws<ArgumentNullException>(
-            () => new OfficeFixture.ComScope().Track<StubProxy>(null!));
-
-    /// <summary>
-    /// A minimal non-COM stand-in for the scope test. The scope's contract is
-    /// over MarshalByRefObject, so a plain subclass exercises tracking and
-    /// release without needing a live Excel.
-    /// </summary>
-    private sealed class StubProxy : System.MarshalByRefObject
-    {
-    }
+            () => new OfficeFixture.ComScope().Track<object>(null!));
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
@@ -500,6 +493,13 @@ public class OfficeFixtureTests
         public List<int> KilledProcessIds { get; } = [];
 
         public int LivePid { get; set; }
+
+        public StubbornFixture()
+        {
+            // This fixture exists to force an escalation, so its kill is
+            // deliberate and must not count against the leak ratchet.
+            SuppressLeakSignal = true;
+        }
 
         /// <summary>
         /// Shortened so the escalation test reaches the kill without first
