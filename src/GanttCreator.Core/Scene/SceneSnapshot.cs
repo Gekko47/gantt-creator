@@ -33,7 +33,18 @@ public static class SceneSnapshot
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
         SceneDocument document = JsonSerializer.Deserialize<SceneDocument>(json, _serializerOptions)
             ?? throw new InvalidDataException("Scene JSON is empty.");
-        return FromDocument(document);
+        try
+        {
+            return FromDocument(document);
+        }
+        catch (JsonException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
+        {
+            throw new InvalidDataException("Scene JSON contains invalid scene data.", exception);
+        }
     }
 
     private static SceneDocument ToDocument(GanttScene scene) => new()
@@ -240,21 +251,34 @@ public static class SceneSnapshot
         Alignment = style.Alignment is { } alignment ? (int)alignment : null,
     };
 
-    private static SceneStyle FromStyle(StyleDocument document) => new(
-        Required(document.StyleKey, "style.styleKey"),
-        ParseColour(document.FillColour, "style.fillColour"),
-        ParseColour(document.StrokeColour, "style.strokeColour"),
-        document.OutlineWidthPt,
-        (GanttHatchPattern)document.HatchPattern,
-        document.FontFamily,
-        document.FontSizePt,
-        document.Bold,
-        document.Alignment is { } alignment ? (GanttLabelPosition)alignment : null);
+    private static SceneStyle FromStyle(StyleDocument document)
+    {
+        GanttHatchPattern hatchPattern = Enum.IsDefined(typeof(GanttHatchPattern), document.HatchPattern)
+            ? (GanttHatchPattern)document.HatchPattern
+            : throw new InvalidDataException($"Invalid hatch pattern {document.HatchPattern}.");
+        GanttLabelPosition? alignment = document.Alignment is { } value
+            ? Enum.IsDefined(typeof(GanttLabelPosition), value)
+                ? (GanttLabelPosition)value
+                : throw new InvalidDataException($"Invalid label alignment {value}.")
+            : null;
+        return new SceneStyle(
+            Required(document.StyleKey, "style.styleKey"),
+            ParseColour(document.FillColour, "style.fillColour"),
+            ParseColour(document.StrokeColour, "style.strokeColour"),
+            document.OutlineWidthPt,
+            hatchPattern,
+            document.FontFamily,
+            document.FontSizePt,
+            document.Bold,
+            alignment);
+    }
 
     private static ColourHex? ParseColour(string? value, string field) =>
-        value is null ? null : ColourHex.Parse(value) is var colour && colour is not null
-            ? colour
-            : throw new InvalidDataException($"Invalid colour in {field}.");
+        value is null
+            ? null
+            : ColourHex.TryParse(value, out ColourHex? colour) && colour is not null
+                ? colour
+                : throw new InvalidDataException($"Invalid colour in {field}.");
 
     private static GanttRowId ParseOwner(string? value) =>
         GanttRowId.TryParse(value, out GanttRowId? owner) && owner is not null

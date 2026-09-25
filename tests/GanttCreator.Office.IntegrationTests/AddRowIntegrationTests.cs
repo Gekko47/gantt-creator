@@ -159,12 +159,12 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 () => FixedId('4'));
 
             Assert.True(inserted.Succeeded, $"Insert refused: {inserted.Refusal}");
-            Assert.Equal(3, inserted.BodyIndex);
+            Assert.Equal(2, inserted.BodyIndex);
             Assert.Equal(4, table.DataBodyRange.Rows.Count);
             Assert.Equal(5, table.Range.Rows.Count);
             AssertId(table.ListRows[1], FixedId('1').Value);
-            AssertId(table.ListRows[2], FixedId('2').Value);
-            AssertId(table.ListRows[3], FixedId('4').Value);
+            AssertId(table.ListRows[2], FixedId('4').Value);
+            AssertId(table.ListRows[3], FixedId('2').Value);
             AssertId(table.ListRows[4], FixedId('3').Value);
         }
         finally

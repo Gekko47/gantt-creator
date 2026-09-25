@@ -60,18 +60,21 @@ public sealed class ColourHex : IEquatable<ColourHex>
     }
 
     /// <inheritdoc />
-    public bool Equals(ColourHex? other) => other is not null && ARGB == other.ARGB;
+    public bool Equals(ColourHex? other) =>
+        other is not null
+        && ARGB == other.ARGB
+        && HasExplicitAlpha == other.HasExplicitAlpha;
 
     /// <inheritdoc />
     public override bool Equals(object? obj) => obj is ColourHex other && Equals(other);
 
     /// <inheritdoc />
-    public override int GetHashCode() => ARGB.GetHashCode();
+    public override int GetHashCode() => HashCode.Combine(ARGB, HasExplicitAlpha);
 
-    /// <summary>Equality operator comparing the numeric ARGB value.</summary>
+    /// <summary>Equality operator comparing the numeric ARGB value and alpha representation.</summary>
     /// <param name="left">The first colour.</param>
     /// <param name="right">The second colour.</param>
-    /// <returns><see langword="true"/> when both colours have the same ARGB value.</returns>
+    /// <returns><see langword="true"/> when both colours have the same ARGB value and alpha representation.</returns>
     public static bool operator ==(ColourHex? left, ColourHex? right) => left is null ? right is null : left.Equals(right);
 
     /// <summary>Inequality operator comparing the numeric ARGB value.</summary>

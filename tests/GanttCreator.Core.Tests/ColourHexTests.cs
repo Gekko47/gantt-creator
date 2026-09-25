@@ -21,12 +21,24 @@ public sealed class ColourHexTests
     }
 
     [Fact]
-    public void Six_and_eight_digit_forms_compare_by_argb()
+    public void Six_and_eight_digit_forms_with_the_same_argb_are_unequal()
     {
         ColourHex implicitAlpha = ColourHex.Parse("#0F0F0F");
         ColourHex explicitAlpha = ColourHex.Parse("#0F0F0FFF");
-        Assert.Equal(implicitAlpha, explicitAlpha);
-        Assert.True(implicitAlpha == explicitAlpha);
+        Assert.NotEqual(implicitAlpha, explicitAlpha);
+        Assert.True(implicitAlpha != explicitAlpha);
+        Assert.Equal("#0F0F0F", implicitAlpha.ToString());
+        Assert.Equal("#0F0F0FFF", explicitAlpha.ToString());
+    }
+
+    [Fact]
+    public void Equivalent_colours_have_equal_hash_codes()
+    {
+        ColourHex first = ColourHex.Parse("#0F0F0F");
+        ColourHex second = ColourHex.Parse("#0F0F0F");
+
+        Assert.Equal(first, second);
+        Assert.Equal(first.GetHashCode(), second.GetHashCode());
     }
 
     [Theory]

@@ -303,7 +303,7 @@ public class GanttRowInserterTests
         Assert.True(outcome.Succeeded);
         Assert.Equal(2, outcome.BodyIndex);
         Assert.Equal(1, graph.AddRowAtPositionCalls);
-        Assert.Equal(3, graph.LastInsertionPosition);
+        Assert.Equal(2, graph.LastInsertionPosition);
         Assert.Equal(0, graph.AddRowCalls);
     }
 

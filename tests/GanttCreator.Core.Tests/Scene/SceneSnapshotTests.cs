@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Core.Tests.Scene;
@@ -44,31 +45,71 @@ public sealed class SceneSnapshotTests
     }
 
     [Fact]
-    public void Deserialize_rejects_unknown_fields()
+    public void Deserialize_rejects_unknown_fields_as_a_json_error()
     {
         var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Version\":1", "\"Version\":1,\"Unknown\":true", StringComparison.Ordinal);
-        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+
+        _ = Assert.Throws<JsonException>(() => SceneSnapshot.Deserialize(json));
     }
 
     [Fact]
-    public void Deserialize_rejects_non_finite_numbers()
+    public void Deserialize_rejects_malformed_json_as_a_json_error() =>
+        Assert.Throws<JsonException>(() => SceneSnapshot.Deserialize("{"));
+
+    [Fact]
+    public void Deserialize_rejects_non_finite_numbers_as_invalid_scene_data()
     {
         var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"X\":0", "\"X\":1e999", StringComparison.Ordinal);
-        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
     }
 
     [Fact]
-    public void Deserialize_rejects_negative_extents()
+    public void Deserialize_rejects_negative_extents_as_invalid_scene_data()
     {
         var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Width\":100", "\"Width\":-1", StringComparison.Ordinal);
-        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
     }
 
     [Fact]
-    public void Deserialize_rejects_unknown_primitive_kind()
+    public void Deserialize_rejects_unknown_primitive_kind_as_invalid_scene_data()
     {
         var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Kind\":\"rect\"", "\"Kind\":\"unknown\"", StringComparison.Ordinal);
-        _ = Assert.ThrowsAny<Exception>(() => SceneSnapshot.Deserialize(json));
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_invalid_colour_as_invalid_scene_data()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"FillColour\":null", "\"FillColour\":\"invalid\"", StringComparison.Ordinal);
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_undefined_hatch_pattern_as_invalid_scene_data()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"HatchPattern\":0", "\"HatchPattern\":999", StringComparison.Ordinal);
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_undefined_style_alignment_as_invalid_scene_data()
+    {
+        var json = SceneSnapshot.Serialize(CreateScene()).Replace("\"Alignment\":null", "\"Alignment\":999", StringComparison.Ordinal);
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
+    }
+
+    [Fact]
+    public void Deserialize_preserves_null_style_alignment()
+    {
+        GanttScene scene = SceneSnapshot.Deserialize(SceneSnapshot.Serialize(CreateScene()));
+
+        Assert.Null(scene.Primitives.OfType<SceneRect>().Single().Style.Alignment);
     }
 
     private static GanttScene CreateScene() => CreateScene(
