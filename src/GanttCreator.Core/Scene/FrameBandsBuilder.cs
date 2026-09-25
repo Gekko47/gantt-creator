@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GanttCreator.Core.Scene;
 
 /// <summary>Injected deterministic text-width measurement seam for scene construction.</summary>
@@ -170,7 +172,7 @@ public static class FrameBandsBuilder
         for (var index = 0; index < sequence.Periods.Count; index++)
         {
             BandInterval period = sequence.Periods[index];
-            var id = $"chart:period:{period.Start:yyyy-MM-dd}";
+            var id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
             RectD bounds = new(
                 period.Left,
                 request.PlotBounds.Y - request.YearBandHeightPt - request.PeriodBandHeightPt,
@@ -244,11 +246,12 @@ public static class FrameBandsBuilder
 
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
         {
+            var key = line.Key.ToString("R", CultureInfo.InvariantCulture);
             primitives.Add(
                 new SceneLine(
                     line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right
-                        ? $"chart:grid:edge:{line.Key:R}"
-                        : $"chart:grid:{line.Key:R}",
+                        ? $"chart:grid:edge:{key}"
+                        : $"chart:grid:{key}",
                     SceneOwnerId.Chart,
                     ZLayer.Grid,
                     new PointD(line.Key, request.PlotBounds.Y),
@@ -321,6 +324,8 @@ public static class FrameBandsBuilder
         && request.PanelBounds.Height > 0
         && request.PlotBounds.Width > 0
         && request.PlotBounds.Height > 0
+        && GeometryMath.ApproximatelyEqual(request.TimeScale.PlotLeftPt, request.PlotBounds.Left)
+        && GeometryMath.ApproximatelyEqual(request.TimeScale.PlotRightPt, request.PlotBounds.Right)
         && IsFiniteNonNegative(request.ChartOuterPaddingPt)
         && IsFinitePositive(request.TitleBandHeightPt)
         && IsFinitePositive(request.YearBandHeightPt)

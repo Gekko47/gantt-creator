@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Core.Tests.Scene;
@@ -128,6 +129,22 @@ public sealed class FrameBandsBuilderTests
     }
 
     [Fact]
+    public void Mismatched_time_scale_plot_edges_are_refused()
+    {
+        var leftMismatch = CreateRequest() with
+        {
+            TimeScale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100 + (GeometryMath.Epsilon * 2), 400).Scale!,
+        };
+        var rightMismatch = CreateRequest() with
+        {
+            TimeScale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400 - (GeometryMath.Epsilon * 2)).Scale!,
+        };
+
+        Assert.Equal(FrameBandsRefusal.InvalidGeometry, Build(leftMismatch).Refusal);
+        Assert.Equal(FrameBandsRefusal.InvalidGeometry, Build(rightMismatch).Refusal);
+    }
+
+    [Fact]
     public void Clips_first_and_last_periods_across_a_year_boundary()
     {
         TimeScale scale = TimeScale.TryCreate(new DateOnly(2023, 12, 15), new DateOnly(2024, 2, 10), 100, 400).Scale!;
@@ -181,6 +198,33 @@ public sealed class FrameBandsBuilderTests
             4,
             roundTripped.Primitives.OfType<SceneLine>().Count(line => line.PrimitiveId.StartsWith("chart:grid:", StringComparison.Ordinal))
         );
+    }
+
+    [Fact]
+    public void Snapshot_is_identical_under_de_de_and_th_th()
+    {
+        string germanSnapshot = BuildSnapshot("de-DE");
+        string thaiSnapshot = BuildSnapshot("th-TH");
+
+        Assert.Equal(germanSnapshot, thaiSnapshot);
+    }
+
+    private static string BuildSnapshot(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(cultureName);
+            FrameBandsResult result = Build(CreateRequest()).Result!;
+            GanttScene scene = GanttScene
+                .TryCreate(result.Geometry.ChartBounds, result.Geometry.ChartBounds, result.Primitives, result.Warnings)
+                .Scene!;
+            return SceneSnapshot.Serialize(scene);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 
     private static FrameBandsCreationOutcome Build(FrameBandsRequest request) =>
