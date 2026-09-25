@@ -110,6 +110,7 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                 .Count(s => s.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden);
             Assert.Equal(1, visibleSheets);
             Assert.Equal(1, veryHiddenSheets);
+            Assert.Equal(2, workbook.Sheets.Count);
             Assert.Equal(
                 GanttWorkbookContract.ConfigSheetName,
                 workbook.Sheets[2].Name,

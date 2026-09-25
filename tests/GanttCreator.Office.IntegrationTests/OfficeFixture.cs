@@ -189,22 +189,18 @@ internal sealed class OfficeFixture : IAsyncLifetime
 
         Exception? cleanupException = null;
 
-        // Release the proxies CreateWorkbook handed out to tests BEFORE the
-        // collection sweep. The sweep below closes workbooks by index from
-        // _excel.Workbooks and releases the proxies it fetches there; those
-        // are separate RCW wrappers for the same COM objects, so this sweep
-        // must release only its own proxies and must NOT close — closing here
-        // would remove the workbook from the collection and leave the sweep's
-        // pre-counted index stale. Releasing a proxy is safe while the object
-        // is still referenced by the collection; the object stays alive until
-        // the sweep closes it. Every proxy is released exactly once.
+        // Close and release each workbook handed out by CreateWorkbook before
+        // the collection sweep. Once Close removes it from Workbooks, the sweep
+        // sees only other workbooks that are still open. Release the tracked
+        // RCW in finally even when Close fails; the sweep then obtains fresh
+        // collection proxies and a fresh post-close count.
         if (_createdWorkbooks is not null)
         {
             foreach (Workbook wb in _createdWorkbooks)
             {
                 try
                 {
-                    Marshal.ReleaseComObject(wb);
+                    wb.Close(SaveChanges: false);
                 }
                 catch (COMException ex)
                 {
@@ -222,6 +218,29 @@ internal sealed class OfficeFixture : IAsyncLifetime
                     }
                 }
 #pragma warning restore CA1031
+                finally
+                {
+                    try
+                    {
+                        Marshal.ReleaseComObject(wb);
+                    }
+                    catch (COMException ex)
+                    {
+                        if (cleanupException is null)
+                        {
+                            cleanupException = ex;
+                        }
+                    }
+#pragma warning disable CA1031
+                    catch (Exception ex)
+                    {
+                        if (cleanupException is null)
+                        {
+                            cleanupException = ex;
+                        }
+                    }
+#pragma warning restore CA1031
+                }
             }
 
             _createdWorkbooks.Clear();
@@ -233,9 +252,9 @@ internal sealed class OfficeFixture : IAsyncLifetime
             {
                 _workbooks = _excel.Workbooks;
 
-                // Close every open workbook without saving. The Excel COM
-                // collection is 1-based; iterate backwards so index shifts
-                // from removals do not skip entries.
+                // Close every workbook still open after the tracked-workbook
+                // loop. Read Count only now, then iterate backwards so removals
+                // do not skip entries.
                 var count = _workbooks.Count;
                 for (int i = count; i >= 1; i--)
                 {
