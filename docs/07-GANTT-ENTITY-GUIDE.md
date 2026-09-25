@@ -62,7 +62,7 @@ Renderers consume resolved scene primitives. They may translate primitives to ho
 | `Start` | span/point events | Required by type |
 | `Finish` | span events | Required; must not precede Start |
 | `LaneId` | lane-bound entities | Events sharing a visual line use the same value |
-| `StackIndex` | lane-bound entities | Non-negative vertical-band order; equal values deliberately share the same line |
+| `StackIndex` | lane-bound entities | Schema-v1 compatibility cell; not user-authored and not used as layout authority. Core derives the effective slot from deterministic row/parent-child position |
 | `ParentId` | critical/child events | Stable ID of the owning activity when required |
 | `LabelPosition` | labelled entities | Supported position; blank resolves to the Type default or `Auto` |
 | `StyleKey` | styleable entities | Blank uses type default; otherwise an approved named style |
@@ -245,9 +245,7 @@ The style dialog must show a contrast warning when text/fill combinations are di
 - `ChartBounds` encloses the selected data panel, headers, and plot—not temporary staging space.
 - `PlotBounds` begins below the period header and excludes the data panel.
 - X coordinates derive only from `TimeScale`; Y coordinates derive only from lane/stack layout.
-- `TimeScale.DateToX(date)` maps the start of that calendar day. The selected plot finish is inclusive, so the plot's exclusive right boundary is `DateToX(PlotFinish + 1 day)`.
-- Span dates are inclusive: `left = DateToX(Start)` and `right = DateToX(Finish + 1 day)`. A one-day span therefore has exactly one day of width.
-- Milestones and delineators are point events: `centreX = DateToX(EventDate)`. Do not add half a day or inherit the span finish rule.
+- `TimeScale.DateToX(date)` maps the start of that calendar day. Activity dates are inclusive: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; the activity left edge is `DateToX(Start)`, its width is `DurationDays * DayWidth`, and its right edge is `left + width`. The `Finish` value is never incremented. Milestones and delineators are point events: `centreX = DateToX(EventDate)`. Do not add half a day or inherit the activity duration rule.
 - Dates before/after the time range are clipped at `PlotBounds.Left/Right`.
 - An event wholly outside the time range emits no bar/marker but may produce a warning according to validation policy.
 - Use one edge-rounding pass when translating points to Excel `Single` geometry or raster pixels.
@@ -295,7 +293,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Purpose:** identify the visual, for example “As-Built with Critical Path”.
 
-**Source:** workbook setting `ChartTitle`; blank suppresses the title band only when `ShowTitle=false` or the product rule explicitly permits it.
+**Source:** workbook settings `ChartTitle` and `ShowTitle`. Initialisation writes the nonblank default `Gantt Chart`; an approved settings dialog may update the stored title. `ShowTitle=true` always emits a populated band, and only `ShowTitle=false` hides it.
 
 **Geometry:** spans the configured export width above both data panel and plot. Height is `TitleBandHeightPt`. Text is horizontally centred and vertically middle-aligned.
 
@@ -303,9 +301,9 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Labels:** the entity is text; no secondary label.
 
-**Validation:** enforce a documented maximum length; overflow uses ellipsis in the live view and a warning, not an automatic font-size reduction.
+**Validation:** a valid configuration has nonblank `ChartTitle`; a visible blank title is a typed refusal and is never rendered as an empty band. Enforce a documented maximum length; overflow uses ellipsis in the live view and a warning, not an automatic font-size reduction.
 
-**Tests:** blank/show policy, centring, long text, Unicode, export equivalence.
+**Tests:** default/user title, show/hide policy, nonblank refusal, centring, long text, Unicode, save/reopen retention, and export equivalence.
 
 ## 3. Visible data panel
 
@@ -355,13 +353,13 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Purpose:** show the selected time subdivision, initially month, quarter, or year.
 
-**Source:** time-scale setting and plot range.
+**Source:** selected plot start/finish and the closed `TimeScale` (`Month`, `Quarter`, `Year`) plus `PeriodLabelFormat` settings.
 
 **Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`; period boundaries continue into the plot as grid lines.
 
 **Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
 
-**Labels:** approved unambiguous format (`MM`, `MMM`, quarter label, or year). The format is a setting, not inferred from locale. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Year` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Year` permits `Year`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
 
 **Validation/tests:** every supported scale/format, partial periods, boundary alignment, narrow widths, locale independence.
 
@@ -397,9 +395,9 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Purpose:** stable visual line shared by one or more events.
 
-**Source:** `LaneId`, lane description/parent information, ordered visible events, and stack indices.
+**Source:** `LaneId`, lane description/parent information, ordered visible events, and deterministic display position. ADR-0012 makes the effective stack index a Core-derived value; the visible schema-v1 `StackIndex` cell is compatibility data and is neither trusted nor required for layout.
 
-**Geometry:** sort the distinct `StackIndex` values and map them to consecutive visual slots. Sparse values preserve order but do not create empty height. Multiple events with the same value use the same vertical centre, allowing sequential or overlapping events on one line.
+**Geometry:** R3.4 orders events within each lane by visible row position (extended by parent/child display position in R5.3), then assigns consecutive effective stack values `0, 1, 2, …`. Visible sparse or contradictory values cannot create empty height. The geometry model still compacts sparse effective values and permits duplicate effective values for imported/legacy compatibility. Multiple events assigned the same effective value use the same vertical centre, allowing sequential or overlapping events on one line.
 
 For each visual slot, `slotHeight` is the maximum resolved rectangle height or milestone size assigned to that slot. Minimum lane height and required content height are:
 
@@ -417,9 +415,9 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Labels:** lane description may be represented by the first/parent row in the data panel; it is not automatically duplicated in the plot.
 
-**Validation:** stable lane ID and non-negative stack indices. Duplicate indices are valid. Same-stack overlap is rendered using deterministic subtype/sort/ID z-order and may produce a non-blocking ambiguity warning; it is never silently moved.
+**Validation:** stable lane ID and non-negative effective stack indices. Duplicate effective indices are valid. Same-stack overlap is rendered using deterministic subtype/sort/ID z-order and may produce a non-blocking ambiguity warning; it is never silently moved. A negative visible compatibility value remains a cell-validation error but never supplies layout geometry.
 
-**Tests:** single/multiple slots, several events sharing one slot, mixed bars/diamonds, sparse indices, reordered rows, same-stack overlap, automatic growth, and row/data-panel alignment.
+**Tests:** generated indices independent of visible compatibility values, single/multiple generated slots, duplicate/sparse effective compatibility values, several events sharing one slot, mixed bars/diamonds, reordered rows, same-stack overlap, automatic growth, and row/data-panel alignment.
 
 ## 10. Splitter or section header
 

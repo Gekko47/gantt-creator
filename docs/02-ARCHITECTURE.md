@@ -64,7 +64,7 @@ Required columns:
 | --- | --- | --- |
 | `Id` | text | Stable event identifier; generated once, never row-number based |
 | `LaneId` | text | Stable visual-lane identifier shared by events on the same line |
-| `StackIndex` | whole number | Non-negative vertical-band order; equal values deliberately share one line |
+| `StackIndex` | whole number or blank | Schema-v1 compatibility value; Core derives the effective vertical slot from deterministic row/parent-child position and never trusts or requires this cell for layout |
 | `Type` | catalogue text | In-cell dropdown from the single `EntityTypeCatalog` defined by the entity guide |
 | `Description` | text | User-facing label |
 | `Start` | Excel date or blank | Inclusive start for span events; the single date for a milestone/delineator |
@@ -130,7 +130,7 @@ Use immutable Core types. Suggested concepts, not mandated class names:
 - `EventStyle`: explicit fill, stroke, thickness, hatch, marker, font, and label placement.
 - `TimeScale`: maps `DateOnly` values to plot-space point coordinates.
 - `Scene`: immutable ordered primitives in points.
-- `ScenePrimitive`: rectangle, line, polygon, text, and group metadata.
+- `ScenePrimitive`: rectangle, line, polygon, text, and group metadata with an explicit `SceneOwnerId` that is either one real row ID or the reserved chart-level owner.
 - `ExportSize`: width, calculated height, pixel dimensions, and DPI.
 
 Validation returns all actionable issues in deterministic table/row order. It must distinguish blocking errors from warnings. Do not throw for routine bad user input.
@@ -139,7 +139,7 @@ Key rules:
 
 - IDs are stable and unique.
 - span start is not after finish;
-- lane and stack ordering is deterministic;
+- lane order is deterministic; effective stack slots are derived in Core from deterministic row position and later parent/child display position, never from the visible compatibility cell;
 - milestones and delineators require one date;
 - Type values come only from the central entity catalogue; unknown pasted values are blocking errors;
 - row colour and label-position overrides are validated against the selected Type's capabilities;
@@ -168,7 +168,7 @@ The scene contains explicit z-order, geometry, style, text bounds, clipping, and
 
 - Scene coordinates use points (`1 inch = 72 points`) as `double` values.
 - Convert dates to a day index before geometry calculation.
-- Date X maps the start of a calendar day. Span finish dates and plot finish are inclusive, so their right edge uses `Finish + 1 day`; point events use their exact date without the extra day.
+- Date X maps the start of a calendar day. Activity dates are inclusive: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; the activity left edge is `DateToX(Start)`, its width is `DurationDays * DayWidth`, and its right edge is `left + width`. `Finish` is never incremented. Point events use their exact date without duration width.
 - Snap at one defined boundary; never round repeatedly through the pipeline.
 - Excel comparisons allow a documented tolerance because COM exposes `Single` shape geometry.
 - Raster mapping is `pixels = round(points / 72 * dpi * scale)`, with edge rounding chosen once and covered by boundary tests.

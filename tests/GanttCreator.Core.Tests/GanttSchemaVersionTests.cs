@@ -5,11 +5,10 @@ namespace GanttCreator.Core.Tests;
 public class GanttSchemaVersionTests
 {
     [Fact]
-    public void Current_schema_version_is_the_initial_version_one()
+    public void Current_schema_version_is_the_current_version_two()
     {
-        // Pins decision D5 (work item R2.1): the schema version starts at 1
-        // and increases monotonically; a bump here is a schema migration.
-        Assert.Equal(1, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v2 adds the nonblank title/default and PeriodLabelFormat contract (ADR-0014).
+        Assert.Equal(2, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

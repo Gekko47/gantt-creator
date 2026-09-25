@@ -88,13 +88,14 @@ internal static class InitialiseSheetCommand
         InitialiseRefusalReason.NoActiveWorkbook =>
             "Gantt Creator needs an open workbook. Open or create a workbook, then try Initialise sheet again.",
         InitialiseRefusalReason.TableExists =>
-            "The target worksheet already contains a table named tblGanttData, so Initialise sheet left it unchanged.",
+            "A table named tblGanttData already exists somewhere in this workbook, "
+            + "so Initialise sheet left it unchanged.",
         InitialiseRefusalReason.ConfigSheetExists =>
             "This workbook already contains Gantt Creator configuration (_GanttCreatorConfig), "
             + "so Initialise sheet left it unchanged. Use Repair configuration to inspect or repair it.",
         InitialiseRefusalReason.TargetProtected =>
-            "The target worksheet is protected, so Initialise sheet cannot populate it. "
-            + "Unprotect the worksheet and try again.",
+            "The target worksheet or workbook structure is protected, so Initialise sheet cannot populate it. "
+            + "Check both target worksheet protection and workbook structure protection, then try again.",
         InitialiseRefusalReason.CatalogueDrift =>
             "Initialise sheet could not verify the Gantt Creator configuration. Repair the configuration and try again.",
         _ => "Initialise sheet could not run. Try again; if it keeps failing, see the Diagnostics dialog.",

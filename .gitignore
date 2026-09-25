@@ -21,6 +21,11 @@
 !.cline/skills/
 !.cline/skills/**
 
+# Findings and revision plans
+docs/GanttCreator_R2_Implementation_Findings.md
+docs/GanttCreator_R2_Implementation_Plan.md
+docs/GanttCreator_StageInspect_Code_Audit.md
+
 # qodo
 .qodo/*
 

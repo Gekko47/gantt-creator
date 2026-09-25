@@ -1,0 +1,8 @@
+# ADR-0012 — Derive effective stack index in Core
+
+- **Status**: Accepted
+- **Date**: 2026-09-25
+- **Context**: Schema v1 exposes `StackIndex` on the visible table, while the product requires stack placement to follow deterministic authoring position. Treating the visible cell as authoritative would make ordinary row movement stale and would require a second mutation path merely to preserve layout. Stable row identity must remain independent of row position.
+- **Decision**: `GanttCreator.Core` derives the effective stack index from deterministic visible row position. R5.3 extends that ordering with the parent/child display relationship and child position relative to its parent. The visible `StackIndex` cell remains compatibility data: it is neither trusted nor required for layout and is never rewritten to mirror generated geometry. `SortOrder` remains a deterministic lane-order and z-order tiebreak, not the source of the generated stack position. Stable row IDs never change when rows move.
+- **Consequences**: Moving or reordering rows changes vertical stack geometry on the next explicit Refresh without rewriting identity. Sparse or contradictory visible values cannot create empty slots. Imported/legacy effective stack values remain representable for geometry compatibility, but first-release authoring no longer depends on users entering them.
+- **Alternatives considered**: Persist generated values in the visible cell (rejected because it adds synchronization and migration failure modes); remove the schema-v1 column immediately (rejected because that is a destructive schema migration); sort by `SortOrder` when assigning stack slots (rejected because the approved source is row/parent-child display position).

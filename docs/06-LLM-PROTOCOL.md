@@ -443,4 +443,4 @@ Before declaring a work item done, run these tools and observe their output:
 5. `memra_add` — persist one work-item completion fact per landed item (3-5 lines: ID, commit, gates, Office status, next item). Do not store commit text, test counts, or file lists — see "Persisting the ledger".
 6. `memra_add_decision` (if an irreversible decision was made) — persist it with the context that made it irreversible.
 7. `memra_bootstrap` — recall prior decisions before restating unknowns at session start.
-7. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.
+8. `sequential-thinking__sequentialthinking` — use for any multi-step reasoning (failure classification, review methodology) before concluding.

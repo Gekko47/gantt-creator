@@ -1,6 +1,6 @@
 # ADR-0007 — Configuration-sheet catalogues: tables, settings home, and catalogue hash
 
-- **Status**: Accepted
+- **Status**: Accepted; title/period-key portions superseded by [ADR-0014](0014-frame-band-settings.md)
 - **Date**: 2026-09-21
 - **Context**: Work item R2.7 must materialise the complete first-release
   catalogue on `_GanttCreatorConfig` before Phase 3 reads it

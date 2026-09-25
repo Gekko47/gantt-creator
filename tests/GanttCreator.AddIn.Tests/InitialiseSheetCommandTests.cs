@@ -77,7 +77,7 @@ public class InitialiseSheetCommandTests
     }
 
     [Fact]
-    public void TableExists_refusal_names_the_target_sheet()
+    public void TableExists_refusal_names_the_workbook_wide_table()
     {
         var messages = new List<string>();
         var initialiser = InitialiserWith(
@@ -87,6 +87,7 @@ public class InitialiseSheetCommandTests
 
         var message = Assert.Single(messages);
         Assert.Contains("tblGanttData", message, StringComparison.Ordinal);
+        Assert.Contains("somewhere in this workbook", message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("left it unchanged", message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -105,7 +106,7 @@ public class InitialiseSheetCommandTests
     }
 
     [Fact]
-    public void TargetProtected_refusal_names_protection_and_the_unprotect_action()
+    public void TargetProtected_refusal_names_both_protection_scopes_and_the_check_action()
     {
         var messages = new List<string>();
         var initialiser = InitialiserWith(
@@ -114,8 +115,8 @@ public class InitialiseSheetCommandTests
         InitialiseSheetCommand.Run(initialiser.Object, messages.Add);
 
         var message = Assert.Single(messages);
-        Assert.Contains("protected", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Unprotect", message, StringComparison.Ordinal);
+        Assert.Contains("target worksheet or workbook structure", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Check both", message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -6,7 +6,7 @@ namespace GanttCreator.Core.Tests;
 
 /// <summary>
 /// Contract tests for the code-owned configuration catalogue (work item
-/// R2.7, ADR-0007). The count pins (23/21/6/16/15/11) and the pinned
+/// R2.7, ADR-0007, and ADR-0014). The count pins (23/21/6/16/15/12) and the pinned
 /// catalogue hash detect any entity-guide drift: the guide remains
 /// authoritative, so a changed token is a guide change first and then a
 /// deliberate test update in the same commit. Every constructor guard has a
@@ -49,9 +49,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_11_approved_keys()
+    public void Settings_contains_exactly_the_12_approved_keys()
     {
-        Assert.Equal(11, GanttCatalogues.Settings.Count);
+        Assert.Equal(12, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -63,6 +63,7 @@ public class GanttConfigCatalogueTests
         "ChartTitle",
         "ShowTitle",
         "TimeScale",
+        "PeriodLabelFormat",
         "LegendPosition",
         "ExportIncludeDataPanel",
         "ExportIncludeLegend",
@@ -72,6 +73,49 @@ public class GanttConfigCatalogueTests
         "ShowMinorGrid",
         "ShowMajorGrid",
     ];
+
+    [Fact]
+    public void Chart_settings_have_the_approved_defaults_and_compatibility_matrix()
+    {
+        Assert.Equal("Gantt Chart", GanttCatalogues.Settings.Single(setting => setting.Key == "ChartTitle").DefaultValue);
+        Assert.Equal("MMM", GanttCatalogues.Settings.Single(setting => setting.Key == "PeriodLabelFormat").DefaultValue);
+
+        Assert.True(GanttChartSettings.TryParseTimeScale("Month", out GanttTimeScale month));
+        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("MMM", out GanttPeriodLabelFormat mmm));
+        Assert.True(GanttChartSettings.IsCompatible(month, mmm));
+        Assert.True(GanttChartSettings.TryParseTimeScale("Quarter", out GanttTimeScale quarter));
+        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Quarter", out GanttPeriodLabelFormat quarterFormat));
+        Assert.True(GanttChartSettings.IsCompatible(quarter, quarterFormat));
+        Assert.True(GanttChartSettings.TryParseTimeScale("Year", out GanttTimeScale year));
+        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Year", out GanttPeriodLabelFormat yearFormat));
+        Assert.True(GanttChartSettings.IsCompatible(year, yearFormat));
+    }
+
+    [Theory]
+    [InlineData("Day")]
+    [InlineData("month")]
+    [InlineData("")]
+    public void Chart_settings_reject_unknown_time_scales(string text)
+    {
+        Assert.False(GanttChartSettings.TryParseTimeScale(text, out _));
+    }
+
+    [Theory]
+    [InlineData("MMM ")]
+    [InlineData("mMM")]
+    [InlineData("")]
+    public void Chart_settings_reject_unknown_period_formats(string text)
+    {
+        Assert.False(GanttChartSettings.TryParsePeriodLabelFormat(text, out _));
+    }
+
+    [Fact]
+    public void Chart_settings_reject_incompatible_scale_and_format_pairs()
+    {
+        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Month, GanttPeriodLabelFormat.Quarter));
+        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Quarter, GanttPeriodLabelFormat.MM));
+        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Year, GanttPeriodLabelFormat.MMM));
+    }
 
     // ------------------------------------------------------------------
     // Range and format pins
@@ -444,16 +488,15 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// The pinned hash of the first-release catalogue as transcribed from
-    /// entity-guide revision 3 (2026-09-21). The hash changes whenever any
-    /// code-owned catalogue value changes — that is the drift-detection
-    /// contract (ADR-0007 D6): a failing pin means a deliberate catalogue
-    /// change, which must first be an entity-guide change and a
-    /// schema-version decision, then a deliberate pin update in the same
-    /// commit (R2.7 guide, count-pin drift rule).
+    /// The pinned hash of the current schema-v2 catalogue as transcribed from
+    /// the entity guide and ADR-0014. The hash changes whenever any code-owned
+    /// catalogue value changes — that is the drift-detection contract
+    /// (ADR-0007 D6): a failing pin means a deliberate catalogue change,
+    /// which must first be an entity-guide change and a schema-version
+    /// decision, then a deliberate pin update in the same commit.
     /// </summary>
     private const string PinnedFirstReleaseHash =
-        "4a513e1185a8897bd103f29d449f9db9033e06fea4d4f51ab860079ea03efcff";
+        "55aa653f5f0d54b5811140c9d2b07341fc4b86d663ad10987dc42180d1b75e20";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>
