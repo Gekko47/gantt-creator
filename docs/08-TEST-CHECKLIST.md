@@ -33,8 +33,7 @@ Applies to: `GanttCreator.Core` scene construction, layout, clipping.
 - [ ] `TimeScale.DateToX` is monotonically increasing across the plot range;
       test with shuffled, reversed, and duplicate dates.
 - [ ] Inclusive duration policy: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; activity width is `DurationDays * DayWidth`, with the left edge fixed at `DateToX(Start)`. `Finish` is never incremented. Milestones and delineators use only their point date X.
-- [ ] `StackIndex` equal values share the same vertical centre; sparse values
-      preserve order but do not create empty height.
+- [ ] Effective stack indices are derived in Core from deterministic row/parent-child position; the visible `StackIndex` cell is neither trusted nor required for layout. Generated indices are consecutive; sparse compatibility values preserve order without empty height, and duplicate effective values share one centre.
 - [ ] Lane height grows to fit content (`max(LaneHeightPt, contentHeight)`);
       events are never compressed. Test with stacked events exceeding minimum.
 - [ ] Clipping never expands bounds; clipped events produce the documented

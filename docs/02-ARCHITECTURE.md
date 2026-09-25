@@ -64,7 +64,7 @@ Required columns:
 | --- | --- | --- |
 | `Id` | text | Stable event identifier; generated once, never row-number based |
 | `LaneId` | text | Stable visual-lane identifier shared by events on the same line |
-| `StackIndex` | whole number | Non-negative vertical-band order; equal values deliberately share one line |
+| `StackIndex` | whole number or blank | Schema-v1 compatibility value; Core derives the effective vertical slot from deterministic row/parent-child position and never trusts or requires this cell for layout |
 | `Type` | catalogue text | In-cell dropdown from the single `EntityTypeCatalog` defined by the entity guide |
 | `Description` | text | User-facing label |
 | `Start` | Excel date or blank | Inclusive start for span events; the single date for a milestone/delineator |
@@ -130,7 +130,7 @@ Use immutable Core types. Suggested concepts, not mandated class names:
 - `EventStyle`: explicit fill, stroke, thickness, hatch, marker, font, and label placement.
 - `TimeScale`: maps `DateOnly` values to plot-space point coordinates.
 - `Scene`: immutable ordered primitives in points.
-- `ScenePrimitive`: rectangle, line, polygon, text, and group metadata.
+- `ScenePrimitive`: rectangle, line, polygon, text, and group metadata with an explicit `SceneOwnerId` that is either one real row ID or the reserved chart-level owner.
 - `ExportSize`: width, calculated height, pixel dimensions, and DPI.
 
 Validation returns all actionable issues in deterministic table/row order. It must distinguish blocking errors from warnings. Do not throw for routine bad user input.
@@ -139,7 +139,7 @@ Key rules:
 
 - IDs are stable and unique.
 - span start is not after finish;
-- lane and stack ordering is deterministic;
+- lane order is deterministic; effective stack slots are derived in Core from deterministic row position and later parent/child display position, never from the visible compatibility cell;
 - milestones and delineators require one date;
 - Type values come only from the central entity catalogue; unknown pasted values are blocking errors;
 - row colour and label-position overrides are validated against the selected Type's capabilities;

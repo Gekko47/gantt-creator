@@ -132,6 +132,7 @@ files only; the local audit verifies every file exists.
 | R5.5 | `R5.5-label-controls.md` | Authored (Tier B) |
 | R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
 | R5.6a | `R5.6a-named-style-presets.md` | Authored (Tier B; added 2026-09-23) |
+| R5.6b | `R5.6b-chart-title-settings.md` | Authored (Tier B; added 2026-09-25) |
 | R5.7 | `R5.7-delineator-workflow.md` | Authored (Tier B) |
 | R5.8 | `R5.8-warnings-panel.md` | Authored (Tier B) |
 | R5.9 | `R5.9-ribbon-completion.md` | Authored (Tier B) |
