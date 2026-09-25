@@ -42,6 +42,13 @@ internal static class ValidationReportComposer
     internal const int MaxNoteLength = 255;
 
     /// <summary>
+    /// The suffix appended when a note is clamped to
+    /// <see cref="MaxNoteLength"/>, so a clipped note is visibly clipped instead
+    /// of silently ending mid-sentence.
+    /// </summary>
+    internal const string TruncationMarker = "...";
+
+    /// <summary>
     /// Groups consecutive same-cell issues into note payloads, in the supplied
     /// (already sorted) order.
     /// </summary>
@@ -75,12 +82,7 @@ internal static class ValidationReportComposer
                 index++;
             }
 
-            var text = BuildNoteText(current.RowNumber, current.Field, lines);
-            if (text.Length > MaxNoteLength)
-            {
-                text = text[..MaxNoteLength];
-            }
-
+            var text = Truncate(BuildNoteText(current.RowNumber, current.Field, lines));
             result.Add(new NotePayload(current.RowNumber, current.Field, text));
         }
 
@@ -88,17 +90,17 @@ internal static class ValidationReportComposer
     }
 
     /// <summary>
-    /// Returns <c>true</c> when the note text belongs to this add-in (starts
-    /// with <see cref="NoteSentinelPrefix"/>).
+    /// Returns <c>true</c> when the note text carries an add-in-owned section.
+    /// The section is recognised only when the sentinel begins the text or begins
+    /// a line within it, so a user note that merely mentions the phrase
+    /// mid-sentence is never treated as add-in content and never truncated.
     /// </summary>
     /// <param name="text">The note text, or <see lang="null"/>.</param>
     /// <returns>
-    /// <see langword="true"/> when the text is non-empty and begins with the
-    /// sentinel prefix.
+    /// <see langword="true"/> when the text starts a line with
+    /// <see cref="NoteSentinelPrefix"/>.
     /// </returns>
-    public static bool IsOwnedByAddIn(string? text) =>
-        !string.IsNullOrEmpty(text)
-        && text.StartsWith(NoteSentinelPrefix, StringComparison.Ordinal);
+    public static bool IsOwnedByAddIn(string? text) => FindOwnedSectionStart(text) >= 0;
 
     /// <summary>
     /// Returns the part of a note text that the user wrote: everything before
@@ -116,14 +118,50 @@ internal static class ValidationReportComposer
     /// <returns>The user-authored prefix; empty when the note is purely the add-in's.</returns>
     public static string StripOwnedSection(string? text)
     {
+        var marker = FindOwnedSectionStart(text);
+        return marker < 0
+            ? (string.IsNullOrEmpty(text) ? string.Empty : text.TrimEnd('\r', '\n', ' '))
+            : text![..marker].TrimEnd('\r', '\n', ' ');
+    }
+
+    /// <summary>
+    /// Locates the first line-anchored <see cref="NoteSentinelPrefix"/> in a note.
+    /// </summary>
+    /// <remarks>
+    /// Ownership is a line-structured property, not a substring property: the
+    /// add-in always writes the sentinel at the start of a line (either the whole
+    /// note is the add-in's, or the section follows the user's text on its own
+    /// line). Requiring that anchor is what makes user text safe — a note reading
+    /// <c>"I use Gantt Creator validation: for my own reasons"</c> is the user's
+    /// note and must survive untouched.
+    /// </remarks>
+    /// <param name="text">The note text, or <see lang="null"/>.</param>
+    /// <returns>The start index of the owned section, or <c>-1</c> when absent.</returns>
+    private static int FindOwnedSectionStart(string? text)
+    {
         if (string.IsNullOrEmpty(text))
         {
-            return string.Empty;
+            return -1;
         }
 
-        var marker = text.IndexOf(NoteSentinelPrefix, StringComparison.Ordinal);
-        var userPart = marker < 0 ? text : text[..marker];
-        return userPart.TrimEnd('\r', '\n', ' ');
+        var searchFrom = 0;
+        while (searchFrom <= text.Length - NoteSentinelPrefix.Length)
+        {
+            var index = text.IndexOf(NoteSentinelPrefix, searchFrom, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                return -1;
+            }
+
+            if (index == 0 || text[index - 1] is '\n' or '\r')
+            {
+                return index;
+            }
+
+            searchFrom = index + 1;
+        }
+
+        return -1;
     }
 
     /// <summary>
@@ -137,14 +175,42 @@ internal static class ValidationReportComposer
     private static string BuildNoteText(int rowNumber, string fieldName, List<string> messageLines)
     {
         var sb = new StringBuilder();
-        _ = sb.Append(NoteSentinelPrefix).Append(' ');
-        _ = sb.AppendFormat(CultureInfo.InvariantCulture, "row {0}, column '{1}':", rowNumber, fieldName);
+        _ = sb.Append(NoteSentinelPrefix);
+        _ = sb.AppendFormat(CultureInfo.InvariantCulture, " row {0}, column '{1}':", rowNumber, fieldName);
         foreach (var line in messageLines)
         {
-            _ = sb.Append(' ').Append(line);
+            _ = sb.Append('\n').Append(line);
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Clamps a note body to <see cref="MaxNoteLength"/> with an explicit marker so a
+    /// reader can tell the note was clipped, never splitting a surrogate pair and
+    /// never leaving a dangling high surrogate that Excel would reject.
+    /// </summary>
+    /// <param name="text">The composed note text.</param>
+    /// <returns>
+    /// The text unchanged when it fits, otherwise the clamped prefix followed by
+    /// <see cref="TruncationMarker"/>.
+    /// </returns>
+    internal static string Truncate(string text)
+    {
+        if (text.Length <= MaxNoteLength)
+        {
+            return text;
+        }
+
+        var budget = MaxNoteLength - TruncationMarker.Length;
+        // A cut landing between a high and low surrogate would leave invalid
+        // UTF-16; back up one unit so the last kept unit is a complete pair.
+        if (char.IsHighSurrogate(text[budget - 1]))
+        {
+            budget--;
+        }
+
+        return string.Concat(text.AsSpan(0, budget), TruncationMarker);
     }
 
     /// <summary>

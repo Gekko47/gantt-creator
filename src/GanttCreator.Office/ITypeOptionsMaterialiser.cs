@@ -17,6 +17,8 @@ public enum TypeOptionsRefusalReason
 
     /// <summary>The target worksheet or workbook structure is protected.</summary>
     TargetProtected = 4,
+    /// <summary>The existing TypeOptions name does not target the expected catalogue range.</summary>
+    NameTargetInvalid = 5,
 }
 
 /// <summary>The typed result of materialising the Type dropdown.</summary>
@@ -36,6 +38,31 @@ public sealed record TypeOptionsMaterialiseOutcome(
 /// <summary>Materialises the TypeOptions name and Type-column validation.</summary>
 public interface ITypeOptionsMaterialiser
 {
-    /// <summary>Applies the named-range dropdown to the current Type body.</summary>
+    /// <summary>
+    /// Applies the named-range dropdown to the current Type body. An existing
+    /// name whose target is not the expected catalogue range is refused rather
+    /// than overwritten.
+    /// </summary>
     TypeOptionsMaterialiseOutcome Materialise();
+
+    /// <summary>
+    /// Applies the named-range dropdown for the explicit configuration-repair
+    /// path, which owns the catalogue rewrite and must therefore be able to
+    /// replace a name left pointing at the previous catalogue range.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>ExcelConfigRepairer</c> may call this. Ordinary materialisation
+    /// (initialise, Add Row) keeps the <see cref="TypeOptionsRefusalReason.NameTargetInvalid"/>
+    /// refusal so a name this adapter did not write is never silently
+    /// overwritten.
+    /// </remarks>
+    /// <returns>The typed materialise result.</returns>
+    TypeOptionsMaterialiseOutcome MaterialiseForRepair() => Materialise();
+
+    /// <summary>
+    /// Ensures the TypeOptions infrastructure is current without rebuilding it
+    /// when the existing name and validation are already current.
+    /// </summary>
+    /// <returns>The typed ensure result.</returns>
+    TypeOptionsMaterialiseOutcome EnsureCurrent() => Materialise();
 }

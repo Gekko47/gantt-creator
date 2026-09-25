@@ -36,8 +36,12 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
+    <!--
+      No Raster reference: Phase 8 export/render work is not implemented yet, so
+      the AddIn currently uses no Raster type. The project stays in the solution
+      and is referenced by the render workstream when it lands.
+    -->
     <ProjectReference Include="..\GanttCreator.Office\GanttCreator.Office.csproj" />
-    <ProjectReference Include="..\GanttCreator.Raster\GanttCreator.Raster.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!--

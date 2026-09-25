@@ -363,7 +363,17 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             definitions.Add(new GanttStyleDefinition(
                 preset.StyleKey,
                 preset.AllowedLabelPositions,
-                preset.ColourCapability));
+                preset.ColourCapability,
+                preset.DefaultLabelPosition,
+                preset.FillColour,
+                preset.StrokeColour,
+                preset.TextColour,
+                preset.HatchPattern,
+                preset.HatchPitchPt,
+                preset.HatchLinePt,
+                preset.StandardOutlinePt,
+                preset.ActivityHeightPt,
+                preset.MilestoneSizePt));
         }
 
         for (var index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
@@ -374,7 +384,23 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 .Select(text => Enum.Parse<GanttLabelPosition>(text, ignoreCase: false))
                 .ToHashSet();
             EntityColourCapability colour = Enum.Parse<EntityColourCapability>(ToText(row[13]), ignoreCase: false);
-            definitions.Add(new GanttStyleDefinition(ToText(row[0]), allowed, colour));
+            // R2.7c: project the resolved columns the user row already validated.
+            // Without this a user-authored style has capabilities but no formatting,
+            // so the resolver cannot render it (R5.6a's Refresh gate).
+            definitions.Add(new GanttStyleDefinition(
+                ToText(row[0]),
+                allowed,
+                colour,
+                Enum.Parse<GanttLabelPosition>(ToText(row[11]), ignoreCase: false),
+                ToText(row[2]),
+                ToText(row[3]),
+                ToText(row[7]),
+                Enum.Parse<GanttHatchPattern>(ToText(row[4]), ignoreCase: false),
+                ToDouble(row[5]),
+                ToDouble(row[6]),
+                ToDouble(row[8]),
+                ToDouble(row[9]),
+                ToDouble(row[10])));
         }
 
         styles = new GanttStyleRegistry(definitions);
@@ -413,12 +439,59 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             }
         }
 
-        return !allowed.Contains(defaultPosition)
+        // R2.7c: the resolved columns are validated here, not only projected later.
+        // Without this a user row carrying a negative metric or a lowercase colour
+        // would be projected as 0/empty and render as a silent blank style.
+        return !TryReadUserStyleMetrics(row, out var metrics)
+            || metrics.Any(value => value < 0)
+            || !IsOptionalUppercaseColour(ToText(row[2]))
+            || !IsOptionalUppercaseColour(ToText(row[3]))
+            || !IsOptionalUppercaseColour(ToText(row[7]))
+            || !Enum.TryParse(ToText(row[4]), ignoreCase: false, out GanttHatchPattern hatchPattern)
+            || !Enum.IsDefined(hatchPattern)
+            || !allowed.Contains(defaultPosition)
             || !Enum.TryParse(ToText(row[13]), ignoreCase: false, out EntityColourCapability colourCapability)
             || !IsKnownColourCapability(colourCapability)
             ? ConfigReadRefusalReason.ValueOutOfRange
             : null;
     }
+
+    /// <summary>
+    /// Reads the five numeric style columns of a user row in contract order:
+    /// HatchPitchPt, HatchLinePt, StandardOutlinePt, ActivityHeightPt, and
+    /// MilestoneSizePt.
+    /// </summary>
+    /// <param name="row">The user style row.</param>
+    /// <param name="metrics">The five finite metric values.</param>
+    /// <returns><see langword="true"/> when every column is a finite number.</returns>
+    private static bool TryReadUserStyleMetrics(object?[] row, out double[] metrics)
+    {
+        int[] columns = [5, 6, 8, 9, 10];
+        metrics = new double[columns.Length];
+        for (var index = 0; index < columns.Length; index++)
+        {
+            if (!TryCellDouble(row[columns[index]], out metrics[index]))
+            {
+                metrics = [];
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Returns whether a resolved style colour is empty or uppercase
+    /// <c>#RRGGBB</c>, matching <c>GanttStyleDefinition.ValidateFormatting</c>
+    /// and the built-in preset contract. <see cref="GanttColourToken.IsValidHex"/>
+    /// is the shared rule: <c>ColourHex.TryParse</c> would additionally accept a
+    /// <c>#RRGGBBAA</c> form and surrounding whitespace, which the registry then
+    /// rejects at construction, turning a typed refusal into a thrown exception.
+    /// </summary>
+    /// <param name="text">The cell text.</param>
+    /// <returns><see langword="true"/> when the colour is empty or well-formed.</returns>
+    private static bool IsOptionalUppercaseColour(string text) =>
+        text.Length == 0 || GanttColourToken.IsValidHex(text);
 
     private static bool IsKnownColourCapability(EntityColourCapability capability)
     {
@@ -568,6 +641,13 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
+        var approvedConfigKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            GanttCatalogues.ConfigSchemaVersionKey,
+            GanttCatalogues.ConfigCatalogueHashKey,
+            GanttCatalogues.ConfigWorkbookIdKey,
+            GanttCatalogues.ConfigAddInVersionKey,
+        };
         Dictionary<string, string> map = new(StringComparer.Ordinal);
         foreach (var row in rows)
         {
@@ -576,13 +656,21 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.RowCountMismatch;
             }
 
-            map[ToText(row[0])] = ToText(row[1]);
+            var key = ToText(row[0]);
+            if (key.Length == 0
+                || !approvedConfigKeys.Contains(key)
+                || !map.TryAdd(key, ToText(row[1])))
+            {
+                return ConfigReadRefusalReason.CatalogueMismatch;
+            }
         }
 
-        return !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out var schemaText)
-            || schemaText != GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)
-            ? ConfigReadRefusalReason.CatalogueHashMismatch
-            : ValidateStoredHash(map, ref workbookId);
+        return map.Count == approvedConfigKeys.Count
+            ? !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out var schemaText)
+                || schemaText != GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)
+                ? ConfigReadRefusalReason.CatalogueHashMismatch
+                : ValidateStoredHash(map, ref workbookId)
+            : ConfigReadRefusalReason.CatalogueMismatch;
     }
 
     /// <summary>
@@ -724,6 +812,16 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         value = 0;
         return false;
     }
+
+    /// <summary>
+    /// Parses a cell as a finite double, degrading an unparseable or non-finite
+    /// value to zero. Safe for projection only because every numeric style column
+    /// was validated before this runs (R2.7c).
+    /// </summary>
+    /// <param name="value">The cell value.</param>
+    /// <returns>The finite double, or zero.</returns>
+    private static double ToDouble(object? value) =>
+        TryCellDouble(value, out var parsed) ? parsed : 0;
 
     /// <summary>
     /// Converts cell text: <see langword="null"/> and NaN/infinity become

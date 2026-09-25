@@ -111,6 +111,38 @@ public sealed class SceneSnapshotTests
     }
 
     [Fact]
+    public void Deserialize_rejects_null_primitive_element_as_invalid_scene_data()
+    {
+        JsonNode document = JsonNode.Parse(SceneSnapshot.Serialize(CreateScene()))!;
+        var primitives = new JsonArray { null };
+        document["Primitives"] = primitives;
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(document.ToJsonString()));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_null_warning_element_as_invalid_scene_data()
+    {
+        JsonNode document = JsonNode.Parse(SceneSnapshot.Serialize(CreateScene()))!;
+        var warnings = new JsonArray { null };
+        document["Warnings"] = warnings;
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(document.ToJsonString()));
+    }
+
+    [Fact]
+    public void Deserialize_rejects_null_polygon_point_element_as_invalid_scene_data()
+    {
+        JsonNode document = JsonNode.Parse(SceneSnapshot.Serialize(CreateScene()))!;
+        JsonNode primitive = document["Primitives"]![0]!;
+        primitive["Kind"] = "polygon";
+        var points = new JsonArray { null };
+        primitive["Points"] = points;
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(document.ToJsonString()));
+    }
+
+    [Fact]
     public void Deserialize_rejects_unknown_fields_as_a_json_error()
     {
         var json = SceneSnapshot

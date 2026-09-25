@@ -155,4 +155,150 @@ public class ExcelApplicationAdapterTests
 
         Assert.Equal(0, calls);
     }
+
+    [Fact]
+    public void An_attached_subscription_reports_each_handler_as_attached()
+    {
+        var application = new Mock<Excel.Application>();
+        using var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => { });
+
+        var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
+        Assert.Equal(EventHandlerState.Attached, status.WorkbookActivateState);
+        Assert.Equal(EventHandlerState.Attached, status.WorkbookDeactivateState);
+        Assert.Equal(EventHandlerState.Attached, status.NewWorkbookState);
+        Assert.False(status.AllDetached);
+    }
+
+    [Fact]
+    public void A_successful_detach_reports_every_handler_as_detached()
+    {
+        var application = new Mock<Excel.Application>();
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => { });
+
+        subscription.Dispose();
+
+        var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
+        Assert.Equal(EventHandlerState.Detached, status.WorkbookActivateState);
+        Assert.Equal(EventHandlerState.Detached, status.WorkbookDeactivateState);
+        Assert.Equal(EventHandlerState.Detached, status.NewWorkbookState);
+        Assert.True(status.AllDetached);
+    }
+
+    [Fact]
+    public void A_failed_removal_is_reported_as_detach_failed_and_never_as_detached()
+    {
+        // The audit finding: teardown previously swallowed a failed removal and
+        // reported success, hiding a leaked event connection. The state must show
+        // the failure, and the other removals must still be attempted.
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        _ = events
+            .SetupRemove(e => e.WorkbookActivate -= It.IsAny<Excel.AppEvents_WorkbookActivateEventHandler>())
+            .Throws(new InvalidOperationException("removal refused"));
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => { });
+
+        Assert.Null(Record.Exception(subscription.Dispose));
+
+        var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
+        Assert.Equal(EventHandlerState.DetachFailed, status.WorkbookActivateState);
+        Assert.False(status.AllDetached);
+
+        // One failure must not skip the remaining removals.
+        Assert.Equal(EventHandlerState.Detached, status.WorkbookDeactivateState);
+        Assert.Equal(EventHandlerState.Detached, status.NewWorkbookState);
+        events.VerifyRemove(
+            e => e.WorkbookDeactivate -= It.IsAny<Excel.AppEvents_WorkbookDeactivateEventHandler>(),
+            Times.Once);
+        events.VerifyRemove(
+            e => e.NewWorkbook -= It.IsAny<Excel.AppEvents_NewWorkbookEventHandler>(),
+            Times.Once);
+    }
+
+    [Fact]
+    public void A_later_dispose_retries_a_handler_whose_removal_failed()
+    {
+        // The failed removal must stay retryable: the delegate is retained, so a
+        // second Dispose removes the handler and reports the clean teardown.
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        var attempts = 0;
+        _ = events
+            .SetupRemove(e => e.WorkbookActivate -= It.IsAny<Excel.AppEvents_WorkbookActivateEventHandler>())
+            .Callback(() =>
+            {
+                attempts++;
+                if (attempts == 1)
+                {
+                    throw new InvalidOperationException("removal refused");
+                }
+            });
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => { });
+
+        subscription.Dispose();
+        var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
+        Assert.Equal(EventHandlerState.DetachFailed, status.WorkbookActivateState);
+
+        Assert.Null(Record.Exception(subscription.Dispose));
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(EventHandlerState.Detached, status.WorkbookActivateState);
+        Assert.True(status.AllDetached);
+    }
+
+    [Fact]
+    public void A_retried_dispose_still_does_not_invoke_the_handler()
+    {
+        // Callbacks are disabled by the first dispose and must stay disabled
+        // across the retry, so a leaked event connection cannot reach the handler.
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        var calls = 0;
+        _ = events
+            .SetupRemove(e => e.WorkbookActivate -= It.IsAny<Excel.AppEvents_WorkbookActivateEventHandler>())
+            .Throws(new InvalidOperationException("removal refused"));
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => calls++);
+
+        subscription.Dispose();
+        subscription.Dispose();
+        events.Raise(e => e.WorkbookActivate += null, new Mock<Excel.Workbook>().Object);
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void A_retried_dispose_does_not_remove_an_already_detached_handler_again()
+    {
+        // Only the failed removal is retried; a clean handler is not removed twice.
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        _ = events
+            .SetupRemove(e => e.WorkbookDeactivate -= It.IsAny<Excel.AppEvents_WorkbookDeactivateEventHandler>())
+            .Throws(new InvalidOperationException("removal refused"));
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeWorkbookStateChanged(() => { });
+
+        subscription.Dispose();
+        subscription.Dispose();
+
+        events.VerifyRemove(
+            e => e.WorkbookActivate -= It.IsAny<Excel.AppEvents_WorkbookActivateEventHandler>(),
+            Times.Once);
+        events.VerifyRemove(
+            e => e.WorkbookDeactivate -= It.IsAny<Excel.AppEvents_WorkbookDeactivateEventHandler>(),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public void An_inert_subscription_reports_every_handler_as_detached()
+    {
+        using var subscription = new ExcelApplicationAdapter(null).SubscribeWorkbookStateChanged(() => { });
+
+        var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
+        Assert.True(status.AllDetached);
+    }
 }

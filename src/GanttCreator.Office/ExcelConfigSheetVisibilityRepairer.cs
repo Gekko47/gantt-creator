@@ -13,14 +13,13 @@ public class ExcelConfigSheetVisibilityRepairer(object? application, IWorksheetP
     /// <inheritdoc />
     public ConfigSheetVisibilityRepairOutcome Repair()
     {
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
         {
             return ConfigSheetVisibilityRepairOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
                     ? ConfigSheetVisibilityRepairRefusalReason.NoActiveWorkbook
-                    : ConfigSheetVisibilityRepairRefusalReason.TargetProtected
-            );
+                    : ConfigSheetVisibilityRepairRefusalReason.TargetProtected);
         }
 
         Excel.Application? application = _application;
@@ -34,11 +33,18 @@ public class ExcelConfigSheetVisibilityRepairer(object? application, IWorksheetP
         var count = sheets.Count;
         for (var index = 1; index <= count; index++)
         {
-            if (
-                GetSheetAt(sheets, index) is Excel.Worksheet sheet
-                && string.Equals(sheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.Ordinal)
-            )
+            if (GetSheetAt(sheets, index) is Excel.Worksheet sheet
+                && string.Equals(sheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase))
             {
+                ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(sheet);
+                if (protection != ProtectionGuardOutcome.NotProtected)
+                {
+                    return ConfigSheetVisibilityRepairOutcome.Refused(
+                        protection == ProtectionGuardOutcome.NoActiveWorkbook
+                            ? ConfigSheetVisibilityRepairRefusalReason.NoActiveWorkbook
+                            : ConfigSheetVisibilityRepairRefusalReason.TargetProtected);
+                }
+
                 sheet.Visible = Excel.XlSheetVisibility.xlSheetVeryHidden;
                 return ConfigSheetVisibilityRepairOutcome.Ok();
             }

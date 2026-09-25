@@ -30,12 +30,41 @@ namespace GanttCreator.Office.IntegrationTests;
 /// <c>Thread.Sleep</c> calls &mdash; the orphan check polls a named
 /// observable condition (process exited) with a deadline.
 /// </summary>
-internal sealed class OfficeFixture : IAsyncLifetime
+/// <remarks>
+/// Not sealed: <see cref="KillOwnedProcess"/> is an <c>internal virtual</c> seam
+/// so a contract test can drive the teardown-escalation path without spawning
+/// Excel.
+/// </remarks>
+internal class OfficeFixture : IAsyncLifetime
 {
     private Application? _excel;
     private Workbooks? _workbooks;
     private int _excelProcessId;
     private bool _disposed;
+
+    /// <summary>
+    /// Every EXCEL.EXE process this launch created, in discovery order. A single
+    /// <c>new Application()</c> can start more than one process, so the first is
+    /// the primary tracked PID and the rest are recorded too; otherwise those
+    /// extra processes are neither verified at teardown nor handed to the
+    /// verifying shell's sweep.
+    /// </summary>
+    private readonly List<int> _ownedProcessIds = [];
+
+    /// <summary>
+    /// How long the owned process gets to exit on its own after <c>Quit()</c> and
+    /// a GC pass. The production bound is 10 s; a process that needs the full
+    /// window is the unreleased-COM-proxy signal, not normal Excel lag. Virtual
+    /// so the escalation test can shorten it instead of spending 10 s.
+    /// </summary>
+    internal virtual TimeSpan GracefulExitTimeout => TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long the owned process gets to disappear after the forced kill. A kill
+    /// is synchronous for the target process, so this only covers the OS
+    /// reclaiming the handle.
+    /// </summary>
+    internal virtual TimeSpan ForcedExitTimeout => TimeSpan.FromSeconds(5);
     /// <summary>
     /// Workbooks created through <see cref="CreateWorkbook"/>. Closed and
     /// released here during teardown, before the existing collection sweep, so
@@ -43,6 +72,30 @@ internal sealed class OfficeFixture : IAsyncLifetime
     /// close. Each proxy is released exactly once (COM ownership, AGENTS.md).
     /// </summary>
     private List<Workbook>? _createdWorkbooks;
+
+    /// <summary>
+    /// Tracked workbooks the caller has already closed itself, so teardown
+    /// releases the proxy without issuing a second <c>Close</c> against a
+    /// workbook that is no longer in Excel.
+    /// </summary>
+    /// <remarks>
+    /// Closing an already-closed workbook raises a COM error whose HRESULT is
+    /// not a stable "already closed" signal, so the state is tracked explicitly
+    /// rather than inferred from a caught exception code.
+    /// </remarks>
+    private readonly HashSet<Workbook> _closedByCaller = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Records that the caller has already closed a workbook handed out by
+    /// <see cref="CreateWorkbook"/>, so teardown releases the proxy without
+    /// closing it a second time.
+    /// </summary>
+    /// <param name="workbook">A workbook previously returned by <see cref="CreateWorkbook"/>.</param>
+    public void MarkWorkbookClosed(Workbook workbook)
+    {
+        ArgumentNullException.ThrowIfNull(workbook);
+        _ = _closedByCaller.Add(workbook);
+    }
 
     /// <summary>
     /// The live Excel Application instance. Valid only between
@@ -61,6 +114,84 @@ internal sealed class OfficeFixture : IAsyncLifetime
     /// best-effort in that case).
     /// </summary>
     public int ProcessId => _excelProcessId;
+
+    /// <summary>
+    /// Every EXCEL.EXE process ID this fixture launched, primary first. Empty when
+    /// no new process could be identified, in which case the orphan check and the
+    /// shell sweep have nothing to act on.
+    /// </summary>
+    public IReadOnlyList<int> OwnedProcessIds => _ownedProcessIds;
+
+    /// <summary>
+    /// Seeds the owned-PID list for a test that drives teardown without launching
+    /// Excel. Internal so the production launch path stays the only writer.
+    /// </summary>
+    internal List<int> OwnedProcessIdsForTest
+    {
+        get => _ownedProcessIds;
+        set
+        {
+            _ownedProcessIds.Clear();
+            _ownedProcessIds.AddRange(value);
+            if (_ownedProcessIds.Count > 0)
+            {
+                _excelProcessId = _ownedProcessIds[0];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Number of times teardown had to escalate to a forced kill because the
+    /// owned process survived the graceful quit, GC, and exit poll.
+    /// </summary>
+    /// <remarks>
+    /// A non-zero count is the regression signal for unreleased COM proxies: the
+    /// escalation stops the leak from breaking the gate, and this counter is what
+    /// makes it visible. The goal is zero. A test that forces an escalation on
+    /// purpose (to prove the escalation path works) sets
+    /// <see cref="SuppressLeakSignal"/> so its deliberate kill is not counted
+    /// against the ratchet.
+    /// </remarks>
+    public int ForcedKillCount { get; private set; }
+
+    /// <summary>
+    /// Whether this fixture's escalation count should be excluded from the leak
+    /// signal. Set only by a test that forces a kill deliberately, never by a
+    /// test that simply leaked.
+    /// </summary>
+    internal bool SuppressLeakSignal { get; set; }
+
+    /// <summary>
+    /// Records the escalation count to the shell so the gate can report the leak
+    /// signal. The target is zero; a non-zero value means a test body left a COM
+    /// proxy alive and the process only went away because it was killed.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort, like the PID handoff: it is diagnostics, never a pass/fail
+    /// input, and a failure to write must not fail the test.
+    /// </remarks>
+    internal void ReportForcedKillCount()
+    {
+        if (SuppressLeakSignal)
+        {
+            return;
+        }
+
+        var path = Environment.GetEnvironmentVariable("GANTTCREATOR_FORCED_KILLS_PATH");
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.AppendAllText(path, $"{ForcedKillCount}{Environment.NewLine}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex;
+        }
+    }
 
     /// <summary>
     /// Loads an XLL code resource into the owned Excel instance via
@@ -159,22 +290,33 @@ internal sealed class OfficeFixture : IAsyncLifetime
             throw;
         }
 
-        // Identify the new EXCEL.EXE process by diffing the snapshot.
+        // Identify the EXCEL.EXE processes this launch created by diffing the
+        // snapshot. Record every one of them: the primary drives the orphan poll
+        // and the escalation, and the rest are still handed to the shell so a
+        // stray among them is swept rather than silently left behind.
         var after = Process.GetProcessesByName("EXCEL")
             .Select(p => p.Id)
             .Where(id => !before.Contains(id))
             .ToList();
 
-        if (after.Count == 1)
+        foreach (var id in after)
+        {
+            _ownedProcessIds.Add(id);
+        }
+
+        if (after.Count > 0)
         {
             _excelProcessId = after[0];
         }
 
-        // Report the owned PID to the verifying shell. On a genuine timeout
+        // Report the owned PIDs to the verifying shell. On a genuine timeout
         // DisposeAsync never runs and the test host is killed, so the shell
         // needs a signal that outlives the process; the manifest file does.
         // Best-effort: this must never affect test pass/fail.
-        RecordOwnedProcessId(_excelProcessId);
+        foreach (var id in _ownedProcessIds)
+        {
+            RecordOwnedProcessId(id);
+        }
 
         return Task.CompletedTask;
     }
@@ -185,29 +327,42 @@ internal sealed class OfficeFixture : IAsyncLifetime
         if (_disposed) return;
         _disposed = true;
 
-        if (_excel == null) return;
+        // A fixture that launched no Excel still owns the PIDs a test seeded
+        // through OwnedProcessIdsForTest, so the owned-process exit check below
+        // must still run for them. Only the COM teardown is skipped.
+        if (_excel == null)
+        {
+            await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
+            ReportForcedKillCount();
+            return;
+        }
 
         Exception? cleanupException = null;
 
         // Close and release each workbook handed out by CreateWorkbook before
         // the collection sweep. Once Close removes it from Workbooks, the sweep
-        // sees only other workbooks that are still open. Release the tracked
-        // RCW in finally even when Close fails; the sweep then obtains fresh
-        // collection proxies and a fresh post-close count.
+        // sees only other workbooks that are still open. A workbook the caller
+        // already closed through MarkWorkbookClosed is released without a second
+        // Close. Release the tracked RCW in finally even when Close fails; the
+        // sweep then obtains fresh collection proxies and a fresh post-close
+        // count.
         if (_createdWorkbooks is not null)
         {
             foreach (Workbook wb in _createdWorkbooks)
             {
                 try
                 {
-                    wb.Close(SaveChanges: false);
+                    // A workbook the caller already closed is no longer in
+                    // Excel, so closing it again is a COM error rather than
+                    // cleanup. Its proxy is still released below.
+                    if (!_closedByCaller.Contains(wb))
+                    {
+                        wb.Close(SaveChanges: false);
+                    }
                 }
                 catch (COMException ex)
                 {
-                    if (cleanupException is null)
-                    {
-                        cleanupException = ex;
-                    }
+                    PreserveFirstCleanupException(ref cleanupException, ex);
                 }
 #pragma warning disable CA1031
                 catch (Exception ex)
@@ -293,35 +448,37 @@ internal sealed class OfficeFixture : IAsyncLifetime
         catch (COMException ex)
         {
             // Excel may already be shutting down from a prior failure.
-            // Best-effort cleanup: capture the exception and continue to the
+            // Best-effort cleanup: capture the first exception and continue to the
             // GC + orphan-poll phase.
-            cleanupException = ex;
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (ArgumentException ex)
         {
             // Workbook index out of range or similar argument issues during
-            // cleanup. Best-effort: capture and continue.
-            cleanupException = ex;
+            // cleanup. Best-effort: capture the first error and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (InvalidOperationException ex)
         {
             // Excel application in invalid state during cleanup.
-            // Best-effort: capture and continue.
-            cleanupException = ex;
+            // Best-effort: capture the first error and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (NotImplementedException ex)
         {
-            // COM method not implemented. Best-effort: capture and continue.
-            cleanupException = ex;
+            // COM method not implemented. Best-effort: capture the first error
+            // and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (NotSupportedException ex)
         {
-            // COM method not supported. Best-effort: capture and continue.
-            cleanupException = ex;
+            // COM method not supported. Best-effort: capture the first error
+            // and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
 
@@ -387,7 +544,11 @@ internal sealed class OfficeFixture : IAsyncLifetime
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        await PollForProcessExitAsync(_excelProcessId).ConfigureAwait(true);
+        // Every owned process this launch created gets the same treatment, not
+        // just the primary: a second Excel process from one launch is equally
+        // capable of holding the packed XLL open.
+        await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
+        ReportForcedKillCount();
 
         // Report any cleanup exception after all cleanup attempts complete.
         // Use ExceptionDispatchInfo to preserve the original stack trace
@@ -398,29 +559,211 @@ internal sealed class OfficeFixture : IAsyncLifetime
         }
     }
 
+    private static void PreserveFirstCleanupException(ref Exception? cleanupException, Exception exception) =>
+        cleanupException ??= exception;
+
     /// <summary>
-    /// Polls the owned Excel process until it exits or the deadline
-    /// elapses. Never throws; the test itself asserts on the result.
+    /// A scoped COM reference-count release for integration test bodies.
     /// </summary>
-    private static async Task PollForProcessExitAsync(int processId)
+    /// <remarks>
+    /// <para>
+    /// Every test in this assembly acquires a chain of proxies --
+    /// <c>workbook.Sheets</c>, <c>worksheet.ListObjects</c>,
+    /// <c>listObject.ListRows</c>, <c>listRow.Range</c> -- and none of them were
+    /// ever released. Unreleased proxies keep the Application's reference count
+    /// above zero, so <c>Quit()</c> returns without terminating the process: that
+    /// is the root cause of the leaked EXCEL.EXE. The fixture now force-kills a
+    /// survivor, so the leak no longer breaks the gate, but the kill is a
+    /// symptom, not a fix.
+    /// </para>
+    /// <para>
+    /// A scope releases its proxies in reverse acquisition order on dispose, which
+    /// matches the COM ownership rule the production adapters already follow. Use
+    /// it as:
+    /// <code>
+    /// using var scope = new OfficeFixture.ComScope();
+    /// var sheets = scope.Track(workbook.Sheets);
+    /// </code>
+    /// so a converted test stops contributing to the leak signal.
+    /// </para>
+    /// </remarks>
+    internal sealed class ComScope : IDisposable
     {
-        if (processId == 0) return;
+        private readonly List<object> _tracked = [];
+
+        /// <summary>Tracks a proxy for release when this scope is disposed.</summary>
+        /// <typeparam name="T">The proxy type.</typeparam>
+        /// <param name="proxy">The proxy to release later.</param>
+        /// <returns>The same proxy, so the call can wrap an expression.</returns>
+        /// <remarks>
+        /// The constraint is <c>class</c>, not <see cref="System.MarshalByRefObject"/>:
+        /// the PIA's Excel types are COM <em>interfaces</em> (<c>Range</c>,
+        /// <c>ListObject</c>, ...), so the concrete RCW behind them is what
+        /// <see cref="System.Runtime.InteropServices.Marshal.ReleaseComObject(object)"/>
+        /// accepts. Releasing a plain object that was never a COM proxy throws
+        /// <see cref="ArgumentException"/>, which <see cref="Dispose"/> swallows
+        /// so a non-COM argument cannot fail teardown.
+        /// </remarks>
+        public T Track<T>(T proxy)
+            where T : class
+        {
+            ArgumentNullException.ThrowIfNull(proxy);
+            _tracked.Add(proxy);
+            return proxy;
+        }
+
+        /// <summary>Gets the number of proxies currently tracked.</summary>
+        public int TrackedCount => _tracked.Count;
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            for (var index = _tracked.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(_tracked[index]);
+                }
+                catch (ArgumentException)
+                {
+                    // Already released elsewhere in the test; releasing twice is
+                    // not an error worth failing teardown over.
+                }
+            }
+
+            _tracked.Clear();
+        }
+    }
+
+    /// <summary>Reports whether a process is still running. Virtual so the teardown
+    /// escalation can be driven deterministically without spawning a process that
+    /// has to be kept alive for the duration of the test.
+    /// </summary>
+    /// <param name="processId">The process to probe; zero counts as not running.</param>
+    /// <returns><see langword="true"/> when the process is alive.</returns>
+    internal virtual bool IsProcessRunning(int processId)
+    {
+        if (processId == 0) return false;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Polls an owned Excel process until it exits or the deadline elapses.
+    /// Never throws.
+    /// </summary>
+    /// <param name="processId">The process to poll; zero is treated as already gone.</param>
+    /// <param name="timeout">How long to wait for exit.</param>
+    /// <returns><see langword="true"/> when the process is gone (or was never identified).</returns>
+    private async Task<bool> PollForProcessExitAsync(int processId, TimeSpan timeout)
+    {
+        if (processId == 0) return true;
 
         var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < 10)
+        while (sw.Elapsed < timeout)
         {
-            try
+            if (!IsProcessRunning(processId))
             {
-                using var proc = Process.GetProcessById(processId);
-                if (proc.HasExited) return;
-            }
-            catch (ArgumentException)
-            {
-                // Process ID not found &mdash; it exited.
-                return;
+                return true;
             }
 
             await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        return !IsProcessRunning(processId);
+    }
+
+    /// <summary>
+    /// Ensures every process this fixture launched is gone, escalating to a
+    /// targeted kill, and reports any that survived as a cleanup failure.
+    /// </summary>
+    /// <remarks>
+    /// A survivor is not tolerated: it holds the packed XLL and breaks the next
+    /// run's publish step, so it must surface as a failure rather than a warning.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when a process outlives both the graceful quit and the kill.</exception>
+    private async Task EnsureOwnedProcessesExitedAsync()
+    {
+        var surviving = new List<int>();
+        foreach (var ownedId in _ownedProcessIds)
+        {
+            if (!await EnsureOwnedProcessExitedAsync(ownedId).ConfigureAwait(true))
+            {
+                surviving.Add(ownedId);
+            }
+        }
+
+        if (surviving.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Office Excel process(es) {string.Join(", ", surviving)} survived teardown.");
+        }
+    }
+
+    /// <summary>
+    /// Waits for the owned process to exit after the graceful quit, escalating to
+    /// a forced kill of this fixture's own process when it does not.
+    /// </summary>
+    /// <remarks>
+    /// The escalation exists because unreleased COM proxies in a test body keep
+    /// the Application's reference count above zero, so <c>Quit()</c> returns
+    /// without terminating the process. Left alone that process holds the packed
+    /// XLL open and breaks the next run's publish step. The kill is targeted by
+    /// the PID this fixture launched, never by process name, and it is counted in
+    /// <see cref="ForcedKillCount"/> so a persistent leak stays visible instead of
+    /// being masked by the force.
+    /// </remarks>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns><see langword="true"/> when the process is gone by the end.</returns>
+    private async Task<bool> EnsureOwnedProcessExitedAsync(int processId)
+    {
+        if (await PollForProcessExitAsync(processId, GracefulExitTimeout).ConfigureAwait(true))
+        {
+            return true;
+        }
+
+        if (KillOwnedProcess(processId))
+        {
+            ForcedKillCount++;
+        }
+
+        return await PollForProcessExitAsync(processId, ForcedExitTimeout).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Forces the fixture's own Excel process to terminate.
+    /// </summary>
+    /// <remarks>
+    /// Virtual so a contract test can substitute the kill and drive the
+    /// escalation path without spawning Excel, mirroring the COM indexer seams
+    /// elsewhere in this harness. The default kills by PID only; it never matches
+    /// on the process name, so a user-owned Excel can never be terminated here.
+    /// </remarks>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns>Whether the kill was issued successfully.</returns>
+    internal virtual bool KillOwnedProcess(int processId)
+    {
+        if (processId == 0) return false;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            if (process.HasExited) return false;
+
+            process.Kill(entireProcessTree: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            return false;
         }
     }
 
@@ -442,10 +785,16 @@ internal sealed class OfficeFixture : IAsyncLifetime
 
         try
         {
-            var entry = new OwnedProcessIdEntry { ProcessId = processId };
+            var entry = new OwnedProcessIdEntry
+            {
+                ProcessId = processId,
+                StartTimeUtcTicks = ReadStartTimeUtcTicks(processId),
+            };
             var json = JsonSerializer.Serialize(entry);
             // Append, not overwrite: a run can launch more than one fixture
-            // before a timeout, and each owned PID must survive.
+            // before a timeout, and each owned PID must survive. One complete
+            // JSON record per line, so a reader can parse each line on its own
+            // (a whole-file ConvertFrom-Json fails on concatenated objects).
             File.AppendAllText(path, json + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -457,11 +806,41 @@ internal sealed class OfficeFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// One owned-PID record as written to the manifest file.
+    /// Reads a live process start time in UTC ticks for the manifest, or zero
+    /// when it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// The start time is the second half of the sweep's identity proof: a PID
+    /// alone can be recycled by Windows between runs, so the shell only kills a
+    /// manifest PID whose live process still reports the recorded start time. A
+    /// zero here is deliberately recorded as unverifiable, and the shell's
+    /// fail-safe direction is to skip such a PID rather than kill it.
+    /// </remarks>
+    /// <param name="processId">The process to sample.</param>
+    /// <returns>The UTC start time in ticks, or zero when unreadable.</returns>
+    internal static long ReadStartTimeUtcTicks(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return process.StartTime.ToUniversalTime().Ticks;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// One owned-PID record as written to the manifest file: the process ID and
+    /// the start time that identifies that specific process, so a recycled PID
+    /// is never mistaken for the harness's own.
     /// </summary>
     private sealed class OwnedProcessIdEntry
     {
         public int ProcessId { get; set; }
+
+        public long StartTimeUtcTicks { get; set; }
     }
 
     /// <summary>

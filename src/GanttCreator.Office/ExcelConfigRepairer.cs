@@ -71,7 +71,7 @@ public class ExcelConfigRepairer(
                 return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
             }
 
-            repaired += plan.Findings.Count(finding => finding.Kind != ConfigIntegrityFindingKind.TypeOptionsMissing);
+            repaired++;
         }
 
         if (plan.Findings.Any(finding => finding.Kind == ConfigIntegrityFindingKind.WrongVisibility))
@@ -79,7 +79,7 @@ public class ExcelConfigRepairer(
             ConfigSheetVisibilityRepairOutcome visibility = _visibilityRepairer.Repair();
             if (!visibility.Succeeded)
             {
-                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
+                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.VisibilityRepairFailed);
             }
 
             repaired++;
@@ -90,7 +90,7 @@ public class ExcelConfigRepairer(
             PlotAnchorRepairOutcome anchor = _plotAnchorRepairer.Repair();
             if (!anchor.Succeeded)
             {
-                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
+                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.PlotAnchorRepairFailed);
             }
 
             repaired++;
@@ -101,7 +101,7 @@ public class ExcelConfigRepairer(
             GanttRowIdentityRepairOutcome identity = _identityRepairer.Repair();
             if (identity.Refusal is not null)
             {
-                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.CatalogueWriteRefused);
+                return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.IdentityRepairFailed);
             }
 
             repaired += identity.RepairedCount;
@@ -109,7 +109,10 @@ public class ExcelConfigRepairer(
 
         if (plan.Findings.Any(finding => finding.Kind == ConfigIntegrityFindingKind.TypeOptionsMissing))
         {
-            TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.Materialise();
+            // The repair path owns the catalogue rewrite that can leave the
+            // TypeOptions name pointing at the previous range, so it is the one
+            // caller allowed to replace that stale target.
+            TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.MaterialiseForRepair();
             if (!typeOptions.Succeeded)
             {
                 return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.TypeOptionsUnavailable);

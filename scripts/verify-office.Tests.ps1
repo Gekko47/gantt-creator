@@ -59,10 +59,11 @@ exit /b 0
     It 'timeout path sweeps harness-owned Office processes' {
         # On timeout the sweep must run as a safety net for orphaned Office
         # processes that were not in the before-snapshot, passing the owned
-        # tree and the fixture's own recorded PIDs.
+        # tree and the fixture's own recorded PIDs. Named parameters: the
+        # fixture signal is a PID -> start-time map, not a bare int array.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses \$officeBeforeSnapshot \$ownedTreePids \$fixtureOwnedPids'
+        $codeOnly | Should -Match 'Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot \$officeBeforeSnapshot -OwnedTreePids \$ownedTreePids -FixtureManifest \$fixtureManifest'
     }
 
     It 'sweep uses taskkill /T /F by PID, never Stop-Process' {
@@ -80,7 +81,8 @@ exit /b 0
         # ownership test; parentage is only the fallback.
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
-        $codeOnly | Should -Match 'FixtureOwnedPids'
+        $codeOnly | Should -Match 'FixtureManifest'
+        $codeOnly | Should -Match 'Test-ManifestProcessIdentity'
         $codeOnly | Should -Match 'GANTTCREATOR_OWNED_PIDS_PATH'
         $codeOnly | Should -Match 'owned-office-pids.json'
         $codeOnly | Should -Match 'recorded by OfficeFixture'
@@ -128,6 +130,103 @@ exit /b 0
         $flagged = "dotnet test --blame-hang-timeout 600`n"
         $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match 'blame-hang-timeout' -Because 'the negative assertion above must be able to detect the flag'
+    }
+
+    It 'reads the owned-PID manifest line by line, not as one JSON document' {
+        # The fixture appends one JSON object per line. Converting-JSON on the
+        # whole file fails on concatenated objects ("Additional text
+        # encountered after finished reading JSON content"), which is what
+        # silently emptied the sweep's primary ownership signal.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'foreach \(\$line in @\(Get-Content -LiteralPath \$Path'
+        $codeOnly | Should -Not -Match "Get-Content -LiteralPath \$ownedPidsPath -Raw \| ConvertFrom-Json"
+    }
+
+    It 'requires the recorded start time to match before killing a manifest PID' {
+        # A PID alone is not identity: Windows recycles process IDs, so a stale
+        # manifest can name an unrelated process. The start time is the second
+        # half of the proof, and a mismatch must skip rather than kill.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Test-ManifestProcessIdentity'
+        $codeOnly | Should -Match 'StartTimeUtcTicks'
+        $codeOnly | Should -Match '\$liveTicks -ne \$recordedTicks'
+        $codeOnly | Should -Match 'PID was recycled'
+    }
+
+    It 'refuses to treat a manifest record with no start time as owned' {
+        # Fail-safe direction: an unverifiable record is skipped, never killed.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'if \(\$recordedTicks -le 0\)'
+        $codeOnly | Should -Match 'carries no start time'
+    }
+
+    It 'sweeps harness-owned Office processes before the build, not only on timeout' {
+        # A stray from a previous run holds the packed XLL, and the build's
+        # ExcelDnaPack step fails first -- before any post-test sweep could run.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $preflightIndex = $codeOnly.IndexOf('preflight: sweeping')
+        $buildIndex = $codeOnly.IndexOf('dotnet build $Solution')
+        $preflightIndex | Should -BeGreaterThan 0
+        $buildIndex | Should -BeGreaterThan 0
+        $preflightIndex | Should -BeLessThan $buildIndex
+    }
+
+    It 'sweeps on the non-timeout exit paths too' {
+        # The sweep used to run only inside the timeout branch, so a green run
+        # that leaked an Excel left it holding the XLL for the next run.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $saveTrx = $codeOnly.LastIndexOf('Save-Trx')
+        $postRunSweep = $codeOnly.IndexOf('$finalManifest = Read-OwnedPidManifest')
+        $postRunSweep | Should -BeGreaterThan $saveTrx
+    }
+
+    It 'fails the gate when a stray Office process had to be killed' {
+        # A killed stray is a real leak, not a warning: it means a test left an
+        # Excel holding the packed XLL. It must not pass silently.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$straysKilled -gt 0'
+        $codeOnly | Should -Match 'survived the test run and had to be killed'
+        $codeOnly | Should -Match 'exit 3'
+    }
+
+    It 'fails the gate when the COM-proxy leak ratchet is exceeded' {
+        # The leak is measured, not fixed, so the gate carries a ceiling. It is
+        # set to the measured baseline: green today, red on a regression, and
+        # lowered as each test file stops leaking.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$MaxForcedKills = \d+'
+        $codeOnly | Should -Match '\$forcedKills -gt \$MaxForcedKills'
+        $codeOnly | Should -Match 'exceeds the ratchet ceiling'
+        $codeOnly | Should -Match 'exit 4'
+    }
+
+    It 'excludes a deliberate escalation from the leak signal' {
+        # A test that forces a kill to prove the escalation path works must not
+        # count against the ratchet, or the ceiling can never be reached.
+        $fixture = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests\GanttCreator.Office.IntegrationTests\OfficeFixture.cs') -Raw
+        $fixture | Should -Match 'SuppressLeakSignal'
+        $fixture | Should -Match 'if \(SuppressLeakSignal\)'
+    }
+
+    It 'positive control: the ratchet assertion fires on a flagged stub' {
+        $flagged = "if (`$forcedKills -gt `$MaxForcedKills) { }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'exceeds the ratchet ceiling'
+    }
+
+    It 'positive control: the fail-on-stray assertion fires on a flagged stub' {
+        # Ensures the negative assertion above can detect a regression where the
+        # stray verdict is removed.
+        $flagged = "if (`$straysKilled -gt 0) { }`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Not -Match 'survived the test run and had to be killed'
     }
 
     Context 'watchdog deadline (isolated harness)' {

@@ -91,6 +91,8 @@ public class ExcelWorkbookInitialiser(
                     : InitialiseRefusalReason.TargetProtected);
         }
 
+        // Resolve the actual mutation target before the authoritative protection
+        // check. The active-sheet query remains the early host/workbook preflight.
         // One proxy per local: no chained `app.ActiveWorkbook.Worksheets[…]`
         // member expressions (docs/02-ARCHITECTURE.md COM ownership).
         Workbook? workbook = application.ActiveWorkbook;
@@ -156,6 +158,20 @@ public class ExcelWorkbookInitialiser(
         }
 
         Worksheet target = adopt ? activeWorksheet! : CreateTargetSheet(sheets, activeWorksheet);
+        ProtectionGuardOutcome targetProtection = _protectionGuard.QueryTarget(target);
+        if (targetProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            if (!adopt)
+            {
+                RollBackCreatedSheet(target);
+            }
+
+            return WorkbookInitialiseOutcome.Refused(
+                targetProtection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? InitialiseRefusalReason.NoActiveWorkbook
+                    : InitialiseRefusalReason.TargetProtected);
+        }
+
         try
         {
             if (!string.Equals(target.Name, label, StringComparison.OrdinalIgnoreCase))

@@ -1,7 +1,110 @@
 using GanttCreator.Core;
 using GanttCreator.Office;
 
+using Excel = Microsoft.Office.Interop.Excel;
+
 namespace GanttCreator.AddIn;
+
+/// <summary>
+/// Moves the user's selection onto a body row of the visible Gantt table.
+/// Implemented in the AddIn layer because selection is a user-interface concern:
+/// Core stays UI-free and the Office row-insertion port stays a data operation.
+/// </summary>
+internal interface IInsertedRowSelector
+{
+    /// <summary>Selects the given one-based body row of the visible Gantt table.</summary>
+    /// <param name="bodyIndex">The one-based body-row index to select.</param>
+    void SelectBodyRow(int bodyIndex);
+}
+
+/// <summary>
+/// Excel implementation of <see cref="IInsertedRowSelector"/>.
+/// </summary>
+/// <remarks>
+/// The <c>internal virtual</c> accessors isolate the Excel COM parameterised
+/// properties (indexers). Expression trees cannot contain indexed properties
+/// (CS0855), so contract tests substitute these seams and every other member
+/// through Moq; the real indexer and <c>Select</c>/<c>Activate</c> behaviour is
+/// exercised by the tagged live-Office integration test.
+/// </remarks>
+internal class ExcelInsertedRowSelector(object? application) : IInsertedRowSelector
+{
+    private readonly Excel.Application? _application = application as Excel.Application;
+
+    /// <inheritdoc />
+    public void SelectBodyRow(int bodyIndex)
+    {
+        Excel.Workbook? workbook = _application?.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return;
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        var count = sheets.Count;
+        for (var sheetIndex = 1; sheetIndex <= count; sheetIndex++)
+        {
+            var sheet = GetSheetAt(sheets, sheetIndex);
+            if (sheet is not Excel.Worksheet worksheet)
+            {
+                continue;
+            }
+
+            Excel.ListObjects listObjects = worksheet.ListObjects;
+            var tableCount = listObjects.Count;
+            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            {
+                Excel.ListObject table = GetTableAt(listObjects, tableIndex);
+                if (!string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // ListRows is table-relative, so body row N is ListRows[N]
+                // whatever worksheet row the table starts on. Indexing
+                // table.Range.Rows by an absolute worksheet row only agrees with
+                // the body index when the table happens to start at row 1.
+                Excel.ListRow targetRow = GetListRowAt(GetListRows(table), bodyIndex);
+
+                // Range.Select only works on the active sheet, so the Gantt
+                // worksheet is activated first. A refused activation or selection
+                // degrades to no selection change (see SelectInsertedRow).
+                worksheet.Activate();
+                Excel.Range target = GetRowRange(targetRow);
+                target.Select();
+                return;
+            }
+        }
+    }
+
+    /// <summary>Returns the sheet object at the one-based index.</summary>
+    /// <param name="sheets">The workbook sheet collection.</param>
+    /// <param name="index">The one-based sheet index.</param>
+    /// <returns>The sheet object.</returns>
+    internal virtual object GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    /// <summary>Returns the list object at the one-based index.</summary>
+    /// <param name="listObjects">The worksheet list-object collection.</param>
+    /// <param name="index">The one-based list-object index.</param>
+    /// <returns>The list object.</returns>
+    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => listObjects[index];
+
+    /// <summary>Returns the table's list rows.</summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The list-row collection.</returns>
+    internal virtual Excel.ListRows GetListRows(Excel.ListObject table) => table.ListRows;
+
+    /// <summary>Returns the one-based body row of the table.</summary>
+    /// <param name="rows">The table's list rows.</param>
+    /// <param name="bodyIndex">The one-based body-row index.</param>
+    /// <returns>The list row.</returns>
+    internal virtual Excel.ListRow GetListRowAt(Excel.ListRows rows, int bodyIndex) => rows[bodyIndex];
+
+    /// <summary>Returns the range spanning a list row.</summary>
+    /// <param name="row">The list row.</param>
+    /// <returns>The row's range.</returns>
+    internal virtual Excel.Range GetRowRange(Excel.ListRow row) => row.Range;
+}
 
 /// <summary>
 /// Adds one scaffold row to the visible Gantt data table. The command owns
@@ -12,31 +115,36 @@ internal static class AddRowCommand
 {
     /// <summary>Runs the production add-row command in the current Excel session.</summary>
     /// <param name="type">The canonical catalogue type to insert.</param>
-    internal static void RunForExcel(GanttEntityType type)
-        => Run(
+    internal static void RunForExcel(GanttEntityType type) =>
+        Run(
             new ExcelGanttRowInserter(ExcelDna.Integration.ExcelDnaUtil.Application),
             GanttRowId.New,
+            new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
             type);
 
     /// <summary>Runs an injected add-row command.</summary>
     /// <param name="inserter">The row insertion port.</param>
     /// <param name="nextId">The stable row-ID generator.</param>
+    /// <param name="selector">Moves the selection onto the inserted row.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     /// <param name="type">The canonical catalogue type to insert.</param>
     internal static void Run(
         IGanttRowInserter inserter,
         Func<GanttRowId> nextId,
+        IInsertedRowSelector selector,
         Action<string> presenter,
         GanttEntityType type)
     {
         ArgumentNullException.ThrowIfNull(inserter);
         ArgumentNullException.ThrowIfNull(nextId);
+        ArgumentNullException.ThrowIfNull(selector);
         ArgumentNullException.ThrowIfNull(presenter);
 
         GanttRowInsertOutcome outcome = inserter.Insert(type, nextId);
         if (outcome.Succeeded)
         {
+            SelectInsertedRow(selector, outcome.BodyIndex!.Value);
             return;
         }
 
@@ -49,6 +157,28 @@ internal static class AddRowCommand
         catch
         {
             // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Moves the selection onto the inserted row, degrading to no selection change
+    /// when the host refuses. A selection failure must never turn a successful
+    /// insert into a user-visible error or escape into Excel.
+    /// </summary>
+    /// <param name="selector">The selection port.</param>
+    /// <param name="bodyIndex">The inserted row's one-based body index.</param>
+    private static void SelectInsertedRow(IInsertedRowSelector selector, int bodyIndex)
+    {
+        // CA1031: a host selection failure is outside command behaviour.
+#pragma warning disable CA1031
+        try
+        {
+            selector.SelectBodyRow(bodyIndex);
+        }
+        catch
+        {
+            // Intentionally empty: the row exists; only the cursor stays put.
         }
 #pragma warning restore CA1031
     }

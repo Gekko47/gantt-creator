@@ -10,9 +10,12 @@
     <AssemblyName>GanttCreator.Raster</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ExcelDna.Interop" />
-  </ItemGroup>
-  <ItemGroup>
+    <!--
+      No Excel interop: ExportSize is pure size arithmetic over
+      System.Globalization. The Raster project is an offline export-size helper
+      and must not drag the Office PIA into the render pipeline (ADR-0004
+      pins the interop package to the Office adapter only).
+    -->
     <ProjectReference Include="..\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
 </Project>

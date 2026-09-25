@@ -235,6 +235,8 @@ public class ValidationReporterTests
     private sealed class AllowProtectionGuard : IWorksheetProtectionGuard
     {
         public ProtectionGuardOutcome Query() => ProtectionGuardOutcome.NotProtected;
+
+        public ProtectionGuardOutcome QueryTarget(object? target) => ProtectionGuardOutcome.NotProtected;
     }
 
     private static GanttValidationIssue Issue(

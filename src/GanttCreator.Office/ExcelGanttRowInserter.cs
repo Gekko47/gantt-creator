@@ -42,10 +42,19 @@ public class ExcelGanttRowInserter(
         }
 
         Excel.Sheets sheets = workbook.Sheets;
-        if (!TryFindTable(sheets, out Excel.ListObject? table) || table is null
+        if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table) || worksheet is null || table is null
             || !TryBuildColumnMap(table, out var columnMap) || columnMap is null)
         {
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TableMissing);
+        }
+
+        ProtectionGuardOutcome targetProtection = _protectionGuard.QueryTarget(worksheet);
+        if (targetProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return GanttRowInsertOutcome.Refused(
+                targetProtection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? GanttRowInsertRefusalReason.NoActiveWorkbook
+                    : GanttRowInsertRefusalReason.TargetProtected);
         }
 
         IReadOnlyList<object?> values = GanttRowDefaults.Build(type, nextId);
@@ -72,7 +81,7 @@ public class ExcelGanttRowInserter(
         }
 
         WriteRow(rowRange, values, columnMap);
-        TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.Materialise();
+        TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
         if (!typeOptions.Succeeded)
         {
             if (newRow is not null)
@@ -140,28 +149,30 @@ public class ExcelGanttRowInserter(
             : null;
     }
 
-    private bool TryFindTable(Excel.Sheets sheets, out Excel.ListObject? table)
+    private bool TryFindTable(
+        Excel.Sheets sheets,
+        out Excel.Worksheet? worksheet,
+        out Excel.ListObject? table)
     {
+        worksheet = null;
         table = null;
         var sheetCount = sheets.Count;
         for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
-            if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet worksheet)
+            if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
                 continue;
             }
 
-            Excel.ListObjects listObjects = worksheet.ListObjects;
+            Excel.ListObjects listObjects = candidate.ListObjects;
             var tableCount = listObjects.Count;
             for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
-                Excel.ListObject candidate = GetTableAt(listObjects, tableIndex);
-                if (string.Equals(
-                    candidate.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                Excel.ListObject candidateTable = GetTableAt(listObjects, tableIndex);
+                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
                 {
-                    table = candidate;
+                    worksheet = candidate;
+                    table = candidateTable;
                     return true;
                 }
             }

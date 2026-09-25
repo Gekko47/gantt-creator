@@ -12,7 +12,19 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
     /// <inheritdoc />
     public PlotAnchorRepairOutcome Repair()
     {
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return PlotAnchorRepairOutcome.Refused(PlotAnchorRepairRefusalReason.NoActiveWorkbook);
+        }
+
+        if (!TryFindGanttTable(workbook.Sheets, out Excel.Worksheet? gantt, out Excel.ListObject? table) || gantt is null || table is null)
+        {
+            return PlotAnchorRepairOutcome.Refused(PlotAnchorRepairRefusalReason.TableMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(gantt);
         if (protection != ProtectionGuardOutcome.NotProtected)
         {
             return PlotAnchorRepairOutcome.Refused(
@@ -22,23 +34,10 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
             );
         }
 
-        Excel.Application? application = _application;
-        Excel.Workbook? workbook = application?.ActiveWorkbook;
-        if (workbook is null)
-        {
-            return PlotAnchorRepairOutcome.Refused(PlotAnchorRepairRefusalReason.NoActiveWorkbook);
-        }
-
-        if (!TryFindGanttSheet(workbook.Sheets, out Excel.Worksheet? gantt) || gantt is null)
-        {
-            return PlotAnchorRepairOutcome.Refused(PlotAnchorRepairRefusalReason.TableMissing);
-        }
-
         try
         {
-            var columnIndex = GanttTableSchema.Default.Columns.Count + 1;
             Excel.Names names = gantt.Names;
-            var refersTo = BuildRefersTo(gantt.Name, columnIndex);
+            var refersTo = BuildRefersTo(gantt.Name, table.ListColumns.Count + 1);
             Excel.Name? existing = FindName(names, GanttWorkbookContract.PlotAnchorDefinedName);
             if (existing is null)
             {
@@ -57,26 +56,31 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
         }
     }
 
-    private bool TryFindGanttSheet(Excel.Sheets sheets, out Excel.Worksheet? gantt)
+    private bool TryFindGanttTable(
+        Excel.Sheets sheets,
+        out Excel.Worksheet? worksheet,
+        out Excel.ListObject? table)
     {
-        gantt = null;
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        worksheet = null;
+        table = null;
+        var sheetCount = sheets.Count;
+        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
-            if (
-                GetSheetAt(sheets, index) is Excel.Worksheet worksheet
-                && string.Equals(worksheet.Name, GanttWorkbookContract.GanttSheetLabel, StringComparison.OrdinalIgnoreCase)
-            )
+            if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
-                Excel.ListObjects objects = worksheet.ListObjects;
-                var objectCount = objects.Count;
-                for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+                continue;
+            }
+
+            Excel.ListObjects objects = candidate.ListObjects;
+            var objectCount = objects.Count;
+            for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+            {
+                Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
+                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(objects[objectIndex].Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        gantt = worksheet;
-                        return true;
-                    }
+                    worksheet = candidate;
+                    table = candidateTable;
+                    return true;
                 }
             }
         }
@@ -120,4 +124,6 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
     }
 
     internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects objects, int index) => objects[index];
 }

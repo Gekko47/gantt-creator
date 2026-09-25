@@ -63,6 +63,7 @@ public static class GanttRowValidator
         // even when that row has other blocking errors. Later rows with the same
         // trimmed text are duplicates.
         var canonicalById = new Dictionary<string, int>(StringComparer.Ordinal);
+        var duplicateIds = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
@@ -78,6 +79,7 @@ public static class GanttRowValidator
             }
             else
             {
+                _ = duplicateIds.Add(key);
                 issues.Add(
                     new GanttValidationIssue(
                         rows[i].RowNumber,
@@ -91,7 +93,7 @@ public static class GanttRowValidator
             }
         }
 
-        CheckCriticalParents(rows, perRow, canonicalById, issues);
+        CheckCriticalParents(rows, perRow, canonicalById, duplicateIds, issues);
 
         var events = new List<GanttEvent>();
         for (var i = 0; i < rows.Count; i++)
@@ -687,10 +689,11 @@ public static class GanttRowValidator
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
         Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
         List<GanttValidationIssue> issues
     )
     {
-        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, issues);
+        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, duplicateIds, issues);
 
         // Resolve each Critical Interval ParentId against the same batch.
         for (var i = 0; i < rows.Count; i++)
@@ -707,6 +710,21 @@ public static class GanttRowValidator
             }
 
             var key = parsed.Event.ParentId.Value;
+            if (duplicateIds.Contains(key))
+            {
+                issues.Add(
+                    new GanttValidationIssue(
+                        rows[i].RowNumber,
+                        "ParentId",
+                        GanttValidationCodes.ParentAmbiguous,
+                        GanttValidationSeverity.Error,
+                        $"ParentId '{key}' is ambiguous because multiple rows carry that Id."
+                    )
+                );
+                perRow[i] = parsed with { HasBlockingError = true };
+                continue;
+            }
+
             if (!canonicalById.TryGetValue(key, out var parentIndex))
             {
                 issues.Add(
@@ -753,6 +771,83 @@ public static class GanttRowValidator
                 perRow[i] = parsed with { HasBlockingError = true };
             }
         }
+
+        // A Critical Interval can itself be the parent of another Critical
+        // Interval, and the child is commonly authored above its parent. The
+        // loop above therefore decides a child against a parent that has not
+        // been decided yet, so the same rows in the opposite order would block
+        // the child. Propagate each newly blocked parent to its dependents
+        // until no further row changes, which makes the outcome independent of
+        // the input order.
+        PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);
+    }
+
+    /// <summary>
+    /// Blocks every still-undecided Critical Interval whose canonical parent row
+    /// is already blocked, repeating until no further row is blocked so a chain
+    /// of dependent intervals is covered.
+    /// </summary>
+    /// <param name="rows">The neutral body rows in table order.</param>
+    /// <param name="perRow">The per-row state to update.</param>
+    /// <param name="canonicalById">First-canonical row index by Id text.</param>
+    /// <param name="duplicateIds">Ids carried by more than one row.</param>
+    /// <param name="issues">The row issue sink.</param>
+    private static void PropagateBlockedParents(
+        IReadOnlyList<GanttRowDto> rows,
+        ValidatedRow?[] perRow,
+        Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
+        List<GanttValidationIssue> issues
+    )
+    {
+        // Rows that already carry a blocking error were decided by the field
+        // pass, the cycle pass, or the direct parent pass; re-reporting them
+        // here would duplicate that finding.
+        var decided = new HashSet<int>();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (perRow[i] is { Type: GanttEntityType.CriticalInterval, HasBlockingError: true })
+            {
+                _ = decided.Add(i);
+            }
+        }
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (var i = 0; i < rows.Count; i++)
+            {
+                if (
+                    decided.Contains(i)
+                    || perRow[i] is not
+                    {
+                        Type: GanttEntityType.CriticalInterval,
+                        HasBlockingError: false,
+                        Event.ParentId: { } parentId,
+                    }
+                    || duplicateIds.Contains(parentId.Value)
+                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex)
+                    || perRow[parentIndex] is not { HasBlockingError: true }
+                )
+                {
+                    continue;
+                }
+
+                issues.Add(
+                    new GanttValidationIssue(
+                        rows[i].RowNumber,
+                        "ParentId",
+                        GanttValidationCodes.ParentInvalid,
+                        GanttValidationSeverity.Error,
+                        $"ParentId '{parentId.Value}' references a row that did not validate as a usable span event."
+                    )
+                );
+                perRow[i] = perRow[i]! with { HasBlockingError = true };
+                _ = decided.Add(i);
+                changed = true;
+            }
+        }
     }
 
     /// <summary>
@@ -760,10 +855,17 @@ public static class GanttRowValidator
     /// Critical Interval ParentId values. Ordinary span parents are
     /// terminal nodes and are not traversed.
     /// </summary>
+    /// <remarks>
+    /// An edge whose target Id is duplicated is ambiguous rather than cyclic:
+    /// which row the reference means is unknown, so claiming a cycle through it
+    /// would replace the accurate <see cref="GanttValidationCodes.ParentAmbiguous"/>
+    /// finding. Such an edge terminates the walk instead.
+    /// </remarks>
     private static HashSet<int> CheckCriticalParentCycles(
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
         Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
         List<GanttValidationIssue> issues
     )
     {
@@ -796,7 +898,9 @@ public static class GanttRowValidator
                 pathIndexByRow[current] = path.Count;
                 path.Add(current);
                 ValidatedRow? node = perRow[current];
-                if (node?.Event?.ParentId is not { } parentId || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                if (node?.Event?.ParentId is not { } parentId
+                    || duplicateIds.Contains(parentId.Value)
+                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
                 {
                     break;
                 }

@@ -76,6 +76,50 @@ public sealed class ConfigRepairerTests
         writer.Verify(w => w.Write(), Times.Once);
     }
 
+    /// <summary>
+    /// The repair path is the one caller allowed to replace a stale TypeOptions
+    /// name target, so it must go through the repair-specific entry point and
+    /// never through ordinary materialisation.
+    /// </summary>
+    [Fact]
+    public void Repair_uses_the_repair_specific_type_options_entry_point()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>(MockBehavior.Strict);
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var typeOptions = new Mock<ITypeOptionsMaterialiser>(MockBehavior.Strict);
+        _ = typeOptions.Setup(t => t.MaterialiseForRepair()).Returns(TypeOptionsMaterialiseOutcome.Ok());
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            typeOptionsMaterialiser: typeOptions.Object,
+            protectionGuard: guard.Object).Repair(
+                Plan(ConfigIntegrityFindingKind.TypeOptionsMissing),
+                true);
+
+        Assert.Null(outcome.Refusal);
+        typeOptions.Verify(t => t.MaterialiseForRepair(), Times.Once);
+        typeOptions.Verify(t => t.Materialise(), Times.Never);
+    }
+
+    [Fact]
+    public void Repair_refuses_when_the_repair_path_cannot_materialise_type_options()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>(MockBehavior.Strict);
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var typeOptions = new Mock<ITypeOptionsMaterialiser>(MockBehavior.Strict);
+        _ = typeOptions.Setup(t => t.MaterialiseForRepair())
+            .Returns(TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.NameTargetInvalid));
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            typeOptionsMaterialiser: typeOptions.Object,
+            protectionGuard: guard.Object).Repair(
+                Plan(ConfigIntegrityFindingKind.TypeOptionsMissing),
+                true);
+
+        Assert.Equal(ConfigRepairRefusalReason.TypeOptionsUnavailable, outcome.Refusal);
+    }
+
     [Fact]
     public void Repair_dispatches_visibility_anchor_and_identity_ports_without_catalogue_rewrite()
     {
@@ -112,6 +156,53 @@ public sealed class ConfigRepairerTests
         visibility.Verify(r => r.Repair(), Times.Once);
         anchor.Verify(r => r.Repair(), Times.Once);
         identity.Verify(r => r.Repair(), Times.Once);
+    }
+
+    [Fact]
+    public void Repair_distinguishes_visibility_failure_from_catalogue_failure()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        var visibility = new Mock<IConfigSheetVisibilityRepairer>();
+        _ = visibility.Setup(r => r.Repair())
+            .Returns(ConfigSheetVisibilityRepairOutcome.Refused(ConfigSheetVisibilityRepairRefusalReason.TargetProtected));
+
+        ConfigRepairOutcome outcome = new ExcelConfigRepairer(
+            null,
+            writer.Object,
+            null,
+            guard.Object,
+            visibilityRepairer: visibility.Object).Repair(
+                Plan(ConfigIntegrityFindingKind.WrongVisibility),
+                true);
+
+        Assert.Equal(ConfigRepairRefusalReason.VisibilityRepairFailed, outcome.Refusal);
+        writer.Verify(w => w.Write(), Times.Never);
+    }
+
+    [Fact]
+    public void Repair_distinguishes_anchor_and_identity_failures()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        var anchor = new Mock<IPlotAnchorRepairer>();
+        _ = anchor.Setup(r => r.Repair())
+            .Returns(PlotAnchorRepairOutcome.Refused(PlotAnchorRepairRefusalReason.NameWriteFailed));
+        var identity = new Mock<IGanttRowIdentityRepairer>();
+        _ = identity.Setup(r => r.Repair())
+            .Returns(GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed));
+
+        ConfigRepairOutcome anchorOutcome = new ExcelConfigRepairer(
+            null, writer.Object, null, guard.Object, plotAnchorRepairer: anchor.Object)
+            .Repair(Plan(ConfigIntegrityFindingKind.PlotAnchorDisagreement), true);
+        Assert.Equal(ConfigRepairRefusalReason.PlotAnchorRepairFailed, anchorOutcome.Refusal);
+
+        ConfigRepairOutcome identityOutcome = new ExcelConfigRepairer(
+            null, writer.Object, null, guard.Object, identityRepairer: identity.Object)
+            .Repair(Plan(ConfigIntegrityFindingKind.IdentityDamage), true);
+        Assert.Equal(ConfigRepairRefusalReason.IdentityRepairFailed, identityOutcome.Refusal);
     }
 
     [Fact]

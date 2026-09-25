@@ -1,13 +1,13 @@
 # Implementation guides manifest and execution plan
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 88 roadmap-guide records: 26 Tier A and 62 Tier B. R2.7 and R2.7a are landed; the new R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a/R2.7b hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 90 roadmap-guide records: 27 Tier A and 63 Tier B. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
-- **Tier A — prescriptive.** 26 guides: the Phase 2 remainder plus seven R2
+- **Tier A — prescriptive.** 27 guides: the Phase 2 remainder plus eight R2
   hardening rows, and Phase 3. They name exact files, types, seams, tests, and
   evidence commands; each is re-verified at implementation time.
-- **Tier B — binding contract.** 62 guides for Phases 4–10. They fix the
+- **Tier B — binding contract.** 63 guides for Phases 4–10. They fix the
   behaviour, acceptance criteria, governing document sections, design
   decisions, stop-points, and evidence commands, while implementation steps
   reference predecessor artifacts by work-item ID plus a mandatory Step 0
@@ -62,7 +62,7 @@ above. Phase 3's guides are Tier A from initial authoring. ADR-0010 is the
 only approved exception to table-order execution: after R4.9, execute R2.10,
 then R3.13, before R4.10.
 
-## Index of guides (88)
+## Index of guides (90)
 
 One row per roadmap-guide record. Status values: `Landed`, `Implemented`
 (working-tree implementation with observed gates; pending commit), `Approved`
@@ -83,6 +83,7 @@ files only; the local audit verifies every file exists.
 | R2.5a | `R2.5a-validation-normalisation.md` | Landed (`f21a908`) |
 | R2.6a | `R2.6a-validation-reporter-boundary.md` | Landed (`bf9727c`) |
 | R2.7b | `R2.7b-style-capability-schema.md` | Landed (`49abd4f`; ADR-0009) |
+| R2.7c | `R2.7c-style-registry-formatting.md` | Implemented (working-tree implementation with observed gates; pending commit) |
 | R2.8 | `R2.8-add-row-commands.md` | Implemented (working-tree implementation with observed gates; pending commit) |
 | R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
 | R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |
@@ -94,8 +95,8 @@ files only; the local audit verifies every file exists.
 | R3.1 | `R3.1-geometry-value-objects.md` | Landed (`b5314c7`) |
 | R3.2 | `R3.2-scene-primitives.md` | Landed (`e244d3c`) |
 | R3.3 | `R3.3-time-scale.md` | Landed (`e8a77e8`) |
-| R3.4 | `R3.4-lane-stack-geometry.md` | Authored (Tier A) |
-| R3.5 | `R3.5-plot-frame-bands.md` | Authored (Tier A) |
+| R3.4 | `R3.4-lane-stack-geometry.md` | Landed (`4ba0601`) |
+| R3.5 | `R3.5-plot-frame-bands.md` | Landed (`9e088bf`, `0f577bd`) |
 | R3.6 | `R3.6-span-bar-label-layout.md` | Authored (Tier A) |
 | R3.7 | `R3.7-milestone-marker-layout.md` | Authored (Tier A) |
 | R3.8 | `R3.8-critical-interval-overlay.md` | Authored (Tier A) |

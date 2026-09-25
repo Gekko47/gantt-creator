@@ -151,6 +151,25 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task CreateWorkbook_closes_cleanly_when_caller_closes_workbook_first()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            var workbook = fixture.CreateWorkbook();
+            workbook.Close(SaveChanges: false);
+            fixture.MarkWorkbookClosed(workbook);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task CreateWorkbook_can_be_called_twice_and_both_teardown_cleanly()
     {
         var fixture = new OfficeFixture();
@@ -229,109 +248,87 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task Five_cycles_registering_the_packed_XLL_leave_no_orphan_and_show_session_open_record_growth()
+    public async Task Packed_XLL_loads_once_and_produces_an_attributable_open_record()
     {
-        // R1.6 attributable gate (work item R1.6 D3/D5): the five open/close
-        // cycles run with the add-in's packed XLL loaded via
-        // Application.RegisterXLL, so real Excel-DNA initialization runs
-        // inside Excel each cycle. Each cycle asserts RegisterXLL success,
-        // the appearance of a session-bearing packed-XLL 'open' record for
-        // that cycle's session token, and owned-process exit.
+        // R1.6 attributable gate (work item R1.6 D3/D5): load the packaged XLL
+        // into real Excel via Application.RegisterXLL, so real Excel-DNA
+        // initialization runs, and assert the session-bearing packed-XLL 'open'
+        // record that proves this load actually initialised.
         //
-        // Scope note: the session token correlates the open record to one
-        // load, but AutoClose still produces no 'close' record on the
-        // automation path (D6 finding) — the closing assertion is the owned
-        // orphan poll. Full close-callback proof remains pending.
+        // Scope note: the session token attributes the open record to one load,
+        // but AutoClose still produces no 'close' record on the automation path
+        // (D6 finding) -- the closing assertion is the owned-process exit. Full
+        // close-callback proof remains pending.
         //
-        // Observed Office behaviour (2026-09-16 spike, three runs, Microsoft
-        // 365 16.0.20326 x64; 2026-09-17 session-token probe): RegisterXLL
-        // returns true immediately, and the matching 'open' log record
-        // materializes ~5-30 s after RegisterXLL, while the Excel instance is
-        // still alive or during shutdown. The wait therefore runs AFTER
-        // DisposeAsync (Quit + exit poll): once the process has exited, the
-        // flushed record must be on disk.
+        // Why one cycle and not five: the wait below is the test's whole cost
+        // (~22 s per cycle, the deferred initialization the log comment above
+        // records), and it proves the same thing every time -- that a load
+        // initialises and writes one new session token. Repeating it five times
+        // bought nothing on the close side, which is unobservable here. Five-cycle
+        // open/close no-orphan coverage is already carried by
+        // Excel_open_close_five_times_no_orphan, and add-in reopen/session
+        // re-arming is pinned by the D2 contract test in AddInHostTests.
         var xllPath = ResolvePackedXllPath();
         var logPath = GetAddInLogPath();
-        var pids = new List<int>();
-        // Negative control: seed the seen set with every session already in
-        // the log, so cycle 1 cannot be satisfied by a foreign record that
-        // predates the test — each cycle must produce a NEW session token.
+        var fixture = new OfficeFixture();
+        int pid;
+
+        // Negative control: seed the seen set with every session already in the
+        // log, so the wait cannot be satisfied by a foreign record that predates
+        // this test -- the record must belong to this load.
         var seenSessions = PackedOpenSessions(TryReadLog(logPath));
         _output.WriteLine(
             $"Pre-existing packed-XLL sessions in the log: {seenSessions.Count}.");
 
-        for (int i = 1; i <= 5; i++)
+        try
         {
-            var fixture = new OfficeFixture();
-            try
-            {
-                await fixture.InitializeAsync().ConfigureAwait(true);
+            await fixture.InitializeAsync().ConfigureAwait(true);
 
-                var pid = fixture.ProcessId;
-                Assert.True(pid != 0,
-                    $"Cycle {i}: Excel launched but process ID was not captured.");
-                pids.Add(pid);
+            pid = fixture.ProcessId;
+            Assert.True(pid != 0, "Excel launched but process ID was not captured.");
 
-                var registered = fixture.RegisterXll(xllPath);
-                Assert.True(registered,
-                    $"Cycle {i}: Application.RegisterXLL returned false for '{xllPath}'.");
+            var registered = fixture.RegisterXll(xllPath);
+            Assert.True(registered,
+                $"Application.RegisterXLL returned false for '{xllPath}'.");
 
-                // No open record is expected yet: initialization is deferred
-                // until Quit (see the observation note above).
-            }
-            finally
-            {
-                // Dispose runs at the end of each cycle, not at test end;
-                // Quit is what makes the deferred AutoOpen record land.
-                await fixture.DisposeAsync().ConfigureAwait(true);
-            }
-
-            var newSession = await WaitForNewPackedOpenSessionAsync(
-                logPath, seenSessions, i).ConfigureAwait(true);
-            seenSessions.Add(newSession);
-            _output.WriteLine(
-                $"Cycle {i}: PID={pids[i - 1]}; RegisterXLL=True; session-bearing packed-XLL 'open' " +
-                $"record observed after quit (session={newSession}; sessions so far: {seenSessions.Count}).");
+            // No open record is expected yet: initialization is deferred until
+            // Quit (see the observation note below).
+        }
+        finally
+        {
+            // Quit is what makes the deferred AutoOpen record land.
+            await fixture.DisposeAsync().ConfigureAwait(true);
         }
 
-        // After all five cycles, verify every owned process exited. Poll with
-        // a deadline rather than asserting immediately, because Excel may take
-        // a moment to fully exit after Quit().
-        var sw = Stopwatch.StartNew();
-        bool anyOrphan;
-        do
-        {
-            anyOrphan = false;
-            foreach (var pid in pids)
-            {
-                try
-                {
-                    using var proc = Process.GetProcessById(pid);
-                    if (!proc.HasExited) { anyOrphan = true; break; }
-                }
-                catch (ArgumentException)
-                {
-                    // This PID has exited.
-                }
-            }
-            if (!anyOrphan) break;
-            await Task.Delay(200).ConfigureAwait(true);
-        // Evidence 2026-09-23 (verify-office run 22:07, archive
-        // office-20260923-221210367.trx): all five cycle PIDs exited
-        // cleanly on their own, but XLL-loaded instances outlive the
-        // plain test's 15 s window — every PID was still alive at 15 s
-        // and confirmed dead when checked minutes later. Deadline widened
-        // to 120 s so the observed minutes-scale clearance is covered with
-        // margin (well under the 600 s suite deadline); the zero-survivor
-        // assertion is unchanged.
-        } while (sw.Elapsed.TotalSeconds < 120);
-
-        Assert.False(anyOrphan,
-            $"One or more Excel processes survived five XLL-loaded open/close " +
-            $"cycles (orphans: {string.Join(", ", pids)}).");
+        var newSession = await WaitForNewPackedOpenSessionAsync(logPath, seenSessions, 1)
+            .ConfigureAwait(true);
         _output.WriteLine(
-            $"All five XLL-loaded Excel processes exited cleanly after {sw.Elapsed.TotalSeconds:F1} s; " +
-            $"total packed-XLL open records: {CountPackedOpenRecords(TryReadLog(logPath))}.");
+            $"PID={pid}; RegisterXLL=True; session-bearing packed-XLL 'open' record " +
+            $"observed after quit (session={newSession}).");
+
+        // The load's Excel must be gone; a survivor here is what holds the packed
+        // XLL and breaks the next run's publish step.
+        var sw = Stopwatch.StartNew();
+        var exited = false;
+        while (sw.Elapsed.TotalSeconds < 120)
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(pid);
+                if (!proc.HasExited) { await Task.Delay(200).ConfigureAwait(true); continue; }
+                exited = true;
+            }
+            catch (ArgumentException)
+            {
+                exited = true;
+            }
+
+            break;
+        }
+
+        Assert.True(exited, $"Excel process {pid} survived the XLL load (orphan).");
+        _output.WriteLine(
+            $"Excel process {pid} exited cleanly after {sw.Elapsed.TotalSeconds:F1} s.");
     }
 
     [Trait("Category", "OfficeIntegration")]
@@ -376,6 +373,235 @@ public class OfficeFixtureTests
         finally
         {
             Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+        }
+    }
+
+    [Fact]
+    public void ReadStartTimeUtcTicks_reads_a_live_process_start_time()
+    {
+        // The manifest's identity proof is the PID plus the start time. This
+        // process is certainly alive, so its start time must be readable and
+        // non-zero; the sweep compares against exactly this value.
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+
+        long ticks = OfficeFixture.ReadStartTimeUtcTicks(self.Id);
+
+        Assert.NotEqual(0, ticks);
+        Assert.Equal(self.StartTime.ToUniversalTime().Ticks, ticks);
+    }
+
+    [Fact]
+    public void ReadStartTimeUtcTicks_returns_zero_for_a_process_that_does_not_exist()
+    {
+        // Fail-safe: an unidentifiable process records zero, and the sweep's
+        // safe direction is to skip a zero rather than kill it.
+        Assert.Equal(0, OfficeFixture.ReadStartTimeUtcTicks(int.MaxValue));
+    }
+
+    [Fact]
+    public void KillOwnedProcess_never_targets_a_zero_process_id()
+    {
+        // The default seam refuses a zero PID before touching any process, so a
+        // fixture that never identified its Excel cannot be handed a kill. The
+        // base method is called directly: the recording subclass's override
+        // would bypass the guard this pins.
+        var fixture = new OfficeFixture();
+
+        Assert.False(fixture.KillOwnedProcess(0));
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Teardown_escalates_to_a_forced_kill_when_the_owned_process_survives()
+    {
+        // The leak this covers: unreleased COM proxies keep the Application's
+        // reference count above zero, so Quit() returns without terminating the
+        // process, and that process holds the packed XLL open. Teardown must
+        // escalate to a kill of its own PID rather than waiting out the deadline
+        // and leaving the orphan behind.
+        //
+        // Liveness is driven through the IsProcessRunning seam and the process
+        // only stops reporting alive once the kill is issued, so the test needs no
+        // real process to keep alive and cannot deadlock on a child pipe.
+        var fixture = new StubbornFixture { LivePid = 4242 };
+
+        await fixture.DisposeStubbornAsync().ConfigureAwait(true);
+
+        Assert.Equal([4242], fixture.KilledProcessIds);
+        Assert.Equal(1, fixture.ForcedKillCount);
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Teardown_reports_a_process_that_outlives_the_forced_kill()
+    {
+        // A kill that does not take effect must not be tolerated silently: the
+        // surviving process would hold the packed XLL and break the next run.
+        var fixture = new UnkillableFixture { LivePid = 77 };
+
+        InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.DisposeStubbornAsync()).ConfigureAwait(true);
+
+        Assert.Contains("77", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_com_scope_tracks_proxies_and_releases_them_on_dispose()
+    {
+        // The scope is the mechanism for retiring the leak at source. It must
+        // hold what it was given, hand it back for use, and empty itself on
+        // dispose; a proxy left tracked would keep the reference count up and
+        // reintroduce the very leak it exists to prevent. A non-COM argument is
+        // fine here: ReleaseComObject rejects it and the scope swallows that, so
+        // a plain object still proves the track/dispose bookkeeping.
+        var scope = new OfficeFixture.ComScope();
+
+        var tracked = scope.Track(new object());
+
+        Assert.NotNull(tracked);
+        Assert.Equal(1, scope.TrackedCount);
+
+        scope.Dispose();
+
+        Assert.Equal(0, scope.TrackedCount);
+    }
+
+    [Fact]
+    public void A_com_scope_rejects_a_null_proxy() =>
+        Assert.Throws<ArgumentNullException>(
+            () => new OfficeFixture.ComScope().Track<object>(null!));
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Teardown_does_not_escalate_when_the_process_exits_on_its_own()
+    {
+        // The common case must stay unforced: a process that exits on its own
+        // never reaches the kill, so ForcedKillCount stays zero and the leak
+        // signal is not polluted.
+        var fixture = new WellBehavedFixture { LivePid = 88 };
+
+        await fixture.DisposeStubbornAsync().ConfigureAwait(true);
+
+        Assert.Equal(0, fixture.ForcedKillCount);
+    }
+
+    /// <summary>
+    /// A fixture whose owned process never exits on its own, so the escalation
+    /// path runs without a real Excel and without a real kill.
+    /// </summary>
+    private class StubbornFixture : OfficeFixture
+    {
+        public List<int> KilledProcessIds { get; } = [];
+
+        public int LivePid { get; set; }
+
+        public StubbornFixture()
+        {
+            // This fixture exists to force an escalation, so its kill is
+            // deliberate and must not count against the leak ratchet.
+            SuppressLeakSignal = true;
+        }
+
+        /// <summary>
+        /// Shortened so the escalation test reaches the kill without first
+        /// spending the production 10 s window.
+        /// </summary>
+        internal override TimeSpan GracefulExitTimeout => TimeSpan.FromMilliseconds(150);
+
+        internal override TimeSpan ForcedExitTimeout => TimeSpan.FromMilliseconds(150);
+
+        public async Task DisposeStubbornAsync()
+        {
+            OwnedProcessIdsForTest = [LivePid];
+            await DisposeAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>Always reports the process alive, until the kill is issued.</summary>
+        internal override bool IsProcessRunning(int processId) => !KilledProcessIds.Contains(processId);
+
+        /// <summary>Records the kill; the liveness seam reacts to the record.</summary>
+        internal override bool KillOwnedProcess(int processId)
+        {
+            KilledProcessIds.Add(processId);
+            return processId != 0;
+        }
+    }
+
+    /// <summary>A fixture whose kill never takes effect, so a survivor is reported.</summary>
+    private sealed class UnkillableFixture : StubbornFixture
+    {
+        internal override bool KillOwnedProcess(int processId)
+        {
+            KilledProcessIds.Add(processId);
+            return true;
+        }
+
+        internal override bool IsProcessRunning(int processId) => true;
+    }
+
+    /// <summary>A fixture whose process exits on its own, so no escalation happens.</summary>
+    private sealed class WellBehavedFixture : StubbornFixture
+    {
+        internal override bool IsProcessRunning(int processId) => false;
+    }
+
+    [Fact]
+    public void A_manifest_record_carries_the_start_time_that_identifies_its_process()
+    {
+        // A PID alone is not identity: Windows recycles PIDs between runs, so the
+        // manifest must record the start time the sweep later re-checks.
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+
+            OfficeFixture.RecordOwnedProcessIdForTest(self.Id);
+
+            var line = File.ReadAllLines(manifestPath).Single();
+            using var record = System.Text.Json.JsonDocument.Parse(line);
+            Assert.Equal(self.Id, record.RootElement.GetProperty("ProcessId").GetInt32());
+            Assert.Equal(
+                self.StartTime.ToUniversalTime().Ticks,
+                record.RootElement.GetProperty("StartTimeUtcTicks").GetInt64());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void Each_manifest_line_is_independently_parseable_json()
+    {
+        // The reader parses line by line. A whole-file ConvertFrom-Json fails on
+        // concatenated objects, which is what silently emptied the sweep's primary
+        // ownership signal before the start-time change.
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+            OfficeFixture.RecordOwnedProcessIdForTest(11);
+            OfficeFixture.RecordOwnedProcessIdForTest(22);
+            OfficeFixture.RecordOwnedProcessIdForTest(33);
+
+            var parsed = File.ReadAllLines(manifestPath)
+                .Select(line => System.Text.Json.JsonDocument.Parse(line).RootElement.GetProperty("ProcessId").GetInt32())
+                .ToArray();
+
+            Assert.Equal([11, 22, 33], parsed);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
         }
     }
 

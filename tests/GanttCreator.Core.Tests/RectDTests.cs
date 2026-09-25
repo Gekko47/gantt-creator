@@ -94,4 +94,36 @@ public sealed class RectDTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new RectD(x, y, width, 1));
     }
+
+    [Fact]
+    public void Negative_coordinates_remain_legal()
+    {
+        // A plot may start left of and above the origin; only the derived edges
+        // must stay finite, so negative coordinates are preserved as-is.
+        var rectangle = new RectD(-30, -40, 10, 10);
+
+        Assert.Equal(-30, rectangle.Left);
+        Assert.Equal(-20, rectangle.Right);
+        Assert.Equal(-40, rectangle.Top);
+        Assert.Equal(-30, rectangle.Bottom);
+    }
+
+    [Fact]
+    public void Right_edge_overflow_is_rejected()
+    {
+        // Two large but individually finite values overflow when summed; a
+        // non-finite edge would make Contains/IntersectsWith meaningless.
+        // (MaxValue + 10 would merely round, so the additive case is required.)
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => new RectD(double.MaxValue, 0, double.MaxValue, 10));
+        Assert.Equal("width", exception.ParamName);
+    }
+
+    [Fact]
+    public void Bottom_edge_overflow_is_rejected()
+    {
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => new RectD(0, double.MaxValue, 10, double.MaxValue));
+        Assert.Equal("height", exception.ParamName);
+    }
 }

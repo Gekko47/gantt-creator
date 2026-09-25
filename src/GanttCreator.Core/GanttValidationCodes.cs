@@ -52,6 +52,9 @@ public static class GanttValidationCodes
     /// <summary>A <c>Critical Interval</c> references an <c>Id</c> absent from the same input batch.</summary>
     public const string ParentUnknown = nameof(ParentUnknown);
 
+    /// <summary>A <c>Critical Interval</c> references a duplicated parent Id and cannot be resolved unambiguously.</summary>
+    public const string ParentAmbiguous = nameof(ParentAmbiguous);
+
     /// <summary>A <c>Critical Interval</c> references a parent that is not a span event.</summary>
     public const string ParentNotSpan = nameof(ParentNotSpan);
 

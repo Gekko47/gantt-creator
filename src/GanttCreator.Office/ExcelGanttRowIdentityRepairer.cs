@@ -13,7 +13,14 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
     /// <inheritdoc />
     public GanttRowIdentityRepairOutcome Repair()
     {
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (workbook is null || !TryFindTable(workbook.Sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table) || worksheet is null || table is null)
+        {
+            return GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.TableMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
         if (protection != ProtectionGuardOutcome.NotProtected)
         {
             return GanttRowIdentityRepairOutcome.Refused(
@@ -21,13 +28,6 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
                     ? GanttRowIdentityRepairRefusalReason.NoActiveWorkbook
                     : GanttRowIdentityRepairRefusalReason.TargetProtected
             );
-        }
-
-        Excel.Application? application = _application;
-        Excel.Workbook? workbook = application?.ActiveWorkbook;
-        if (workbook is null || !TryFindTable(workbook.Sheets, out Excel.ListObject? table) || table is null)
-        {
-            return GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.TableMissing);
         }
 
         Excel.Range? body = GetTableBody(table);
@@ -38,27 +38,78 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
 
         List<object?[]> rows = ExcelValue2Matrix.ReadRows(GetBodyValues(body));
         var idIndex = FindColumnIndex(table, "Id");
+        var parentIdIndex = FindColumnIndex(table, "ParentId");
         if (idIndex < 0)
         {
             return GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.TableMissing);
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var used = new HashSet<string>(StringComparer.Ordinal);
-        var repaired = 0;
-        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        var rowCount = rows.Count;
+        var originalIds = new string[rowCount];
+        var canonicalIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+        var idOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            var text = ToText(rows[rowIndex].ElementAtOrDefault(idIndex)).Trim();
-            if (!GanttRowId.TryParse(text, out GanttRowId? parsed) || parsed is null || !seen.Add(text))
+            originalIds[rowIndex] = ToText(rows[rowIndex].ElementAtOrDefault(idIndex)).Trim();
+            _ = canonicalIndexes.TryAdd(originalIds[rowIndex], rowIndex);
+            _ = idOccurrences.TryGetValue(originalIds[rowIndex], out var occurrences);
+            idOccurrences[originalIds[rowIndex]] = occurrences + 1;
+        }
+
+        var replacements = new Dictionary<int, GanttRowId>();
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            var original = originalIds[rowIndex];
+            if (GanttRowId.TryParse(original, out _))
+            {
+                _ = used.Add(original);
+            }
+        }
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            var original = originalIds[rowIndex];
+            var malformed = !GanttRowId.TryParse(original, out _);
+            var duplicate = !canonicalIndexes.TryGetValue(original, out var canonicalIndex) || canonicalIndex != rowIndex;
+            if (malformed || duplicate)
             {
                 GanttRowId replacement = NewUniqueId(used);
                 _ = used.Add(replacement.Value);
-                GetCell(body, rowIndex + 1, idIndex + 1).Value2 = replacement.Value;
-                repaired++;
-                continue;
+                replacements[rowIndex] = replacement;
             }
+        }
 
-            _ = used.Add(text);
+        var repaired = 0;
+        foreach (KeyValuePair<int, GanttRowId> pair in replacements.OrderBy(pair => pair.Key))
+        {
+            GetCell(body, pair.Key + 1, idIndex + 1).Value2 = pair.Value.Value;
+            repaired++;
+        }
+
+        if (parentIdIndex >= 0)
+        {
+            for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+            {
+                var parentText = ToText(rows[rowIndex].ElementAtOrDefault(parentIdIndex)).Trim();
+
+                // A blank cell is not a reference. A duplicated Id has no single
+                // canonical replacement, so ADR-0011 leaves it unchanged and
+                // GanttRowValidator reports it as ParentAmbiguous instead.
+                if (parentText.Length == 0
+                    || !idOccurrences.TryGetValue(parentText, out var parentOccurrences)
+                    || parentOccurrences > 1)
+                {
+                    continue;
+                }
+
+                if (canonicalIndexes.TryGetValue(parentText, out var parentRowIndex)
+                    && replacements.TryGetValue(parentRowIndex, out GanttRowId? replacement)
+                    && replacement is not null)
+                {
+                    GetCell(body, rowIndex + 1, parentIdIndex + 1).Value2 = replacement.Value;
+                    repaired++;
+                }
+            }
         }
 
         return GanttRowIdentityRepairOutcome.Ok(repaired);
@@ -75,25 +126,30 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
         return id;
     }
 
-    private bool TryFindTable(Excel.Sheets sheets, out Excel.ListObject? table)
+    private bool TryFindTable(
+        Excel.Sheets sheets,
+        out Excel.Worksheet? worksheet,
+        out Excel.ListObject? table)
     {
+        worksheet = null;
         table = null;
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        var sheetCount = sheets.Count;
+        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
-            if (GetSheetAt(sheets, index) is not Excel.Worksheet worksheet)
+            if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
                 continue;
             }
 
-            Excel.ListObjects objects = worksheet.ListObjects;
+            Excel.ListObjects objects = candidate.ListObjects;
             var objectCount = objects.Count;
             for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
-                Excel.ListObject candidate = GetTableAt(objects, objectIndex);
-                if (string.Equals(candidate.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
+                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
                 {
-                    table = candidate;
+                    worksheet = candidate;
+                    table = candidateTable;
                     return true;
                 }
             }
@@ -120,7 +176,12 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
     private static string ToText(object? value) =>
         Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
 
-    private static Excel.Range GetCell(Excel.Range body, int row, int column)
+    /// <summary>
+    /// Returns the cell at the one-based body row and one-based table-column
+    /// index. Test seam over the COM <c>Range.Cells[row, column]</c> dispatch,
+    /// so contract tests can intercept per-cell writes without a worksheet.
+    /// </summary>
+    internal virtual Excel.Range GetCell(Excel.Range body, int row, int column)
     {
         Excel.Range cells = body.Cells;
         return cells[row, column];

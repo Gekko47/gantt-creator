@@ -133,11 +133,15 @@ public sealed class FrameBandsBuilderTests
     {
         var leftMismatch = CreateRequest() with
         {
-            TimeScale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100 + (GeometryMath.Epsilon * 2), 400).Scale!,
+            TimeScale = TimeScale
+                .TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100 + (GeometryMath.Epsilon * 2), 400)
+                .Scale!,
         };
         var rightMismatch = CreateRequest() with
         {
-            TimeScale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400 - (GeometryMath.Epsilon * 2)).Scale!,
+            TimeScale = TimeScale
+                .TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400 - (GeometryMath.Epsilon * 2))
+                .Scale!,
         };
 
         Assert.Equal(FrameBandsRefusal.InvalidGeometry, Build(leftMismatch).Refusal);
@@ -179,7 +183,10 @@ public sealed class FrameBandsBuilderTests
     {
         FrameBandsResult result = Build(CreateRequest() with { Scale = scale, PeriodLabelFormat = format }).Result!;
 
-        Assert.Contains(result.Primitives.OfType<SceneText>(), text => text.Text == expectedLabel);
+        Assert.Contains(
+            result.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == expectedLabel
+        );
     }
 
     [Fact]

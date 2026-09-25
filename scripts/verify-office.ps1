@@ -23,7 +23,14 @@
 param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
-    [int]$DeadlineSeconds = 600
+    [int]$DeadlineSeconds = 600,
+    # Ratchet on the COM-proxy leak signal: the ceiling on forced kills the run
+    # may contain before the gate fails. It is set to the measured baseline, so
+    # the gate is green today and a regression past the ceiling is red. Each
+    # commit that retires a leaked proxy chain lowers it; the end state is 0.
+    # The number counts real test teardowns only -- a test that forces a kill
+    # deliberately sets OfficeFixture.SuppressLeakSignal and is excluded.
+    [int]$MaxForcedKills = 24
 )
 
 $ErrorActionPreference = 'Stop'
@@ -103,9 +110,76 @@ function Test-HarnessProcessTreeActive {
 }
 
 
+# Reads the fixture's owned-PID manifest into a hashtable of
+#   ProcessId -> StartTimeUtcTicks.
+# Each record is one complete JSON object on its own line, so every line is
+# parsed independently. Parsing the whole file as one JSON document fails on
+# concatenated objects ("Additional text encountered after finished reading
+# JSON content"), which previously emptied this signal and silently degraded
+# the sweep to the parentage fallback.
+function Read-OwnedPidManifest {
+    param([string]$Path)
+
+    $result = @{}
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $result }
+
+    foreach ($line in @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)) {
+        if (-not $line -or $line.Trim().Length -eq 0) { continue }
+        try {
+            $record = $line | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $record -or $null -eq $record.ProcessId) { continue }
+            $result[[int]$record.ProcessId] = [long]$record.StartTimeUtcTicks
+        } catch {
+            # A single unreadable line must not discard the rest of the manifest.
+            Log "WARN: could not parse owned-PID manifest line: $($_.Exception.Message)"
+        }
+    }
+
+    return $result
+}
+
+# Returns whether the manifest's record still identifies the live process.
+# A PID alone is not identity: Windows recycles process IDs between runs, so a
+# stale manifest entry can name an unrelated process. The start time recorded
+# alongside the PID is the second half of the proof. A record with no start time
+# (an older manifest, or an unreadable process) fails safe and is NOT owned.
+function Test-ManifestProcessIdentity {
+    param(
+        [Parameter(Mandatory)][hashtable]$Manifest,
+        [Parameter(Mandatory)][int]$ProcessId
+    )
+
+    if (-not $Manifest.ContainsKey($ProcessId)) { return $false }
+
+    $recordedTicks = $Manifest[$ProcessId]
+    if ($recordedTicks -le 0) {
+        Log "Skipping Office process PID $ProcessId (manifest carries no start time, so it cannot be identified safely)"
+        return $false
+    }
+
+    try {
+        $live = Get-Process -Id $ProcessId -ErrorAction Stop
+        $liveTicks = $live.StartTime.ToUniversalTime().Ticks
+    } catch {
+        Log "Skipping Office process PID $ProcessId (live start time unreadable: $($_.Exception.Message))"
+        return $false
+    }
+
+    if ($liveTicks -ne $recordedTicks) {
+        Log "Skipping Office process PID $ProcessId (PID was recycled: manifest start $recordedTicks, live start $liveTicks)"
+        return $false
+    }
+
+    return $true
+}
+
 function Remove-HarnessOwnedOfficeProcesses {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
-    param([int[]]$BeforeSnapshot, [int[]]$OwnedTreePids, [int[]]$FixtureOwnedPids)
+    param(
+        [int[]]$BeforeSnapshot,
+        [int[]]$OwnedTreePids,
+        [Parameter(Mandatory)][hashtable]$FixtureManifest
+    )
 
     $beforeSet = @{}
     foreach ($processId in $BeforeSnapshot) { $beforeSet[$processId] = $true }
@@ -113,30 +187,32 @@ function Remove-HarnessOwnedOfficeProcesses {
     $ownedSet = @{}
     foreach ($processId in $OwnedTreePids) { $ownedSet[$processId] = $true }
 
-    $fixtureSet = @{}
-    foreach ($processId in $FixtureOwnedPids) { $fixtureSet[$processId] = $true }
-
     $currentPids = @()
     try {
         $currentPids = @(Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Where-Object { $_ } | Sort-Object -Unique
     } catch {
         Log "WARN: Could not enumerate Office processes for sweep: $($_.Exception.Message)"
-        return
+        return 0
     }
 
+    $killed = 0
     foreach ($processId in $currentPids) {
         if ($beforeSet.ContainsKey($processId)) { continue }
 
-        # Primary ownership test: the fixture's own recorded PID. This is the
-        # signal OfficeFixture wrote to the owned-PID manifest, so it does not
-        # depend on Excel being a child of the test host.
-        if ($fixtureSet.ContainsKey($processId)) {
+        # Primary ownership test: the fixture's own recorded PID *and* the start
+        # time it recorded with it. This is the signal OfficeFixture wrote to the
+        # owned-PID manifest, so it does not depend on Excel being a child of the
+        # test host. The start-time check is what makes a stale manifest safe:
+        # a recycled PID no longer matches and is skipped.
+        if (Test-ManifestProcessIdentity -Manifest $FixtureManifest -ProcessId $processId) {
             Log "Killing harness-owned Office process PID $processId (recorded by OfficeFixture)"
             try {
                 if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
-                    & taskkill /PID $processId /T /F 2>$null
+                    & taskkill /PID $processId /T /F 2>$null | Out-Null
                     if ($LASTEXITCODE -ne 0) {
                         Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
+                    } else {
+                        $killed++
                     }
                 }
             } catch {
@@ -149,31 +225,37 @@ function Remove-HarnessOwnedOfficeProcesses {
         # fixture's own PID was not recorded; if the parent cannot be
         # determined we refuse to assume ownership -- the safe direction is
         # to leave an unrelated user-owned Office process alone.
-        $parentPid = $null
-        try {
-            $owner = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
-            if ($owner) { $parentPid = $owner.ParentProcessId }
-        } catch {
-            $err = $_.Exception.Message
-            Log "WARN: Could not determine parent of Office process PID ${processId}: $err"
-        }
-        if ($null -eq $parentPid -or -not $ownedSet.ContainsKey($parentPid)) {
-            Log "Skipping Office process PID $processId (parent $parentPid is not in the owned dotnet-test tree)"
-            continue
-        }
-
-        Log "Killing harness-owned Office process PID $processId (child of owned PID $parentPid)"
-        try {
-            if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
-                & taskkill /PID $processId /T /F 2>$null
-                if ($LASTEXITCODE -ne 0) {
-                    Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
-                }
+        if (-not $FixtureManifest.ContainsKey($processId)) {
+            $parentPid = $null
+            try {
+                $owner = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+                if ($owner) { $parentPid = $owner.ParentProcessId }
+            } catch {
+                $err = $_.Exception.Message
+                Log "WARN: Could not determine parent of Office process PID ${processId}: $err"
             }
-        } catch {
-            Log "WARN: taskkill threw for PID ${processId}: $($_.Exception.Message)"
+            if ($null -eq $parentPid -or -not $ownedSet.ContainsKey($parentPid)) {
+                Log "Skipping Office process PID $processId (parent $parentPid is not in the owned dotnet-test tree)"
+                continue
+            }
+
+            Log "Killing harness-owned Office process PID $processId (child of owned PID $parentPid)"
+            try {
+                if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
+                    & taskkill /PID $processId /T /F 2>$null | Out-Null
+                    if ($LASTEXITCODE -ne 0) {
+                        Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
+                    } else {
+                        $killed++
+                    }
+                }
+            } catch {
+                Log "WARN: taskkill threw for PID ${processId}: $($_.Exception.Message)"
+            }
         }
     }
+
+    return $killed
 }
 
 Log "verify-office: started $(Get-Date -Format 'o')"
@@ -194,28 +276,55 @@ if ($cfg) {
     exit 2
 }
 
-# Build, then test only the OfficeIntegration trait.
-Log 'build Release -warnaserror'
-dotnet build $Solution -c $Configuration --no-restore -warnaserror
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# The owned-PID manifest. OfficeFixture records the EXCEL.EXE process IDs it
+# created, each with the start time that identifies it, so the sweep can
+# positively identify the fixture's Excel even when it is not a child of the
+# test host, and can tell a live owned process from a recycled PID. The file
+# must not be committed; it lives under the ignored scripts/_artifacts/ tree.
+$ownedPidsPath = Join-Path $evidence 'owned-office-pids.json'
+
+# Preflight sweep, BEFORE the build. A harness-owned Excel left over from a
+# previous run holds the packed XLL open, and the build's ExcelDnaPack step
+# fails first ("could not be deleted. Perhaps loaded in Excel?") -- before any
+# post-test sweep could run. So the previous run's manifest is consumed here to
+# clear the lock, then the file is reset for this run.
+#
+# Identity is PID plus start time, so this can never kill a recycled PID or a
+# user-owned Excel: a process this script did not record, or whose start time no
+# longer matches, is skipped.
+$staleManifest = Read-OwnedPidManifest $ownedPidsPath
+if ($staleManifest.Count -gt 0) {
+    Log "preflight: sweeping $(@($staleManifest.Keys).Count) process(es) recorded by a previous run"
+    $preflightKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot @() -OwnedTreePids @() -FixtureManifest $staleManifest
+    if ($preflightKilled -gt 0) {
+        Log "preflight: cleared $preflightKilled harness-owned Office process(es) left by a previous run"
+    }
+}
 
 # Capture the Office processes that existed before this script started, so the
-# timeout sweep can distinguish harness-owned processes from user-owned ones.
-$officeBeforeSnapshot = @{}
+# sweep can distinguish harness-owned processes from user-owned ones.
+$officeBeforeSnapshot = @()
 try {
     $officeBeforeSnapshot = @(Get-Process -Name 'EXCEL','POWERPNT' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) | Where-Object { $_ } | Sort-Object -Unique
 } catch {
     $officeBeforeSnapshot = @()
 }
 
-# Owned-PID manifest. OfficeFixture records the EXCEL.EXE process ID it
-# created into this file (via $env:GANTTCREATOR_OWNED_PIDS_PATH), so the
-# timeout sweep can positively identify the fixture's Excel even when it is
-# not a child of the test host. The file must not be committed; it lives
-# under the ignored scripts/_artifacts/ tree.
-$ownedPidsPath = Join-Path $evidence 'owned-office-pids.json'
 if (Test-Path -LiteralPath $ownedPidsPath) { Remove-Item -LiteralPath $ownedPidsPath -Force -ErrorAction SilentlyContinue }
 $env:GANTTCREATOR_OWNED_PIDS_PATH = $ownedPidsPath
+
+# Escalation log. The fixture records how many owned processes it had to force
+# to the kill path; the target is zero, and a non-zero total is the visible
+# signal that a test body left a COM proxy alive. Reported, never used as the
+# pass/fail verdict -- that is the stray sweep's job.
+$forcedKillsPath = Join-Path $evidence 'office-forced-kills.log'
+if (Test-Path -LiteralPath $forcedKillsPath) { Remove-Item -LiteralPath $forcedKillsPath -Force -ErrorAction SilentlyContinue }
+$env:GANTTCREATOR_FORCED_KILLS_PATH = $forcedKillsPath
+
+# Build, then test only the OfficeIntegration trait.
+Log 'build Release -warnaserror'
+dotnet build $Solution -c $Configuration --no-restore -warnaserror
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
 $testArgs = @(
@@ -244,15 +353,7 @@ if (-not $testProc.HasExited)
     $ownedTreePids = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
         Where-Object { $_.ParentProcessId -eq $testProc.Id } | ForEach-Object { $_.ProcessId })
     # The owned-PID manifest outlives the killed test host, so read it now.
-    $fixtureOwnedPids = @()
-    try {
-        if (Test-Path -LiteralPath $ownedPidsPath) {
-            $fixtureOwnedPids = @((Get-Content -LiteralPath $ownedPidsPath -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue).ProcessId)
-        }
-    } catch {
-        $err = $_.Exception.Message
-        Log "WARN: could not read owned-PID manifest ${ownedPidsPath}: $err"
-    }
+    $fixtureManifest = Read-OwnedPidManifest $ownedPidsPath
 
     $cleanupDeadlineSeconds = 30
     $cleanupWatchdog = [System.Diagnostics.Stopwatch]::StartNew()
@@ -280,15 +381,56 @@ if (-not $testProc.HasExited)
     # this script's own sweep. Ownership is primary from the fixture's own
     # recorded PID, with parentage as a fallback; user-owned Office is never
     # killed.
-    Remove-HarnessOwnedOfficeProcesses $officeBeforeSnapshot $ownedTreePids $fixtureOwnedPids
+    Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids $ownedTreePids -FixtureManifest $fixtureManifest | Out-Null
     Save-Trx
     Log "TIMEOUT: OfficeIntegration tests exceeded the $DeadlineSeconds s deadline and were stopped. Evidence preserved under $evidence."
     exit 124
 }
 Save-Trx
+
+# Post-run sweep on the non-timeout paths too. A fixture-owned Excel that
+# outlived its test holds the packed XLL and breaks the NEXT run's publish step,
+# so the sweep is not reserved for the timeout path. Ownership is PID plus the
+# recorded start time, with parentage as a fallback; user-owned Office is never
+# killed.
+$finalManifest = Read-OwnedPidManifest $ownedPidsPath
+$straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids @() -FixtureManifest $finalManifest
+
+# Report the COM-proxy leak signal. A non-zero total means a test body left a
+# proxy alive and the owned Excel only exited because the fixture killed it.
+$forcedKills = 0
+try {
+    if (Test-Path -LiteralPath $forcedKillsPath) {
+        foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
+            $parsed = 0
+            if ([int]::TryParse($line.Trim(), [ref]$parsed)) { $forcedKills += $parsed }
+        }
+    }
+} catch {
+    Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
+}
+Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (ratchet ceiling $MaxForcedKills, end state 0; each one is a test body that left a COM proxy alive)"
+
 if ($testProc.ExitCode -ne 0) {
     Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."
     exit $testProc.ExitCode
+}
+
+# A stray that had to be killed is a real leak, not a warning: it means a test
+# left an Excel process holding the packed XLL, which is exactly the condition
+# that breaks the next run. It fails the gate so the leak cannot stay invisible.
+if ($straysKilled -gt 0) {
+    Log "FAIL: $straysKilled harness-owned Office process(es) survived the test run and had to be killed. Evidence preserved under $evidence."
+    exit 3
+}
+
+# Ratchet on the leak signal. The ceiling is the measured baseline, so this is
+# green today; a test that starts leaking again pushes the count past it and the
+# gate goes red. Each commit that retires a leaked proxy chain lowers the
+# ceiling, and the end state is 0 -- no test should need a forced kill at all.
+if ($forcedKills -gt $MaxForcedKills) {
+    Log "FAIL: COM proxy leak signal $forcedKills exceeds the ratchet ceiling $MaxForcedKills. A test that previously released its COM proxies has stopped, or a new test is leaking. Evidence preserved under $evidence."
+    exit 4
 }
 
 Log "verify-office: PASS. Report: $report"

@@ -171,16 +171,55 @@ public class ConfigCatalogueWriterTests
     [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected)]
     public void Write_shared_guard_refusal_does_not_mutate(ProtectionGuardOutcome protection)
     {
+        // The writer's mutation target is the configuration worksheet, so
+        // QueryTarget is the authoritative check. Query() reports the active
+        // sheet and must not gate this write.
         var fake = new ConfigSheetFake();
         var guard = new Mock<IWorksheetProtectionGuard>();
-        _ = guard.Setup(g => g.Query()).Returns(protection);
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object?>())).Returns(protection);
         var writer = ConfigGraph.BuildWriter(fake, protectionGuard: guard.Object);
 
         var outcome = writer.Write();
 
         Assert.Equal(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected), outcome);
-        guard.Verify(g => g.Query(), Times.Once);
+        guard.Verify(g => g.QueryTarget(It.IsAny<object?>()), Times.Once);
+        guard.Verify(g => g.Query(), Times.Never);
         Assert.Empty(fake.Tables);
+    }
+
+    [Fact]
+    public void Write_proceeds_when_only_the_active_sheet_is_protected()
+    {
+        // A protected *active* sheet is not the mutation target: the writer
+        // touches only the configuration worksheet, whose own protection and the
+        // workbook structure both report NotProtected. Refusing here would block
+        // catalogue writes for any user who protects their visible data sheet.
+        var fake = new ConfigSheetFake();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
+        _ = guard
+            .Setup(g => g.QueryTarget(It.IsAny<object?>()))
+            .Returns(ProtectionGuardOutcome.NotProtected);
+        var writer = ConfigGraph.BuildWriter(fake, protectionGuard: guard.Object);
+
+        var outcome = writer.Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Equal(5, fake.Tables.Count);
+    }
+
+    [Fact]
+    public void Write_refuses_duplicate_setting_preservation_keys()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[3].Body.Add([GanttCatalogues.Settings[0].Key, "duplicate"]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid),
+            outcome);
     }
 
     [Fact]
