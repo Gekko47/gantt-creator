@@ -17,7 +17,7 @@ public sealed record SceneText : ScenePrimitive
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
     public SceneText(
         string primitiveId,
-        GanttRowId ownerId,
+        SceneOwnerId ownerId,
         ZLayer zLayer,
         string text,
         RectD textBounds,
@@ -26,7 +26,8 @@ public sealed record SceneText : ScenePrimitive
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null)
+        int? sortOrder = null
+    )
         : base(primitiveId, ownerId, zLayer, entityType, laneOrder, stackIndex, sortOrder)
     {
         ArgumentNullException.ThrowIfNull(text);

@@ -38,21 +38,53 @@ public sealed class ZOrderTests
     [Fact]
     public void Scene_orders_layers_then_subtype_then_lane_stack_sort_and_id()
     {
-        GanttRowId owner = GanttRowId.New();
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
         SceneRect background = new("row:background", owner, ZLayer.Background, new RectD(0, 0, 10, 10), new SceneStyle("Default"));
-        SceneRect delay = new("row:delay", owner, ZLayer.ActivityBody, new RectD(0, 0, 10, 10), new SceneStyle("Delay"), GanttEntityType.DelayEvent, 1, 0, 1);
-        SceneRect actual = new("row:actual", owner, ZLayer.ActivityBody, new RectD(0, 0, 10, 10), new SceneStyle("Actual"), GanttEntityType.AsBuiltActivity, 1, 0, 1);
-        SceneRect planned = new("row:planned", owner, ZLayer.ActivityBody, new RectD(0, 0, 10, 10), new SceneStyle("Planned"), GanttEntityType.AsPlannedActivity, 0, 0, 2);
+        SceneRect delay = new(
+            "row:delay",
+            owner,
+            ZLayer.ActivityBody,
+            new RectD(0, 0, 10, 10),
+            new SceneStyle("Delay"),
+            GanttEntityType.DelayEvent,
+            1,
+            0,
+            1
+        );
+        SceneRect actual = new(
+            "row:actual",
+            owner,
+            ZLayer.ActivityBody,
+            new RectD(0, 0, 10, 10),
+            new SceneStyle("Actual"),
+            GanttEntityType.AsBuiltActivity,
+            1,
+            0,
+            1
+        );
+        SceneRect planned = new(
+            "row:planned",
+            owner,
+            ZLayer.ActivityBody,
+            new RectD(0, 0, 10, 10),
+            new SceneStyle("Planned"),
+            GanttEntityType.AsPlannedActivity,
+            0,
+            0,
+            2
+        );
 
         SceneCreationOutcome outcome = GanttScene.TryCreate(
             new RectD(0, 0, 100, 100),
             new RectD(10, 10, 90, 90),
             [delay, background, actual, planned],
-            []);
+            []
+        );
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(
             ["row:background", "row:planned", "row:actual", "row:delay"],
-            outcome.Scene!.Primitives.Select(primitive => primitive.PrimitiveId));
+            outcome.Scene!.Primitives.Select(primitive => primitive.PrimitiveId)
+        );
     }
 }

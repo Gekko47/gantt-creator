@@ -15,14 +15,15 @@ public sealed record SceneRect : ScenePrimitive
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
     public SceneRect(
         string primitiveId,
-        GanttRowId ownerId,
+        SceneOwnerId ownerId,
         ZLayer zLayer,
         RectD bounds,
         SceneStyle style,
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null)
+        int? sortOrder = null
+    )
         : base(primitiveId, ownerId, zLayer, entityType, laneOrder, stackIndex, sortOrder)
     {
         ArgumentNullException.ThrowIfNull(style);

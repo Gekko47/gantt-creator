@@ -14,13 +14,14 @@ public sealed record SceneGroup : ScenePrimitive
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
     public SceneGroup(
         string primitiveId,
-        GanttRowId ownerId,
+        SceneOwnerId ownerId,
         ZLayer zLayer,
         IReadOnlyList<string> childPrimitiveIds,
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null)
+        int? sortOrder = null
+    )
         : base(primitiveId, ownerId, zLayer, entityType, laneOrder, stackIndex, sortOrder)
     {
         ArgumentNullException.ThrowIfNull(childPrimitiveIds);

@@ -31,8 +31,8 @@ public static class SceneSnapshot
     public static GanttScene Deserialize(string json)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
-        SceneDocument document = JsonSerializer.Deserialize<SceneDocument>(json, _serializerOptions)
-            ?? throw new InvalidDataException("Scene JSON is empty.");
+        SceneDocument document =
+            JsonSerializer.Deserialize<SceneDocument>(json, _serializerOptions) ?? throw new InvalidDataException("Scene JSON is empty.");
         try
         {
             return FromDocument(document);
@@ -47,97 +47,100 @@ public static class SceneSnapshot
         }
     }
 
-    private static SceneDocument ToDocument(GanttScene scene) => new()
-    {
-        Version = 1,
-        ChartBounds = ToRect(scene.ChartBounds),
-        PlotBounds = ToRect(scene.PlotBounds),
-        Primitives = [.. scene.Primitives.Select(ToPrimitive)],
-        Warnings = [.. scene.Warnings.Select(ToWarning)],
-    };
+    private static SceneDocument ToDocument(GanttScene scene) =>
+        new()
+        {
+            Version = 2,
+            ChartBounds = ToRect(scene.ChartBounds),
+            PlotBounds = ToRect(scene.PlotBounds),
+            Primitives = [.. scene.Primitives.Select(ToPrimitive)],
+            Warnings = [.. scene.Warnings.Select(ToWarning)],
+        };
 
-    private static PrimitiveDocument ToPrimitive(ScenePrimitive primitive) => primitive switch
-    {
-        SceneRect rect => new PrimitiveDocument
+    private static PrimitiveDocument ToPrimitive(ScenePrimitive primitive) =>
+        primitive switch
         {
-            Kind = "rect",
-            PrimitiveId = rect.PrimitiveId,
-            OwnerId = rect.OwnerId.Value,
-            ZLayer = (int)rect.ZLayer,
-            EntityType = ToNullableInt(rect.EntityType),
-            LaneOrder = rect.LaneOrder,
-            StackIndex = rect.StackIndex,
-            SortOrder = rect.SortOrder,
-            Bounds = ToRect(rect.Bounds),
-            Style = ToStyle(rect.Style),
-        },
-        SceneLine line => new PrimitiveDocument
-        {
-            Kind = "line",
-            PrimitiveId = line.PrimitiveId,
-            OwnerId = line.OwnerId.Value,
-            ZLayer = (int)line.ZLayer,
-            EntityType = ToNullableInt(line.EntityType),
-            LaneOrder = line.LaneOrder,
-            StackIndex = line.StackIndex,
-            SortOrder = line.SortOrder,
-            From = ToPoint(line.From),
-            To = ToPoint(line.To),
-            Style = ToStyle(line.Style),
-        },
-        ScenePolygon polygon => new PrimitiveDocument
-        {
-            Kind = "polygon",
-            PrimitiveId = polygon.PrimitiveId,
-            OwnerId = polygon.OwnerId.Value,
-            ZLayer = (int)polygon.ZLayer,
-            EntityType = ToNullableInt(polygon.EntityType),
-            LaneOrder = polygon.LaneOrder,
-            StackIndex = polygon.StackIndex,
-            SortOrder = polygon.SortOrder,
-            Points = [.. polygon.Points.Select(ToPoint)],
-            Style = ToStyle(polygon.Style),
-        },
-        SceneText text => new PrimitiveDocument
-        {
-            Kind = "text",
-            PrimitiveId = text.PrimitiveId,
-            OwnerId = text.OwnerId.Value,
-            ZLayer = (int)text.ZLayer,
-            EntityType = ToNullableInt(text.EntityType),
-            LaneOrder = text.LaneOrder,
-            StackIndex = text.StackIndex,
-            SortOrder = text.SortOrder,
-            Text = text.Text,
-            TextBounds = ToRect(text.TextBounds),
-            Style = ToStyle(text.Style),
-            Alignment = (int)text.Alignment,
-        },
-        SceneGroup group => new PrimitiveDocument
-        {
-            Kind = "group",
-            PrimitiveId = group.PrimitiveId,
-            OwnerId = group.OwnerId.Value,
-            ZLayer = (int)group.ZLayer,
-            EntityType = ToNullableInt(group.EntityType),
-            LaneOrder = group.LaneOrder,
-            StackIndex = group.StackIndex,
-            SortOrder = group.SortOrder,
-            ChildPrimitiveIds = [.. group.ChildPrimitiveIds],
-        },
-        _ => throw new InvalidDataException($"Unsupported scene primitive '{primitive.GetType().Name}'."),
-    };
+            SceneRect rect => new PrimitiveDocument
+            {
+                Kind = "rect",
+                PrimitiveId = rect.PrimitiveId,
+                Owner = ToOwner(rect.OwnerId),
+                ZLayer = (int)rect.ZLayer,
+                EntityType = ToNullableInt(rect.EntityType),
+                LaneOrder = rect.LaneOrder,
+                StackIndex = rect.StackIndex,
+                SortOrder = rect.SortOrder,
+                Bounds = ToRect(rect.Bounds),
+                Style = ToStyle(rect.Style),
+            },
+            SceneLine line => new PrimitiveDocument
+            {
+                Kind = "line",
+                PrimitiveId = line.PrimitiveId,
+                Owner = ToOwner(line.OwnerId),
+                ZLayer = (int)line.ZLayer,
+                EntityType = ToNullableInt(line.EntityType),
+                LaneOrder = line.LaneOrder,
+                StackIndex = line.StackIndex,
+                SortOrder = line.SortOrder,
+                From = ToPoint(line.From),
+                To = ToPoint(line.To),
+                Style = ToStyle(line.Style),
+            },
+            ScenePolygon polygon => new PrimitiveDocument
+            {
+                Kind = "polygon",
+                PrimitiveId = polygon.PrimitiveId,
+                Owner = ToOwner(polygon.OwnerId),
+                ZLayer = (int)polygon.ZLayer,
+                EntityType = ToNullableInt(polygon.EntityType),
+                LaneOrder = polygon.LaneOrder,
+                StackIndex = polygon.StackIndex,
+                SortOrder = polygon.SortOrder,
+                Points = [.. polygon.Points.Select(ToPoint)],
+                Style = ToStyle(polygon.Style),
+            },
+            SceneText text => new PrimitiveDocument
+            {
+                Kind = "text",
+                PrimitiveId = text.PrimitiveId,
+                Owner = ToOwner(text.OwnerId),
+                ZLayer = (int)text.ZLayer,
+                EntityType = ToNullableInt(text.EntityType),
+                LaneOrder = text.LaneOrder,
+                StackIndex = text.StackIndex,
+                SortOrder = text.SortOrder,
+                Text = text.Text,
+                TextBounds = ToRect(text.TextBounds),
+                Style = ToStyle(text.Style),
+                Alignment = (int)text.Alignment,
+            },
+            SceneGroup group => new PrimitiveDocument
+            {
+                Kind = "group",
+                PrimitiveId = group.PrimitiveId,
+                Owner = ToOwner(group.OwnerId),
+                ZLayer = (int)group.ZLayer,
+                EntityType = ToNullableInt(group.EntityType),
+                LaneOrder = group.LaneOrder,
+                StackIndex = group.StackIndex,
+                SortOrder = group.SortOrder,
+                ChildPrimitiveIds = [.. group.ChildPrimitiveIds],
+            },
+            _ => throw new InvalidDataException($"Unsupported scene primitive '{primitive.GetType().Name}'."),
+        };
 
-    private static WarningDocument ToWarning(SceneWarning warning) => new()
-    {
-        OwnerId = warning.OwnerId.Value,
-        Code = warning.Code,
-        Message = warning.Message,
-    };
+    private static WarningDocument ToWarning(SceneWarning warning) =>
+        new()
+        {
+            Owner = ToOwner(warning.OwnerId),
+            Code = warning.Code,
+            Message = warning.Message,
+        };
 
     private static GanttScene FromDocument(SceneDocument document)
     {
-        if (document.Version != 1)
+        if (document.Version != 2)
         {
             throw new InvalidDataException($"Unsupported scene snapshot version {document.Version}.");
         }
@@ -148,13 +151,14 @@ public static class SceneSnapshot
             FromRect(Required(document.ChartBounds, "chartBounds"), "chartBounds"),
             FromRect(Required(document.PlotBounds, "plotBounds"), "plotBounds"),
             primitives,
-            warnings);
+            warnings
+        );
         return outcome.Scene ?? throw new InvalidDataException($"Scene creation refused: {outcome.Refusal}.");
     }
 
     private static ScenePrimitive FromPrimitive(PrimitiveDocument document)
     {
-        GanttRowId owner = ParseOwner(document.OwnerId);
+        SceneOwnerId owner = ParseOwner(Required(document.Owner, "primitive.owner"));
         ZLayer layer = ParseLayer(document.ZLayer);
         GanttEntityType? entityType = FromNullableInt(document.EntityType);
         return document.Kind switch
@@ -168,7 +172,8 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder),
+                document.SortOrder
+            ),
             "line" => new SceneLine(
                 Required(document.PrimitiveId, "primitiveId"),
                 owner,
@@ -179,7 +184,8 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder),
+                document.SortOrder
+            ),
             "polygon" => new ScenePolygon(
                 Required(document.PrimitiveId, "primitiveId"),
                 owner,
@@ -189,7 +195,8 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder),
+                document.SortOrder
+            ),
             "text" => new SceneText(
                 Required(document.PrimitiveId, "primitiveId"),
                 owner,
@@ -201,7 +208,8 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder),
+                document.SortOrder
+            ),
             "group" => new SceneGroup(
                 Required(document.PrimitiveId, "primitiveId"),
                 owner,
@@ -210,46 +218,54 @@ public static class SceneSnapshot
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
-                document.SortOrder),
+                document.SortOrder
+            ),
             _ => throw new InvalidDataException($"Unknown scene primitive kind '{document.Kind}'."),
         };
     }
 
     private static SceneWarning FromWarning(WarningDocument document) =>
-        new(ParseOwner(document.OwnerId), Required(document.Code, "warning.code"), Required(document.Message, "warning.message"));
+        new(
+            ParseOwner(Required(document.Owner, "warning.owner")),
+            Required(document.Code, "warning.code"),
+            Required(document.Message, "warning.message")
+        );
 
-    private static RectDocument ToRect(RectD rect) => new()
-    {
-        X = rect.X,
-        Y = rect.Y,
-        Width = rect.Width,
-        Height = rect.Height,
-    };
+    private static RectDocument ToRect(RectD rect) =>
+        new()
+        {
+            X = rect.X,
+            Y = rect.Y,
+            Width = rect.Width,
+            Height = rect.Height,
+        };
 
     private static RectD FromRect(RectDocument document, string field) =>
         new(
             RequiredFinite(document.X, field + ".x"),
             RequiredFinite(document.Y, field + ".y"),
             RequiredFinite(document.Width, field + ".width"),
-            RequiredFinite(document.Height, field + ".height"));
+            RequiredFinite(document.Height, field + ".height")
+        );
 
     private static PointDocument ToPoint(PointD point) => new() { X = point.X, Y = point.Y };
 
     private static PointD FromPoint(PointDocument document, string field) =>
         new(RequiredFinite(document.X, field + ".x"), RequiredFinite(document.Y, field + ".y"));
 
-    private static StyleDocument ToStyle(SceneStyle style) => new()
-    {
-        StyleKey = style.StyleKey,
-        FillColour = style.FillColour?.ToString(),
-        StrokeColour = style.StrokeColour?.ToString(),
-        OutlineWidthPt = style.OutlineWidthPt,
-        HatchPattern = (int)style.HatchPattern,
-        FontFamily = style.FontFamily,
-        FontSizePt = style.FontSizePt,
-        Bold = style.Bold,
-        Alignment = style.Alignment is { } alignment ? (int)alignment : null,
-    };
+    private static StyleDocument ToStyle(SceneStyle style) =>
+        new()
+        {
+            StyleKey = style.StyleKey,
+            FillColour = style.FillColour?.ToString(),
+            StrokeColour = style.StrokeColour?.ToString(),
+            OutlineWidthPt = style.OutlineWidthPt,
+            HatchPattern = (int)style.HatchPattern,
+            FontFamily = style.FontFamily,
+            FontSizePt = style.FontSizePt,
+            Bold = style.Bold,
+            Alignment = style.Alignment is { } alignment ? (int)alignment : null,
+        };
 
     private static SceneStyle FromStyle(StyleDocument document)
     {
@@ -270,20 +286,22 @@ public static class SceneSnapshot
             document.FontFamily,
             document.FontSizePt,
             document.Bold,
-            alignment);
+            alignment
+        );
     }
 
     private static ColourHex? ParseColour(string? value, string field) =>
-        value is null
-            ? null
-            : ColourHex.TryParse(value, out ColourHex? colour) && colour is not null
-                ? colour
-                : throw new InvalidDataException($"Invalid colour in {field}.");
+        value is null ? null
+        : ColourHex.TryParse(value, out ColourHex? colour) && colour is not null ? colour
+        : throw new InvalidDataException($"Invalid colour in {field}.");
 
-    private static GanttRowId ParseOwner(string? value) =>
-        GanttRowId.TryParse(value, out GanttRowId? owner) && owner is not null
+    private static OwnerDocument ToOwner(SceneOwnerId owner) =>
+        new() { Kind = owner.Kind == SceneOwnerKind.Row ? "row" : "chart", Value = owner.Value };
+
+    private static SceneOwnerId ParseOwner(OwnerDocument document) =>
+        SceneOwnerId.TryParse(document.Kind, document.Value, out SceneOwnerId? owner) && owner is not null
             ? owner
-            : throw new InvalidDataException("Invalid scene owner ID.");
+            : throw new InvalidDataException("Invalid scene owner.");
 
     private static ZLayer ParseLayer(int value) =>
         Enum.IsDefined(typeof(ZLayer), value) ? (ZLayer)value : throw new InvalidDataException($"Invalid z-layer {value}.");
@@ -291,16 +309,17 @@ public static class SceneSnapshot
     private static int? ToNullableInt(GanttEntityType? value) => value is { } type ? (int)type : null;
 
     private static GanttEntityType? FromNullableInt(int? value) =>
-        value is null ? null : Enum.IsDefined(typeof(GanttEntityType), value.Value) ? (GanttEntityType)value.Value : throw new InvalidDataException($"Invalid entity type {value}.");
+        value is null ? null
+        : Enum.IsDefined(typeof(GanttEntityType), value.Value) ? (GanttEntityType)value.Value
+        : throw new InvalidDataException($"Invalid entity type {value}.");
 
-    private static T Required<T>(T? value, string field) where T : class =>
-        value ?? throw new InvalidDataException($"Missing scene field '{field}'.");
+    private static T Required<T>(T? value, string field)
+        where T : class => value ?? throw new InvalidDataException($"Missing scene field '{field}'.");
 
     private static double RequiredFinite(double value, string field) =>
         double.IsFinite(value) ? value : throw new InvalidDataException($"Non-finite scene field '{field}'.");
 
-    private static int RequiredInt(int? value, string field) =>
-        value ?? throw new InvalidDataException($"Missing scene field '{field}'.");
+    private static int RequiredInt(int? value, string field) => value ?? throw new InvalidDataException($"Missing scene field '{field}'.");
 
     private sealed class SceneDocument
     {
@@ -315,7 +334,7 @@ public static class SceneSnapshot
     {
         public string? Kind { get; init; }
         public string? PrimitiveId { get; init; }
-        public string? OwnerId { get; init; }
+        public OwnerDocument? Owner { get; init; }
         public int ZLayer { get; init; }
         public int? EntityType { get; init; }
         public int? LaneOrder { get; init; }
@@ -330,6 +349,12 @@ public static class SceneSnapshot
         public StyleDocument? Style { get; init; }
         public int? Alignment { get; init; }
         public List<string>? ChildPrimitiveIds { get; init; }
+    }
+
+    private sealed class OwnerDocument
+    {
+        public string? Kind { get; init; }
+        public string? Value { get; init; }
     }
 
     private sealed class RectDocument
@@ -361,7 +386,7 @@ public static class SceneSnapshot
 
     private sealed class WarningDocument
     {
-        public string? OwnerId { get; init; }
+        public OwnerDocument? Owner { get; init; }
         public string? Code { get; init; }
         public string? Message { get; init; }
     }

@@ -15,14 +15,15 @@ public sealed record ScenePolygon : ScenePrimitive
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
     public ScenePolygon(
         string primitiveId,
-        GanttRowId ownerId,
+        SceneOwnerId ownerId,
         ZLayer zLayer,
         IReadOnlyList<PointD> points,
         SceneStyle style,
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null)
+        int? sortOrder = null
+    )
         : base(primitiveId, ownerId, zLayer, entityType, laneOrder, stackIndex, sortOrder)
     {
         ArgumentNullException.ThrowIfNull(points);

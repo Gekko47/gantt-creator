@@ -13,12 +13,13 @@ public abstract record ScenePrimitive
     /// <param name="sortOrder">The explicit user ordering value, when known.</param>
     protected ScenePrimitive(
         string primitiveId,
-        GanttRowId ownerId,
+        SceneOwnerId ownerId,
         ZLayer zLayer,
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
-        int? sortOrder = null)
+        int? sortOrder = null
+    )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
         ArgumentNullException.ThrowIfNull(ownerId);
@@ -49,8 +50,8 @@ public abstract record ScenePrimitive
     /// <summary>Gets the stable role-derived primitive identifier.</summary>
     public string PrimitiveId { get; }
 
-    /// <summary>Gets the stable source row identifier.</summary>
-    public GanttRowId OwnerId { get; }
+    /// <summary>Gets the stable scene owner identifier.</summary>
+    public SceneOwnerId OwnerId { get; }
 
     /// <summary>Gets the scene layer.</summary>
     public ZLayer ZLayer { get; }
@@ -71,7 +72,7 @@ public abstract record ScenePrimitive
     /// <param name="ownerId">The stable source row identifier.</param>
     /// <param name="role">The role suffix for this primitive.</param>
     /// <returns>The stable primitive identifier.</returns>
-    public static string CreateId(GanttRowId ownerId, string role)
+    public static string CreateId(SceneOwnerId ownerId, string role)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
         ArgumentException.ThrowIfNullOrWhiteSpace(role);
