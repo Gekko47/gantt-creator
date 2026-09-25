@@ -251,18 +251,23 @@ public class ValidationReportComposerTests
     [Fact]
     public void Truncate_marks_a_clipped_note_and_never_splits_a_surrogate_pair()
     {
-        // A real astral character (surrogate pair) repeated so the clamp point
-        // lands on a pair boundary. The guard exists to avoid cutting between a
-        // high and low surrogate, which would make the note text invalid UTF-16.
+        // One ASCII character, then a real astral character (surrogate pair)
+        // repeated until the text overruns the limit. The leading ASCII unit
+        // makes the clamp point land on a high surrogate, which the guard must
+        // drop: cutting between a high and low surrogate would make the note
+        // text invalid UTF-16 and Excel would reject it.
         var builder = new System.Text.StringBuilder();
-        while (builder.Length < ValidationReportComposer.MaxNoteLength)
+        _ = builder.Append('x');
+        while (builder.Length <= ValidationReportComposer.MaxNoteLength)
         {
             _ = builder.Append("\U0001F600"); // GRINNING FACE (astral, surrogate pair)
         }
 
         string clipped = ValidationReportComposer.Truncate(builder.ToString());
 
-        Assert.Equal(ValidationReportComposer.MaxNoteLength, clipped.Length);
+        // One unit shorter than the maximum: the orphaned high surrogate was
+        // removed before the marker was appended.
+        Assert.Equal(ValidationReportComposer.MaxNoteLength - 1, clipped.Length);
         Assert.EndsWith(ValidationReportComposer.TruncationMarker, clipped, StringComparison.Ordinal);
         // The last kept unit before the marker must be a complete pair: a low
         // surrogate preceded by its high surrogate, never a lone high surrogate.
