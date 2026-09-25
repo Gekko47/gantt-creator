@@ -18,11 +18,11 @@ public class ExcelTypeOptionsMaterialiser(
     /// <inheritdoc />
     public TypeOptionsMaterialiseOutcome Materialise()
     {
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
         {
             return TypeOptionsMaterialiseOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
                     ? TypeOptionsRefusalReason.NoActiveWorkbook
                     : TypeOptionsRefusalReason.TargetProtected);
         }
@@ -48,14 +48,21 @@ public class ExcelTypeOptionsMaterialiser(
         Excel.Sheets sheets = workbook.Sheets;
         Excel.Worksheet? config = FindSheet(sheets, GanttWorkbookContract.ConfigSheetName);
         Excel.Worksheet? gantt = FindTableSheet(sheets, GanttTableSchema.TableName);
-        if (config is null)
+        if (config is null || gantt is null)
         {
-            return TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.ConfigSheetMissing);
+            return TypeOptionsMaterialiseOutcome.Refused(
+                config is null
+                    ? TypeOptionsRefusalReason.ConfigSheetMissing
+                    : TypeOptionsRefusalReason.TableMissing);
         }
 
-        if (gantt is null)
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
         {
-            return TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.TableMissing);
+            return TypeOptionsMaterialiseOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? TypeOptionsRefusalReason.NoActiveWorkbook
+                    : TypeOptionsRefusalReason.TargetProtected);
         }
 
         Excel.ListObject? types = FindTable(config, GanttCatalogues.TypesTableName);
@@ -79,7 +86,15 @@ public class ExcelTypeOptionsMaterialiser(
         }
 
         Excel.Names names = workbook.Names;
-        SetName(names, GanttWorkbookContract.TypeOptionsDefinedName, BuildRefersTo(config.Name, optionsRange));
+        Excel.Name? existingName = FindName(names, GanttWorkbookContract.TypeOptionsDefinedName);
+        var expectedRefersTo = BuildRefersTo(config.Name, optionsRange);
+        if (existingName is not null
+            && !string.Equals(existingName.RefersTo, expectedRefersTo, StringComparison.Ordinal))
+        {
+            return TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.NameTargetInvalid);
+        }
+
+        SetName(names, GanttWorkbookContract.TypeOptionsDefinedName, expectedRefersTo);
         Excel.Range? typeRange = typeColumn.DataBodyRange;
         if (typeRange is not null)
         {
@@ -106,20 +121,24 @@ public class ExcelTypeOptionsMaterialiser(
         return $"='{sheetName.Replace("'", "''", StringComparison.Ordinal)}'!{address}";
     }
 
-    private static void SetName(Excel.Names names, string nameText, string refersTo)
+    private static Excel.Name? FindName(Excel.Names names, string nameText)
     {
-        Excel.Name? existing = null;
         var count = names.Count;
         for (var index = 1; index <= count; index++)
         {
             Excel.Name candidate = names.Item(index);
             if (string.Equals(candidate.Name, nameText, StringComparison.OrdinalIgnoreCase))
             {
-                existing = candidate;
-                break;
+                return candidate;
             }
         }
 
+        return null;
+    }
+
+    private static void SetName(Excel.Names names, string nameText, string refersTo)
+    {
+        Excel.Name? existing = FindName(names, nameText);
         if (existing is null)
         {
             _ = names.Add(nameText, refersTo);
@@ -129,7 +148,6 @@ public class ExcelTypeOptionsMaterialiser(
             existing.RefersTo = refersTo;
         }
     }
-
 
     private static Excel.Worksheet? FindSheet(Excel.Sheets sheets, string name)
     {

@@ -17,6 +17,8 @@ public enum TypeOptionsRefusalReason
 
     /// <summary>The target worksheet or workbook structure is protected.</summary>
     TargetProtected = 4,
+    /// <summary>The existing TypeOptions name does not target the expected catalogue range.</summary>
+    NameTargetInvalid = 5,
 }
 
 /// <summary>The typed result of materialising the Type dropdown.</summary>
@@ -38,4 +40,11 @@ public interface ITypeOptionsMaterialiser
 {
     /// <summary>Applies the named-range dropdown to the current Type body.</summary>
     TypeOptionsMaterialiseOutcome Materialise();
+
+    /// <summary>
+    /// Ensures the TypeOptions infrastructure is current without rebuilding it
+    /// when the existing name and validation are already current.
+    /// </summary>
+    /// <returns>The typed ensure result.</returns>
+    TypeOptionsMaterialiseOutcome EnsureCurrent() => Materialise();
 }

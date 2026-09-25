@@ -19,11 +19,12 @@ public enum ConfigWriteRefusalReason
     /// </summary>
     ConfigSheetMissing = 1,
 
-    /// <summary>
-    /// The configuration worksheet or the workbook structure is protected;
+    /// <summary>The configuration worksheet or the workbook structure is protected;
     /// nothing was written.
     /// </summary>
     TargetProtected = 2,
+    /// <summary>Existing configuration content could not be preserved safely.</summary>
+    CataloguePreservationInvalid = 3,
 }
 
 /// <summary>

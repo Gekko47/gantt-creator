@@ -38,6 +38,14 @@ public abstract record ScenePrimitive
             throw new ArgumentOutOfRangeException(nameof(stackIndex));
         }
 
+        if (sortOrder is { } sort && sort < 0)
+        {
+            // SortOrder is validated as a non-negative integer in the row validator
+            // (GanttValidationCodes.BadSortOrder). A negative value reaching a
+            // primitive would silently reorder the scene, so it is refused here too.
+            throw new ArgumentOutOfRangeException(nameof(sortOrder));
+        }
+
         PrimitiveId = primitiveId;
         OwnerId = ownerId;
         ZLayer = zLayer;

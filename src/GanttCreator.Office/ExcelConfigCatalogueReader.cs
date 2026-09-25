@@ -568,6 +568,13 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             return ConfigReadRefusalReason.RowCountMismatch;
         }
 
+        var approvedConfigKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            GanttCatalogues.ConfigSchemaVersionKey,
+            GanttCatalogues.ConfigCatalogueHashKey,
+            GanttCatalogues.ConfigWorkbookIdKey,
+            GanttCatalogues.ConfigAddInVersionKey,
+        };
         Dictionary<string, string> map = new(StringComparer.Ordinal);
         foreach (var row in rows)
         {
@@ -576,13 +583,21 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.RowCountMismatch;
             }
 
-            map[ToText(row[0])] = ToText(row[1]);
+            var key = ToText(row[0]);
+            if (key.Length == 0
+                || !approvedConfigKeys.Contains(key)
+                || !map.TryAdd(key, ToText(row[1])))
+            {
+                return ConfigReadRefusalReason.CatalogueMismatch;
+            }
         }
 
-        return !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out var schemaText)
-            || schemaText != GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)
-            ? ConfigReadRefusalReason.CatalogueHashMismatch
-            : ValidateStoredHash(map, ref workbookId);
+        return map.Count == approvedConfigKeys.Count
+            ? !map.TryGetValue(GanttCatalogues.ConfigSchemaVersionKey, out var schemaText)
+                || schemaText != GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)
+                ? ConfigReadRefusalReason.CatalogueHashMismatch
+                : ValidateStoredHash(map, ref workbookId)
+            : ConfigReadRefusalReason.CatalogueMismatch;
     }
 
     /// <summary>

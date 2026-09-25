@@ -18,11 +18,33 @@ public class AddRowCommandTests
 
     private static GanttRowId FixedId() => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
 
+    private sealed class RecordingSelector : IInsertedRowSelector
+    {
+        public List<int> Selected { get; } = [];
+
+        public int Calls { get; private set; }
+
+        public bool Throws { get; set; }
+
+        public void SelectBodyRow(int bodyIndex)
+        {
+            Calls++;
+            if (Throws)
+            {
+                throw new InvalidOperationException("selection refused");
+            }
+
+            Selected.Add(bodyIndex);
+        }
+    }
+
+    private static RecordingSelector NoopSelector() => new();
+
     [Fact]
     public void Run_throws_for_a_null_inserter()
     {
         Assert.Throws<ArgumentNullException>(
-            () => AddRowCommand.Run(null!, FixedId, _ => { }, GanttEntityType.AsPlannedActivity));
+            () => AddRowCommand.Run(null!, FixedId, NoopSelector(), _ => { }, GanttEntityType.AsPlannedActivity));
     }
 
     [Fact]
@@ -30,7 +52,15 @@ public class AddRowCommandTests
     {
         Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(1));
         Assert.Throws<ArgumentNullException>(
-            () => AddRowCommand.Run(inserter.Object, null!, _ => { }, GanttEntityType.AsPlannedActivity));
+            () => AddRowCommand.Run(inserter.Object, null!, NoopSelector(), _ => { }, GanttEntityType.AsPlannedActivity));
+    }
+
+    [Fact]
+    public void Run_throws_for_a_null_selector()
+    {
+        Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(1));
+        Assert.Throws<ArgumentNullException>(
+            () => AddRowCommand.Run(inserter.Object, FixedId, null!, _ => { }, GanttEntityType.AsPlannedActivity));
     }
 
     [Fact]
@@ -38,7 +68,58 @@ public class AddRowCommandTests
     {
         Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(1));
         Assert.Throws<ArgumentNullException>(
-            () => AddRowCommand.Run(inserter.Object, FixedId, null!, GanttEntityType.AsPlannedActivity));
+            () => AddRowCommand.Run(inserter.Object, FixedId, NoopSelector(), null!, GanttEntityType.AsPlannedActivity));
+    }
+
+    [Fact]
+    public void Success_selects_the_inserted_row_body_index()
+    {
+        // The inserted row must be where the user's cursor lands, otherwise the
+        // user has to hunt for the row they just created.
+        var selector = new RecordingSelector();
+        Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(4));
+
+        AddRowCommand.Run(
+            inserter.Object,
+            FixedId,
+            selector,
+            _ => { },
+            GanttEntityType.AsPlannedMilestone);
+
+        Assert.Equal(4, Assert.Single(selector.Selected));
+    }
+
+    [Fact]
+    public void Refusal_never_moves_the_selection()
+    {
+        var selector = new RecordingSelector();
+        Mock<IGanttRowInserter> inserter = InserterWith(
+            GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TargetProtected));
+
+        AddRowCommand.Run(inserter.Object, FixedId, selector, _ => { }, GanttEntityType.AsPlannedActivity);
+
+        Assert.Equal(0, selector.Calls);
+    }
+
+    [Fact]
+    public void Selection_failure_does_not_escape_or_report_an_error()
+    {
+        // The row was inserted; a refused selection must neither throw into Excel
+        // nor claim the add failed.
+        var messages = new List<string>();
+        var selector = new RecordingSelector { Throws = true };
+        Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(2));
+
+        Exception? exception = Record.Exception(() => AddRowCommand.Run(
+            inserter.Object,
+            FixedId,
+            selector,
+            messages.Add,
+            GanttEntityType.AsPlannedActivity));
+
+        Assert.Null(exception);
+        Assert.Equal(1, selector.Calls);
+        Assert.Empty(messages);
     }
 
     [Fact]
@@ -50,6 +131,7 @@ public class AddRowCommandTests
         AddRowCommand.Run(
             inserter.Object,
             FixedId,
+            NoopSelector(),
             messages.Add,
             GanttEntityType.AsPlannedMilestone);
 
@@ -74,6 +156,7 @@ public class AddRowCommandTests
         AddRowCommand.Run(
             inserter.Object,
             FixedId,
+            NoopSelector(),
             messages.Add,
             GanttEntityType.Delineator);
 
@@ -90,6 +173,7 @@ public class AddRowCommandTests
         Exception? exception = Record.Exception(() => AddRowCommand.Run(
             inserter.Object,
             FixedId,
+            NoopSelector(),
             _ => throw new InvalidOperationException("dialog down"),
             GanttEntityType.AsPlannedActivity));
 

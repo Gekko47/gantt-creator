@@ -87,12 +87,31 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     /// </summary>
     /// <param name="events">The Excel application event interface (a shared root; not owned).</param>
     /// <param name="handler">The subscriber's change handler.</param>
-    private sealed class WorkbookStateSubscription(Excel.AppEvents_Event events, Action handler) : IDisposable
+    private sealed class WorkbookStateSubscription(Excel.AppEvents_Event events, Action handler)
+        : IDisposable, IWorkbookStateSubscriptionStatus
     {
         private Excel.AppEvents_WorkbookActivateEventHandler? _onWorkbookActivate;
         private Excel.AppEvents_WorkbookDeactivateEventHandler? _onWorkbookDeactivate;
         private Excel.AppEvents_NewWorkbookEventHandler? _onNewWorkbook;
         private bool _disposed;
+        private EventHandlerState _workbookActivateState = EventHandlerState.Detached;
+        private EventHandlerState _workbookDeactivateState = EventHandlerState.Detached;
+        private EventHandlerState _newWorkbookState = EventHandlerState.Detached;
+
+        /// <inheritdoc />
+        public EventHandlerState WorkbookActivateState => _workbookActivateState;
+
+        /// <inheritdoc />
+        public EventHandlerState WorkbookDeactivateState => _workbookDeactivateState;
+
+        /// <inheritdoc />
+        public EventHandlerState NewWorkbookState => _newWorkbookState;
+
+        /// <inheritdoc />
+        public bool AllDetached =>
+            _workbookActivateState == EventHandlerState.Detached
+            && _workbookDeactivateState == EventHandlerState.Detached
+            && _newWorkbookState == EventHandlerState.Detached;
 
         /// <summary>
         /// Attaches the three handlers. A failure degrades to "no automatic
@@ -113,8 +132,11 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
                 _onNewWorkbook = _ => Invoke();
 
                 events.WorkbookActivate += _onWorkbookActivate;
+                _workbookActivateState = EventHandlerState.Attached;
                 events.WorkbookDeactivate += _onWorkbookDeactivate;
+                _workbookDeactivateState = EventHandlerState.Attached;
                 events.NewWorkbook += _onNewWorkbook;
+                _newWorkbookState = EventHandlerState.Attached;
             }
             catch
             {
@@ -160,55 +182,80 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
             _disposed = true;
 
             // CA1031: teardown runs from AutoClose and must never throw into
-            // Excel; a failed detach degrades to a retained event connection.
-            // Each removal is guarded separately so a failure on one event
-            // does not prevent the remaining removals from running.
+            // Excel. Each removal is attempted independently so a failure on one
+            // event does not prevent the remaining removals, and a failed removal
+            // is recorded as DetachFailed rather than reported as a success.
+            Detach(
+                ref _workbookActivateState,
+                () =>
+                {
+                    if (_onWorkbookActivate is not null)
+                    {
+                        events.WorkbookActivate -= _onWorkbookActivate;
+                    }
+                });
+
+            Detach(
+                ref _workbookDeactivateState,
+                () =>
+                {
+                    if (_onWorkbookDeactivate is not null)
+                    {
+                        events.WorkbookDeactivate -= _onWorkbookDeactivate;
+                    }
+                });
+
+            Detach(
+                ref _newWorkbookState,
+                () =>
+                {
+                    if (_onNewWorkbook is not null)
+                    {
+                        events.NewWorkbook -= _onNewWorkbook;
+                    }
+                });
+
+            // Drop the delegate references unconditionally: the connection is
+            // not retried, and the delegates must not keep the handler alive
+            // after teardown. A handler whose removal failed is already
+            // unreferenced by us; the recorded DetachFailed state is the honest
+            // signal that the event source may still hold it.
+            _onWorkbookActivate = null;
+            _onWorkbookDeactivate = null;
+            _onNewWorkbook = null;
+        }
+
+        /// <summary>
+        /// Removes one handler and records the outcome. A handler that was never
+        /// attached stays <see cref="EventHandlerState.Detached"/>; a removal that
+        /// throws becomes <see cref="EventHandlerState.DetachFailed"/> and never
+        /// throws out of <see cref="Dispose"/>.
+        /// </summary>
+        /// <param name="state">The handler's state, updated in place.</param>
+        /// <param name="remove">The removal action.</param>
+        private static void Detach(ref EventHandlerState state, Action remove)
+        {
+            if (state == EventHandlerState.Detached)
+            {
+                return;
+            }
+
+            state = EventHandlerState.Detaching;
+
+            // CA1031: see the teardown rationale in Dispose.
 #pragma warning disable CA1031
             try
             {
-                if (_onWorkbookActivate is not null)
-                {
-                    events.WorkbookActivate -= _onWorkbookActivate;
-                }
+                remove();
+                state = EventHandlerState.Detached;
             }
             catch
             {
-                // Intentionally empty: see the teardown rationale above.
-            }
-
-            try
-            {
-                if (_onWorkbookDeactivate is not null)
-                {
-                    events.WorkbookDeactivate -= _onWorkbookDeactivate;
-                }
-            }
-            catch
-            {
-                // Intentionally empty: see the teardown rationale above.
-            }
-
-            try
-            {
-                if (_onNewWorkbook is not null)
-                {
-                    events.NewWorkbook -= _onNewWorkbook;
-                }
-            }
-            catch
-            {
-                // Intentionally empty: see the teardown rationale above.
+                // The removal genuinely failed; reporting Detached here would make
+                // a leaked event connection look like a clean teardown.
+                state = EventHandlerState.DetachFailed;
             }
 #pragma warning restore CA1031
-            finally
-            {
-                // Drop the delegate references unconditionally: the connection
-                // is not retried, and the delegates must not keep the handler
-                // alive after teardown.
-                _onWorkbookActivate = null;
-                _onWorkbookDeactivate = null;
-                _onNewWorkbook = null;
-            }
         }
     }
 
@@ -216,7 +263,7 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
     /// The subscription returned when no application object is available. It is
     /// already inert, so callers need no special case.
     /// </summary>
-    private sealed class InertSubscription : IDisposable
+    private sealed class InertSubscription : IDisposable, IWorkbookStateSubscriptionStatus
     {
         private InertSubscription()
         {
@@ -224,6 +271,18 @@ public sealed class ExcelApplicationAdapter(object? application) : IExcelApplica
 
         /// <summary>Gets the shared instance; the type holds no state.</summary>
         internal static InertSubscription Instance { get; } = new();
+
+        /// <inheritdoc />
+        public EventHandlerState WorkbookActivateState => EventHandlerState.Detached;
+
+        /// <inheritdoc />
+        public EventHandlerState WorkbookDeactivateState => EventHandlerState.Detached;
+
+        /// <inheritdoc />
+        public EventHandlerState NewWorkbookState => EventHandlerState.Detached;
+
+        /// <inheritdoc />
+        public bool AllDetached => true;
 
         /// <inheritdoc />
         public void Dispose()

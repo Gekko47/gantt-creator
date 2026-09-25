@@ -22,14 +22,21 @@ namespace GanttCreator.Office;
 public interface IWorksheetProtectionGuard
 {
     /// <summary>
-    /// Queries the current workbook-protection state of the active
-    /// worksheet's contents and the active workbook's structure. Read-only by
-    /// contract — never mutates the workbook.
+    /// Queries the current workbook-protection state of the active worksheet and
+    /// active workbook. This remains available for Ribbon/state probes; it is not
+    /// sufficient authorization for a mutation against another worksheet.
     /// </summary>
-    /// <returns>
-    /// The typed outcome. <see cref="ProtectionGuardOutcome.NotProtected"/>
-    /// means a mutating command may proceed; any other value means the guard
-    /// refuses and the command must not mutate.
-    /// </returns>
+    /// <returns>The typed active-sheet protection outcome.</returns>
     ProtectionGuardOutcome Query();
+
+    /// <summary>
+    /// Queries workbook structure protection and the contents protection of the
+    /// supplied target worksheet. The target is supplied as an opaque object so
+    /// Excel interop does not cross this port; the Office adapter validates it as
+    /// an Excel worksheet belonging to the active workbook.
+    /// </summary>
+    /// <param name="target">The resolved target worksheet proxy.</param>
+    /// <returns>The typed target protection outcome.</returns>
+    ProtectionGuardOutcome QueryTarget(object? target) => Query();
+
 }

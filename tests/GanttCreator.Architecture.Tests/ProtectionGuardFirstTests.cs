@@ -171,6 +171,7 @@ public sealed class ProtectionGuardFirstTests
         "ProtectContents",
         "ProtectStructure",
         ".Query(",
+        "QueryTarget(",
     ];
 
     [Fact]

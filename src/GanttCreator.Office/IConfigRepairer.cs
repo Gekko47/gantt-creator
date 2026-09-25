@@ -15,6 +15,12 @@ public enum ConfigRepairRefusalReason
     CatalogueWriteRefused = 3,
     /// <summary>The TypeOptions materialisation failed after catalogue repair.</summary>
     TypeOptionsUnavailable = 4,
+    /// <summary>Visibility repair failed.</summary>
+    VisibilityRepairFailed = 5,
+    /// <summary>Plot-anchor repair failed.</summary>
+    PlotAnchorRepairFailed = 6,
+    /// <summary>Row-identity repair failed.</summary>
+    IdentityRepairFailed = 7,
 }
 
 /// <summary>Typed result of one approved configuration repair.</summary>

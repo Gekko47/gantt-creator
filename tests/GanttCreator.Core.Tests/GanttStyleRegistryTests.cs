@@ -19,6 +19,86 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
+    public void Resolver_uses_selected_style_defaults_then_row_overrides()
+    {
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.AsPlannedActivity,
+            "AsBuiltActivity",
+            "#112233",
+            null,
+            GanttLabelPosition.Inside,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("AsBuiltActivity", resolved!.StyleKey);
+        Assert.Equal("#112233", resolved.FillColour!.ToString());
+        Assert.Equal("#0070C0", resolved.StrokeColour!.ToString());
+        Assert.Equal(GanttLabelPosition.Inside, resolved.LabelPosition);
+        Assert.False(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_falls_back_to_the_type_default_for_an_unknown_style()
+    {
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.AsPlannedActivity,
+            "MissingStyle",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("AsPlannedActivity", resolved!.StyleKey);
+        Assert.True(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_refuses_a_type_without_a_default_style()
+    {
+        Assert.False(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomActivity,
+            "MissingCustomStyle",
+            null,
+            null,
+            null,
+            out _,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Equal(GanttStyleResolutionRefusal.NoDefaultStyle, refusal);
+    }
+
+    [Fact]
+    public void ChangeStyleKey_clears_all_per_row_formatting_overrides()
+    {
+        GanttRowDto row = new(
+            2,
+            "G-0123456789abcdef0123456789abcdef",
+            null,
+            0,
+            "As-Planned Activity",
+            null,
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 2),
+            null,
+            "AsPlannedActivity",
+            "Inside",
+            "#112233",
+            "#445566",
+            true,
+            null);
+
+        GanttRowDto changed = GanttStyleChange.ChangeStyleKey(row, "AsBuiltActivity");
+
+        Assert.Equal("AsBuiltActivity", changed.StyleKey);
+        Assert.Null(changed.LabelPositionText);
+        Assert.Null(changed.FillColourText);
+        Assert.Null(changed.StrokeColourText);
+    }
+
+    [Fact]
     public void Registry_rejects_null_input() =>
         Assert.Throws<ArgumentNullException>(() => new GanttStyleRegistry(null!));
 

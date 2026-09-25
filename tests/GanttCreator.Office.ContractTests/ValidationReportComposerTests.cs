@@ -195,6 +195,101 @@ public class ValidationReportComposerTests
     }
 
     [Fact]
+    public void IsOwnedByAddIn_accepts_a_line_anchored_section_after_user_text()
+    {
+        // The add-in always writes its sentinel at the start of a line, so a
+        // section following the user's text is still add-in owned.
+        Assert.True(ValidationReportComposer.IsOwnedByAddIn(
+            "My own note."
+            + "\n"
+            + ValidationReportComposer.NoteSentinelPrefix + " row 1, column 'Id': Error: Id is blank."));
+    }
+
+    [Fact]
+    public void IsOwnedByAddIn_rejects_a_mid_sentence_mention()
+    {
+        // Regression: ownership was previously a substring test, so a user's own
+        // note that merely mentioned the phrase was treated as add-in content and
+        // truncated by StripOwnedSection, destroying their text.
+        const string UserNote = "I use Gantt Creator validation: as my own checklist.";
+
+        Assert.False(ValidationReportComposer.IsOwnedByAddIn(UserNote));
+        Assert.Equal(UserNote, ValidationReportComposer.StripOwnedSection(UserNote));
+    }
+
+    [Fact]
+    public void IsOwnedByAddIn_ignores_a_later_mid_sentence_mention_and_keeps_the_real_section()
+    {
+        // A note can mention the phrase in the user's part and still carry a real
+        // owned section; only the line-anchored one counts.
+        var text = "I use Gantt Creator validation: myself."
+            + "\n"
+            + ValidationReportComposer.NoteSentinelPrefix + " row 2, column 'Type': Error: unknown type.";
+
+        Assert.True(ValidationReportComposer.IsOwnedByAddIn(text));
+        Assert.Equal("I use Gantt Creator validation: myself.", ValidationReportComposer.StripOwnedSection(text));
+    }
+
+    [Fact]
+    public void GroupIntoNotes_separates_message_lines_with_newlines()
+    {
+        // Line structure is what makes ownership detectable after user text is
+        // prepended, so the composer must emit real line breaks.
+        NotePayload note = Assert.Single(ValidationReportComposer.GroupIntoNotes(
+        [
+            Issue(1, "Start", "GC9101", GanttValidationSeverity.Error, "First problem."),
+            Issue(1, "Start", "GC9102", GanttValidationSeverity.Warning, "Second problem."),
+        ]));
+
+        var lines = note.Text.Split('\n');
+        Assert.Equal(3, lines.Length);
+        Assert.StartsWith(ValidationReportComposer.NoteSentinelPrefix, lines[0], StringComparison.Ordinal);
+        Assert.Equal("Error: First problem.", lines[1]);
+        Assert.Equal("Warning: Second problem.", lines[2]);
+    }
+
+    [Fact]
+    public void Truncate_marks_a_clipped_note_and_never_splits_a_surrogate_pair()
+    {
+        // A real astral character (surrogate pair) repeated so the clamp point
+        // lands on a pair boundary. The guard exists to avoid cutting between a
+        // high and low surrogate, which would make the note text invalid UTF-16.
+        var builder = new System.Text.StringBuilder();
+        while (builder.Length < ValidationReportComposer.MaxNoteLength)
+        {
+            _ = builder.Append("\U0001F600"); // GRINNING FACE (astral, surrogate pair)
+        }
+
+        string clipped = ValidationReportComposer.Truncate(builder.ToString());
+
+        Assert.Equal(ValidationReportComposer.MaxNoteLength, clipped.Length);
+        Assert.EndsWith(ValidationReportComposer.TruncationMarker, clipped, StringComparison.Ordinal);
+        // The last kept unit before the marker must be a complete pair: a low
+        // surrogate preceded by its high surrogate, never a lone high surrogate.
+        var markerStart = clipped.Length - ValidationReportComposer.TruncationMarker.Length;
+        Assert.False(char.IsHighSurrogate(clipped[markerStart - 1]));
+        Assert.False(char.IsLowSurrogate(clipped[0]));
+    }
+
+    [Fact]
+    public void GroupIntoNotes_truncation_is_marked_and_within_the_limit()
+    {
+        var message = new string('x', 400);
+        NotePayload note = Assert.Single(ValidationReportComposer.GroupIntoNotes(
+            [Issue(1, "Description", "GC9201", GanttValidationSeverity.Error, message)]));
+
+        Assert.Equal(ValidationReportComposer.MaxNoteLength, note.Text.Length);
+        Assert.EndsWith(ValidationReportComposer.TruncationMarker, note.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Truncate_leaves_text_within_the_limit_unchanged()
+    {
+        const string text = "short note";
+        Assert.Equal(text, ValidationReportComposer.Truncate(text));
+    }
+
+    [Fact]
     public void StripOwnedSection_returns_the_user_text_before_the_marker()
     {
         // Excel allows one classic note per cell, so the add-in section is

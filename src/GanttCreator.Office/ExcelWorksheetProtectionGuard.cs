@@ -57,41 +57,44 @@ public class ExcelWorksheetProtectionGuard(object? application) : IWorksheetProt
             return ProtectionGuardOutcome.NoActiveWorkbook;
         }
 
-        // One proxy per local: no chained
-        // `application.ActiveWorkbook.ActiveSheet` member expression
-        // (docs/02-ARCHITECTURE.md COM ownership).
         Excel.Workbook? workbook = application.ActiveWorkbook;
         if (workbook is null)
         {
             return ProtectionGuardOutcome.NoActiveWorkbook;
         }
 
-        // Read-only check 1 — workbook structure protection. ADR-0008 D4:
-        // the protection guard is the first check in every mutating adapter.
-        // Structure protection is checked before the sheet because it is the
-        // workbook-wide gate; a structure-protected workbook must refuse even
-        // if the active sheet is not content-protected.
         if (IsWorkbookStructureProtected(workbook))
         {
             return ProtectionGuardOutcome.WorkbookStructureProtected;
         }
 
-        // Read-only check 2 — active sheet content protection. If the active
-        // sheet cannot be resolved (the workbook has no active sheet), treat
-        // that as "not determinable" and refuse rather than assume unprotected.
         Excel._Worksheet? sheet = GetActiveSheet(workbook);
-        if (sheet is null)
+        return sheet is null
+            ? ProtectionGuardOutcome.NoActiveWorkbook
+            : IsWorksheetProtected(sheet)
+                ? ProtectionGuardOutcome.SheetProtected
+                : ProtectionGuardOutcome.NotProtected;
+    }
+
+    /// <inheritdoc />
+    public ProtectionGuardOutcome QueryTarget(object? target)
+    {
+        Excel.Application? application = _application;
+        if (application is null)
         {
             return ProtectionGuardOutcome.NoActiveWorkbook;
         }
 
-        // Read-only check 3 — sheet content protection. ProtectContents is a
-        // read-only Boolean on _Worksheet; the guard queries it, never writes
-        // it. Ternary form: IDE0046 ('if' can be simplified) is enforced as an
-        // error repo-wide, so the branch is expressed without a suppression.
-        return IsWorksheetProtected(sheet)
-            ? ProtectionGuardOutcome.SheetProtected
-            : ProtectionGuardOutcome.NotProtected;
+        Excel.Workbook? workbook = application.ActiveWorkbook;
+        return workbook is null
+            ? ProtectionGuardOutcome.NoActiveWorkbook
+            : IsWorkbookStructureProtected(workbook)
+                ? ProtectionGuardOutcome.WorkbookStructureProtected
+                : target is Excel._Worksheet sheet
+                    ? IsWorksheetProtected(sheet)
+                        ? ProtectionGuardOutcome.SheetProtected
+                        : ProtectionGuardOutcome.NotProtected
+                    : ProtectionGuardOutcome.NoActiveWorkbook;
     }
 
     /// <summary>

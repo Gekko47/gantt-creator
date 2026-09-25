@@ -184,6 +184,20 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_refuses_duplicate_setting_preservation_keys()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[3].Body.Add([GanttCatalogues.Settings[0].Key, "duplicate"]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid),
+            outcome);
+    }
+
+    [Fact]
     public void Write_preserves_user_style_rows_and_present_settings_on_regeneration()
     {
         // D4: the same writer regenerates built-ins without destroying user

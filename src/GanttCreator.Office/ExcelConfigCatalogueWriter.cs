@@ -50,12 +50,6 @@ public class ExcelConfigCatalogueWriter(
     /// The preservation data captured before any mutation: existing setting
     /// values, user-authored style rows, and the workbook ID.
     /// </summary>
-    /// <param name="Settings">Existing key/value pairs from <c>tblGanttSettings</c>.</param>
-    /// <param name="UserStyleRows">
-    /// Full rows of <c>tblGanttStyles</c> whose <c>StyleKey</c> is not a
-    /// built-in preset key.
-    /// </param>
-    /// <param name="WorkbookId">The stored workbook ID, when present.</param>
     private sealed record CataloguePreservation(
         IReadOnlyDictionary<string, string> Settings,
         IReadOnlyList<object?[]> UserStyleRows,
@@ -70,11 +64,31 @@ public class ExcelConfigCatalogueWriter(
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
         }
 
-        // ADR-0008 D4: the shared protection guard is the first read-only check
-        // for every mutating adapter. The configuration-sheet probe below is
-        // still required because the guard checks the active sheet, while this
-        // writer may target the VeryHidden configuration sheet.
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        // Resolve the actual mutation target before the authoritative protection
+        // check. The active-sheet query remains the early host/workbook preflight.
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
         if (protection != ProtectionGuardOutcome.NotProtected)
         {
             return ConfigWriteOutcome.Refused(
@@ -83,36 +97,13 @@ public class ExcelConfigCatalogueWriter(
                     : ConfigWriteRefusalReason.TargetProtected);
         }
 
-        // One proxy per local: no chained member expressions
-        // (docs/02-ARCHITECTURE.md COM ownership).
-        Workbook? workbook = application.ActiveWorkbook;
-        if (workbook is null)
-        {
-            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
-        }
-
-        Sheets sheets = workbook.Sheets;
-
-        // Read-only check 1: the configuration worksheet must exist —
-        // catalogues are materialised during initialise (initialise itself
-        // refuses when the sheet already exists, so a missing sheet here is
-        // a call-order error, not a repair trigger).
-        Worksheet? config = FindConfigSheet(sheets);
-        if (config is null)
-        {
-            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
-        }
-
-        // Read-only check 2: worksheet or workbook-structure protection
-        // would block the table writes; refuse before any mutation.
-        if (config.ProtectContents || workbook.ProtectStructure)
-        {
-            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected);
-        }
-
         // Read-only phase: capture the user content the write must preserve
         // (ADR-0007 D4) before any table is touched.
-        CataloguePreservation preservation = ReadPreservation(config);
+        CataloguePreservation? preservation = ReadPreservation(config);
+        if (preservation is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
 
         // Mutation phase: per-table delete-and-recreate under one
         // DisplayAlerts save/restore (table deletion prompts).
@@ -191,37 +182,49 @@ public class ExcelConfigCatalogueWriter(
     /// </summary>
     /// <param name="config">The configuration worksheet.</param>
     /// <returns>The preservation snapshot; absent tables contribute nothing.</returns>
-    private CataloguePreservation ReadPreservation(Worksheet config)
+    private CataloguePreservation? ReadPreservation(Worksheet config)
     {
-        Dictionary<string, string> settings = ReadKeyValues(config, GanttCatalogues.SettingsTableName);
+        if (!TryReadKeyValues(config, GanttCatalogues.SettingsTableName, out Dictionary<string, string> settings)
+            || !TryReadKeyValues(config, GanttCatalogues.ConfigTableName, out Dictionary<string, string> configValues))
+        {
+            return null;
+        }
+
         List<object?[]> userStyles = ReadUserStyleRows(config);
-        var workbookId = ReadConfigValue(config, GanttCatalogues.ConfigWorkbookIdKey);
+        var workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
         return new CataloguePreservation(settings, userStyles, workbookId);
     }
 
     /// <summary>
-    /// Reads an existing key/value table on the configuration worksheet as a
-    /// key→value map; an absent table or body contributes an empty map.
+    /// Reads an existing key/value table while rejecting blank and duplicate keys.
     /// </summary>
     /// <param name="config">The configuration worksheet.</param>
     /// <param name="tableName">The table to read.</param>
-    /// <returns>The key→value map.</returns>
-    private Dictionary<string, string> ReadKeyValues(Worksheet config, string tableName)
+    /// <param name="values">The parsed key/value map when valid.</param>
+    /// <returns><see langword="true"/> when the table is absent or valid.</returns>
+    private bool TryReadKeyValues(
+        Worksheet config,
+        string tableName,
+        out Dictionary<string, string> values)
     {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        values = new Dictionary<string, string>(StringComparer.Ordinal);
         ListObject? table = FindTable(config, tableName);
         if (table is null)
         {
-            return map;
+            return true;
         }
 
-        List<object?[]> rows = ReadBodyRows(table);
-        foreach (var row in rows)
+        foreach (var row in ReadBodyRows(table))
         {
-            map[ToText(row.ElementAtOrDefault(0))] = ToText(row.ElementAtOrDefault(1));
+            var key = ToText(row.ElementAtOrDefault(0));
+            if (key.Length == 0 || !values.TryAdd(key, ToText(row.ElementAtOrDefault(1))))
+            {
+                values.Clear();
+                return false;
+            }
         }
 
-        return map;
+        return true;
     }
 
     /// <summary>
@@ -252,19 +255,6 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return userRows;
-    }
-
-    /// <summary>
-    /// Reads one <c>tblGanttConfig</c> value by key; <see langword="null"/>
-    /// when the table or key is absent.
-    /// </summary>
-    /// <param name="config">The configuration worksheet.</param>
-    /// <param name="key">The config key.</param>
-    /// <returns>The value text, or <see langword="null"/>.</returns>
-    private string? ReadConfigValue(Worksheet config, string key)
-    {
-        Dictionary<string, string> values = ReadKeyValues(config, GanttCatalogues.ConfigTableName);
-        return values.TryGetValue(key, out var value) ? value : null;
     }
 
     /// <summary>

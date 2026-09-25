@@ -425,6 +425,26 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Critical_interval_with_duplicate_parent_is_reported_as_ambiguous()
+    {
+        var parentId = NewId();
+        GanttRowDto firstParent = ValidSpan(rowNumber: 2, id: parentId);
+        GanttRowDto secondParent = ValidSpan(rowNumber: 3, id: parentId);
+        GanttRowDto child = ValidSpan(
+            rowNumber: 4,
+            typeText: "Critical Interval",
+            id: NewId(),
+            parentId: parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([firstParent, secondParent, child]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, issue =>
+            issue.RowNumber == 4
+            && issue.Code == GanttValidationCodes.ParentAmbiguous);
+    }
+
+    [Fact]
     public void Critical_interval_with_unknown_parent_is_a_blocking_error()
     {
         var row = new GanttRowDto(

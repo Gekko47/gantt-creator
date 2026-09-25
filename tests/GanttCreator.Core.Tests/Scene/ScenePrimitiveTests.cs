@@ -115,6 +115,41 @@ public sealed class ScenePrimitiveTests
     }
 
     [Fact]
+    public void Primitive_rejects_a_negative_sort_order()
+    {
+        // SortOrder is a non-negative user ordering key (BadSortOrder in the row
+        // validator); a negative value must not silently reorder the scene.
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new SceneRect(
+                "row:bar",
+                SceneOwnerId.ForRow(GanttRowId.New()),
+                ZLayer.ActivityBody,
+                new RectD(0, 0, 1, 1),
+                new SceneStyle("Default"),
+                sortOrder: -1
+            )
+        );
+        Assert.Equal("sortOrder", exception.ParamName);
+    }
+
+    [Fact]
+    public void Group_rejects_duplicate_child_primitive_ids()
+    {
+        // A repeated child would render twice and make the snapshot non-canonical.
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new SceneGroup("row:group", SceneOwnerId.ForRow(GanttRowId.New()), ZLayer.Label, ["row:a", "row:a"]));
+        Assert.Contains("unique", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Group_rejects_a_direct_self_reference()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new SceneGroup("row:group", SceneOwnerId.ForRow(GanttRowId.New()), ZLayer.Label, ["row:group"]));
+        Assert.Contains("itself", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Group_preserves_child_order_and_rejects_blank_child()
     {
         var owner = SceneOwnerId.ForRow(GanttRowId.New());

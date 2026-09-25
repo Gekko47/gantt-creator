@@ -84,20 +84,29 @@ public class ExcelGanttValidationReporter(
                 GanttValidationReportRefusalReason.NoActiveWorkbook);
         }
 
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return GanttValidationReportOutcome.Refused(
+                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? GanttValidationReportRefusalReason.NoActiveWorkbook
+                    : GanttValidationReportRefusalReason.TargetProtected);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        if (!TryFindTable(sheets, out Worksheet? worksheet, out ListObject? table) || worksheet is null || table is null)
+        {
+            return GanttValidationReportOutcome.Refused(
+                GanttValidationReportRefusalReason.TableMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
         if (protection != ProtectionGuardOutcome.NotProtected)
         {
             return GanttValidationReportOutcome.Refused(
                 protection == ProtectionGuardOutcome.NoActiveWorkbook
                     ? GanttValidationReportRefusalReason.NoActiveWorkbook
                     : GanttValidationReportRefusalReason.TargetProtected);
-        }
-
-        Sheets sheets = workbook.Sheets;
-        if (!TryFindTable(sheets, out ListObject? table) || table is null)
-        {
-            return GanttValidationReportOutcome.Refused(
-                GanttValidationReportRefusalReason.TableMissing);
         }
 
         if (!TryBuildColumnMap(table, out var columnMap) || columnMap is null)
@@ -188,9 +197,12 @@ public class ExcelGanttValidationReporter(
             }
 
             var current = ReadCommentText(comment);
-            if (current.IndexOf(ValidationReportComposer.NoteSentinelPrefix, StringComparison.Ordinal) < 0)
+            if (!ValidationReportComposer.IsOwnedByAddIn(current))
             {
-                continue; // A user note we did not write: never touched.
+                // No line-anchored sentinel, so the note is the user's alone. Even
+                // when the text mentions the sentinel mid-sentence it is not
+                // add-in content, and must never be rewritten or deleted.
+                continue;
             }
 
             var userText = ValidationReportComposer.StripOwnedSection(current);
@@ -279,28 +291,34 @@ public class ExcelGanttValidationReporter(
     /// Scans every worksheet for a table named <c>tblGanttData</c>.
     /// </summary>
     /// <param name="sheets">The workbook's sheets.</param>
+    /// <param name="worksheet">The worksheet containing the located table.</param>
     /// <param name="table">The located table, or <see lang="null"/>.</param>
     /// <returns><see lang="true"/> when the table was found.</returns>
-    private bool TryFindTable(Sheets sheets, out ListObject? table)
+    private bool TryFindTable(
+        Sheets sheets,
+        out Worksheet? worksheet,
+        out ListObject? table)
     {
+        worksheet = null;
         table = null;
         var count = sheets.Count;
         for (var index = 1; index <= count; index++)
         {
             var sheet = GetSheetAt(sheets, index);
-            if (sheet is Worksheet worksheet)
+            if (sheet is Worksheet candidate)
             {
-                ListObjects listObjects = worksheet.ListObjects;
+                ListObjects listObjects = candidate.ListObjects;
                 var tableCount = listObjects.Count;
                 for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
-                    ListObject candidate = GetTableAt(listObjects, tableIndex);
+                    ListObject candidateTable = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
-                        candidate.Name,
+                        candidateTable.Name,
                         Core.GanttTableSchema.TableName,
                         StringComparison.OrdinalIgnoreCase))
                     {
-                        table = candidate;
+                        worksheet = candidate;
+                        table = candidateTable;
                         return true;
                     }
                 }

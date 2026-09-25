@@ -177,6 +177,8 @@ public class WorkbookInitialiserTests
     private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
     {
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
+
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
     private sealed class TestableInitialiser : ExcelWorkbookInitialiser

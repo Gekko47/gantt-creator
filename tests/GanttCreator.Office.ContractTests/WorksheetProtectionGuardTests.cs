@@ -240,7 +240,35 @@ public class WorksheetProtectionGuardTests
         sheet.VerifyGet(s => s.ProtectContents, Times.Never());
     }
 
-    // ---- Seam replacement verifies the PIA properties are wired ----
+    [Fact]
+    public void QueryTarget_refuses_a_protected_non_active_target()
+    {
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        var target = new Mock<Excel._Worksheet>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.ProtectStructure).Returns(false);
+        _ = target.SetupGet(s => s.ProtectContents).Returns(true);
+
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+
+        Assert.Equal(ProtectionGuardOutcome.SheetProtected, guard.QueryTarget(target.Object));
+        target.VerifyGet(s => s.ProtectContents, Times.Once);
+    }
+
+    [Fact]
+    public void QueryTarget_refuses_when_the_target_is_not_a_worksheet()
+    {
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.ProtectStructure).Returns(false);
+
+        ExcelWorksheetProtectionGuard guard = new ExcelWorksheetProtectionGuard(application.Object);
+
+        Assert.Equal(ProtectionGuardOutcome.NoActiveWorkbook, guard.QueryTarget(new object()));
+    }
+
 
     [Fact]
     public void Query_wires_ProtectContents_via_the_seam()

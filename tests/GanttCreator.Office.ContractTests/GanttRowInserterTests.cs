@@ -10,6 +10,8 @@ public class GanttRowInserterTests
     private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
     {
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
+
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
     private sealed class TestableInserter(
@@ -273,7 +275,7 @@ public class GanttRowInserterTests
         var guard = new Mock<IWorksheetProtectionGuard>();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
         var materialiser = new Mock<ITypeOptionsMaterialiser>();
-        _ = materialiser.Setup(m => m.Materialise())
+        _ = materialiser.Setup(m => m.EnsureCurrent())
             .Returns(TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.CatalogueHashMismatch));
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object, materialiser.Object).Insert(
@@ -440,7 +442,7 @@ public class GanttRowInserterTests
         var guard = new Mock<IWorksheetProtectionGuard>();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
         var materialiser = new Mock<ITypeOptionsMaterialiser>();
-        _ = materialiser.Setup(m => m.Materialise())
+        _ = materialiser.Setup(m => m.EnsureCurrent())
             .Returns(TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.CatalogueHashMismatch));
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object, materialiser.Object).Insert(

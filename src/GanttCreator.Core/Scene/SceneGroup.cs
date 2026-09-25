@@ -30,6 +30,22 @@ public sealed record SceneGroup : ScenePrimitive
         {
             throw new ArgumentException("Group child primitive IDs must not be blank.", nameof(childPrimitiveIds));
         }
+
+        // A repeated child would render the same primitive twice and make the
+        // snapshot non-canonical, so duplicates are refused rather than collapsed.
+        if (ChildPrimitiveIds.Count != ChildPrimitiveIds.Distinct(StringComparer.Ordinal).Count())
+        {
+            throw new ArgumentException("Group child primitive IDs must be unique.", nameof(childPrimitiveIds));
+        }
+
+        // A group that lists itself, directly or through a chain, is a cycle and
+        // would make the scene unserialisable. Nested groups are not resolved here
+        // (a child ID is a string, not a reference), so only the direct self-reference
+        // is detectable at this boundary; the snapshot layer rejects wider cycles.
+        if (ChildPrimitiveIds.Contains(primitiveId, StringComparer.Ordinal))
+        {
+            throw new ArgumentException("A group cannot contain itself as a child.", nameof(childPrimitiveIds));
+        }
     }
 
     /// <summary>Gets the ordered child primitive identifiers.</summary>

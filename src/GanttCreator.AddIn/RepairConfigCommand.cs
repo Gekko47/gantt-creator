@@ -92,6 +92,12 @@ internal static class RepairConfigCommand
             ConfigRepairRefusalReason.PlanRefused => "Configuration repair was refused because unsafe or unsupported damage was found.",
             ConfigRepairRefusalReason.CatalogueWriteRefused =>
                 "Gantt Creator could not safely write the configuration catalogues. No further changes were made.",
+            ConfigRepairRefusalReason.VisibilityRepairFailed =>
+                "Gantt Creator could not repair the configuration worksheet visibility. No further changes were made.",
+            ConfigRepairRefusalReason.PlotAnchorRepairFailed =>
+                "Gantt Creator could not repair the plot anchor. No further changes were made.",
+            ConfigRepairRefusalReason.IdentityRepairFailed =>
+                "Gantt Creator could not safely repair row identity. No further changes were made.",
             ConfigRepairRefusalReason.TypeOptionsUnavailable =>
                 "Configuration was repaired, but the Type dropdown could not be prepared. No further changes were made.",
             _ => "Gantt Creator could not repair configuration. See the Diagnostics dialog.",

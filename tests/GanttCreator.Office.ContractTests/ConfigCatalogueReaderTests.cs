@@ -215,7 +215,43 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
-    public void Read_refuses_when_a_boolean_setting_is_not_true_or_false()
+    public void Read_refuses_duplicate_config_metadata_keys()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[4].Body[1] = [GanttCatalogues.ConfigSchemaVersionKey, fake.Tables[4].Body[1][1]];
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_missing_config_metadata_keys()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[4].Body.RemoveAt(3);
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.RowCountMismatch), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_unexpected_config_metadata_keys()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[4].Body[3] = ["Unexpected", "value"];
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_a_boolean_setting_is_not_true_or_false()
     {
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();

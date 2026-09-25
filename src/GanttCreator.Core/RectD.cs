@@ -15,6 +15,27 @@ public readonly record struct RectD
         ValidateCoordinate(y, nameof(y));
         ValidateExtent(width, nameof(width));
         ValidateExtent(height, nameof(height));
+
+        // Negative coordinates are legitimate (a plot can start left of the
+        // origin), but the derived edges must stay finite: an edge that
+        // overflows to infinity would make Contains/IntersectsWith meaningless
+        // and would serialise as a non-finite snapshot value.
+        if (!double.IsFinite(x + width))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(width),
+                width,
+                "Right edge must be finite.");
+        }
+
+        if (!double.IsFinite(y + height))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(height),
+                height,
+                "Bottom edge must be finite.");
+        }
+
         X = x;
         Y = y;
         Width = width;

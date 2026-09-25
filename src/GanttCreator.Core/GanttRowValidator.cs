@@ -63,6 +63,7 @@ public static class GanttRowValidator
         // even when that row has other blocking errors. Later rows with the same
         // trimmed text are duplicates.
         var canonicalById = new Dictionary<string, int>(StringComparer.Ordinal);
+        var duplicateIds = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
@@ -78,6 +79,7 @@ public static class GanttRowValidator
             }
             else
             {
+                _ = duplicateIds.Add(key);
                 issues.Add(
                     new GanttValidationIssue(
                         rows[i].RowNumber,
@@ -91,7 +93,7 @@ public static class GanttRowValidator
             }
         }
 
-        CheckCriticalParents(rows, perRow, canonicalById, issues);
+        CheckCriticalParents(rows, perRow, canonicalById, duplicateIds, issues);
 
         var events = new List<GanttEvent>();
         for (var i = 0; i < rows.Count; i++)
@@ -687,6 +689,7 @@ public static class GanttRowValidator
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
         Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
         List<GanttValidationIssue> issues
     )
     {
@@ -707,6 +710,21 @@ public static class GanttRowValidator
             }
 
             var key = parsed.Event.ParentId.Value;
+            if (duplicateIds.Contains(key))
+            {
+                issues.Add(
+                    new GanttValidationIssue(
+                        rows[i].RowNumber,
+                        "ParentId",
+                        GanttValidationCodes.ParentAmbiguous,
+                        GanttValidationSeverity.Error,
+                        $"ParentId '{key}' is ambiguous because multiple rows carry that Id."
+                    )
+                );
+                perRow[i] = parsed with { HasBlockingError = true };
+                continue;
+            }
+
             if (!canonicalById.TryGetValue(key, out var parentIndex))
             {
                 issues.Add(
