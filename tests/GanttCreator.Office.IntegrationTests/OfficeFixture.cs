@@ -53,17 +53,18 @@ internal class OfficeFixture : IAsyncLifetime
 
     /// <summary>
     /// How long the owned process gets to exit on its own after <c>Quit()</c> and
-    /// a GC pass. Unchanged from the original 10 s bound; a process that needs the
-    /// full window is the unreleased-COM-proxy signal, not normal Excel lag.
+    /// a GC pass. The production bound is 10 s; a process that needs the full
+    /// window is the unreleased-COM-proxy signal, not normal Excel lag. Virtual
+    /// so the escalation test can shorten it instead of spending 10 s.
     /// </summary>
-    private static readonly TimeSpan GracefulExitTimeout = TimeSpan.FromSeconds(10);
+    internal virtual TimeSpan GracefulExitTimeout => TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// How long the owned process gets to disappear after the forced kill. A kill
     /// is synchronous for the target process, so this only covers the OS
     /// reclaiming the handle.
     /// </summary>
-    private static readonly TimeSpan ForcedExitTimeout = TimeSpan.FromSeconds(5);
+    internal virtual TimeSpan ForcedExitTimeout => TimeSpan.FromSeconds(5);
     /// <summary>
     /// Workbooks created through <see cref="CreateWorkbook"/>. Closed and
     /// released here during teardown, before the existing collection sweep, so
@@ -260,7 +261,14 @@ internal class OfficeFixture : IAsyncLifetime
         if (_disposed) return;
         _disposed = true;
 
-        if (_excel == null) return;
+        // A fixture that launched no Excel still owns the PIDs a test seeded
+        // through OwnedProcessIdsForTest, so the owned-process exit check below
+        // must still run for them. Only the COM teardown is skipped.
+        if (_excel == null)
+        {
+            await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
+            return;
+        }
 
         Exception? cleanupException = null;
 
@@ -469,25 +477,7 @@ internal class OfficeFixture : IAsyncLifetime
         // Every owned process this launch created gets the same treatment, not
         // just the primary: a second Excel process from one launch is equally
         // capable of holding the packed XLL open.
-        var surviving = new List<int>();
-        foreach (var ownedId in _ownedProcessIds)
-        {
-            if (!await EnsureOwnedProcessExitedAsync(ownedId).ConfigureAwait(true))
-            {
-                surviving.Add(ownedId);
-            }
-        }
-
-        if (surviving.Count > 0)
-        {
-            // Surfaced as a cleanup failure rather than tolerated: a process that
-            // outlives both the graceful quit and the targeted kill would hold the
-            // packed XLL and break the next run's publish step.
-            PreserveFirstCleanupException(
-                ref cleanupException,
-                new InvalidOperationException(
-                    $"Office Excel process(es) {string.Join(", ", surviving)} survived teardown."));
-        }
+        await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
 
         // Report any cleanup exception after all cleanup attempts complete.
         // Use ExceptionDispatchInfo to preserve the original stack trace
@@ -502,41 +492,76 @@ internal class OfficeFixture : IAsyncLifetime
         cleanupException ??= exception;
 
     /// <summary>
+    /// Reports whether a process is still running. Virtual so the teardown
+    /// escalation can be driven deterministically without spawning a process that
+    /// has to be kept alive for the duration of the test.
+    /// </summary>
+    /// <param name="processId">The process to probe; zero counts as not running.</param>
+    /// <returns><see langword="true"/> when the process is alive.</returns>
+    internal virtual bool IsProcessRunning(int processId)
+    {
+        if (processId == 0) return false;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Polls an owned Excel process until it exits or the deadline elapses.
     /// Never throws.
     /// </summary>
     /// <param name="processId">The process to poll; zero is treated as already gone.</param>
     /// <param name="timeout">How long to wait for exit.</param>
     /// <returns><see langword="true"/> when the process is gone (or was never identified).</returns>
-    private static async Task<bool> PollForProcessExitAsync(int processId, TimeSpan timeout)
+    private async Task<bool> PollForProcessExitAsync(int processId, TimeSpan timeout)
     {
         if (processId == 0) return true;
 
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < timeout)
         {
-            try
+            if (!IsProcessRunning(processId))
             {
-                using var proc = Process.GetProcessById(processId);
-                if (proc.HasExited) return true;
-            }
-            catch (ArgumentException)
-            {
-                // Process ID not found &mdash; it exited.
                 return true;
             }
 
             await Task.Delay(100).ConfigureAwait(true);
         }
 
-        try
+        return !IsProcessRunning(processId);
+    }
+
+    /// <summary>
+    /// Ensures every process this fixture launched is gone, escalating to a
+    /// targeted kill, and reports any that survived as a cleanup failure.
+    /// </summary>
+    /// <remarks>
+    /// A survivor is not tolerated: it holds the packed XLL and breaks the next
+    /// run's publish step, so it must surface as a failure rather than a warning.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Thrown when a process outlives both the graceful quit and the kill.</exception>
+    private async Task EnsureOwnedProcessesExitedAsync()
+    {
+        var surviving = new List<int>();
+        foreach (var ownedId in _ownedProcessIds)
         {
-            using var proc = Process.GetProcessById(processId);
-            return proc.HasExited;
+            if (!await EnsureOwnedProcessExitedAsync(ownedId).ConfigureAwait(true))
+            {
+                surviving.Add(ownedId);
+            }
         }
-        catch (ArgumentException)
+
+        if (surviving.Count > 0)
         {
-            return true;
+            throw new InvalidOperationException(
+                $"Office Excel process(es) {string.Join(", ", surviving)} survived teardown.");
         }
     }
 
