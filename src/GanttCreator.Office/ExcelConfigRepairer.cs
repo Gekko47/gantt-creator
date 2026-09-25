@@ -109,7 +109,10 @@ public class ExcelConfigRepairer(
 
         if (plan.Findings.Any(finding => finding.Kind == ConfigIntegrityFindingKind.TypeOptionsMissing))
         {
-            TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.Materialise();
+            // The repair path owns the catalogue rewrite that can leave the
+            // TypeOptions name pointing at the previous range, so it is the one
+            // caller allowed to replace that stale target.
+            TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.MaterialiseForRepair();
             if (!typeOptions.Succeeded)
             {
                 return ConfigRepairOutcome.Refused(ConfigRepairRefusalReason.TypeOptionsUnavailable);

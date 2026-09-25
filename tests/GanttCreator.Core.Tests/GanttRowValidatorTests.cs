@@ -1111,6 +1111,42 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Critical_interval_child_of_an_ambiguous_interval_is_blocked_in_either_input_order()
+    {
+        // A Critical Interval can itself be a parent. The child is authored
+        // above its parent here, so the direct parent pass decides the child
+        // before the parent is known to be ambiguous; propagation must block it
+        // anyway, and the same rows reversed must produce the same outcome.
+        string ambiguousId = NewId();
+        string childId = NewId();
+        string duplicatedId = NewId();
+        GanttRowDto child = CriticalIntervalRow(2, childId, ambiguousId);
+        GanttRowDto ambiguousInterval = CriticalIntervalRow(3, ambiguousId, duplicatedId);
+        GanttRowDto firstDuplicate = ValidSpan(rowNumber: 4, id: duplicatedId);
+        GanttRowDto secondDuplicate = ValidSpan(rowNumber: 5, id: duplicatedId);
+
+        GanttValidationOutcome childFirst = GanttRowValidator.Validate(
+            [child, ambiguousInterval, firstDuplicate, secondDuplicate]);
+        GanttValidationOutcome parentFirst = GanttRowValidator.Validate(
+            [ambiguousInterval, child, firstDuplicate, secondDuplicate]);
+
+        foreach (GanttValidationOutcome outcome in new[] { childFirst, parentFirst })
+        {
+            Assert.False(outcome.IsValid);
+            Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
+            Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentInvalid);
+            Assert.DoesNotContain(outcome.Events, e => e.RowNumber is 2 or 3);
+        }
+
+        Assert.Equal(childFirst.Issues, parentFirst.Issues);
+
+        // The canonical duplicate row stays a valid event; only the two
+        // Critical Intervals must drop out.
+        Assert.DoesNotContain(childFirst.Events, e => e.Type == GanttEntityType.CriticalInterval);
+        Assert.DoesNotContain(parentFirst.Events, e => e.Type == GanttEntityType.CriticalInterval);
+    }
+
+    [Fact]
     public void Critical_interval_child_of_a_cycle_is_blocked_as_parent_invalid()
     {
         string firstId = NewId();

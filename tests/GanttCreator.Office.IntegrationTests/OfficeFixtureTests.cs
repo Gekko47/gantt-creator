@@ -160,6 +160,7 @@ public class OfficeFixtureTests
 
             var workbook = fixture.CreateWorkbook();
             workbook.Close(SaveChanges: false);
+            fixture.MarkWorkbookClosed(workbook);
         }
         finally
         {

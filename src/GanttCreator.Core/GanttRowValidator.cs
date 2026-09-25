@@ -771,6 +771,83 @@ public static class GanttRowValidator
                 perRow[i] = parsed with { HasBlockingError = true };
             }
         }
+
+        // A Critical Interval can itself be the parent of another Critical
+        // Interval, and the child is commonly authored above its parent. The
+        // loop above therefore decides a child against a parent that has not
+        // been decided yet, so the same rows in the opposite order would block
+        // the child. Propagate each newly blocked parent to its dependents
+        // until no further row changes, which makes the outcome independent of
+        // the input order.
+        PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);
+    }
+
+    /// <summary>
+    /// Blocks every still-undecided Critical Interval whose canonical parent row
+    /// is already blocked, repeating until no further row is blocked so a chain
+    /// of dependent intervals is covered.
+    /// </summary>
+    /// <param name="rows">The neutral body rows in table order.</param>
+    /// <param name="perRow">The per-row state to update.</param>
+    /// <param name="canonicalById">First-canonical row index by Id text.</param>
+    /// <param name="duplicateIds">Ids carried by more than one row.</param>
+    /// <param name="issues">The row issue sink.</param>
+    private static void PropagateBlockedParents(
+        IReadOnlyList<GanttRowDto> rows,
+        ValidatedRow?[] perRow,
+        Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
+        List<GanttValidationIssue> issues
+    )
+    {
+        // Rows that already carry a blocking error were decided by the field
+        // pass, the cycle pass, or the direct parent pass; re-reporting them
+        // here would duplicate that finding.
+        var decided = new HashSet<int>();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (perRow[i] is { Type: GanttEntityType.CriticalInterval, HasBlockingError: true })
+            {
+                _ = decided.Add(i);
+            }
+        }
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (var i = 0; i < rows.Count; i++)
+            {
+                if (
+                    decided.Contains(i)
+                    || perRow[i] is not
+                    {
+                        Type: GanttEntityType.CriticalInterval,
+                        HasBlockingError: false,
+                        Event.ParentId: { } parentId,
+                    }
+                    || duplicateIds.Contains(parentId.Value)
+                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex)
+                    || perRow[parentIndex] is not { HasBlockingError: true }
+                )
+                {
+                    continue;
+                }
+
+                issues.Add(
+                    new GanttValidationIssue(
+                        rows[i].RowNumber,
+                        "ParentId",
+                        GanttValidationCodes.ParentInvalid,
+                        GanttValidationSeverity.Error,
+                        $"ParentId '{parentId.Value}' references a row that did not validate as a usable span event."
+                    )
+                );
+                perRow[i] = perRow[i]! with { HasBlockingError = true };
+                _ = decided.Add(i);
+                changed = true;
+            }
+        }
     }
 
     /// <summary>

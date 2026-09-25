@@ -77,9 +77,13 @@ public sealed class RepresentativeAcceptanceFixtureTests
         return
         [
             Row(2, parentId, lane, 0, "As-Planned Activity", "Site preparation", Day(1), Day(10), styleKey: "AsPlannedActivity"),
-            Row(3, NewId(), lane, 0, "As-Built Activity", "Site preparation (actual)", Day(4), Day(12), styleKey: "AsBuiltActivity"),
-            Row(4, NewId(), lane, 1, "As-Planned Activity", "Foundation pour", Day(8), Day(18), styleKey: "AsPlannedActivity"),
-            Row(5, NewId(), lane, 2, "Critical Interval", "Critical handover", Day(6), Day(9), parentId, "CriticalInterval"),
+            // Overlaps row 2, so it takes the next stack rather than sharing one:
+            // an overlapping pair stacked identically is what the stacking
+            // assertion below must be able to see fail.
+            Row(3, NewId(), lane, 1, "As-Built Activity", "Site preparation (actual)", Day(4), Day(12), styleKey: "AsBuiltActivity"),
+            // A separate span that must not be able to stand in for the pair.
+            Row(4, NewId(), lane, 2, "As-Planned Activity", "Foundation pour", Day(8), Day(18), styleKey: "AsPlannedActivity"),
+            Row(5, NewId(), lane, 3, "Critical Interval", "Critical handover", Day(6), Day(9), parentId, "CriticalInterval"),
             Row(6, NewId(), lane, 0, "As-Planned Milestone", "Design freeze", Day(1), styleKey: "AsPlannedMilestone"),
             Row(7, NewId(), lane, 0, "As-Built Milestone", "Practical completion", Day(18), styleKey: "AsBuiltMilestone"),
             Row(8, NewId(), null, null, "Delineator", null, Day(13), styleKey: "DefaultDelineator"),
@@ -130,6 +134,22 @@ public sealed class RepresentativeAcceptanceFixtureTests
         string firstLane = laneRows[0].LaneId!.Value;
         List<GanttEvent> sameLane = [.. laneRows.Where(@event => @event.LaneId!.Value == firstLane)];
         Assert.Equal(laneRows.Count, sameLane.Count);
+
+        // Assert the overlapping pair's own stacks, not merely that the lane
+        // contains some stack indices: a separate non-overlapping span would
+        // otherwise satisfy a "distinct stacks exist" check while the pair
+        // itself stayed stacked identically.
+        GanttEvent planned = Assert.Single(sameLane, @event => @event.Description == "Site preparation");
+        GanttEvent asBuilt = Assert.Single(
+            sameLane,
+            @event => @event.Description == "Site preparation (actual)");
+        Assert.True(
+            planned.Start!.Value <= asBuilt.Start!.Value && asBuilt.Start <= planned.Finish!.Value,
+            "Fixture precondition: the planned and as-built spans must overlap.");
+        Assert.Equal(0, planned.StackIndex);
+        Assert.Equal(1, asBuilt.StackIndex);
+        Assert.NotEqual(planned.StackIndex, asBuilt.StackIndex);
+
         Assert.Contains(sameLane, @event => @event.StackIndex == 0);
         Assert.Contains(sameLane, @event => @event.StackIndex == 1);
     }

@@ -69,10 +69,8 @@ public class ExcelInsertedRowSelectorTests
             _ = Application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
             _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
             _ = sheets.SetupGet(s => s.Count).Returns(1);
-            _ = sheets.Setup(s => s[1]).Returns(Worksheet.Object);
             _ = Worksheet.SetupGet(w => w.ListObjects).Returns(listObjects.Object);
             _ = listObjects.SetupGet(l => l.Count).Returns(1);
-            _ = listObjects.Setup(l => l[1]).Returns(Table.Object);
             _ = Table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
             _ = Worksheet.Setup(w => w.Activate()).Callback(() => Activations++);
 

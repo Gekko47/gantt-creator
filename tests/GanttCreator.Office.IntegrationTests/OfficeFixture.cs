@@ -74,6 +74,30 @@ internal class OfficeFixture : IAsyncLifetime
     private List<Workbook>? _createdWorkbooks;
 
     /// <summary>
+    /// Tracked workbooks the caller has already closed itself, so teardown
+    /// releases the proxy without issuing a second <c>Close</c> against a
+    /// workbook that is no longer in Excel.
+    /// </summary>
+    /// <remarks>
+    /// Closing an already-closed workbook raises a COM error whose HRESULT is
+    /// not a stable "already closed" signal, so the state is tracked explicitly
+    /// rather than inferred from a caught exception code.
+    /// </remarks>
+    private readonly HashSet<Workbook> _closedByCaller = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Records that the caller has already closed a workbook handed out by
+    /// <see cref="CreateWorkbook"/>, so teardown releases the proxy without
+    /// closing it a second time.
+    /// </summary>
+    /// <param name="workbook">A workbook previously returned by <see cref="CreateWorkbook"/>.</param>
+    public void MarkWorkbookClosed(Workbook workbook)
+    {
+        ArgumentNullException.ThrowIfNull(workbook);
+        _ = _closedByCaller.Add(workbook);
+    }
+
+    /// <summary>
     /// The live Excel Application instance. Valid only between
     /// <see cref="InitializeAsync"/> and <see cref="DisposeAsync"/>.
     /// </summary>
@@ -317,21 +341,24 @@ internal class OfficeFixture : IAsyncLifetime
 
         // Close and release each workbook handed out by CreateWorkbook before
         // the collection sweep. Once Close removes it from Workbooks, the sweep
-        // sees only other workbooks that are still open. Release the tracked
-        // RCW in finally even when Close fails; the sweep then obtains fresh
-        // collection proxies and a fresh post-close count.
+        // sees only other workbooks that are still open. A workbook the caller
+        // already closed through MarkWorkbookClosed is released without a second
+        // Close. Release the tracked RCW in finally even when Close fails; the
+        // sweep then obtains fresh collection proxies and a fresh post-close
+        // count.
         if (_createdWorkbooks is not null)
         {
             foreach (Workbook wb in _createdWorkbooks)
             {
                 try
                 {
-                    wb.Close(SaveChanges: false);
-                }
-                catch (COMException ex) when (ex.HResult == unchecked((int)0x80010108))
-                {
-                    // The caller already closed this workbook; the collection
-                    // sweep remains responsible for workbooks still open in Excel.
+                    // A workbook the caller already closed is no longer in
+                    // Excel, so closing it again is a COM error rather than
+                    // cleanup. Its proxy is still released below.
+                    if (!_closedByCaller.Contains(wb))
+                    {
+                        wb.Close(SaveChanges: false);
+                    }
                 }
                 catch (COMException ex)
                 {

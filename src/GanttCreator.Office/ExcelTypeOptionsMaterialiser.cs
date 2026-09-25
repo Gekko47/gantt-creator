@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -18,7 +19,44 @@ public class ExcelTypeOptionsMaterialiser(
     /// <inheritdoc />
     public TypeOptionsMaterialiseOutcome Materialise()
     {
+        // ADR-0008 D4: the shared protection guard is intentionally the first
+        // operation in this mutating entry point, before any workbook access.
         ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        return Apply(activeProtection, allowStaleNameTargetReplacement: false, skipWhenCurrent: false);
+    }
+
+    /// <inheritdoc />
+    public TypeOptionsMaterialiseOutcome MaterialiseForRepair()
+    {
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        return Apply(activeProtection, allowStaleNameTargetReplacement: true, skipWhenCurrent: false);
+    }
+
+    /// <summary>
+    /// Returns success without writing when the stored TypeOptions name and the
+    /// Type-column validation already match what this adapter would write, so a
+    /// scaffold row does not re-delete and re-add the same validation on every
+    /// Add Row.
+    /// </summary>
+    /// <remarks>
+    /// Currency is only ever a reason to skip work. Anything that is missing,
+    /// stale, or unreadable falls through to the ordinary
+    /// <see cref="Materialise"/>, including the
+    /// <see cref="TypeOptionsRefusalReason.NameTargetInvalid"/> refusal, so this
+    /// never repairs a name it did not write.
+    /// </remarks>
+    /// <returns>The typed ensure result.</returns>
+    public TypeOptionsMaterialiseOutcome EnsureCurrent()
+    {
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        return Apply(activeProtection, allowStaleNameTargetReplacement: false, skipWhenCurrent: true);
+    }
+
+    private TypeOptionsMaterialiseOutcome Apply(
+        ProtectionGuardOutcome activeProtection,
+        bool allowStaleNameTargetReplacement,
+        bool skipWhenCurrent)
+    {
         if (activeProtection != ProtectionGuardOutcome.NotProtected)
         {
             return TypeOptionsMaterialiseOutcome.Refused(
@@ -87,14 +125,22 @@ public class ExcelTypeOptionsMaterialiser(
 
         Excel.Names names = workbook.Names;
         Excel.Name? existingName = FindName(names, GanttWorkbookContract.TypeOptionsDefinedName);
-        var expectedRefersTo = BuildRefersTo(config.Name, optionsRange);
-        if (existingName is not null && !RefersToMatches(existingName.RefersTo, expectedRefersTo))
+        var expectedRefersTo = GetRefersTo(config.Name, optionsRange);
+        bool nameIsCurrent =
+            existingName is not null && RefersToMatches(existingName.RefersTo, expectedRefersTo);
+
+        if (existingName is not null && !nameIsCurrent && !allowStaleNameTargetReplacement)
         {
             return TypeOptionsMaterialiseOutcome.Refused(TypeOptionsRefusalReason.NameTargetInvalid);
         }
 
-        SetName(names, GanttWorkbookContract.TypeOptionsDefinedName, expectedRefersTo);
         Excel.Range? typeRange = typeColumn.DataBodyRange;
+        if (skipWhenCurrent && nameIsCurrent && ValidationIsCurrent(typeRange))
+        {
+            return TypeOptionsMaterialiseOutcome.Ok();
+        }
+
+        SetName(names, GanttWorkbookContract.TypeOptionsDefinedName, expectedRefersTo);
         if (typeRange is not null)
         {
             Excel.Validation validation = typeRange.Validation;
@@ -111,6 +157,60 @@ public class ExcelTypeOptionsMaterialiser(
         }
 
         return TypeOptionsMaterialiseOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Builds the <c>=Sheet!Address</c> target for a catalogue range.
+    /// </summary>
+    /// <remarks>
+    /// Virtual so contract tests can substitute it: <c>Range.Address</c> is a
+    /// COM parameterised property, which an expression tree cannot contain
+    /// (CS0855), so it cannot be mocked directly.
+    /// </remarks>
+    /// <param name="sheetName">The configuration worksheet name.</param>
+    /// <param name="range">The catalogue range to reference.</param>
+    /// <returns>The name target this adapter would write.</returns>
+    internal virtual string GetRefersTo(string sheetName, Excel.Range range) =>
+        BuildRefersTo(sheetName, range);
+
+    /// <summary>
+    /// Returns whether the Type body already carries this adapter's list
+    /// validation against the TypeOptions name.
+    /// </summary>
+    /// <remarks>
+    /// A read failure is reported as "not current" so the caller re-applies the
+    /// validation rather than assuming a state it could not confirm. The
+    /// re-application is idempotent, so the fallback is safe.
+    /// </remarks>
+    /// <param name="typeRange">The Type column's data body, or null when empty.</param>
+    /// <returns><see langword="true"/> only when the stored validation is current.</returns>
+    private static bool ValidationIsCurrent(Excel.Range? typeRange)
+    {
+        if (typeRange is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            Excel.Validation validation = typeRange.Validation;
+            // The PIA surfaces Validation.Type as the raw int; the integration
+            // test asserts against the same cast.
+            if ((Excel.XlDVType)validation.Type != Excel.XlDVType.xlValidateList)
+            {
+                return false;
+            }
+
+            var formula = validation.Formula1;
+            return string.Equals(
+                formula?.Trim(),
+                $"={GanttWorkbookContract.TypeOptionsDefinedName}",
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (COMException)
+        {
+            return false;
+        }
     }
 
     private static string BuildRefersTo(string sheetName, Excel.Range range)
