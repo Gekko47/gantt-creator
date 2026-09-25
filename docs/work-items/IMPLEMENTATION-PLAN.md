@@ -94,8 +94,8 @@ files only; the local audit verifies every file exists.
 | R3.1 | `R3.1-geometry-value-objects.md` | Landed (`b5314c7`) |
 | R3.2 | `R3.2-scene-primitives.md` | Landed (`e244d3c`) |
 | R3.3 | `R3.3-time-scale.md` | Landed (`e8a77e8`) |
-| R3.4 | `R3.4-lane-stack-geometry.md` | Authored (Tier A) |
-| R3.5 | `R3.5-plot-frame-bands.md` | Authored (Tier A) |
+| R3.4 | `R3.4-lane-stack-geometry.md` | Landed (`4ba0601`) |
+| R3.5 | `R3.5-plot-frame-bands.md` | Landed (`9e088bf`, `0f577bd`) |
 | R3.6 | `R3.6-span-bar-label-layout.md` | Authored (Tier A) |
 | R3.7 | `R3.7-milestone-marker-layout.md` | Authored (Tier A) |
 | R3.8 | `R3.8-critical-interval-overlay.md` | Authored (Tier A) |

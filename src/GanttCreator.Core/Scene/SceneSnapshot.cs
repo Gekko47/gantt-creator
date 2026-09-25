@@ -145,8 +145,8 @@ public static class SceneSnapshot
             throw new InvalidDataException($"Unsupported scene snapshot version {document.Version}.");
         }
 
-        ScenePrimitive[] primitives = [.. (document.Primitives ?? []).Select(FromPrimitive)];
-        SceneWarning[] warnings = [.. (document.Warnings ?? []).Select(FromWarning)];
+        ScenePrimitive[] primitives = [.. (document.Primitives ?? []).Select(primitive => FromPrimitive(Required(primitive, "primitive")))];
+        SceneWarning[] warnings = [.. (document.Warnings ?? []).Select(warning => FromWarning(Required(warning, "warning")))];
         SceneCreationOutcome outcome = GanttScene.TryCreate(
             FromRect(Required(document.ChartBounds, "chartBounds"), "chartBounds"),
             FromRect(Required(document.PlotBounds, "plotBounds"), "plotBounds"),
@@ -190,7 +190,7 @@ public static class SceneSnapshot
                 Required(document.PrimitiveId, "primitiveId"),
                 owner,
                 layer,
-                [.. (document.Points ?? []).Select(point => FromPoint(point, "point"))],
+                [.. (document.Points ?? []).Select(point => FromPoint(Required(point, "point"), "point"))],
                 FromStyle(Required(document.Style, "style")),
                 entityType,
                 document.LaneOrder,

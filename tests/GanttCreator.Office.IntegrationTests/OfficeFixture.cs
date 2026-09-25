@@ -202,12 +202,14 @@ internal sealed class OfficeFixture : IAsyncLifetime
                 {
                     wb.Close(SaveChanges: false);
                 }
+                catch (COMException ex) when (ex.HResult == unchecked((int)0x80010108))
+                {
+                    // The caller already closed this workbook; the collection
+                    // sweep remains responsible for workbooks still open in Excel.
+                }
                 catch (COMException ex)
                 {
-                    if (cleanupException is null)
-                    {
-                        cleanupException = ex;
-                    }
+                    PreserveFirstCleanupException(ref cleanupException, ex);
                 }
 #pragma warning disable CA1031
                 catch (Exception ex)
@@ -293,35 +295,37 @@ internal sealed class OfficeFixture : IAsyncLifetime
         catch (COMException ex)
         {
             // Excel may already be shutting down from a prior failure.
-            // Best-effort cleanup: capture the exception and continue to the
+            // Best-effort cleanup: capture the first exception and continue to the
             // GC + orphan-poll phase.
-            cleanupException = ex;
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (ArgumentException ex)
         {
             // Workbook index out of range or similar argument issues during
-            // cleanup. Best-effort: capture and continue.
-            cleanupException = ex;
+            // cleanup. Best-effort: capture the first error and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (InvalidOperationException ex)
         {
             // Excel application in invalid state during cleanup.
-            // Best-effort: capture and continue.
-            cleanupException = ex;
+            // Best-effort: capture the first error and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (NotImplementedException ex)
         {
-            // COM method not implemented. Best-effort: capture and continue.
-            cleanupException = ex;
+            // COM method not implemented. Best-effort: capture the first error
+            // and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
         catch (NotSupportedException ex)
         {
-            // COM method not supported. Best-effort: capture and continue.
-            cleanupException = ex;
+            // COM method not supported. Best-effort: capture the first error
+            // and continue.
+            cleanupException ??= ex;
             _workbooks = null;
         }
 
@@ -397,6 +401,9 @@ internal sealed class OfficeFixture : IAsyncLifetime
             ExceptionDispatchInfo.Capture(cleanupException).Throw();
         }
     }
+
+    private static void PreserveFirstCleanupException(ref Exception? cleanupException, Exception exception) =>
+        cleanupException ??= exception;
 
     /// <summary>
     /// Polls the owned Excel process until it exits or the deadline

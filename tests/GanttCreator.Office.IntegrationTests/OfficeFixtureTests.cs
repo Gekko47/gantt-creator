@@ -151,6 +151,24 @@ public class OfficeFixtureTests
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
+    public async Task CreateWorkbook_closes_cleanly_when_caller_closes_workbook_first()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+
+            var workbook = fixture.CreateWorkbook();
+            workbook.Close(SaveChanges: false);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
     public async Task CreateWorkbook_can_be_called_twice_and_both_teardown_cleanly()
     {
         var fixture = new OfficeFixture();
