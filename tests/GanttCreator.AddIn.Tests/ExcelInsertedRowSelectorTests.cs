@@ -60,6 +60,13 @@ public class ExcelInsertedRowSelectorTests
 
         public int Activations { get; private set; }
 
+        /// <summary>
+        /// One ordered record of the calls the selector makes. Activation and row
+        /// selection share this single sequence so their relative order is
+        /// observable, not just their counts.
+        /// </summary>
+        public List<string> Calls { get; } = [];
+
         public Graph()
         {
             var workbook = new Mock<Excel.Workbook>();
@@ -72,11 +79,21 @@ public class ExcelInsertedRowSelectorTests
             _ = Worksheet.SetupGet(w => w.ListObjects).Returns(listObjects.Object);
             _ = listObjects.SetupGet(l => l.Count).Returns(1);
             _ = Table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
-            _ = Worksheet.Setup(w => w.Activate()).Callback(() => Activations++);
+            _ = Worksheet
+                .Setup(w => w.Activate())
+                .Callback(() =>
+                {
+                    Activations++;
+                    Calls.Add("activate");
+                });
 
             for (var index = 0; index < Rows.Length; index++)
             {
                 _ = Rows[index].SetupGet(r => r.Range).Returns(RowRanges[index].Object);
+                var bodyIndex = index + 1;
+                _ = RowRanges[index]
+                    .Setup(r => r.Select())
+                    .Callback(() => Calls.Add($"select:{bodyIndex}"));
             }
         }
 
@@ -108,7 +125,9 @@ public class ExcelInsertedRowSelectorTests
     public void Activates_the_worksheet_before_selecting()
     {
         // Range.Select only works on the active sheet, so the Gantt worksheet
-        // must be activated first.
+        // must be activated first. Asserting the two counts separately would
+        // pass even with the order reversed, so the single recorded sequence is
+        // what proves activation came first.
         var graph = new Graph();
         TestableSelector selector = graph.Build();
 
@@ -116,6 +135,10 @@ public class ExcelInsertedRowSelectorTests
 
         Assert.Equal(1, graph.Activations);
         graph.RowRanges[1].Verify(r => r.Select(), Times.Once);
+        Assert.Equal(["activate", "select:2"], graph.Calls);
+        Assert.True(
+            graph.Calls.IndexOf("activate") < graph.Calls.IndexOf("select:2"),
+            "Worksheet activation must precede the row selection.");
     }
 
     [Fact]

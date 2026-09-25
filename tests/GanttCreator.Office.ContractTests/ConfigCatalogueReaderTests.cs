@@ -457,6 +457,9 @@ public class ConfigCatalogueReaderTests
     [InlineData(2, "#ff0000")]
     [InlineData(3, "112233")]
     [InlineData(7, "#GGGGGG")]
+    [InlineData(2, "#11223344")]
+    [InlineData(3, " #112233")]
+    [InlineData(7, "#112233 ")]
     public void Read_refuses_a_user_style_with_a_malformed_resolved_colour(int column, string value)
     {
         var fake = new ConfigSheetFake();

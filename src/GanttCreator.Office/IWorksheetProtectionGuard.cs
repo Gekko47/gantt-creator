@@ -32,11 +32,18 @@ public interface IWorksheetProtectionGuard
     /// <summary>
     /// Queries workbook structure protection and the contents protection of the
     /// supplied target worksheet. The target is supplied as an opaque object so
-    /// Excel interop does not cross this port; the Office adapter validates it as
-    /// an Excel worksheet belonging to the active workbook.
+    /// Excel interop does not cross this port.
     /// </summary>
+    /// <remarks>
+    /// This is the authoritative check for a mutation against a worksheet other
+    /// than the active one: <see cref="Query"/> reports the active sheet, whose
+    /// protection says nothing about the target. It is deliberately abstract
+    /// rather than defaulting to <see cref="Query"/>, because a default would
+    /// silently substitute the active sheet for the target and authorise a
+    /// mutation the caller meant to refuse.
+    /// </remarks>
     /// <param name="target">The resolved target worksheet proxy.</param>
     /// <returns>The typed target protection outcome.</returns>
-    ProtectionGuardOutcome QueryTarget(object? target) => Query();
+    ProtectionGuardOutcome QueryTarget(object? target);
 
 }

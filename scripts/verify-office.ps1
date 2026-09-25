@@ -208,7 +208,7 @@ function Remove-HarnessOwnedOfficeProcesses {
             Log "Killing harness-owned Office process PID $processId (recorded by OfficeFixture)"
             try {
                 if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
-                    & taskkill /PID $processId /T /F 2>$null
+                    & taskkill /PID $processId /T /F 2>$null | Out-Null
                     if ($LASTEXITCODE -ne 0) {
                         Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
                     } else {
@@ -242,7 +242,7 @@ function Remove-HarnessOwnedOfficeProcesses {
             Log "Killing harness-owned Office process PID $processId (child of owned PID $parentPid)"
             try {
                 if ($PSCmdlet.ShouldProcess($processId, 'Kill harness-owned Office process', 'Office process sweep')) {
-                    & taskkill /PID $processId /T /F 2>$null
+                    & taskkill /PID $processId /T /F 2>$null | Out-Null
                     if ($LASTEXITCODE -ne 0) {
                         Log "WARN: taskkill failed for PID $processId with exit $LASTEXITCODE"
                     } else {

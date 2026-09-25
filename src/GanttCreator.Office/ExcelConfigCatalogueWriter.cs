@@ -64,21 +64,16 @@ public class ExcelConfigCatalogueWriter(
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
         }
 
-        // Resolve the actual mutation target before the authoritative protection
-        // check. The active-sheet query remains the early host/workbook preflight.
+        // Resolve the actual mutation target. The writer mutates only the
+        // configuration worksheet, so QueryTarget(config) is the authoritative
+        // check: it reports workbook-structure protection and the
+        // configuration sheet's own contents protection. Query() would report
+        // the *active* sheet, whose protection says nothing about whether this
+        // write may proceed, so it is not consulted here.
         Workbook? workbook = application.ActiveWorkbook;
         if (workbook is null)
         {
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
-        }
-
-        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
-        if (activeProtection != ProtectionGuardOutcome.NotProtected)
-        {
-            return ConfigWriteOutcome.Refused(
-                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? ConfigWriteRefusalReason.NoActiveWorkbook
-                    : ConfigWriteRefusalReason.TargetProtected);
         }
 
         Sheets sheets = workbook.Sheets;

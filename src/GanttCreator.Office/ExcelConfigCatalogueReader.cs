@@ -482,12 +482,16 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
 
     /// <summary>
     /// Returns whether a resolved style colour is empty or uppercase
-    /// <c>#RRGGBB</c>, matching the built-in preset contract.
+    /// <c>#RRGGBB</c>, matching <c>GanttStyleDefinition.ValidateFormatting</c>
+    /// and the built-in preset contract. <see cref="GanttColourToken.IsValidHex"/>
+    /// is the shared rule: <c>ColourHex.TryParse</c> would additionally accept a
+    /// <c>#RRGGBBAA</c> form and surrounding whitespace, which the registry then
+    /// rejects at construction, turning a typed refusal into a thrown exception.
     /// </summary>
     /// <param name="text">The cell text.</param>
     /// <returns><see langword="true"/> when the colour is empty or well-formed.</returns>
     private static bool IsOptionalUppercaseColour(string text) =>
-        text.Length == 0 || ColourHex.TryParse(text, out _);
+        text.Length == 0 || GanttColourToken.IsValidHex(text);
 
     private static bool IsKnownColourCapability(EntityColourCapability capability)
     {
