@@ -92,6 +92,14 @@ public sealed class FrameBandsBuilderTests
     {
         Assert.Equal(FrameBandsRefusal.NullRequest, FrameBandsBuilder.TryBuild(null, new FixedMeasurer(_ => 1)).Refusal);
         Assert.Equal(
+            FrameBandsRefusal.InvalidTimeScale,
+            FrameBandsBuilder.TryBuild(CreateRequest() with { TimeScale = null! }, new FixedMeasurer(_ => 1)).Refusal
+        );
+        Assert.Equal(
+            FrameBandsRefusal.InvalidTheme,
+            FrameBandsBuilder.TryBuild(CreateRequest() with { Theme = null! }, new FixedMeasurer(_ => 1)).Refusal
+        );
+        Assert.Equal(
             FrameBandsRefusal.IncompatibleSettings,
             FrameBandsBuilder
                 .TryBuild(

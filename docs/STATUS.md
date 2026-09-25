@@ -7,7 +7,7 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
-- **R3.5 frame/band geometry (commit pending)** — Added Core `ChartFrameGeometry`, `BandSequence`, `FrameBandsBuilder`, and injected `ITextWidthMeasurer`; emits chart-owned background, frame, title, year/period headers, alternating bands, and deduplicated grid primitives with exact chart bounds, label suppression, overflow warnings, closed scale/format pairs, and typed refusal positives. Core 561/561 PASS; Architecture 78/78 PASS; Release solution build 0 warnings/0 errors. Office gate not applicable. Checklist: B, C, G, I.
+- **R3.5 frame/band geometry (commit `9e088bf`)** — Added Core `ChartFrameGeometry`, `BandSequence`, `FrameBandsBuilder`, and injected `ITextWidthMeasurer`; emits chart-owned background, frame, title, year/period headers, alternating bands, and deduplicated grid primitives with exact chart bounds, label suppression, overflow warnings, closed scale/format pairs, and typed refusal positives. Core 561/561 PASS; Architecture 78/78 PASS; Release solution build 0 warnings/0 errors. Office gate not applicable. Checklist: B, C, G, I.
 
 - **R3.4 lane/stack geometry (commit `4ba0601`)** — Added pure Core `LaneLayoutBuilder`, `LaneOrdering`, `LaneGeometry`, `SlotGeometry`, and `LaneEventInput`; effective stack indices derive from row position and ignore visible `StackIndex`, with sparse/duplicate compatibility values compacted, exact growth/centre formulas, splitter/spacer fixed lanes, deterministic shuffle proofs, and typed refusal positives. Core 549/549 PASS; Architecture 78/78 PASS; Release solution build 0 warnings/0 errors. Office gate not applicable. Checklist: B, G, I.
 
