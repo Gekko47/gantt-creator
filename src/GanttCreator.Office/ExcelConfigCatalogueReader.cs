@@ -520,7 +520,29 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
+            if (expected.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
+            if (expected.Key == "TimeScale" && !GanttChartSettings.TryParseTimeScale(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
+            if (expected.Key == "PeriodLabelFormat" && !GanttChartSettings.TryParsePeriodLabelFormat(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
             map[expected.Key] = value;
+        }
+
+        if (!GanttChartSettings.TryParseTimeScale(map["TimeScale"], out GanttTimeScale scale)
+            || !GanttChartSettings.TryParsePeriodLabelFormat(map["PeriodLabelFormat"], out GanttPeriodLabelFormat format)
+            || !GanttChartSettings.IsCompatible(scale, format))
+        {
+            return ConfigReadRefusalReason.ValueOutOfRange;
         }
 
         settings = map;
@@ -592,9 +614,10 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
 
     /// <summary>
     /// Determines whether a setting key carries a boolean value
-    /// (<c>TRUE</c>/<c>FALSE</c>). The free-text keys are <c>ChartTitle</c>,
-    /// <c>TimeScale</c>, <c>LegendPosition</c>, <c>PlotStartMode</c>, and
-    /// <c>PlotFinishMode</c> (ADR-0007 D3).
+    /// (<c>TRUE</c>/<c>FALSE</c>). The typed/free-text keys are
+    /// <c>ChartTitle</c>, <c>TimeScale</c>, <c>PeriodLabelFormat</c>,
+    /// <c>LegendPosition</c>, <c>PlotStartMode</c>, and
+    /// <c>PlotFinishMode</c> (ADR-0007 D3 and ADR-0014).
     /// </summary>
     /// <param name="key">The setting key.</param>
     /// <returns><see langword="true"/> for the boolean-valued keys.</returns>

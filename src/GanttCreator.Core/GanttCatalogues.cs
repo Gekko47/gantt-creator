@@ -194,16 +194,14 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 11 first-release setting definitions approved in ADR-0007 D3.
-    /// <c>PlotStartMode</c>/<c>PlotFinishMode</c>/<c>TimeScale</c> value
-    /// enums are fixed by R3.3/R5.1; until then the defaults below are the
-    /// only stored values.
+    /// The 12 schema-v2 setting definitions approved by ADR-0007 and ADR-0014.
     /// </summary>
     public static IReadOnlyList<GanttSettingDefinition> Settings { get; } =
     [
-        new("ChartTitle", string.Empty),
+        new("ChartTitle", "Gantt Chart"),
         new("ShowTitle", "TRUE"),
         new("TimeScale", "Month"),
+        new("PeriodLabelFormat", "MMM"),
         new("LegendPosition", "Right"),
         new("ExportIncludeDataPanel", "TRUE"),
         new("ExportIncludeLegend", "TRUE"),

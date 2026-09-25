@@ -442,14 +442,13 @@ public class ExcelConfigCatalogueWriter(
 
     /// <summary>
     /// Builds the <c>tblGanttSettings</c> data rows: present values win and
-    /// absent keys get the code default, so the table always holds exactly
-    /// the approved key set (ADR-0007 D2/D3). A key that is not in the
-    /// approved set is not carried forward: the reader validates the exact
-    /// key set, so preserving an unapproved key would leave the workbook
-    /// permanently unreadable after every regeneration. Dialog-authored
-    /// keys are a future decision owned by the settings-dialog work item,
-    /// which must bump the schema version and catalogue hash first
-    /// (ADR-0007 D5/D6).
+    /// absent keys get the schema-v2 code default, so the table always holds
+    /// exactly the approved key set (ADR-0007 D2/D3 and ADR-0014). A legacy
+    /// blank <c>ChartTitle</c> is replaced with the approved nonblank default;
+    /// valid user title and visibility values survive regeneration. A key that
+    /// is not in the approved set is not carried forward: the reader validates
+    /// the exact key set, so preserving an unapproved key would leave the
+    /// workbook permanently unreadable after every regeneration.
     /// </summary>
     /// <param name="existing">The preserved key/value map.</param>
     /// <returns>The data rows.</returns>
@@ -458,11 +457,13 @@ public class ExcelConfigCatalogueWriter(
         List<object?[]> rows = [];
         foreach (GanttSettingDefinition setting in GanttCatalogues.Settings)
         {
-            rows.Add(
-            [
-                setting.Key,
-                existing.TryGetValue(setting.Key, out var value) ? value : setting.DefaultValue,
-            ]);
+            var value = existing.TryGetValue(setting.Key, out var preserved) ? preserved : setting.DefaultValue;
+            if (setting.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
+            {
+                value = setting.DefaultValue;
+            }
+
+            rows.Add([setting.Key, value]);
         }
 
         return rows;

@@ -248,6 +248,25 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_repairs_a_legacy_blank_title_and_adds_the_new_period_format()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var settings = fake.Tables[3].Body;
+        var titleIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "ChartTitle");
+        settings[titleIndex][1] = string.Empty;
+        settings.RemoveAll(row => CellText(row.ElementAtOrDefault(0)) == "PeriodLabelFormat");
+
+        var outcome = ConfigGraph.BuildWriter(fake).Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        var repairedSettings = fake.Tables[3].Body;
+        Assert.Equal("Gantt Chart", CellText(repairedSettings[titleIndex][1]));
+        Assert.Contains(repairedSettings, row => CellText(row.ElementAtOrDefault(0)) == "PeriodLabelFormat" && CellText(row.ElementAtOrDefault(1)) == "MMM");
+        Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
     public void Write_emits_the_style_columns_in_the_styles_header_order()
     {
         // Layout pin. The numeric columns are non-contiguous: TextColour (7)

@@ -227,6 +227,68 @@ public class ConfigCatalogueReaderTests
         Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
     }
 
+    [Theory]
+    [InlineData("Month", "MM")]
+    [InlineData("Month", "MMM")]
+    [InlineData("Quarter", "Quarter")]
+    [InlineData("Year", "Year")]
+    public void Read_accepts_each_supported_scale_and_period_format_pair(string scale, string format)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var scaleIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "TimeScale");
+        var formatIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PeriodLabelFormat");
+        fake.Tables[3].Body[scaleIndex][1] = scale;
+        fake.Tables[3].Body[formatIndex][1] = format;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(scale, outcome.Settings["TimeScale"]);
+        Assert.Equal(format, outcome.Settings["PeriodLabelFormat"]);
+    }
+
+    [Fact]
+    public void Read_refuses_a_blank_chart_title()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "ChartTitle");
+        fake.Tables[3].Body[index][1] = "   ";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Theory]
+    [InlineData("TimeScale", "Day")]
+    [InlineData("PeriodLabelFormat", "MMM ")]
+    public void Read_refuses_unknown_chart_settings(string key, string value)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == key);
+        fake.Tables[3].Body[index][1] = value;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_an_incompatible_scale_and_period_format()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PeriodLabelFormat");
+        fake.Tables[3].Body[index][1] = "Quarter";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
     [Fact]
     public void Read_returns_the_present_setting_values_not_just_the_defaults()
     {
