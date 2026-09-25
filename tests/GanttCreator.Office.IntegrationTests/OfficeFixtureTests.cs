@@ -444,6 +444,39 @@ public class OfficeFixtureTests
         Assert.Contains("77", failure.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void A_com_scope_tracks_proxies_and_releases_them_on_dispose()
+    {
+        // The scope is the mechanism for retiring the leak at source. It must
+        // hold what it was given, hand it back for use, and empty itself on
+        // dispose; a proxy left tracked would keep the reference count up and
+        // reintroduce the very leak it exists to prevent.
+        var scope = new OfficeFixture.ComScope();
+
+        var tracked = scope.Track(new StubProxy());
+
+        Assert.NotNull(tracked);
+        Assert.Equal(1, scope.TrackedCount);
+
+        scope.Dispose();
+
+        Assert.Equal(0, scope.TrackedCount);
+    }
+
+    [Fact]
+    public void A_com_scope_rejects_a_null_proxy() =>
+        Assert.Throws<ArgumentNullException>(
+            () => new OfficeFixture.ComScope().Track<StubProxy>(null!));
+
+    /// <summary>
+    /// A minimal non-COM stand-in for the scope test. The scope's contract is
+    /// over MarshalByRefObject, so a plain subclass exercises tracking and
+    /// release without needing a live Excel.
+    /// </summary>
+    private sealed class StubProxy : System.MarshalByRefObject
+    {
+    }
+
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task Teardown_does_not_escalate_when_the_process_exits_on_its_own()

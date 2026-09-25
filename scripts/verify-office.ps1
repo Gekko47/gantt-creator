@@ -306,6 +306,14 @@ try {
 if (Test-Path -LiteralPath $ownedPidsPath) { Remove-Item -LiteralPath $ownedPidsPath -Force -ErrorAction SilentlyContinue }
 $env:GANTTCREATOR_OWNED_PIDS_PATH = $ownedPidsPath
 
+# Escalation log. The fixture records how many owned processes it had to force
+# to the kill path; the target is zero, and a non-zero total is the visible
+# signal that a test body left a COM proxy alive. Reported, never used as the
+# pass/fail verdict -- that is the stray sweep's job.
+$forcedKillsPath = Join-Path $evidence 'office-forced-kills.log'
+if (Test-Path -LiteralPath $forcedKillsPath) { Remove-Item -LiteralPath $forcedKillsPath -Force -ErrorAction SilentlyContinue }
+$env:GANTTCREATOR_FORCED_KILLS_PATH = $forcedKillsPath
+
 # Build, then test only the OfficeIntegration trait.
 Log 'build Release -warnaserror'
 dotnet build $Solution -c $Configuration --no-restore -warnaserror
@@ -380,6 +388,21 @@ Save-Trx
 # killed.
 $finalManifest = Read-OwnedPidManifest $ownedPidsPath
 $straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBeforeSnapshot -OwnedTreePids @() -FixtureManifest $finalManifest
+
+# Report the COM-proxy leak signal. A non-zero total means a test body left a
+# proxy alive and the owned Excel only exited because the fixture killed it.
+$forcedKills = 0
+try {
+    if (Test-Path -LiteralPath $forcedKillsPath) {
+        foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
+            $parsed = 0
+            if ([int]::TryParse($line.Trim(), [ref]$parsed)) { $forcedKills += $parsed }
+        }
+    }
+} catch {
+    Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
+}
+Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (target 0; each one is a test body that left a COM proxy alive)"
 
 if ($testProc.ExitCode -ne 0) {
     Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."

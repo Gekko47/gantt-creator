@@ -128,6 +128,33 @@ internal class OfficeFixture : IAsyncLifetime
     public int ForcedKillCount { get; private set; }
 
     /// <summary>
+    /// Records the escalation count to the shell so the gate can report the leak
+    /// signal. The target is zero; a non-zero value means a test body left a COM
+    /// proxy alive and the process only went away because it was killed.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort, like the PID handoff: it is diagnostics, never a pass/fail
+    /// input, and a failure to write must not fail the test.
+    /// </remarks>
+    internal void ReportForcedKillCount()
+    {
+        var path = Environment.GetEnvironmentVariable("GANTTCREATOR_FORCED_KILLS_PATH");
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.AppendAllText(path, $"{ForcedKillCount}{Environment.NewLine}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex;
+        }
+    }
+
+    /// <summary>
     /// Loads an XLL code resource into the owned Excel instance via
     /// <c>Application.RegisterXLL</c> (work item R1.6 D3). Excel loads the
     /// resource and registers its entry points; in the 2026-09-16 automation
@@ -267,6 +294,7 @@ internal class OfficeFixture : IAsyncLifetime
         if (_excel == null)
         {
             await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
+            ReportForcedKillCount();
             return;
         }
 
@@ -478,6 +506,7 @@ internal class OfficeFixture : IAsyncLifetime
         // just the primary: a second Excel process from one launch is equally
         // capable of holding the packed XLL open.
         await EnsureOwnedProcessesExitedAsync().ConfigureAwait(true);
+        ReportForcedKillCount();
 
         // Report any cleanup exception after all cleanup attempts complete.
         // Use ExceptionDispatchInfo to preserve the original stack trace
@@ -492,7 +521,70 @@ internal class OfficeFixture : IAsyncLifetime
         cleanupException ??= exception;
 
     /// <summary>
-    /// Reports whether a process is still running. Virtual so the teardown
+    /// A scoped COM reference-count release for integration test bodies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every test in this assembly acquires a chain of proxies --
+    /// <c>workbook.Sheets</c>, <c>worksheet.ListObjects</c>,
+    /// <c>listObject.ListRows</c>, <c>listRow.Range</c> -- and none of them were
+    /// ever released. Unreleased proxies keep the Application's reference count
+    /// above zero, so <c>Quit()</c> returns without terminating the process: that
+    /// is the root cause of the leaked EXCEL.EXE. The fixture now force-kills a
+    /// survivor, so the leak no longer breaks the gate, but the kill is a
+    /// symptom, not a fix.
+    /// </para>
+    /// <para>
+    /// A scope releases its proxies in reverse acquisition order on dispose, which
+    /// matches the COM ownership rule the production adapters already follow. Use
+    /// it as:
+    /// <code>
+    /// using var scope = new OfficeFixture.ComScope();
+    /// var sheets = scope.Track(workbook.Sheets);
+    /// </code>
+    /// so a converted test stops contributing to the leak signal.
+    /// </para>
+    /// </remarks>
+    internal sealed class ComScope : IDisposable
+    {
+        private readonly List<System.MarshalByRefObject> _tracked = [];
+
+        /// <summary>Tracks a proxy for release when this scope is disposed.</summary>
+        /// <typeparam name="T">The proxy type.</typeparam>
+        /// <param name="proxy">The proxy to release later.</param>
+        /// <returns>The same proxy, so the call can wrap an expression.</returns>
+        public T Track<T>(T proxy)
+            where T : System.MarshalByRefObject
+        {
+            ArgumentNullException.ThrowIfNull(proxy);
+            _tracked.Add(proxy);
+            return proxy;
+        }
+
+        /// <summary>Gets the number of proxies currently tracked.</summary>
+        public int TrackedCount => _tracked.Count;
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            for (var index = _tracked.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(_tracked[index]);
+                }
+                catch (ArgumentException)
+                {
+                    // Already released elsewhere in the test; releasing twice is
+                    // not an error worth failing teardown over.
+                }
+            }
+
+            _tracked.Clear();
+        }
+    }
+
+    /// <summary>Reports whether a process is still running. Virtual so the teardown
     /// escalation can be driven deterministically without spawning a process that
     /// has to be kept alive for the duration of the test.
     /// </summary>
