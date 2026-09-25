@@ -168,7 +168,7 @@ The scene contains explicit z-order, geometry, style, text bounds, clipping, and
 
 - Scene coordinates use points (`1 inch = 72 points`) as `double` values.
 - Convert dates to a day index before geometry calculation.
-- Date X maps the start of a calendar day. Span finish dates and plot finish are inclusive, so their right edge uses `Finish + 1 day`; point events use their exact date without the extra day.
+- Date X maps the start of a calendar day. Activity dates are inclusive: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; the activity left edge is `DateToX(Start)`, its width is `DurationDays * DayWidth`, and its right edge is `left + width`. `Finish` is never incremented. Point events use their exact date without duration width.
 - Snap at one defined boundary; never round repeatedly through the pipeline.
 - Excel comparisons allow a documented tolerance because COM exposes `Single` shape geometry.
 - Raster mapping is `pixels = round(points / 72 * dpi * scale)`, with edge rounding chosen once and covered by boundary tests.

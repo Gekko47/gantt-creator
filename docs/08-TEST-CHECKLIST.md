@@ -32,9 +32,7 @@ Applies to: `GanttCreator.Core` scene construction, layout, clipping.
       height. Assert by walking the built scene.
 - [ ] `TimeScale.DateToX` is monotonically increasing across the plot range;
       test with shuffled, reversed, and duplicate dates.
-- [ ] Inclusive-finish policy: a one-day span has exactly one day of width;
-      right edge uses `DateToX(Finish + 1 day)`. Milestones and delineators do
-      **not** add the extra day.
+- [ ] Inclusive duration policy: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; activity width is `DurationDays * DayWidth`, with the left edge fixed at `DateToX(Start)`. `Finish` is never incremented. Milestones and delineators use only their point date X.
 - [ ] `StackIndex` equal values share the same vertical centre; sparse values
       preserve order but do not create empty height.
 - [ ] Lane height grows to fit content (`max(LaneHeightPt, contentHeight)`);

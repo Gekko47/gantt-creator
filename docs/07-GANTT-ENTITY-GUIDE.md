@@ -245,9 +245,7 @@ The style dialog must show a contrast warning when text/fill combinations are di
 - `ChartBounds` encloses the selected data panel, headers, and plot—not temporary staging space.
 - `PlotBounds` begins below the period header and excludes the data panel.
 - X coordinates derive only from `TimeScale`; Y coordinates derive only from lane/stack layout.
-- `TimeScale.DateToX(date)` maps the start of that calendar day. The selected plot finish is inclusive, so the plot's exclusive right boundary is `DateToX(PlotFinish + 1 day)`.
-- Span dates are inclusive: `left = DateToX(Start)` and `right = DateToX(Finish + 1 day)`. A one-day span therefore has exactly one day of width.
-- Milestones and delineators are point events: `centreX = DateToX(EventDate)`. Do not add half a day or inherit the span finish rule.
+- `TimeScale.DateToX(date)` maps the start of that calendar day. Activity dates are inclusive: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; the activity left edge is `DateToX(Start)`, its width is `DurationDays * DayWidth`, and its right edge is `left + width`. The `Finish` value is never incremented. Milestones and delineators are point events: `centreX = DateToX(EventDate)`. Do not add half a day or inherit the activity duration rule.
 - Dates before/after the time range are clipped at `PlotBounds.Left/Right`.
 - An event wholly outside the time range emits no bar/marker but may produce a warning according to validation policy.
 - Use one edge-rounding pass when translating points to Excel `Single` geometry or raster pixels.
