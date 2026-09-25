@@ -397,6 +397,140 @@ public class OfficeFixtureTests
         }
     }
 
+    [Fact]
+    public void ReadStartTimeUtcTicks_reads_a_live_process_start_time()
+    {
+        // The manifest's identity proof is the PID plus the start time. This
+        // process is certainly alive, so its start time must be readable and
+        // non-zero; the sweep compares against exactly this value.
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+
+        long ticks = OfficeFixture.ReadStartTimeUtcTicks(self.Id);
+
+        Assert.NotEqual(0, ticks);
+        Assert.Equal(self.StartTime.ToUniversalTime().Ticks, ticks);
+    }
+
+    [Fact]
+    public void ReadStartTimeUtcTicks_returns_zero_for_a_process_that_does_not_exist()
+    {
+        // Fail-safe: an unidentifiable process records zero, and the sweep's
+        // safe direction is to skip a zero rather than kill it.
+        Assert.Equal(0, OfficeFixture.ReadStartTimeUtcTicks(int.MaxValue));
+    }
+
+    [Fact]
+    public void KillOwnedProcess_never_targets_a_zero_process_id()
+    {
+        // The default seam refuses a zero PID before touching any process, so a
+        // fixture that never identified its Excel cannot be handed a kill. The
+        // base method is called directly: the recording subclass's override
+        // would bypass the guard this pins.
+        var fixture = new OfficeFixture();
+
+        Assert.False(fixture.KillOwnedProcess(0));
+    }
+
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task Teardown_escalates_to_a_forced_kill_when_the_owned_process_survives()
+    {
+        // The leak this covers: unreleased COM proxies keep the Application's
+        // reference count above zero, so Quit() returns without terminating the
+        // process, and that process holds the packed XLL open. Teardown must
+        // escalate to a kill of its own PID rather than waiting out the deadline
+        // and leaving the orphan behind.
+        var fixture = new StubbornFixture { LivePid = 4242 };
+
+        await fixture.DisposeStubbornAsync().ConfigureAwait(true);
+
+        Assert.Equal([4242], fixture.KilledProcessIds);
+        Assert.Equal(1, fixture.ForcedKillCount);
+    }
+
+    /// <summary>
+    /// A fixture whose owned process never exits on its own, so the escalation
+    /// path runs without a real Excel and without a real kill.
+    /// </summary>
+    private sealed class StubbornFixture : OfficeFixture
+    {
+        public List<int> KilledProcessIds { get; } = [];
+
+        public int LivePid { get; set; }
+
+        public async Task DisposeStubbornAsync()
+        {
+            OwnedProcessIdsForTest = [LivePid];
+            await DisposeAsync().ConfigureAwait(true);
+        }
+
+        internal override bool KillOwnedProcess(int processId)
+        {
+            KilledProcessIds.Add(processId);
+            return processId != 0;
+        }
+    }
+
+    [Fact]
+    public void A_manifest_record_carries_the_start_time_that_identifies_its_process()
+    {
+        // A PID alone is not identity: Windows recycles PIDs between runs, so the
+        // manifest must record the start time the sweep later re-checks.
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+
+            OfficeFixture.RecordOwnedProcessIdForTest(self.Id);
+
+            var line = File.ReadAllLines(manifestPath).Single();
+            using var record = System.Text.Json.JsonDocument.Parse(line);
+            Assert.Equal(self.Id, record.RootElement.GetProperty("ProcessId").GetInt32());
+            Assert.Equal(
+                self.StartTime.ToUniversalTime().Ticks,
+                record.RootElement.GetProperty("StartTimeUtcTicks").GetInt64());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void Each_manifest_line_is_independently_parseable_json()
+    {
+        // The reader parses line by line. A whole-file ConvertFrom-Json fails on
+        // concatenated objects, which is what silently emptied the sweep's primary
+        // ownership signal before the start-time change.
+        var dir = Directory.CreateTempSubdirectory();
+        var manifestPath = Path.Combine(dir.FullName, "owned-office-pids.json");
+        var previous = Environment.GetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", manifestPath);
+            OfficeFixture.RecordOwnedProcessIdForTest(11);
+            OfficeFixture.RecordOwnedProcessIdForTest(22);
+            OfficeFixture.RecordOwnedProcessIdForTest(33);
+
+            var parsed = File.ReadAllLines(manifestPath)
+                .Select(line => System.Text.Json.JsonDocument.Parse(line).RootElement.GetProperty("ProcessId").GetInt32())
+                .ToArray();
+
+            Assert.Equal([11, 22, 33], parsed);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GANTTCREATOR_OWNED_PIDS_PATH", previous);
+            try { Directory.Delete(dir.FullName, true); }
+            catch (IOException) { }
+        }
+    }
+
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public void RecordOwnedProcessId_is_a_noop_for_zero_process_id()

@@ -30,12 +30,40 @@ namespace GanttCreator.Office.IntegrationTests;
 /// <c>Thread.Sleep</c> calls &mdash; the orphan check polls a named
 /// observable condition (process exited) with a deadline.
 /// </summary>
-internal sealed class OfficeFixture : IAsyncLifetime
+/// <remarks>
+/// Not sealed: <see cref="KillOwnedProcess"/> is an <c>internal virtual</c> seam
+/// so a contract test can drive the teardown-escalation path without spawning
+/// Excel.
+/// </remarks>
+internal class OfficeFixture : IAsyncLifetime
 {
     private Application? _excel;
     private Workbooks? _workbooks;
     private int _excelProcessId;
     private bool _disposed;
+
+    /// <summary>
+    /// Every EXCEL.EXE process this launch created, in discovery order. A single
+    /// <c>new Application()</c> can start more than one process, so the first is
+    /// the primary tracked PID and the rest are recorded too; otherwise those
+    /// extra processes are neither verified at teardown nor handed to the
+    /// verifying shell's sweep.
+    /// </summary>
+    private readonly List<int> _ownedProcessIds = [];
+
+    /// <summary>
+    /// How long the owned process gets to exit on its own after <c>Quit()</c> and
+    /// a GC pass. Unchanged from the original 10 s bound; a process that needs the
+    /// full window is the unreleased-COM-proxy signal, not normal Excel lag.
+    /// </summary>
+    private static readonly TimeSpan GracefulExitTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long the owned process gets to disappear after the forced kill. A kill
+    /// is synchronous for the target process, so this only covers the OS
+    /// reclaiming the handle.
+    /// </summary>
+    private static readonly TimeSpan ForcedExitTimeout = TimeSpan.FromSeconds(5);
     /// <summary>
     /// Workbooks created through <see cref="CreateWorkbook"/>. Closed and
     /// released here during teardown, before the existing collection sweep, so
@@ -61,6 +89,42 @@ internal sealed class OfficeFixture : IAsyncLifetime
     /// best-effort in that case).
     /// </summary>
     public int ProcessId => _excelProcessId;
+
+    /// <summary>
+    /// Every EXCEL.EXE process ID this fixture launched, primary first. Empty when
+    /// no new process could be identified, in which case the orphan check and the
+    /// shell sweep have nothing to act on.
+    /// </summary>
+    public IReadOnlyList<int> OwnedProcessIds => _ownedProcessIds;
+
+    /// <summary>
+    /// Seeds the owned-PID list for a test that drives teardown without launching
+    /// Excel. Internal so the production launch path stays the only writer.
+    /// </summary>
+    internal List<int> OwnedProcessIdsForTest
+    {
+        get => _ownedProcessIds;
+        set
+        {
+            _ownedProcessIds.Clear();
+            _ownedProcessIds.AddRange(value);
+            if (_ownedProcessIds.Count > 0)
+            {
+                _excelProcessId = _ownedProcessIds[0];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Number of times teardown had to escalate to a forced kill because the
+    /// owned process survived the graceful quit, GC, and exit poll.
+    /// </summary>
+    /// <remarks>
+    /// A non-zero count is the regression signal for unreleased COM proxies: the
+    /// escalation stops the leak from breaking the gate, and this counter is what
+    /// makes it visible. The goal is zero, asserted by the residual-process test.
+    /// </remarks>
+    public int ForcedKillCount { get; private set; }
 
     /// <summary>
     /// Loads an XLL code resource into the owned Excel instance via
@@ -159,22 +223,33 @@ internal sealed class OfficeFixture : IAsyncLifetime
             throw;
         }
 
-        // Identify the new EXCEL.EXE process by diffing the snapshot.
+        // Identify the EXCEL.EXE processes this launch created by diffing the
+        // snapshot. Record every one of them: the primary drives the orphan poll
+        // and the escalation, and the rest are still handed to the shell so a
+        // stray among them is swept rather than silently left behind.
         var after = Process.GetProcessesByName("EXCEL")
             .Select(p => p.Id)
             .Where(id => !before.Contains(id))
             .ToList();
 
-        if (after.Count == 1)
+        foreach (var id in after)
+        {
+            _ownedProcessIds.Add(id);
+        }
+
+        if (after.Count > 0)
         {
             _excelProcessId = after[0];
         }
 
-        // Report the owned PID to the verifying shell. On a genuine timeout
+        // Report the owned PIDs to the verifying shell. On a genuine timeout
         // DisposeAsync never runs and the test host is killed, so the shell
         // needs a signal that outlives the process; the manifest file does.
         // Best-effort: this must never affect test pass/fail.
-        RecordOwnedProcessId(_excelProcessId);
+        foreach (var id in _ownedProcessIds)
+        {
+            RecordOwnedProcessId(id);
+        }
 
         return Task.CompletedTask;
     }
@@ -391,7 +466,28 @@ internal sealed class OfficeFixture : IAsyncLifetime
         GC.WaitForPendingFinalizers();
         GC.Collect();
 
-        await PollForProcessExitAsync(_excelProcessId).ConfigureAwait(true);
+        // Every owned process this launch created gets the same treatment, not
+        // just the primary: a second Excel process from one launch is equally
+        // capable of holding the packed XLL open.
+        var surviving = new List<int>();
+        foreach (var ownedId in _ownedProcessIds)
+        {
+            if (!await EnsureOwnedProcessExitedAsync(ownedId).ConfigureAwait(true))
+            {
+                surviving.Add(ownedId);
+            }
+        }
+
+        if (surviving.Count > 0)
+        {
+            // Surfaced as a cleanup failure rather than tolerated: a process that
+            // outlives both the graceful quit and the targeted kill would hold the
+            // packed XLL and break the next run's publish step.
+            PreserveFirstCleanupException(
+                ref cleanupException,
+                new InvalidOperationException(
+                    $"Office Excel process(es) {string.Join(", ", surviving)} survived teardown."));
+        }
 
         // Report any cleanup exception after all cleanup attempts complete.
         // Use ExceptionDispatchInfo to preserve the original stack trace
@@ -406,28 +502,100 @@ internal sealed class OfficeFixture : IAsyncLifetime
         cleanupException ??= exception;
 
     /// <summary>
-    /// Polls the owned Excel process until it exits or the deadline
-    /// elapses. Never throws; the test itself asserts on the result.
+    /// Polls an owned Excel process until it exits or the deadline elapses.
+    /// Never throws.
     /// </summary>
-    private static async Task PollForProcessExitAsync(int processId)
+    /// <param name="processId">The process to poll; zero is treated as already gone.</param>
+    /// <param name="timeout">How long to wait for exit.</param>
+    /// <returns><see langword="true"/> when the process is gone (or was never identified).</returns>
+    private static async Task<bool> PollForProcessExitAsync(int processId, TimeSpan timeout)
     {
-        if (processId == 0) return;
+        if (processId == 0) return true;
 
         var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < 10)
+        while (sw.Elapsed < timeout)
         {
             try
             {
                 using var proc = Process.GetProcessById(processId);
-                if (proc.HasExited) return;
+                if (proc.HasExited) return true;
             }
             catch (ArgumentException)
             {
                 // Process ID not found &mdash; it exited.
-                return;
+                return true;
             }
 
             await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        try
+        {
+            using var proc = Process.GetProcessById(processId);
+            return proc.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Waits for the owned process to exit after the graceful quit, escalating to
+    /// a forced kill of this fixture's own process when it does not.
+    /// </summary>
+    /// <remarks>
+    /// The escalation exists because unreleased COM proxies in a test body keep
+    /// the Application's reference count above zero, so <c>Quit()</c> returns
+    /// without terminating the process. Left alone that process holds the packed
+    /// XLL open and breaks the next run's publish step. The kill is targeted by
+    /// the PID this fixture launched, never by process name, and it is counted in
+    /// <see cref="ForcedKillCount"/> so a persistent leak stays visible instead of
+    /// being masked by the force.
+    /// </remarks>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns><see langword="true"/> when the process is gone by the end.</returns>
+    private async Task<bool> EnsureOwnedProcessExitedAsync(int processId)
+    {
+        if (await PollForProcessExitAsync(processId, GracefulExitTimeout).ConfigureAwait(true))
+        {
+            return true;
+        }
+
+        if (KillOwnedProcess(processId))
+        {
+            ForcedKillCount++;
+        }
+
+        return await PollForProcessExitAsync(processId, ForcedExitTimeout).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Forces the fixture's own Excel process to terminate.
+    /// </summary>
+    /// <remarks>
+    /// Virtual so a contract test can substitute the kill and drive the
+    /// escalation path without spawning Excel, mirroring the COM indexer seams
+    /// elsewhere in this harness. The default kills by PID only; it never matches
+    /// on the process name, so a user-owned Excel can never be terminated here.
+    /// </remarks>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns>Whether the kill was issued successfully.</returns>
+    internal virtual bool KillOwnedProcess(int processId)
+    {
+        if (processId == 0) return false;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            if (process.HasExited) return false;
+
+            process.Kill(entireProcessTree: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            return false;
         }
     }
 
@@ -449,10 +617,16 @@ internal sealed class OfficeFixture : IAsyncLifetime
 
         try
         {
-            var entry = new OwnedProcessIdEntry { ProcessId = processId };
+            var entry = new OwnedProcessIdEntry
+            {
+                ProcessId = processId,
+                StartTimeUtcTicks = ReadStartTimeUtcTicks(processId),
+            };
             var json = JsonSerializer.Serialize(entry);
             // Append, not overwrite: a run can launch more than one fixture
-            // before a timeout, and each owned PID must survive.
+            // before a timeout, and each owned PID must survive. One complete
+            // JSON record per line, so a reader can parse each line on its own
+            // (a whole-file ConvertFrom-Json fails on concatenated objects).
             File.AppendAllText(path, json + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -464,11 +638,41 @@ internal sealed class OfficeFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// One owned-PID record as written to the manifest file.
+    /// Reads a live process start time in UTC ticks for the manifest, or zero
+    /// when it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// The start time is the second half of the sweep's identity proof: a PID
+    /// alone can be recycled by Windows between runs, so the shell only kills a
+    /// manifest PID whose live process still reports the recorded start time. A
+    /// zero here is deliberately recorded as unverifiable, and the shell's
+    /// fail-safe direction is to skip such a PID rather than kill it.
+    /// </remarks>
+    /// <param name="processId">The process to sample.</param>
+    /// <returns>The UTC start time in ticks, or zero when unreadable.</returns>
+    internal static long ReadStartTimeUtcTicks(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return process.StartTime.ToUniversalTime().Ticks;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// One owned-PID record as written to the manifest file: the process ID and
+    /// the start time that identifies that specific process, so a recycled PID
+    /// is never mistaken for the harness's own.
     /// </summary>
     private sealed class OwnedProcessIdEntry
     {
         public int ProcessId { get; set; }
+
+        public long StartTimeUtcTicks { get; set; }
     }
 
     /// <summary>
