@@ -1,6 +1,6 @@
 # Implementation guides manifest and execution plan
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 88 roadmap-guide records: 26 Tier A and 62 Tier B. R2.7 and R2.7a are landed; the new R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a/R2.7b hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 89 roadmap-guide records: 27 Tier A and 62 Tier B. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a/R2.7c hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
@@ -83,6 +83,7 @@ files only; the local audit verifies every file exists.
 | R2.5a | `R2.5a-validation-normalisation.md` | Landed (`f21a908`) |
 | R2.6a | `R2.6a-validation-reporter-boundary.md` | Landed (`bf9727c`) |
 | R2.7b | `R2.7b-style-capability-schema.md` | Landed (`49abd4f`; ADR-0009) |
+| R2.7c | `R2.7c-style-registry-formatting.md` | Authored (Tier A) |
 | R2.8 | `R2.8-add-row-commands.md` | Implemented (working-tree implementation with observed gates; pending commit) |
 | R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
 | R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |

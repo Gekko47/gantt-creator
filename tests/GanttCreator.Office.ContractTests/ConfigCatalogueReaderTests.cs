@@ -432,5 +432,88 @@ public class ConfigCatalogueReaderTests
         "Fill, Stroke",
     ];
 
+    [Fact]
+    public void Read_projects_a_user_style_as_renderable_formatting()
+    {
+        // R2.7c: a user row that validates must reach the registry with resolved
+        // formatting, not capabilities only, or the resolver refuses it later.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[1].Body.Add(UserStyleRow());
 
+        ConfigReadOutcome outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Styles.TryGet("UserStyle", out GanttStyleDefinition? style));
+        Assert.True(style!.HasFormatting);
+        Assert.Equal("#112233", style.FillColour);
+        Assert.Equal("#445566", style.StrokeColour);
+        Assert.Equal("#FFFFFF", style.TextColour);
+        Assert.Equal(GanttLabelPosition.Inside, style.DefaultLabelPosition);
+        Assert.Equal(8, style.ActivityHeightPt);
+    }
+
+    [Theory]
+    [InlineData(2, "#ff0000")]
+    [InlineData(3, "112233")]
+    [InlineData(7, "#GGGGGG")]
+    public void Read_refuses_a_user_style_with_a_malformed_resolved_colour(int column, string value)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        object?[] userStyle = UserStyleRow();
+        userStyle[column] = value;
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange),
+            ConfigGraph.BuildReader(fake).Read());
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
+    public void Read_refuses_a_user_style_with_a_negative_metric(int column)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        object?[] userStyle = UserStyleRow();
+        userStyle[column] = -1.0;
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange),
+            ConfigGraph.BuildReader(fake).Read());
+    }
+
+    [Fact]
+    public void Read_refuses_a_user_style_with_a_non_numeric_metric()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        object?[] userStyle = UserStyleRow();
+        userStyle[9] = "tall";
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange),
+            ConfigGraph.BuildReader(fake).Read());
+    }
+
+    [Fact]
+    public void Read_refuses_a_user_style_with_an_undefined_hatch_pattern()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        object?[] userStyle = UserStyleRow();
+        userStyle[4] = "Diagonalish";
+        fake.Tables[1].Body.Add(userStyle);
+
+        Assert.Equal(
+            ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange),
+            ConfigGraph.BuildReader(fake).Read());
+    }
 }
