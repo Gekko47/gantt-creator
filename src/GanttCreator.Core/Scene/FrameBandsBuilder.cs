@@ -170,7 +170,7 @@ public static class FrameBandsBuilder
         for (var index = 0; index < sequence.Periods.Count; index++)
         {
             BandInterval period = sequence.Periods[index];
-            string id = $"chart:period:{period.Start:yyyy-MM-dd}";
+            var id = $"chart:period:{period.Start:yyyy-MM-dd}";
             RectD bounds = new(
                 period.Left,
                 request.PlotBounds.Y - request.YearBandHeightPt - request.PeriodBandHeightPt,
@@ -208,8 +208,8 @@ public static class FrameBandsBuilder
             return;
         }
 
-        string text = request.ChartTitle;
-        if (textMeasurer.TryMeasure(text, out double width) && width > title.Width)
+        var text = request.ChartTitle;
+        if (textMeasurer.TryMeasure(text, out var width) && width > title.Width)
         {
             warnings.Add(new SceneWarning(SceneOwnerId.Chart, _titleOverflowCode, "Chart title was truncated with an ellipsis."));
             text = Ellipsize(text, title.Width, textMeasurer);
@@ -234,7 +234,7 @@ public static class FrameBandsBuilder
         {
             if (period.Right < request.PlotBounds.Right - GeometryMath.Epsilon)
             {
-                bool major = request.ShowMajorGrid && period.Finish.Month == 12;
+                var major = request.ShowMajorGrid && period.Finish.Month == 12;
                 if (request.ShowMinorGrid || major)
                 {
                     AddGridLine(lines, period.Right, major);
@@ -261,7 +261,7 @@ public static class FrameBandsBuilder
 
     private static void AddGridLine(Dictionary<double, bool> lines, double x, bool major)
     {
-        if (lines.TryGetValue(x, out bool existingMajor))
+        if (lines.TryGetValue(x, out var existingMajor))
         {
             lines[x] = existingMajor || major;
         }
@@ -346,8 +346,8 @@ public static class FrameBandsBuilder
     {
         for (var length = text.Length - 1; length >= 0; length--)
         {
-            string candidate = string.Concat(text.AsSpan(0, length), "…");
-            if (measurer.TryMeasure(candidate, out double width) && width <= availableWidth)
+            var candidate = string.Concat(text.AsSpan(0, length), "…");
+            if (measurer.TryMeasure(candidate, out var width) && width <= availableWidth)
             {
                 return candidate;
             }
@@ -358,10 +358,10 @@ public static class FrameBandsBuilder
 
     private static RectD Union(params RectD[] rectangles)
     {
-        double left = rectangles.Min(rectangle => rectangle.Left);
-        double top = rectangles.Min(rectangle => rectangle.Top);
-        double right = rectangles.Max(rectangle => rectangle.Right);
-        double bottom = rectangles.Max(rectangle => rectangle.Bottom);
+        var left = rectangles.Min(rectangle => rectangle.Left);
+        var top = rectangles.Min(rectangle => rectangle.Top);
+        var right = rectangles.Max(rectangle => rectangle.Right);
+        var bottom = rectangles.Max(rectangle => rectangle.Bottom);
         return new RectD(left, top, right - left, bottom - top);
     }
 

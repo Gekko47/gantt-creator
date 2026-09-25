@@ -100,8 +100,8 @@ public static class LaneLayoutBuilder
         foreach (IGrouping<string, LaneEventInput> group in ordered.GroupBy(LaneOrdering.LaneKey))
         {
             LaneEventInput[] laneInputs = [.. group];
-            bool isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
-            bool isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
+            var isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
+            var isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
             LaneGeometry lane =
                 isSplitter || isSpacer
                     ? BuildFixedLane(group.Key, laneOrder, laneTop, laneInputs, isSplitter, isSpacer, metrics)
@@ -124,7 +124,7 @@ public static class LaneLayoutBuilder
         LaneLayoutMetrics metrics
     )
     {
-        double height = isSplitter ? metrics.SplitterHeightPt : metrics.SpacerHeightPt;
+        var height = isSplitter ? metrics.SplitterHeightPt : metrics.SpacerHeightPt;
         GanttRowId[] eventIds = [.. inputs.Select(input => input.Event.Id)];
         SlotGeometry slot = new(0, 0, laneTop, laneTop + (height / 2), laneTop + height, height, eventIds);
         return new LaneGeometry(laneKey, laneOrder, laneTop, height, [slot], eventIds, isSplitter, isSpacer);
@@ -146,7 +146,7 @@ public static class LaneLayoutBuilder
         Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
         for (var index = 0; index < rowOrdered.Length; index++)
         {
-            int effective = rowOrdered[index].EffectiveStackIndex ?? index;
+            var effective = rowOrdered[index].EffectiveStackIndex ?? index;
             if (!effectiveSlots.TryGetValue(effective, out List<LaneEventInput>? slotEvents))
             {
                 slotEvents = [];
@@ -157,17 +157,17 @@ public static class LaneLayoutBuilder
         }
 
         int[] effectiveValues = [.. effectiveSlots.Keys.OrderBy(value => value)];
-        double contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
+        var contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
         contentHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
         contentHeight += effectiveValues.Sum(value => effectiveSlots[value].Max(input => input.ResolvedHeightPt));
-        double laneHeight = Math.Max(metrics.LaneHeightPt, contentHeight);
-        List<SlotGeometry> slots = [];
-        double slotTop = laneTop + metrics.LanePaddingTopPt;
+        var laneHeight = Math.Max(metrics.LaneHeightPt, contentHeight);
+        var slots = new List<SlotGeometry>();
+        var slotTop = laneTop + metrics.LanePaddingTopPt;
         for (var visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)
         {
-            int effective = effectiveValues[visualIndex];
+            var effective = effectiveValues[visualIndex];
             List<LaneEventInput> slotEvents = effectiveSlots[effective];
-            double height = slotEvents.Max(input => input.ResolvedHeightPt);
+            var height = slotEvents.Max(input => input.ResolvedHeightPt);
             GanttRowId[] eventIds =
             [
                 .. slotEvents

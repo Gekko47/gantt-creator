@@ -124,8 +124,8 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     {
         DateOnly visibleStart = periodStart < scale.PlotStart ? scale.PlotStart : periodStart;
         DateOnly visibleFinish = periodFinish > scale.PlotFinish ? scale.PlotFinish : periodFinish;
-        double left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
-        double right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
+        var left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
+        var right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
         intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, right - left >= minimumWidth));
     }
 
