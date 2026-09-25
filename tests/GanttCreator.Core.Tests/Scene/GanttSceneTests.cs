@@ -57,4 +57,78 @@ public sealed class GanttSceneTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(SceneCreationRefusal.UnresolvedGroupChild, outcome.Refusal);
     }
+
+    [Fact]
+    public void TryCreate_refuses_a_cycle_spanning_two_groups()
+    {
+        // Neither group names itself, so SceneGroup accepts both; every child ID
+        // also resolves, so the unresolved-child check cannot catch it. Only the
+        // whole-set cycle check can see that expanding row:a revisits row:b and
+        // never terminates.
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
+        var groupA = new SceneGroup("row:a", owner, ZLayer.Label, ["row:b"]);
+        var groupB = new SceneGroup("row:b", owner, ZLayer.Label, ["row:a"]);
+
+        var outcome = GanttScene.TryCreate(
+            new RectD(0, 0, 10, 10),
+            new RectD(0, 0, 10, 10),
+            [groupA, groupB],
+            []);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneCreationRefusal.CyclicGroupChild, outcome.Refusal);
+    }
+
+    [Fact]
+    public void TryCreate_refuses_a_cycle_spanning_three_groups()
+    {
+        // A longer cycle must be refused for the same reason; a two-group cycle
+        // alone would not prove the walk follows more than one hop.
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
+        var groupA = new SceneGroup("row:a", owner, ZLayer.Label, ["row:b"]);
+        var groupB = new SceneGroup("row:b", owner, ZLayer.Label, ["row:c"]);
+        var groupC = new SceneGroup("row:c", owner, ZLayer.Label, ["row:a"]);
+
+        var outcome = GanttScene.TryCreate(
+            new RectD(0, 0, 10, 10),
+            new RectD(0, 0, 10, 10),
+            [groupA, groupB, groupC],
+            []);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneCreationRefusal.CyclicGroupChild, outcome.Refusal);
+    }
+
+    [Fact]
+    public void TryCreate_accepts_a_diamond_of_groups_sharing_one_descendant()
+    {
+        // Two groups naming the same descendant is a shared child, not a cycle.
+        // The walk colours completed nodes precisely so this legal shape is not
+        // mistaken for one, and the scene still builds.
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
+        var leaf = new SceneRect("row:leaf", owner, ZLayer.Label, new RectD(0, 0, 1, 1), new SceneStyle("A"));
+        var shared = new SceneGroup("row:shared", owner, ZLayer.Label, ["row:leaf"]);
+        var left = new SceneGroup("row:left", owner, ZLayer.Label, ["row:shared"]);
+        var right = new SceneGroup("row:right", owner, ZLayer.Label, ["row:shared"]);
+
+        var outcome = GanttScene.TryCreate(
+            new RectD(0, 0, 10, 10),
+            new RectD(0, 0, 10, 10),
+            [left, right, shared, leaf],
+            []);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(4, outcome.Scene!.Primitives.Count);
+    }
+
+    [Fact]
+    public void SceneGroup_refuses_a_direct_self_reference()
+    {
+        // The single-group half of the cycle rule, refused at the primitive
+        // boundary before a scene ever exists.
+        var owner = SceneOwnerId.ForRow(GanttRowId.New());
+
+        _ = Assert.Throws<ArgumentException>(
+            () => new SceneGroup("row:self", owner, ZLayer.Label, ["row:self"]));
+    }
 }

@@ -21,20 +21,37 @@ internal interface IInsertedRowSelector
 /// Excel implementation of <see cref="IInsertedRowSelector"/>.
 /// </summary>
 /// <remarks>
+/// The target workbook is captured in the constructor, not resolved when the
+/// selection runs. The selector is built before <see cref="AddRowCommand.Run"/>
+/// performs the write, so the capture records the workbook that is active
+/// before any handler runs; re-reading <c>Application.ActiveWorkbook</c> after
+/// the write would follow whatever a cell-change or workbook-activate handler
+/// left active, which may be a different workbook from the one that received
+/// the row.
+/// <para>
 /// The <c>internal virtual</c> accessors isolate the Excel COM parameterised
 /// properties (indexers). Expression trees cannot contain indexed properties
 /// (CS0855), so contract tests substitute these seams and every other member
 /// through Moq; the real indexer and <c>Select</c>/<c>Activate</c> behaviour is
 /// exercised by the tagged live-Office integration test.
+/// </para>
 /// </remarks>
-internal class ExcelInsertedRowSelector(object? application) : IInsertedRowSelector
+internal class ExcelInsertedRowSelector : IInsertedRowSelector
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Excel.Workbook? _workbook;
+
+    /// <summary>Initialises the selector against the currently active workbook.</summary>
+    /// <param name="application">The Excel application, or <see langword="null"/> when unavailable.</param>
+    internal ExcelInsertedRowSelector(object? application)
+    {
+        var excel = application as Excel.Application;
+        _workbook = excel?.ActiveWorkbook;
+    }
 
     /// <inheritdoc />
     public void SelectBodyRow(int bodyIndex)
     {
-        Excel.Workbook? workbook = _application?.ActiveWorkbook;
+        Excel.Workbook? workbook = _workbook;
         if (workbook is null)
         {
             return;

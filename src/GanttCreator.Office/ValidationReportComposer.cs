@@ -91,21 +91,22 @@ internal static class ValidationReportComposer
 
     /// <summary>
     /// Returns <c>true</c> when the note text carries an add-in-owned section.
-    /// The section is recognised only when the sentinel begins the text or begins
-    /// a line within it, so a user note that merely mentions the phrase
-    /// mid-sentence is never treated as add-in content and never truncated.
+    /// The section is recognised only when the complete generated-section marker
+    /// begins the text or begins a line within it, so a user note that merely
+    /// mentions the phrase — mid-sentence or as the start of its own line — is
+    /// never treated as add-in content and never truncated.
     /// </summary>
     /// <param name="text">The note text, or <see lang="null"/>.</param>
     /// <returns>
-    /// <see langword="true"/> when the text starts a line with
-    /// <see cref="NoteSentinelPrefix"/>.
+    /// <see langword="true"/> when the text starts a line with the complete
+    /// <see cref="NoteSentinelPrefix"/> generated-section marker.
     /// </returns>
     public static bool IsOwnedByAddIn(string? text) => FindOwnedSectionStart(text) >= 0;
 
     /// <summary>
     /// Returns the part of a note text that the user wrote: everything before
-    /// the first <see cref="NoteSentinelPrefix"/> occurrence, with trailing
-    /// whitespace trimmed. Text with no sentinel is returned unchanged (trimmed).
+    /// the first complete generated-section marker, with trailing whitespace
+    /// trimmed. Text with no such marker is returned unchanged (trimmed).
     /// </summary>
     /// <remarks>
     /// Excel allows only one classic note per cell and <c>Range.AddComment</c>
@@ -125,15 +126,19 @@ internal static class ValidationReportComposer
     }
 
     /// <summary>
-    /// Locates the first line-anchored <see cref="NoteSentinelPrefix"/> in a note.
+    /// Locates the first complete generated-section marker in a note.
     /// </summary>
     /// <remarks>
-    /// Ownership is a line-structured property, not a substring property: the
-    /// add-in always writes the sentinel at the start of a line (either the whole
-    /// note is the add-in's, or the section follows the user's text on its own
-    /// line). Requiring that anchor is what makes user text safe — a note reading
-    /// <c>"I use Gantt Creator validation: for my own reasons"</c> is the user's
-    /// note and must survive untouched.
+    /// Ownership requires the whole marker <c>NoteSentinelPrefix + " row &lt;n&gt;,
+    /// column '&lt;field&gt;':"</c> that <see cref="BuildNoteText"/> emits, anchored
+    /// to the start of a line. Two conditions, both necessary:
+    /// <list type="bullet">
+    /// <item>The line anchor keeps a user sentence that merely mentions the phrase
+    /// mid-line (<c>"I use Gantt Creator validation: for my own reasons"</c>).
+    /// </item>
+    /// <item>The full marker keeps a user note whose own line happens to begin with
+    /// the prefix, which a line anchor alone would silently truncate away.</item>
+    /// </list>
     /// </remarks>
     /// <param name="text">The note text, or <see lang="null"/>.</param>
     /// <returns>The start index of the owned section, or <c>-1</c> when absent.</returns>
@@ -153,7 +158,7 @@ internal static class ValidationReportComposer
                 return -1;
             }
 
-            if (index == 0 || text[index - 1] is '\n' or '\r')
+            if ((index == 0 || text[index - 1] is '\n' or '\r') && IsGeneratedSectionMarker(text, index))
             {
                 return index;
             }
@@ -162,6 +167,59 @@ internal static class ValidationReportComposer
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// Checks that the generated section header follows the sentinel at
+    /// <paramref name="markerStart"/>: a one-based row number, then the anchor
+    /// column in single quotes, then the closing colon.
+    /// </summary>
+    /// <param name="text">The note text being inspected.</param>
+    /// <param name="markerStart">The index of the sentinel within <paramref name="text"/>.</param>
+    /// <returns><see langword="true"/> when a complete generated-section header is present.</returns>
+    private static bool IsGeneratedSectionMarker(string text, int markerStart)
+    {
+        var index = markerStart + NoteSentinelPrefix.Length;
+        if (!TryReadAt(text, ref index, " row "))
+        {
+            return false;
+        }
+
+        var digitsStart = index;
+        while (index < text.Length && char.IsAsciiDigit(text[index]))
+        {
+            index++;
+        }
+
+        if (index == digitsStart)
+        {
+            return false;
+        }
+
+        if (!TryReadAt(text, ref index, ", column '"))
+        {
+            return false;
+        }
+
+        var closing = text.IndexOf("':", index, StringComparison.Ordinal);
+        return closing > index;
+    }
+
+    /// <summary>Advances <paramref name="index"/> past <paramref name="literal"/> when it matches there.</summary>
+    /// <param name="text">The text being scanned.</param>
+    /// <param name="index">The current scan position, advanced on a match.</param>
+    /// <param name="literal">The literal text expected at that position.</param>
+    /// <returns><see langword="true"/> when the literal matched.</returns>
+    private static bool TryReadAt(string text, ref int index, string literal)
+    {
+        if (index + literal.Length > text.Length
+            || !text.AsSpan(index, literal.Length).SequenceEqual(literal))
+        {
+            return false;
+        }
+
+        index += literal.Length;
+        return true;
     }
 
     /// <summary>

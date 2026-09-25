@@ -140,7 +140,19 @@ exit /b 0
         $raw = Get-Content -LiteralPath $script:scriptPath -Raw
         $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
         $codeOnly | Should -Match 'foreach \(\$line in @\(Get-Content -LiteralPath \$Path'
-        $codeOnly | Should -Not -Match "Get-Content -LiteralPath \$ownedPidsPath -Raw \| ConvertFrom-Json"
+        # Single-quoted so `$ownedPidsPath` stays literal: in a double-quoted
+        # PowerShell string the backslash is not an escape character, so the
+        # variable would expand to empty and the pattern could never match the
+        # forbidden command, making the negative assertion vacuous.
+        $codeOnly | Should -Not -Match 'Get-Content -LiteralPath \$ownedPidsPath -Raw \| ConvertFrom-Json'
+    }
+
+    It 'positive control: the whole-file manifest assertion fires on a flagged stub' {
+        # Proves the preceding negative assertion can actually detect the
+        # regression it guards, rather than passing because its pattern is dead.
+        $flagged = "Get-Content -LiteralPath `$ownedPidsPath -Raw | ConvertFrom-Json`n"
+        $codeOnly = $flagged -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match 'Get-Content -LiteralPath \$ownedPidsPath -Raw \| ConvertFrom-Json'
     }
 
     It 'requires the recorded start time to match before killing a manifest PID' {

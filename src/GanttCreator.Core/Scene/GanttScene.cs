@@ -75,11 +75,92 @@ public sealed record GanttScene
             return new SceneCreationOutcome(null, SceneCreationRefusal.UnresolvedGroupChild);
         }
 
+        // Unresolved children are checked first, so every child ID names a real
+        // primitive here and a cycle cannot be masked as a missing reference.
+        if (HasGroupCycle(primitiveList))
+        {
+            return new SceneCreationOutcome(null, SceneCreationRefusal.CyclicGroupChild);
+        }
+
         ScenePrimitive[] ordered = [.. Order(primitiveList)];
         SceneWarning[] warningList = [.. warnings ?? []];
         return new SceneCreationOutcome(
             new GanttScene(chartBounds, plotBounds, ordered, warningList),
             null);
+    }
+
+    /// <summary>
+    /// Detects a cycle in the scene's group-to-group containment graph.
+    /// </summary>
+    /// <remarks>
+    /// Only edges that lead from one group to another can close a cycle; an edge
+    /// to a non-group primitive is a leaf and cannot continue a path. The walk is
+    /// iterative rather than recursive so a deeply nested scene cannot overflow
+    /// the stack, and it colours nodes (unvisited, on the current path, done) so
+    /// each node is visited once. A node reached again while still on the current
+    /// path closes a cycle; reaching one already coloured done is a shared
+    /// descendant, which is legal and not a cycle.
+    /// </remarks>
+    /// <param name="primitives">The primitives whose group links are inspected.</param>
+    /// <returns><see langword="true"/> when a cycle exists.</returns>
+    private static bool HasGroupCycle(IEnumerable<ScenePrimitive> primitives)
+    {
+        var groups = primitives
+            .OfType<SceneGroup>()
+            .ToDictionary(group => group.PrimitiveId, StringComparer.Ordinal);
+        if (groups.Count == 0)
+        {
+            return false;
+        }
+
+        var onPath = new HashSet<string>(StringComparer.Ordinal);
+        var done = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var start in groups.Keys)
+        {
+            if (done.Contains(start))
+            {
+                continue;
+            }
+
+            // Each stack entry is a group and the index of the child to visit
+            // next, so a group is only marked done once all its children are.
+            var path = new Stack<(SceneGroup Group, int NextChild)>();
+            path.Push((groups[start], 0));
+            _ = onPath.Add(start);
+
+            while (path.Count > 0)
+            {
+                (SceneGroup group, var nextChild) = path.Pop();
+                if (nextChild >= group.ChildPrimitiveIds.Count)
+                {
+                    _ = onPath.Remove(group.PrimitiveId);
+                    _ = done.Add(group.PrimitiveId);
+                    continue;
+                }
+
+                path.Push((group, nextChild + 1));
+                var childId = group.ChildPrimitiveIds[nextChild];
+                if (!groups.TryGetValue(childId, out SceneGroup? child))
+                {
+                    continue;
+                }
+
+                if (onPath.Contains(childId))
+                {
+                    return true;
+                }
+
+                if (done.Contains(childId))
+                {
+                    continue;
+                }
+
+                _ = onPath.Add(childId);
+                path.Push((child, 0));
+            }
+        }
+
+        return false;
     }
 
     private static IEnumerable<ScenePrimitive> Order(IEnumerable<ScenePrimitive> primitives) =>

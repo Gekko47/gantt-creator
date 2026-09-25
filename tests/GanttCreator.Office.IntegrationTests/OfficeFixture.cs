@@ -52,6 +52,13 @@ internal class OfficeFixture : IAsyncLifetime
     private readonly List<int> _ownedProcessIds = [];
 
     /// <summary>
+    /// The start time observed for each owned PID when the fixture adopted it, so
+    /// the teardown kill can confirm the PID still names the process this fixture
+    /// launched before terminating it. See <see cref="KillOwnedProcess"/>.
+    /// </summary>
+    private readonly Dictionary<int, long> _ownedProcessStartTicks = [];
+
+    /// <summary>
     /// How long the owned process gets to exit on its own after <c>Quit()</c> and
     /// a GC pass. The production bound is 10 s; a process that needs the full
     /// window is the unreleased-COM-proxy signal, not normal Excel lag. Virtual
@@ -132,7 +139,13 @@ internal class OfficeFixture : IAsyncLifetime
         set
         {
             _ownedProcessIds.Clear();
-            _ownedProcessIds.AddRange(value);
+            _ownedProcessStartTicks.Clear();
+            foreach (var id in value)
+            {
+                _ownedProcessIds.Add(id);
+                RememberOwnedProcessStartTime(id);
+            }
+
             if (_ownedProcessIds.Count > 0)
             {
                 _excelProcessId = _ownedProcessIds[0];
@@ -302,6 +315,11 @@ internal class OfficeFixture : IAsyncLifetime
         foreach (var id in after)
         {
             _ownedProcessIds.Add(id);
+
+            // The start time is captured at adoption, while the process is
+            // certainly the one this launch created, so teardown can later prove
+            // the PID was not recycled before killing it.
+            RememberOwnedProcessStartTime(id);
         }
 
         if (after.Count > 0)
@@ -746,12 +764,19 @@ internal class OfficeFixture : IAsyncLifetime
     /// escalation path without spawning Excel, mirroring the COM indexer seams
     /// elsewhere in this harness. The default kills by PID only; it never matches
     /// on the process name, so a user-owned Excel can never be terminated here.
+    /// The start time recorded in <see cref="OwnedProcessIdEntry"/> is re-checked
+    /// first, because a PID alone is not identity: Windows recycles process IDs,
+    /// so between the launch and this escalation a seeded PID can name a process
+    /// this fixture never started. A mismatch means the PID is no longer ours, and
+    /// killing it would terminate an unrelated process. An unreadable start time
+    /// (zero) is likewise not proof of ownership, so it refuses rather than kills.
     /// </remarks>
     /// <param name="processId">The owned process ID.</param>
     /// <returns>Whether the kill was issued successfully.</returns>
     internal virtual bool KillOwnedProcess(int processId)
     {
         if (processId == 0) return false;
+        if (!IsOwnedProcessIdentity(processId)) return false;
 
         try
         {
@@ -766,6 +791,60 @@ internal class OfficeFixture : IAsyncLifetime
             return false;
         }
     }
+
+    /// <summary>
+    /// Records the start time proving a PID is still the process this fixture
+    /// launched, so the kill path can refuse a recycled PID.
+    /// </summary>
+    /// <param name="processId">The owned process ID.</param>
+    internal void RememberOwnedProcessStartTime(int processId)
+    {
+        if (processId == 0) return;
+
+        _ownedProcessStartTicks[processId] = ReadStartTimeUtcTicks(processId);
+    }
+
+    /// <summary>
+    /// Test-only entry point for <see cref="RememberOwnedProcessStartTime"/> that
+    /// records a supplied start time instead of sampling the live process, so a
+    /// test can simulate a recycled PID. Internal (not public) so the production
+    /// surface stays narrow; the xUnit test in the same assembly calls this.
+    /// </summary>
+    /// <param name="processId">The owned process ID.</param>
+    /// <param name="startTimeUtcTicks">The start time to record, standing in for the sampled one.</param>
+    internal void RememberOwnedProcessStartTimeForTest(int processId, long startTimeUtcTicks)
+    {
+        if (processId == 0) return;
+
+        _ownedProcessStartTicks[processId] = startTimeUtcTicks;
+    }
+
+    /// <summary>
+    /// Returns whether the live process at <paramref name="processId"/> still
+    /// reports the start time recorded when this fixture adopted the PID.
+    /// </summary>
+    /// <remarks>
+    /// Both halves must agree: a recorded zero (the process was already gone when
+    /// it was adopted, or its start time was unreadable) is treated as
+    /// unverifiable and refused, matching the shell sweep's fail-safe direction of
+    /// skipping an unverifiable record rather than killing it.
+    /// </remarks>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns><see langword="true"/> when the start time still matches.</returns>
+    private bool IsOwnedProcessIdentity(int processId) =>
+        _ownedProcessStartTicks.TryGetValue(processId, out long recordedTicks)
+        && recordedTicks > 0
+        && ReadStartTimeUtcTicks(processId) == recordedTicks;
+
+    /// <summary>
+    /// Test-only entry point for <see cref="IsOwnedProcessIdentity"/>. Kept
+    /// internal so the ownership check can be pinned directly, without driving a
+    /// real kill to observe it. Internal (not public) so the production surface
+    /// stays narrow; the xUnit test in the same assembly calls this.
+    /// </summary>
+    /// <param name="processId">The owned process ID.</param>
+    /// <returns><see langword="true"/> when the start time still matches.</returns>
+    internal bool IsOwnedProcessIdentityForTest(int processId) => IsOwnedProcessIdentity(processId);
 
     /// <summary>
     /// Appends the fixture's owned Excel process ID to the manifest file the

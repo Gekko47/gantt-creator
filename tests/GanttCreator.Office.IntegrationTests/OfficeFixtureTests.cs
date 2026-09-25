@@ -410,6 +410,55 @@ public class OfficeFixtureTests
         Assert.False(fixture.KillOwnedProcess(0));
     }
 
+    [Fact]
+    public void KillOwnedProcess_refuses_a_recycled_pid_whose_start_time_no_longer_matches()
+    {
+        // A PID alone is not identity: Windows recycles process IDs, so a PID
+        // recorded at launch can name a different process by teardown. Killing on
+        // the PID alone would terminate a process this fixture never started, so
+        // the default kill must refuse when the recorded start time disagrees.
+        // The current process is used because it is certainly alive; the check is
+        // driven through the identity seam rather than a real kill so the test
+        // cannot terminate the test host.
+        var fixture = new OfficeFixture();
+        using var self = Process.GetCurrentProcess();
+        fixture.OwnedProcessIdsForTest = [self.Id];
+
+        // A deliberately wrong recorded start time: the live process reports its
+        // real one, so the two halves of the identity proof disagree.
+        fixture.RememberOwnedProcessStartTimeForTest(self.Id, long.MaxValue);
+
+        Assert.False(fixture.IsOwnedProcessIdentityForTest(self.Id));
+        Assert.False(fixture.KillOwnedProcess(self.Id));
+    }
+
+    [Fact]
+    public void KillOwnedProcess_refuses_a_pid_with_no_recorded_start_time()
+    {
+        // Fail-safe direction, matching the shell sweep: a PID with no verifiable
+        // start time is not proven to be the harness's, so it is skipped rather
+        // than killed. int.MaxValue does not exist, so adoption records zero.
+        var fixture = new OfficeFixture();
+        fixture.OwnedProcessIdsForTest = [int.MaxValue];
+
+        Assert.False(fixture.IsOwnedProcessIdentityForTest(int.MaxValue));
+        Assert.False(fixture.KillOwnedProcess(int.MaxValue));
+    }
+
+    [Fact]
+    public void KillOwnedProcess_still_accepts_a_verified_owned_pid()
+    {
+        // The hardening must not disable the escalation that keeps a leaked Excel
+        // from holding the packed XLL. A PID whose recorded start time still matches
+        // the live process is proven to be ours, so the identity check passes and
+        // only the PID guard remains.
+        var fixture = new OfficeFixture();
+        using var self = Process.GetCurrentProcess();
+        fixture.OwnedProcessIdsForTest = [self.Id];
+
+        Assert.True(fixture.IsOwnedProcessIdentityForTest(self.Id));
+    }
+
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task Teardown_escalates_to_a_forced_kill_when_the_owned_process_survives()

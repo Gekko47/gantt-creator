@@ -420,7 +420,10 @@ public class ValidationReporterTests
         ownedOnly.WithOwnedNote("row 1, column 'Id': Error: fixed since");
         CellGraph userPlusOwned = graph.Cell(2, ColumnOf("Id"));
         userPlusOwned.WithUserNote(
-            "Keep me." + Environment.NewLine + ValidationReportComposer.NoteSentinelPrefix + " old section");
+            "Keep me."
+            + Environment.NewLine
+            + ValidationReportComposer.NoteSentinelPrefix
+            + " row 1, column 'Id': Error: old section");
         CellGraph userOnly = graph.Cell(3, ColumnOf("Id"));
         userOnly.WithUserNote("Mine.");
         graph.WithCommentedCells(ownedOnly, userPlusOwned, userOnly);
@@ -497,7 +500,7 @@ public class ValidationReporterTests
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
         ReporterGraph graph = Graph();
         CellGraph cell = graph.Cell(1, ColumnOf("Start"));
-        cell.WithOwnedNote("stale");
+        cell.WithOwnedNote("row 1, column 'Start': Error: stale");
         TestableReporter reporter = new TestableReporter(
             graph.Application.Object,
             guard.Object,

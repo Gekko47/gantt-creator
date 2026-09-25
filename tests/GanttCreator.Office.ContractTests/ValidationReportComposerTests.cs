@@ -181,11 +181,15 @@ public class ValidationReportComposerTests
     }
 
     [Fact]
-    public void IsOwnedByAddIn_recognises_only_the_sentinel_prefix()
+    public void IsOwnedByAddIn_recognises_only_the_complete_generated_marker()
     {
+        // Ownership needs the whole marker the composer writes. A bare prefix is
+        // not proof of ownership: a user can legitimately start a line with the
+        // same phrase, and treating that as add-in content would delete their text.
         Assert.True(ValidationReportComposer.IsOwnedByAddIn(
             ValidationReportComposer.NoteSentinelPrefix + " row 1, column 'Id': Error: Id is blank."));
-        Assert.True(ValidationReportComposer.IsOwnedByAddIn(
+
+        Assert.False(ValidationReportComposer.IsOwnedByAddIn(
             ValidationReportComposer.NoteSentinelPrefix));
 
         Assert.False(ValidationReportComposer.IsOwnedByAddIn(null));
@@ -335,6 +339,66 @@ public class ValidationReportComposerTests
     {
         Assert.Equal(string.Empty, ValidationReportComposer.StripOwnedSection(null));
         Assert.Equal(string.Empty, ValidationReportComposer.StripOwnedSection(string.Empty));
+    }
+
+    [Fact]
+    public void StripOwnedSection_keeps_a_user_line_that_only_begins_with_the_sentinel()
+    {
+        // The line anchor alone was not enough: a user note whose own line starts
+        // with the phrase was treated as add-in content, so everything from that
+        // line on was deleted and the user lost their text. Requiring the
+        // complete generated-section marker is what preserves it.
+        var text = "Chased with the vendor."
+            + Environment.NewLine
+            + ValidationReportComposer.NoteSentinelPrefix
+            + " is how I describe this check to the team.";
+
+        Assert.False(ValidationReportComposer.IsOwnedByAddIn(text));
+        Assert.Equal(text, ValidationReportComposer.StripOwnedSection(text));
+    }
+
+    [Theory]
+    [InlineData(" row 1, column 'Id':")]
+    [InlineData(" row 12, column 'ParentId':")]
+    public void IsOwnedByAddIn_accepts_a_complete_generated_section_marker(string headerSuffix)
+    {
+        // The positive control for the stricter marker check: the exact shape
+        // BuildNoteText writes must still be recognised as owned, or the
+        // reporter would stop clearing its own stale sections.
+        var text = ValidationReportComposer.NoteSentinelPrefix + headerSuffix + " Error: something.";
+
+        Assert.True(ValidationReportComposer.IsOwnedByAddIn(text));
+        Assert.Equal(string.Empty, ValidationReportComposer.StripOwnedSection(text));
+    }
+
+    [Theory]
+    [InlineData("")]                       // bare prefix, no header at all
+    [InlineData(" row , column 'Id':")]   // missing row number
+    [InlineData(" row 1 column 'Id':")]    // missing comma before column
+    [InlineData(" row 1, column Id:")]     // missing quotes around the column
+    [InlineData(" column 'Id':")]         // missing row segment
+    public void IsOwnedByAddIn_rejects_an_incomplete_marker(string headerSuffix)
+    {
+        // Each variant is a near-miss that a looser check would accept and then
+        // silently delete a user's note over. With no complete marker found the
+        // whole text is the user's, so stripping returns it unchanged.
+        var text = "My own note." + Environment.NewLine + ValidationReportComposer.NoteSentinelPrefix + headerSuffix;
+
+        Assert.False(ValidationReportComposer.IsOwnedByAddIn(text));
+        Assert.Equal(text, ValidationReportComposer.StripOwnedSection(text));
+    }
+
+    [Fact]
+    public void StripOwnedSection_skips_a_bare_prefix_and_still_strips_a_real_section_below_it()
+    {
+        // The scan must not stop at the first prefix occurrence: a user line that
+        // merely starts with the phrase comes first, and the genuine generated
+        // section after it still has to be removed.
+        var userLine = ValidationReportComposer.NoteSentinelPrefix + " is my shorthand.";
+        var section = ValidationReportComposer.NoteSentinelPrefix + " row 3, column 'Type': Error: unknown type.";
+        var text = userLine + Environment.NewLine + section;
+
+        Assert.Equal(userLine, ValidationReportComposer.StripOwnedSection(text));
     }
 
     [Fact]
