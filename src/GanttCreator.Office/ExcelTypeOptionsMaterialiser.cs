@@ -149,14 +149,23 @@ public class ExcelTypeOptionsMaterialiser(
             return false;
         }
 
-        var (existingSheet, existingAddress) = ParseRefersTo(existingRefersTo);
-        var (expectedSheet, expectedAddress) = ParseRefersTo(expectedRefersTo);
+        NameTarget existing = ParseRefersTo(existingRefersTo);
+        NameTarget expected = ParseRefersTo(expectedRefersTo);
 
         // Both targets must parse; an unparsable one is a mismatch, not a match.
-        return existingSheet.Length > 0
-            && expectedSheet.Length > 0
-            && string.Equals(existingSheet, expectedSheet, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(existingAddress, expectedAddress, StringComparison.Ordinal);
+        return existing.IsParsed
+            && expected.IsParsed
+            && string.Equals(existing.Sheet, expected.Sheet, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.Address, expected.Address, StringComparison.Ordinal);
+    }
+
+    /// <summary>A <c>=Sheet!Address</c> name target split into its parts.</summary>
+    /// <param name="Sheet">The unquoted, unescaped sheet name.</param>
+    /// <param name="Address">The range address.</param>
+    private readonly record struct NameTarget(string Sheet, string Address)
+    {
+        /// <summary>Gets whether the target carried both a sheet and an address.</summary>
+        public bool IsParsed => Sheet.Length > 0 && Address.Length > 0;
     }
 
     /// <summary>
@@ -164,14 +173,14 @@ public class ExcelTypeOptionsMaterialiser(
     /// sheet name and its range address.
     /// </summary>
     /// <param name="refersTo">The name target.</param>
-    /// <returns>The sheet and address parts, both empty when the target cannot be split.</returns>
-    private static (string Sheet, string Address) ParseRefersTo(string refersTo)
+    /// <returns>The parsed parts, both empty when the target cannot be split.</returns>
+    private static NameTarget ParseRefersTo(string refersTo)
     {
         var text = refersTo.TrimStart('=').Trim();
         var separator = text.LastIndexOf('!');
         if (separator <= 0 || separator == text.Length - 1)
         {
-            return (string.Empty, string.Empty);
+            return new NameTarget(string.Empty, string.Empty);
         }
 
         var sheetPart = text[..separator].Trim();
@@ -180,7 +189,7 @@ public class ExcelTypeOptionsMaterialiser(
             ? sheetPart[1..^1].Replace("''", "'", StringComparison.Ordinal)
             : sheetPart;
 
-        return address.Length == 0 ? (string.Empty, string.Empty) : (sheet, address);
+        return new NameTarget(sheet, address);
     }
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)
