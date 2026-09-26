@@ -166,6 +166,26 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
+    public void Read_refuses_when_the_settings_table_is_missing_the_date_display_format_row()
+    {
+        // Positive test for the R2.7d consequence recorded in ADR-0016 D7: a
+        // workbook written before the DateDisplayFormat contract has one fewer
+        // settings row than the approved key set, and the reader refuses it
+        // rather than inferring a date format. The existing extra-row test does
+        // not cover this direction.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList()
+            .FindIndex(setting => setting.Key == "DateDisplayFormat");
+        Assert.True(index >= 0, "DateDisplayFormat must be a code-owned setting key.");
+        fake.Tables[3].Body.RemoveAt(index);
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.RowCountMismatch), outcome);
+    }
+
+    [Fact]
     public void Read_refuses_when_a_type_row_drifts_from_the_code_owned_catalogue()
     {
         var fake = new ConfigSheetFake();
