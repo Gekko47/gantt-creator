@@ -119,6 +119,24 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the critical-interval overlay line width.</summary>
     public double CriticalLinePt { get; init; }
+
+    /// <summary>Gets the delineator line width, from the <c>DelineatorLinePt</c> token.</summary>
+    public double DelineatorLinePt { get; init; }
+
+    /// <summary>Gets the gap between a shape bound and an external label.</summary>
+    public double LabelGapPt { get; init; }
+
+    /// <summary>Gets the one-line label box height.</summary>
+    public double LabelHeightPt { get; init; }
+
+    /// <summary>Gets the vertical gap between stacked same-date delineator labels.</summary>
+    public double DelineatorStackGapPt { get; init; }
+
+    /// <summary>Gets the resolved description-label text style, or null to omit them.</summary>
+    public SceneStyle? LabelStyle { get; init; }
+
+    /// <summary>Gets whether section 23 start and finish date labels are emitted.</summary>
+    public bool ShowDateLabels { get; init; } = true;
 }
 
 
@@ -213,12 +231,16 @@ public static class SceneBuilder
         }
 
         // A hidden row validates but must not render, and a splitter or spacer is
-        // lane geometry with no entity primitive. Both are excluded here so a lane
-        // is never created for an entity that cannot be drawn.
+        // lane geometry with no entity primitive. A delineator is excluded too: §24
+        // makes it a full-height plot line, not a lane-bound entity, so giving it a
+        // lane would reserve vertical space for a row it must not occupy. It is
+        // built separately by the delineator pass.
         List<GanttEvent> renderable =
         [
             .. request.Events.Where(@event =>
-                @event.Visible && @event.Type is not (GanttEntityType.Splitter or GanttEntityType.Spacer)),
+                @event.Visible && @event.Type is not (GanttEntityType.Splitter
+                    or GanttEntityType.Spacer
+                    or GanttEntityType.Delineator)),
         ];
         if (renderable.Count == 0)
         {
@@ -227,6 +249,27 @@ public static class SceneBuilder
 
         List<LaneEventInput> laneInputs = [];
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
+
+        // A delineator takes no lane, so its resolved line style is collected
+        // separately and the grouping pass reads this map.
+        List<GanttEvent> delineators =
+        [
+            .. request.Events.Where(@event =>
+                @event.Visible && @event.Type == GanttEntityType.Delineator),
+        ];
+        Dictionary<GanttRowId, SceneStyle> delineatorStyles = [];
+        foreach (GanttEvent @event in delineators)
+        {
+            // §24 draws the line from the resolved line style, but a Delineator has
+            // no named-style default and no built-in preset, so an unresolvable one
+            // is NOT a broken workbook: it falls back to the chart's own delineator
+            // token style rather than refusing the whole scene. Only Types that
+            // *have* a default are refused when it cannot resolve.
+            delineatorStyles[@event.Id] = TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null
+                ? resolved.Style
+                : new SceneStyle("DefaultDelineator", strokeColour: ColourHex.Parse("#404040"));
+        }
+
         foreach (GanttEvent @event in renderable)
         {
             // A Splitter, Spacer, or Delineator has no named-style default, so
@@ -269,9 +312,13 @@ public static class SceneBuilder
         // The critical overlay clips to the parent's post-plot-clip visible span, so
         // the map is filled over the span events before any overlay is built.
         Dictionary<GanttRowId, RectD> parentVisibleBounds = [];
-        BuildSpans(placements, styles, timeScale, primitives, warnings, parentVisibleBounds);
+        // The lane layout is lane-relative (it starts at y=0 for the first lane), but
+        // every bar, marker, and overlay is placed in chart coordinates. The plot
+        // top is therefore added exactly once, here, so no builder re-adds it and
+        // the offset cannot be applied twice.
+        BuildSpans(placements, styles, timeScale, plotBounds, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, delineators, delineatorStyles, parentVisibleBounds, primitives, warnings);
     }
 
 
@@ -284,6 +331,7 @@ public static class SceneBuilder
         LaneEventLayoutResult placements,
         IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         TimeScale timeScale,
+        RectD plotBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings,
         Dictionary<GanttRowId, RectD> parentVisibleBounds)
@@ -304,11 +352,16 @@ public static class SceneBuilder
             }
 
             ResolvedEventStyle resolved = styles[@event.Id];
+
+            // Lane-relative to chart-relative, applied once per placement. The zero
+            // width fallback below must use the same centre, or a parentless overlay
+            // would clip against a band the bar never had.
+            var slotCentreY = placement.SlotCentreY + plotBounds.Top;
             SpanBarCreationOutcome bar = SpanBarBuilder.TryBuild(
                 new SpanBarRequest(
                     @event,
                     resolved.Style,
-                    placement.SlotCentreY,
+                    slotCentreY,
                     resolved.HeightPt,
                     placement.LaneOrder,
                     placement.EffectiveStackIndex),
@@ -329,7 +382,7 @@ public static class SceneBuilder
                 parentVisibleBounds[@event.Id] =
                     new RectD(
                         timeScale.PlotLeftPt,
-                        placement.SlotCentreY - (resolved.HeightPt / 2),
+                        slotCentreY - (resolved.HeightPt / 2),
                         0,
                         resolved.HeightPt);
                 continue;
@@ -407,7 +460,10 @@ public static class SceneBuilder
                     @event,
                     resolved.Style,
                     request.MilestoneSizePt,
-                    placement.SlotCentreY,
+                    // The same single lane-relative to chart-relative conversion the
+                    // span pass applies, so a marker and a bar on one row cannot
+                    // disagree about where that row is.
+                    placement.SlotCentreY + plotBounds.Top,
                     placement.LaneOrder,
                     placement.EffectiveStackIndex),
                 timeScale);
@@ -435,6 +491,9 @@ public static class SceneBuilder
         RectD panelBounds,
         RectD plotBounds,
         LaneEventLayoutResult placements,
+        List<GanttEvent> delineators,
+        Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
@@ -476,24 +535,65 @@ public static class SceneBuilder
         primitives.AddRange(frameResult.Primitives);
         warnings.AddRange(frameResult.Warnings);
 
+        // The delineator and label passes run here, not earlier, because §24 and the
+        // §22/§23 label planners all bound their boxes by the *derived* chart bounds
+        // the frame builder produces. Running them earlier would mean passing an
+        // unverified chart rectangle back in, which is the R3.15 defect all over again.
+        BuildDelineators(
+            request,
+            timeScale,
+            plotBounds,
+            frameResult.Geometry.ChartBounds,
+            delineators,
+            delineatorStyles,
+            primitives,
+            warnings);
+
+        BuildLabels(
+            request,
+            plotBounds,
+            frameResult.Geometry.ChartBounds,
+            placements,
+            parentVisibleBounds,
+            primitives,
+            warnings);
+
         if (request.Panel is { } panelTheme)
         {
             // Section 4 fixes the header band's bottom edge to the period header's
             // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
             // panel builder cannot know the plot bounds, so it is supplied here and
             // SceneBuilderTests asserts the emitted bottom equals this value.
+            //
+            // The header band height is the §4 panel header's own height, not the
+            // year band: YearBandHeightPt belongs to §5, and reusing it here made a
+            // structural equality (the bottoms align) rest on an unrelated pairing.
+            // The height is derived from the panel's own measured row height so the
+            // header and the body rows share one metric.
             PanelBuildOutcome panel = PanelBuilder.TryBuild(
                 new PanelBuildRequest(
                     request.Grid!,
-                    [.. placements.Placements.Select(placement => new PanelRow(placement.Event.Id, []))],
+                    [.. placements.Placements.Select(placement => new PanelRow(placement.Event.Id, Cells(placement.Event, request)))],
                     plotBounds,
                     plotBounds.Y - request.YearBandHeightPt,
-                    request.YearBandHeightPt,
+                    request.Grid!.RowHeightPt,
                     panelTheme));
-            if (panel.Result is { } panelResult)
+
+            // A panel refusal must not be dropped: an empty panel would read as a
+            // scene with no data table, which is a silent data loss rather than an
+            // error. Every PanelBuildRefusal is precondition-checked upstream (the
+            // frame builder refuses a non-positive plot, and the grid guarantees a
+            // positive row height and a unique row per placement), so this branch is
+            // a defence against a future PanelBuilder refusal. It reports the existing
+            // InvalidLayoutSettings rather than adding a member that could never be
+            // positively tested -- AGENTS.md treats an unreachable validator as a
+            // defect, exactly as R3.15 D2 removed the dead PlotOutsideChart guard.
+            if (panel.Result is not { } panelResult)
             {
-                primitives.AddRange(panelResult.Primitives);
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
             }
+
+            primitives.AddRange(panelResult.Primitives);
         }
 
         SceneCreationOutcome scene = GanttScene.TryCreate(frameResult.Geometry.ChartBounds, plotBounds, primitives, warnings);
@@ -501,6 +601,216 @@ public static class SceneBuilder
             ? new SceneBuildOutcome(new SceneBuildResult(built, timeScale), null)
             : Refused(SceneBuilderRefusal.InvalidLayoutSettings);
     }
+
+    /// <summary>
+    /// Projects one event's cell texts in grid-column order, as §3 requires the
+    /// emitted bounds to follow the measured column order.
+    /// </summary>
+    /// <param name="event">The validated event supplying the cell values.</param>
+    /// <param name="request">The build request supplying the grid and the date format.</param>
+    /// <returns>
+    /// One entry per grid column. A column with no schema mapping, or a field the
+    /// entity type does not use, is <see langword="null"/>: blank is legal cell
+    /// data (R2.5 U2) and the builder already omits text for it.
+    /// </returns>
+    /// <remarks>
+    /// Dates go through <see cref="GanttDateFormatting"/> with the request's
+    /// approved format, so a panel cell and a §23 date label cannot disagree and
+    /// no host culture can re-derive the pattern.
+    /// </remarks>
+    private static List<string?> Cells(GanttEvent @event, SceneBuildRequest request)
+    {
+        List<string?> cells = new(request.Grid!.Columns.Count);
+        foreach (PanelColumn column in request.Grid.Columns)
+        {
+            cells.Add(column.Name switch
+            {
+                "Type" => @event.Type.ToString(),
+                "Description" => @event.Description,
+                "Start" => @event.Start is { } start ? GanttDateFormatting.Format(start, request.DateFormat) : null,
+                "Finish" => @event.Finish is { } finish ? GanttDateFormatting.Format(finish, request.DateFormat) : null,
+                _ => null,
+            });
+        }
+
+        return cells;
+    }
+
+    /// <summary>
+    /// Groups the delineators §24 requires and builds each group's line and labels.
+    /// </summary>
+    /// <remarks>
+    /// A group is one date plus one resolved line style, because §24 draws the line
+    /// once per resolved line style: two same-date rows sharing a style share a line,
+    /// and two sharing a date but not a style get one line each. Grouping by date
+    /// alone would make <c>DelineatorLayout</c> refuse the mixed group, and grouping
+    /// by style alone would emit several lines for one date.
+    /// </remarks>
+    private static void BuildDelineators(
+        SceneBuildRequest request,
+        TimeScale timeScale,
+        RectD plotBounds,
+        RectD chartBounds,
+        List<GanttEvent> delineators,
+        Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        List<ScenePrimitive> primitives,
+        List<SceneWarning> warnings)
+    {
+        // Grouping is by (date, style), and the members inside a group are ordered by
+        // the stable row ID. The input is not ordered -- the R3.12 determinism contract
+        // is that a shuffled input produces a byte-identical scene -- so using the
+        // first member in *input* order would make the group's owning row depend on
+        // the caller's row order. Grouping preserves first-appearance order, so an
+        // explicit order-by is required for determinism, not just tidiness.
+        foreach (IGrouping<(DateOnly Date, string Style), GanttEvent> group in delineators
+            .OrderBy(@event => @event.Id.Value, StringComparer.Ordinal)
+            .GroupBy(@event => (@event.Start!.Value, StyleKey(delineatorStyles, @event))))
+        {
+            DelineatorRequest[] requests =
+            [
+                .. group.Select(@event => new DelineatorRequest(
+                    @event,
+                    delineatorStyles[@event.Id],
+                    request.DelineatorLinePt,
+                    plotBounds,
+                    chartBounds,
+                    request.LabelGapPt,
+                    request.Metrics!,
+                    @event.LabelPosition ?? GanttLabelPosition.Auto)),
+            ];
+
+            DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest(requests, request.DelineatorStackGapPt),
+                timeScale);
+            if (groupOutcome.Result is not { } groupResult)
+            {
+                // The warning is owned by the group's first row, deterministically, so
+                // a refused group is reported once rather than per member.
+                warnings.Add(new SceneWarning(
+                    SceneOwnerId.ForRow(group.First().Id),
+                    "DelineatorGroupRefused",
+                    "A same-date delineator group could not be laid out."));
+                continue;
+            }
+
+            primitives.AddRange(groupResult.Primitives);
+            warnings.AddRange(groupResult.Warnings);
+        }
+    }
+
+    /// <summary>
+    /// Plans the §22 description label and the §23 start/finish date labels, in that
+    /// order, so a date label is planned against the description label already placed
+    /// for its row.
+    /// </summary>
+    /// <remarks>
+    /// §23 requires a date label to avoid the row's own description label, and §22
+    /// requires labels to avoid each other. Both are satisfied by one growing
+    /// <c>occupants</c> list that every placed label joins, which is also the
+    /// contract <see cref="DateLabelRequest.Occupants"/> documents. A label is
+    /// registered as an occupant only once it is actually emitted, so a suppressed
+    /// label reserves nothing.
+    /// </remarks>
+    private static void BuildLabels(
+        SceneBuildRequest request,
+        RectD plotBounds,
+        RectD chartBounds,
+        LaneEventLayoutResult placements,
+        Dictionary<GanttRowId, RectD> parentVisibleBounds,
+        List<ScenePrimitive> primitives,
+        List<SceneWarning> warnings)
+    {
+        if (request.LabelStyle is not { } labelStyle)
+        {
+            return;
+        }
+
+        LabelMetrics metrics = new(
+            plotBounds,
+            chartBounds,
+            request.LabelGapPt,
+            request.LabelHeightPt,
+            plotBounds.Width);
+
+        List<RectD> occupants = [];
+
+        foreach (LaneEventPlacement placement in placements.Placements)
+        {
+            GanttEvent @event = placement.Event;
+            if (!parentVisibleBounds.TryGetValue(@event.Id, out RectD shapeBounds))
+            {
+                // No emitted bar or marker: there is nothing to label. A span wholly
+                // outside the plot still needs no label, because its date is not shown
+                // on the shape either.
+                continue;
+            }
+
+            LabelPlanCreationOutcome description = LabelPlanner.TryPlan(
+                new LabelRequest(
+                    @event,
+                    @event.Description,
+                    @event.LabelPosition ?? GanttLabelPosition.Auto,
+                    shapeBounds,
+                    labelStyle,
+                    request.Metrics!,
+                    LaneOrder: placement.LaneOrder,
+                    StackIndex: placement.EffectiveStackIndex),
+                metrics,
+                occupants);
+            if (description.Result is { } described)
+            {
+                warnings.AddRange(described.Warnings);
+                if (described.Primitive is { } descriptionText && described.Bounds is { } descriptionBounds)
+                {
+                    primitives.Add(descriptionText);
+                    occupants.Add(descriptionBounds);
+                }
+            }
+
+            if (!request.ShowDateLabels)
+            {
+                continue;
+            }
+
+            // The full span is the post-plot-clip bounds with the clip released, so
+            // the builder can tell a clipped event from a whole one. DateLabelBuilder
+            // derives that itself from the two rectangles; the unclipped rectangle is
+            // the visible bounds widened back to the time scale's own extent.
+            DateLabelOutcome dates = DateLabelBuilder.TryBuild(
+                new DateLabelRequest(
+                    @event,
+                    shapeBounds,
+                    FullBoundsOf(shapeBounds, plotBounds),
+                    metrics,
+                    request.Metrics!,
+                    request.DateFormat,
+                    labelStyle,
+                    Occupants: occupants));
+            if (dates.Result is not { } planned)
+            {
+                continue;
+            }
+
+            primitives.AddRange(planned.Primitives);
+            foreach (SceneText dateLabel in planned.Primitives)
+            {
+                occupants.Add(dateLabel.TextBounds);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reconstructs a span's unclipped bounds from its clipped ones, so §23's
+    /// clipped-date rule can fire on a bar the plot cut short.
+    /// </summary>
+    /// <param name="visible">The bar's post-plot-clip bounds.</param>
+    /// <param name="plotBounds">The plot rectangle the clip was taken against.</param>
+    /// <returns>The unclipped bounds: the same vertical extent, spanning the plot width.</returns>
+    private static RectD FullBoundsOf(RectD visible, RectD plotBounds) =>
+        new(plotBounds.Left, visible.Y, plotBounds.Width, visible.Height);
+
+    private static string StyleKey(Dictionary<GanttRowId, SceneStyle> styles, GanttEvent @event) =>
+        styles.TryGetValue(@event.Id, out SceneStyle? style) ? style.StyleKey : "None";
 
     private static bool TryResolveStyle(
         GanttStyleRegistry registry,

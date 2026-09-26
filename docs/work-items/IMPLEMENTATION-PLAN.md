@@ -104,10 +104,10 @@ files only; the local audit verifies every file exists.
 | R3.9 | `R3.9-multi-event-stack-lanes.md` | Landed (`6b733a4`) |
 | R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
 | R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
-| R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
+| R3.12 | `R3.12-scene-validator-benchmark.md` | Landed (`abd52c9` steps 1-2, `808162f` step 3, `2e40998` step 4, `b46c59c` steps 5-6) |
 | R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Authored (Tier A) |
-| R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Authored (Tier A; R3.12 follow-up) |
+| R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Landed (`e3efd4e`; golden `d8acd0d`) |
 
 ### Phase 4 — live renderer (Tier B; upgrade to Tier A at Phase 3 exit)
 

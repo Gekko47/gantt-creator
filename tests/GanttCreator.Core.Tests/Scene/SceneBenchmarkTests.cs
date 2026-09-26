@@ -51,17 +51,25 @@ public sealed class SceneBenchmarkTests
 
         var stopwatch = Stopwatch.StartNew();
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(events));
+        // The budget is stated for "validate + build", so validation is inside the
+        // timed region. Measuring only the build would report a number the
+        // architecture never claimed, and would understate a validation regression.
+        SceneValidationReport? report = null;
+        if (outcome.Result is { } built)
+        {
+            report = SceneValidator.Validate(built.Scene);
+        }
+
         stopwatch.Stop();
 
         Assert.True(outcome.Succeeded, "Scene build refused at scale: " + outcome.Refusal);
-
-        SceneValidationReport report = SceneValidator.Validate(outcome.Result!.Scene);
-        Assert.True(report.IsClean, "Findings at scale: " + string.Join("; ", report.Findings));
+        Assert.NotNull(report);
+        Assert.True(report!.IsClean, "Findings at scale: " + string.Join("; ", report.Findings));
 
         double elapsedMs = stopwatch.Elapsed.TotalMilliseconds;
         _output.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"R3.12 benchmark: {EventCount} events, validate+build {elapsedMs:F1} ms, {outcome.Result.Scene.Primitives.Count} primitives, budget {BudgetMs} ms on the reference machine."));
+            $"R3.12 benchmark: {EventCount} events, validate+build {elapsedMs:F1} ms, {outcome.Result!.Scene.Primitives.Count} primitives, budget {BudgetMs} ms on the reference machine."));
 
         // The judgement is recorded, not asserted, so a slower machine does not fail
         // the gate. The verdict line is printed for whoever reads the test log.

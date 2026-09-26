@@ -90,6 +90,13 @@ public sealed class SceneBuilderTests
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,
+            // §24 delineator tokens, positive so the line builder has a width to use.
+            // A request that omits them has no line width, which the builder refuses
+            // rather than defaulting.
+            DelineatorLinePt = 1,
+            DelineatorStackGapPt = 10,
+            LabelGapPt = 2,
+            LabelHeightPt = 8,
             ChartOuterPaddingPt = 0,
             MinimumHeaderLabelWidthPt = 0,
         };
@@ -358,9 +365,123 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         double expectedBottom = _plotBounds.Y - request.YearBandHeightPt;
-        Assert.Contains(
-            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
-            rect => Math.Abs((rect.Bounds.Top + rect.Bounds.Height) - expectedBottom) < 1e-9);
+
+        // Filtered to the header cells specifically. The period band is also a
+        // SceneRect whose bottom happens to equal expectedBottom, so an unfiltered
+        // Assert.Contains would pass on the frame alone and prove nothing about the
+        // panel's header.
+        SceneRect[] headers =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.Contains("header-cell:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(headers);
+        Assert.All(
+            headers,
+            header => Assert.Equal(expectedBottom, header.Bounds.Top + header.Bounds.Height, precision: 9));
+    }
+
+    [Fact]
+    public void Every_bar_and_marker_lies_inside_the_plot_bounds()
+    {
+        // The regression the plot-top offset fixes. The lane layout is lane-relative
+        // and starts at y=0, so a placement used as a chart Y put every bar above the
+        // plot, overlapping the header bands. Bars and markers are placed in chart
+        // coordinates, so each must sit within the plot rectangle.
+        SceneBuildRequest request = Request(
+            Event(1),
+            Event(2, GanttEntityType.AsPlannedMilestone, styleKey: "AsPlannedMilestone"),
+            Event(3, GanttEntityType.AsBuiltActivity, styleKey: "AsBuiltActivity"));
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        RectD plot = outcome.Result!.Scene.PlotBounds;
+
+        SceneRect[] bars =
+        [
+            .. outcome.Result.Scene.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(bars);
+        Assert.All(bars, AssertInsidePlot);
+
+        // Milestones are four-point polygons, so the same containment rule is
+        // asserted over their bounding box.
+        ScenePolygon[] markers = [.. outcome.Result.Scene.Primitives.OfType<ScenePolygon>()];
+        Assert.NotEmpty(markers);
+        Assert.All(markers, marker => Assert.True(
+            marker.Points.Min(point => point.Y) >= plot.Y
+            && marker.Points.Max(point => point.Y) <= plot.Bottom,
+            "A milestone marker must lie inside the plot bounds."));
+
+        void AssertInsidePlot(SceneRect bar) => Assert.True(
+            bar.Bounds.Y >= plot.Y && bar.Bounds.Bottom <= plot.Bottom,
+            $"Bar {bar.PrimitiveId} at y={bar.Bounds.Y}..{bar.Bounds.Bottom} is outside the plot y={plot.Y}..{plot.Bottom}.");
+    }
+
+    [Fact]
+    public void A_delineator_is_a_full_height_line_and_takes_no_lane()
+    {
+        GanttEvent first = Event(
+            1,
+            GanttEntityType.Delineator,
+            new DateOnly(2024, 1, 8),
+            null,
+            styleKey: null);
+        GanttEvent second = Event(2);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(first, second));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        // §24: the line spans PlotBounds.Top to PlotBounds.Bottom exactly.
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
+        Assert.Equal(_plotBounds.Y, line.From.Y, precision: 9);
+        Assert.Equal(_plotBounds.Bottom, line.To.Y, precision: 9);
+
+        // A delineator is not lane-bound, so the one activity bar must still be the
+        // only bar: the line must not have consumed a lane.
+        Assert.Single(outcome.Result.Scene.Primitives.OfType<SceneRect>(), rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_rendered_panel_emits_a_cell_per_grid_column_with_invariant_dates()
+    {
+        // The panel pass populates cells in grid-column order and formats dates through
+        // the approved invariant format. A null cell list would emit a panel with no
+        // text at all, which is what this guards.
+        // The test's default grid carries only Id and Description, so a date cell
+        // needs a grid that includes the date columns: the cells are projected in
+        // grid-column order, so a column that is not in the grid is not emitted.
+        SceneBuildRequest request = Request(Event(1, start: new DateOnly(2024, 1, 5), finish: new DateOnly(2024, 1, 10)))
+        with
+        {
+            Grid = PanelCellGrid.TryCreate(
+                [new PanelColumn("Id", 40), new PanelColumn("Start", 80), new PanelColumn("Finish", 80)],
+                10,
+                ["Id", "Start", "Finish"]).Grid,
+            Panel = new PanelTheme(
+                new SceneStyle("BodyFill"),
+                new SceneStyle("BodyText"),
+                new SceneStyle("HeaderFill"),
+                new SceneStyle("HeaderText"),
+                new SceneStyle("Border")),
+        };
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText dateCell = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.EndsWith(":panel-text:Start", StringComparison.Ordinal));
+
+        // ADR-0016 D1/D4: dd/mm/yyyy, culture-invariant, never a re-derived pattern.
+        Assert.Equal("05/01/2024", dateCell.Text);
     }
 
     [Fact]
@@ -436,6 +557,14 @@ public sealed class SceneBuilderTests
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,
+            // §24 delineator tokens. These must be positive: the builder refuses a
+            // non-positive line width rather than defaulting one, so a request that
+            // omits them has no line to draw.
+            DelineatorLinePt = 1,
+            DelineatorStackGapPt = 10,
+            LabelGapPt = 2,
+            LabelHeightPt = 8,
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
 
         SceneBuildOutcome build = SceneBuilder.TryBuild(request);
