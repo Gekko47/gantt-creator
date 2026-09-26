@@ -156,7 +156,6 @@ public sealed class SceneBenchmarkTests
             // geometry is scaled rather than reusing the small fixture geometry.
             PanelBounds = new RectD(0, 20, 260, 200),
             PlotBounds = new RectD(260, 110, 3_000, 30_000),
-            ChartBounds = new RectD(0, 0, 3_400, 30_200),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
             FrameTheme = ReferenceSceneBuilder.FrameTheme,

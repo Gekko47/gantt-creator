@@ -15,7 +15,7 @@ public enum SceneBuilderRefusal
     /// <summary>The caller-supplied measured panel grid was null.</summary>
     NullPanelGrid = 3,
 
-    /// <summary>The caller-supplied plot, panel, or chart bounds were null.</summary>
+    /// <summary>The caller-supplied panel and plot bounds were null.</summary>
     NullBounds = 4,
 
     /// <summary>The plot range could not be turned into a time scale.</summary>
@@ -24,11 +24,8 @@ public enum SceneBuilderRefusal
     /// <summary>The lane metrics or the resolved frame settings were refused.</summary>
     InvalidLayoutSettings = 6,
 
-    /// <summary>The caller-supplied plot bounds fall outside the chart bounds.</summary>
-    PlotOutsideChart = 7,
-
     /// <summary>One event's named style could not be resolved to a renderable style.</summary>
-    UnresolvableStyle = 8,
+    UnresolvableStyle = 7,
 }
 
 /// <summary>
@@ -56,9 +53,6 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the caller-supplied measured plot bounds.</summary>
     public RectD? PlotBounds { get; init; }
-
-    /// <summary>Gets the caller-supplied chart bounds enclosing the panel and plot.</summary>
-    public RectD? ChartBounds { get; init; }
 
     /// <summary>Gets the single injected text-metrics seam.</summary>
     public ITextMetrics? Metrics { get; init; }
@@ -191,20 +185,17 @@ public static class SceneBuilder
         }
 
         if (request.PanelBounds is not { } panelBounds
-            || request.PlotBounds is not { } plotBounds
-            || request.ChartBounds is not { } chartBounds)
+            || request.PlotBounds is not { } plotBounds)
         {
             return Refused(SceneBuilderRefusal.NullBounds);
         }
 
-        // RectD has no rectangle-contains-rectangle, so containment is checked at
-        // the two opposite corners. A plot outside the chart would let a frame
-        // label at a chart edge fall outside the chart that owns it.
-        if (!chartBounds.Contains(new PointD(plotBounds.Left, plotBounds.Top))
-            || !chartBounds.Contains(new PointD(plotBounds.Right, plotBounds.Bottom)))
-        {
-            return Refused(SceneBuilderRefusal.PlotOutsideChart);
-        }
+        // There is deliberately no chart-bounds input. Entity guide section 2
+        // defines ChartBounds as the union of the title, data panel, time headers,
+        // and plot plus ChartOuterPaddingPt, so the frame builder derives it and the
+        // scene is created with that derived value. A caller-supplied chart bounds
+        // was a second, contradictory source: the scene could declare bounds the
+        // chart:background primitive it contains did not have.
 
         TimeScaleCreationOutcome scale = TimeScale.TryCreate(
             request.PlotStart,
@@ -280,7 +271,7 @@ public static class SceneBuilder
         Dictionary<GanttRowId, RectD> parentVisibleBounds = [];
         BuildSpans(placements, styles, timeScale, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, chartBounds, placements, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, primitives, warnings);
     }
 
 
@@ -443,7 +434,6 @@ public static class SceneBuilder
         TimeScale timeScale,
         RectD panelBounds,
         RectD plotBounds,
-        RectD chartBounds,
         LaneEventLayoutResult placements,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
@@ -506,7 +496,7 @@ public static class SceneBuilder
             }
         }
 
-        SceneCreationOutcome scene = GanttScene.TryCreate(chartBounds, plotBounds, primitives, warnings);
+        SceneCreationOutcome scene = GanttScene.TryCreate(frameResult.Geometry.ChartBounds, plotBounds, primitives, warnings);
         return scene.Scene is { } built
             ? new SceneBuildOutcome(new SceneBuildResult(built, timeScale), null)
             : Refused(SceneBuilderRefusal.InvalidLayoutSettings);

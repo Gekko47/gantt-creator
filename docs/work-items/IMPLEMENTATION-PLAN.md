@@ -107,6 +107,7 @@ files only; the local audit verifies every file exists.
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
 | R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Authored (Tier A) |
+| R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Authored (Tier A; R3.12 follow-up) |
 
 ### Phase 4 — live renderer (Tier B; upgrade to Tier A at Phase 3 exit)
 

@@ -22,7 +22,6 @@ public sealed class SceneBuilderTests
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
     private static readonly RectD _panelBounds = new(0, 0, 200, 200);
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
-    private static readonly RectD _chartBounds = new(0, 0, 520, 200);
 
     private static GanttStyleDefinition Style(string key, double height) =>
         new(
@@ -77,7 +76,6 @@ public sealed class SceneBuilderTests
             Grid = Grid(),
             PanelBounds = _panelBounds,
             PlotBounds = _plotBounds,
-            ChartBounds = _chartBounds,
             Metrics = _metrics,
             LaneMetrics = _laneMetrics,
             FrameTheme = FrameTheme(),
@@ -168,17 +166,44 @@ public sealed class SceneBuilderTests
     {
         Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
         Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PanelBounds = null }).Refusal);
-        Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { ChartBounds = null }).Refusal);
     }
 
     [Fact]
-    public void A_plot_outside_the_chart_is_refused()
+    public void The_declared_chart_bounds_equal_the_emitted_chart_background()
     {
-        // The plot extends 40pt past the chart's right edge, so a frame label at
-        // the chart edge could fall outside the chart that owns it.
-        Assert.Equal(
-            SceneBuilderRefusal.PlotOutsideChart,
-            SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = new RectD(200, 20, 400, 160) }).Refusal);
+        // The regression this item fixes. Entity guide section 2 defines ChartBounds
+        // as the union of the title, panel, headers, and plot, so the frame builder
+        // derives it; the scene must then be created with that same value. It was
+        // previously created with a caller-supplied chart bounds instead, so the
+        // scene could declare bounds the chart:background it contained did not have.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(Event(1)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect background = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.PrimitiveId == "chart:background");
+        Assert.Equal(background.Bounds, outcome.Result!.Scene.ChartBounds);
+    }
+
+    [Fact]
+    public void An_awkward_measured_geometry_still_produces_a_self_consistent_scene()
+    {
+        // The R3.12 fixture had to place the panel at y=20 and the plot at y=110 to
+        // keep the header bands inside its declared chart. With chart bounds derived
+        // rather than supplied, that fudge is no longer needed: the bands may extend
+        // above the plot and the scene stays coherent, because the chart bounds
+        // follow the content instead of constraining it.
+        SceneBuildRequest request = Request(Event(1)) with
+        {
+            PanelBounds = new RectD(0, 0, 200, 200),
+            PlotBounds = new RectD(200, 20, 300, 140),
+        };
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneValidationReport report = SceneValidator.Validate(outcome.Result!.Scene);
+        Assert.True(report.IsClean, "Findings: " + string.Join("; ", report.Findings));
     }
 
     [Fact]
@@ -391,7 +416,6 @@ public sealed class SceneBuilderTests
             // the chart; it starts below the band stack instead.
             PanelBounds = new RectD(0, 20, 520, 200),
             PlotBounds = new RectD(520, 110, 600, 290),
-            ChartBounds = new RectD(0, 0, 1400, 420),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
             FrameTheme = ReferenceSceneBuilder.FrameTheme,
