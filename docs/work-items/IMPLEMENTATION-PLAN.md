@@ -217,6 +217,7 @@ files only; the local audit verifies every file exists.
 | D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |
 | D-G7 | Named-style label/colour capability schema | R2.7b | ADR-0009 | Accepted 2026-09-23 |
 | D-G8 | Defer R2.10 and R3.13 until after the R4.9 first-live slice | R2.9/R3.12 | ADR-0010 | Accepted 2026-09-23 |
+| D-G9 | Label `Auto` cascade order and the blocked-label widest-gap truncation fallback | R3.6 | ADR-0015 | Accepted 2026-09-26 |
 
 ## Known drift resolved by revision 5
 

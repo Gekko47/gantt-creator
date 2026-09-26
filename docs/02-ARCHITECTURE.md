@@ -173,6 +173,7 @@ The scene contains explicit z-order, geometry, style, text bounds, clipping, and
 - Excel comparisons allow a documented tolerance because COM exposes `Single` shape geometry.
 - Raster mapping is `pixels = round(points / 72 * dpi * scale)`, with edge rounding chosen once and covered by boundary tests.
 - One injected deterministic text-metrics service measures labels during scene construction. Its implementation, font, and version are pinned for tests. Renderers consume the resolved text bounds and may not choose a different label side.
+- The scene also resolves the label side, so the cascade order and the blocked-label outcome are part of the scene contract, not a renderer policy. The per-type `Auto` orders and the widest-gap truncation fallback are fixed by the entity guide and [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md).
 
 ## Live Excel renderer
 

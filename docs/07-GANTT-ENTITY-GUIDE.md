@@ -1,6 +1,6 @@
-# Gantt visual entity guide — revision 3
+# Gantt visual entity guide — revision 4
 
-> Created 2 September 2026 under a new filename. This revision uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
+> Created 2 September 2026 under a new filename. Revision 4 (26 September 2026) applies [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
 
 
 <!-- SKILL-SUMMARY:START -->
@@ -455,7 +455,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Style:** resolved by subtype. Fill and outline are explicit; no renderer defaults.
 
-**Label positions:** `Auto`, `Left`, `Right`, `Inside`, `Above`, `Below`, `None`. Manual value wins. `Auto` tries Right → Inside → Left. Above/Below are only used automatically by a named style, not as an unbounded collision cascade.
+**Label positions:** `Auto`, `Left`, `Right`, `Inside`, `Above`, `Below`, `None`. Manual value wins. `Auto` tries Right → Left → Inside. Above/Below are only used automatically by a named style, not as an unbounded collision cascade. When no `Auto` candidate accepts the full text, the widest-gap truncation fallback in §22 applies.
 
 **Clipping:** use visible rectangle bounds for label candidates. An arrow or continuation glyph is not shown unless later approved.
 
@@ -519,7 +519,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Base:** general span activity.
 
-**Default style:** `DelayFill`, critical/red outline, `DelayText`, standard activity height. Initial label position is `Inside`; if text does not fit, `Auto` tries Right then Left and changes to `DefaultText` outside the red body.
+**Default style:** `DelayFill`, critical/red outline, `DelayText`, standard activity height. `Inside` is the named style's default label position, not merely the first `Auto` candidate: it is evaluated once and never re-entered. If the text does not fit inside, the remaining cascade is Right then Left — `Inside` is not retried — and the text changes to `DefaultText` outside the red body. The Delay Event's style default therefore overrides the general span cascade in §12.
 
 **Semantics:** dates and description are supplied by the user. The add-in does not calculate responsibility, causation, or entitlement.
 
@@ -607,7 +607,9 @@ A milestone does not inherit critical styling merely because it shares a date wi
 
 Candidate acceptance requires containment within allowed chart bounds and no intersection with registered foreground shapes or higher-priority labels, except an `Inside` label may occupy its own parent rectangle. Maximum external width is `MaximumExternalLabelWidthPt`.
 
-Placement priority is: explicit manual positions first; then critical milestones, other milestones, delay labels, actual labels, planned labels, baseline labels, procurement/custom labels, date labels, and delineator labels. Within a priority use lane, stack, sort order, then stable ID. If no candidate is clear, use the entity's defined fallback and emit one warning; do not move labels differently on each refresh.
+Placement priority is: explicit manual positions first; then critical milestones, other milestones, delay labels, actual labels, planned labels, baseline labels, procurement/custom labels, date labels, and delineator labels. Within a priority use lane, stack, sort order, then stable ID. If no candidate is clear, use the widest-gap truncation fallback below and emit one warning; do not move labels differently on each refresh.
+
+**Widest-gap truncation fallback.** When no `Auto` candidate accepts the full text, measure the free horizontal space at each of the entity's applicable positions — for a span, `Left`, `Right`, and `Inside` — and place the label at the widest. Free space is the distance from the shape's edge to the nearest obstruction, where obstructions are in-lane shapes, already-placed higher-priority labels, and the `PlotBounds` boundary alike. The label text is cut to the measured width with a single-character ellipsis `…` and exactly one warning is emitted; the font is never shrunk and the text is never wrapped. Equal-width gaps are broken by the entity's `Auto` order, so the placement is stable across refreshes. If every measured gap is too small to hold even the ellipsis, the label is suppressed and exactly one warning is emitted; no position is invented and no label is drawn over an obstruction.
 
 **Text measurement:** use one injected deterministic text-metrics service during scene construction. The service implementation/version/font is pinned for tests. Excel and raster renderers consume the resulting label bounds and do not reselect the side.
 
