@@ -289,6 +289,28 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
+    public void Clips_to_the_requested_parent_bounds_not_the_dictionary_entry()
+    {
+        // The request's ParentVisibleBounds is the single source of the parent's
+        // visible span, so it wins even when the dictionary holds a different
+        // rect for the same parent row. Two sources of truth for one span could
+        // disagree silently; pinning the request here proves which one is used.
+        CriticalOverlayCreationOutcome outcome = Build(
+            1,
+            20,
+            parentBounds: new RectD(60, 56, 40, 8),
+            parents: new Dictionary<GanttRowId, RectD> { [_parentId] = new RectD(0, 56, 310, 8) }
+        );
+
+        Assert.True(outcome.Succeeded);
+        // The requested parent spans 60..100, so the overlay is confined to that
+        // rather than stretching to the dictionary entry's 0..310.
+        Assert.Equal(60, outcome.Result!.VisibleBounds!.Value.Left);
+        Assert.Equal(100, outcome.Result.VisibleBounds!.Value.Right, 10);
+        Assert.Equal(CriticalOverlayBuilder.ClippedToParentCode, Assert.Single(outcome.Result.Warnings).Code);
+    }
+
+    [Fact]
     public void Refuses_a_zero_thickness_overlay()
     {
         CriticalOverlayCreationOutcome outcome = Build(5, 9, thickness: 0);

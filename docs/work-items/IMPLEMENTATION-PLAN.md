@@ -97,10 +97,10 @@ files only; the local audit verifies every file exists.
 | R3.3 | `R3.3-time-scale.md` | Landed (`e8a77e8`) |
 | R3.4 | `R3.4-lane-stack-geometry.md` | Landed (`4ba0601`) |
 | R3.5 | `R3.5-plot-frame-bands.md` | Landed (`9e088bf`, `0f577bd`) |
-| R3.6 | `R3.6-span-bar-label-layout.md` | Implemented (pending commit) |
-| R3.7 | `R3.7-milestone-marker-layout.md` | Implemented (pending commit) |
-| R3.8 | `R3.8-critical-interval-overlay.md` | Implemented (pending commit) |
-| R3.9 | `R3.9-multi-event-stack-lanes.md` | Implemented (pending commit) |
+| R3.6 | `R3.6-span-bar-label-layout.md` | Landed (`5d49f9c`) |
+| R3.7 | `R3.7-milestone-marker-layout.md` | Landed (`e518ca6`) |
+| R3.8 | `R3.8-critical-interval-overlay.md` | Landed (`31b72ac`, `eb00c71`) |
+| R3.9 | `R3.9-multi-event-stack-lanes.md` | Landed (`6b733a4`) |
 | R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
 | R3.11 | `R3.11-table-header-primitives.md` | Authored (Tier A) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |

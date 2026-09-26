@@ -86,8 +86,10 @@ public static class CriticalOverlayBuilder
     /// <param name="request">The typed overlay request.</param>
     /// <param name="timeScale">The validated time scale.</param>
     /// <param name="parentVisibleBounds">
-    /// The parent bar's visible bounds, keyed by parent row ID. R3.6 produces
-    /// these after plot clipping, which is what the overlay must clip to.
+    /// The parent bars' visible bounds, keyed by parent row ID. R3.6 produces
+    /// these after plot clipping. It is used only to prove the parent resolved to
+    /// a laid-out bar; the geometry clips to <see cref="CriticalOverlayRequest.ParentVisibleBounds"/>,
+    /// which is the single source of the parent's visible span.
     /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static CriticalOverlayCreationOutcome TryBuild(
@@ -115,7 +117,9 @@ public static class CriticalOverlayBuilder
             !double.IsFinite(request.CriticalLinePt)
             || request.CriticalLinePt <= 0
             || !double.IsFinite(request.ParentVisibleBounds.X)
+            || !double.IsFinite(request.ParentVisibleBounds.Y)
             || !double.IsFinite(request.ParentVisibleBounds.Width)
+            || !double.IsFinite(request.ParentVisibleBounds.Height)
         )
         {
             return Refused(CriticalOverlayRefusal.InvalidGeometry);
@@ -134,12 +138,19 @@ public static class CriticalOverlayBuilder
             return Refused(CriticalOverlayRefusal.UnresolvedParent);
         }
 
-        // The parent bar's *visible* bounds are authoritative, so a parent that
-        // was itself plot-clipped constrains the overlay to what is on screen.
-        if (parentVisibleBounds is null || !parentVisibleBounds.TryGetValue(parentId, out RectD parent))
+        // The parent must resolve to a bar that was laid out, so an orphan or an
+        // unresolvable parent is refused with a typed outcome rather than throwing.
+        // The resolved rect is deliberately *not* the geometry source: the request
+        // carries the authoritative visible span, and two sources of truth could
+        // disagree, so the request's bounds are the only ones clipped to below.
+        if (parentVisibleBounds is null || !parentVisibleBounds.ContainsKey(parentId))
         {
             return Refused(CriticalOverlayRefusal.UnresolvedParent);
         }
+
+        // The parent's *visible* bounds are authoritative, so a parent that was
+        // itself plot-clipped constrains the overlay to what is on screen.
+        RectD parent = request.ParentVisibleBounds;
 
         if (@event.Start is not { } start || @event.Finish is not { } finish || finish < start)
         {

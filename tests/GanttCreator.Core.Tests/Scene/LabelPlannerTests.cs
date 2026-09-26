@@ -350,6 +350,64 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
+    public void The_widest_gap_fallback_never_places_above_the_chart_top_edge()
+    {
+        // A 200pt milestone band whose top edge sits 5pt below the chart's top
+        // edge. The 60-character text is 240pt, so no cascade position holds it
+        // and the ADR-0015 widest-gap measure runs: Above and Below each offer the
+        // shape's full 200pt, which beats the 97pt Left gap, and the cascade order
+        // tries Above first. §22's "Above: label bottom = shape top − LabelGapPt"
+        // puts that box at 5 − 3 − 10 = −8, i.e. above the chart's top edge of 0 —
+        // and the gap measure is blind to the chart, so containment is the only
+        // thing that keeps the label on the panel. Below is chosen instead.
+        var topEdgeMetrics = _labelMetrics with { ChartBounds = new RectD(-6, 0, 322, 106) };
+
+        LabelPlanResult result = PlanOutcome(
+                Request(
+                    Shape(100, 5, 200),
+                    new string('x', 60),
+                    GanttLabelPosition.Auto,
+                    GanttEntityType.AsPlannedMilestone
+                ),
+                topEdgeMetrics
+            )
+            .Result!;
+
+        Assert.Equal(GanttLabelPosition.Below, result.Position);
+        Assert.True(result.WasTruncated);
+        // Below: label top = shape bottom + LabelGapPt = 13 + 3 = 16.
+        Assert.Equal(16, result.Bounds!.Value.Top);
+        Assert.True(result.Bounds.Value.Top >= topEdgeMetrics.ChartBounds.Top);
+    }
+
+    [Fact]
+    public void The_widest_gap_fallback_never_places_below_the_chart_bottom_edge()
+    {
+        // The mirror case, and the one that proves the containment check rather
+        // than the tie-break: the band sits near the chart's bottom, so Below
+        // would land at 96 + 3 = 99 and end at 109, past the chart's bottom edge
+        // of 106. Above is blocked by an in-lane occupant, so before the fix the
+        // 200pt Below gap was selected and the label was drawn off the panel.
+        var bottomEdgeMetrics = _labelMetrics with { ChartBounds = new RectD(-6, 0, 322, 106) };
+
+        LabelPlanResult result = PlanOutcome(
+                Request(
+                    Shape(100, 88, 200),
+                    new string('x', 60),
+                    GanttLabelPosition.Auto,
+                    GanttEntityType.AsPlannedMilestone
+                ),
+                bottomEdgeMetrics,
+                [new RectD(100, 70, 200, 10)]
+            )
+            .Result!;
+
+        Assert.NotEqual(GanttLabelPosition.Below, result.Position);
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.True(result.Bounds!.Value.Bottom <= bottomEdgeMetrics.ChartBounds.Bottom);
+    }
+
+    [Fact]
     public void Suppresses_the_label_with_one_warning_when_no_gap_holds_an_ellipsis()
     {
         // A 10pt-wide bar in a 120pt plot, boxed in so that neither side leaves
@@ -407,8 +465,11 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
-    public void Ellipsize_returns_the_full_text_when_it_already_fits()
+    public void Ellipsize_truncates_the_text_and_appends_the_marker()
     {
+        // Five characters need 20pt, but the reserved ellipsis means only four
+        // fit inside a 20pt box, so the result is the text cut to fit with the
+        // single-character marker appended.
         var truncated = LabelText.Ellipsize("abcde", 20, _metrics);
 
         Assert.Equal("abcd…", truncated);
@@ -536,6 +597,15 @@ public sealed class LabelPlannerTests
         LabelRequest request,
         IReadOnlyList<RectD>? occupants = null
     ) => LabelPlanner.TryPlan(request, _labelMetrics, occupants);
+
+    private static LabelPlanCreationOutcome PlanOutcome(LabelRequest request, LabelMetrics metrics) =>
+        LabelPlanner.TryPlan(request, metrics);
+
+    private static LabelPlanCreationOutcome PlanOutcome(
+        LabelRequest request,
+        LabelMetrics metrics,
+        IReadOnlyList<RectD> occupants
+    ) => LabelPlanner.TryPlan(request, metrics, occupants);
 
     private static LabelPlanResult Plan(LabelRequest request, IReadOnlyList<RectD>? occupants = null) =>
         PlanOutcome(request, occupants).Result!;

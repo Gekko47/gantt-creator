@@ -426,7 +426,13 @@ public static class LabelPlanner
                 // usable` to the left of the boundary the untruncated one uses.
                 var left = position == GanttLabelPosition.Left ? geometry.Right - usable : geometry.X;
                 var candidate = new RectD(left, geometry.Y, usable, geometry.Height);
-                if (Blocked(candidate, position))
+
+                // Containment is against the chart bounds, exactly as in TryAccept.
+                // The gap measure itself is blind to the chart edges — Above and
+                // Below are derived from the shape's own top/bottom and can fall
+                // outside the chart — so without this the fallback could place a
+                // truncated label beyond the panel the cascade refuses to enter.
+                if (!WithinBounds(candidate, metrics.ChartBounds) || Blocked(candidate, position))
                 {
                     continue;
                 }

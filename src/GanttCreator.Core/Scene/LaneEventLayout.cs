@@ -173,6 +173,17 @@ public static class LaneEventLayout
             }
         }
 
+        // Every input event must reach a placement. The per-lane filter above
+        // selects only events whose lane key matches a layout lane, so an event on
+        // a lane the layout never produced is silently dropped — a caller would
+        // then render a scene missing a row with no refusal and no warning. The
+        // count is the authoritative completeness check, and MissingLayout is the
+        // honest reason: the layout does not cover the inputs.
+        if (placements.Count != events.Count)
+        {
+            return Refused(LaneEventLayoutRefusal.MissingLayout);
+        }
+
         IReadOnlyList<LaneEventPlacement> ordered =
         [
             .. placements.Values

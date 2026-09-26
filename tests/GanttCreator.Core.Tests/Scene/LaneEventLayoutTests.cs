@@ -268,6 +268,23 @@ public sealed class LaneEventLayoutTests
     }
 
     [Fact]
+    public void Refuses_an_event_the_layout_does_not_cover()
+    {
+        // The layout was built from a single-lane event, but the input carries a
+        // second event on a lane the layout never produced. The per-lane filter
+        // matches nothing for that lane key, so without the completeness check the
+        // event would vanish from the scene with no refusal and no warning.
+        GanttRowId otherLane = GanttRowId.New();
+        LaneEventInput[] events = [Input(1, 1), Input(2, 2, laneId: otherLane)];
+        LaneLayoutResult layout = Lane([Input(1, 1)]);
+
+        LaneEventLayoutCreationOutcome outcome = LaneEventLayout.TryBuild(events, layout);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LaneEventLayoutRefusal.MissingLayout, outcome.Refusal);
+    }
+
+    [Fact]
     public void Refuses_a_negative_effective_slot()
     {
         LaneEventLayoutCreationOutcome outcome = LaneEventLayout.TryBuild(
@@ -299,14 +316,16 @@ public sealed class LaneEventLayoutTests
         DateOnly? start = null,
         DateOnly? finish = null,
         GanttEntityType type = GanttEntityType.AsPlannedActivity,
-        int? effective = null
+        int? effective = null,
+        GanttRowId? laneId = null
     ) =>
         new(
             Event(
                 rowNumber,
                 start: start ?? new DateOnly(2024, 1, 1).AddDays(dayOffset),
                 finish: finish ?? new DateOnly(2024, 1, 1).AddDays(dayOffset + 2),
-                effectiveType: type
+                effectiveType: type,
+                laneId: laneId
             ),
             8,
             effective
@@ -318,12 +337,13 @@ public sealed class LaneEventLayoutTests
         GanttEntityType effectiveType = GanttEntityType.AsPlannedActivity,
         GanttRowId? id = null,
         DateOnly? start = null,
-        DateOnly? finish = null
+        DateOnly? finish = null,
+        GanttRowId? laneId = null
     ) =>
         new(
             rowNumber,
             id ?? GanttRowId.New(),
-            _laneId,
+            laneId ?? _laneId,
             visibleStack,
             effectiveType,
             "Event",
