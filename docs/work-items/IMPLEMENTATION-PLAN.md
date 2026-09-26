@@ -83,9 +83,9 @@ files only; the local audit verifies every file exists.
 | R2.5a | `R2.5a-validation-normalisation.md` | Landed (`f21a908`) |
 | R2.6a | `R2.6a-validation-reporter-boundary.md` | Landed (`bf9727c`) |
 | R2.7b | `R2.7b-style-capability-schema.md` | Landed (`49abd4f`; ADR-0009) |
-| R2.7c | `R2.7c-style-registry-formatting.md` | Implemented (working-tree implementation with observed gates; pending commit) |
+| R2.7c | `R2.7c-style-registry-formatting.md` | Landed (`69a986d`) |
 | R2.7d | `R2.7d-date-display-format-setting.md` | Landed (ADR-0016) |
-| R2.8 | `R2.8-add-row-commands.md` | Implemented (working-tree implementation with observed gates; pending commit) |
+| R2.8 | `R2.8-add-row-commands.md` | Landed (`61e67f9`; fix `75df937`) |
 | R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
 | R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |
 
