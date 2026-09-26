@@ -221,7 +221,7 @@ public static class FrameBandsBuilder
                         year.Label,
                         bounds,
                         request.Theme.YearHeader,
-                        GanttLabelPosition.Auto
+                        GanttTextAlignment.Centre
                     )
                 );
             }
@@ -248,7 +248,7 @@ public static class FrameBandsBuilder
                         period.Label,
                         bounds,
                         request.Theme.PeriodHeader,
-                        GanttLabelPosition.Auto
+                        GanttTextAlignment.Centre
                     )
                 );
             }
@@ -277,7 +277,7 @@ public static class FrameBandsBuilder
 
         primitives.Add(new SceneRect("chart:title-band", SceneOwnerId.Chart, ZLayer.Title, title, request.Theme.Title));
         primitives.Add(
-            new SceneText("chart:title-text", SceneOwnerId.Chart, ZLayer.Title, text, title, request.Theme.Title, GanttLabelPosition.Auto)
+            new SceneText("chart:title-text", SceneOwnerId.Chart, ZLayer.Title, text, title, request.Theme.Title, GanttTextAlignment.Centre)
         );
     }
 

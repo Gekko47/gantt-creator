@@ -22,7 +22,7 @@ public sealed record SceneText : ScenePrimitive
         string text,
         RectD textBounds,
         SceneStyle style,
-        GanttLabelPosition alignment,
+        GanttTextAlignment alignment,
         GanttEntityType? entityType = null,
         int? laneOrder = null,
         int? stackIndex = null,
@@ -53,5 +53,5 @@ public sealed record SceneText : ScenePrimitive
     public SceneStyle Style { get; }
 
     /// <summary>Gets the resolved text alignment.</summary>
-    public GanttLabelPosition Alignment { get; }
+    public GanttTextAlignment Alignment { get; }
 }

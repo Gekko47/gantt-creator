@@ -1,25 +1,17 @@
 namespace GanttCreator.Core.Scene;
 
-/// <summary>The horizontal alignment of one data-panel cell.</summary>
-public enum PanelColumnAlignment
-{
-    /// <summary>Text starts at the cell's left edge.</summary>
-    Left = 0,
-
-    /// <summary>Text is centred in the cell.</summary>
-    Centre = 1,
-
-    /// <summary>Text ends at the cell's right edge.</summary>
-    Right = 2,
-}
-
 /// <summary>One measured data-panel column.</summary>
 /// <param name="Name">
 /// The exact schema display name, from <see cref="GanttTableSchema.Default"/>.
 /// </param>
 /// <param name="WidthPt">The measured column width in points.</param>
 /// <param name="Alignment">The resolved body-text alignment for this column.</param>
-public sealed record PanelColumn(string Name, double WidthPt, PanelColumnAlignment Alignment = PanelColumnAlignment.Left);
+/// <remarks>
+/// The alignment is <see cref="GanttTextAlignment"/> rather than a panel-local
+/// type so the grid's measured alignment flows straight into the emitted
+/// <see cref="SceneText"/> without a conversion that could drift (ADR-0018).
+/// </remarks>
+public sealed record PanelColumn(string Name, double WidthPt, GanttTextAlignment Alignment = GanttTextAlignment.Left);
 
 /// <summary>The reason a measured cell grid was refused.</summary>
 public enum PanelCellGridRefusal

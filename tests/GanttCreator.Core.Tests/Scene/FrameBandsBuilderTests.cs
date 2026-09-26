@@ -55,6 +55,22 @@ public sealed class FrameBandsBuilderTests
     }
 
     [Fact]
+    public void Band_and_title_text_is_centred_in_its_resolved_bounds()
+    {
+        // §2 fixes the title as "horizontally centred and vertically
+        // middle-aligned", and the year/period band labels are centred in their
+        // band. Before ADR-0018 these carried GanttLabelPosition.Auto, which is
+        // a label *position* and meaningless as a text alignment, so nothing
+        // pinned the centring. This is the positive pin for that behaviour.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+
+        SceneText[] texts = [.. result.Primitives.OfType<SceneText>()];
+        Assert.NotEmpty(texts);
+        Assert.All(texts, text => Assert.Equal(GanttTextAlignment.Centre, text.Alignment));
+        Assert.Equal(GanttTextAlignment.Centre, result.Primitives.OfType<SceneText>().Single(text => text.PrimitiveId == "chart:title-text").Alignment);
+    }
+
+    [Fact]
     public void ShowTitle_false_omits_title_band_and_text()
     {
         FrameBandsResult result = Build(CreateRequest() with { ShowTitle = false }).Result!;

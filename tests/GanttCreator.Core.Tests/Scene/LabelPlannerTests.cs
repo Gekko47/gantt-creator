@@ -113,7 +113,7 @@ public sealed class LabelPlannerTests
             "abcde",
             GanttLabelPosition.Auto,
             GanttEntityType.DelayEvent,
-            alignment: GanttLabelPosition.Inside
+            styleDefaultPosition: GanttLabelPosition.Inside
         );
 
         LabelPlanResult result = Plan(request);
@@ -133,7 +133,7 @@ public sealed class LabelPlannerTests
             "abcde",
             GanttLabelPosition.Auto,
             GanttEntityType.DelayEvent,
-            alignment: GanttLabelPosition.Inside
+            styleDefaultPosition: GanttLabelPosition.Inside
         );
 
         LabelPlanResult result = Plan(request);
@@ -155,7 +155,7 @@ public sealed class LabelPlannerTests
             "abcde",
             GanttLabelPosition.Auto,
             GanttEntityType.DelayEvent,
-            alignment: GanttLabelPosition.Inside
+            styleDefaultPosition: GanttLabelPosition.Inside
         );
 
         LabelPlanResult result = Plan(request, [new RectD(120, 20, 6, 10)]);
@@ -169,7 +169,7 @@ public sealed class LabelPlannerTests
         // §17: the delay's text is DelayText inside the red body and DefaultText
         // outside it, so the same request must resolve to two different styles
         // depending only on which side the label lands.
-        SceneStyle inside = new("Delay", strokeColour: ColourHex.Parse("#FF0000"), alignment: GanttLabelPosition.Inside);
+        SceneStyle inside = new("Delay", strokeColour: ColourHex.Parse("#FF0000"));
         SceneStyle outside = new("Default");
 
         // Wide enough for the 20pt text inside, so the style default applies.
@@ -179,7 +179,7 @@ public sealed class LabelPlannerTests
                 "abcde",
                 GanttLabelPosition.Auto,
                 GanttEntityType.DelayEvent,
-                alignment: GanttLabelPosition.Inside,
+                styleDefaultPosition: GanttLabelPosition.Inside,
                 outsideStyle: outside,
                 textStyle: inside
             )
@@ -191,7 +191,7 @@ public sealed class LabelPlannerTests
                 "abcde",
                 GanttLabelPosition.Auto,
                 GanttEntityType.DelayEvent,
-                alignment: GanttLabelPosition.Inside,
+                styleDefaultPosition: GanttLabelPosition.Inside,
                 outsideStyle: outside,
                 textStyle: inside
             )
@@ -216,7 +216,7 @@ public sealed class LabelPlannerTests
                 "abcde",
                 GanttLabelPosition.Right,
                 GanttEntityType.DelayEvent,
-                alignment: GanttLabelPosition.Inside
+                styleDefaultPosition: GanttLabelPosition.Inside
             )
         );
 
@@ -623,12 +623,35 @@ public sealed class LabelPlannerTests
         IReadOnlyList<RectD>? occupants
     ) => PlanOutcome(Request(shape, text), occupants).Result!;
 
+    [Theory]
+    [InlineData(GanttLabelPosition.Left, GanttTextAlignment.Right)]
+    [InlineData(GanttLabelPosition.Right, GanttTextAlignment.Left)]
+    [InlineData(GanttLabelPosition.Inside, GanttTextAlignment.Centre)]
+    [InlineData(GanttLabelPosition.Above, GanttTextAlignment.Centre)]
+    [InlineData(GanttLabelPosition.Below, GanttTextAlignment.Centre)]
+    public void The_emitted_alignment_follows_the_product_rule_not_the_position_enum(
+        GanttLabelPosition position,
+        GanttTextAlignment expected)
+    {
+        // ADR-0018 D4. §22 fixes the label *box* but never says how text sits
+        // inside it, so this mapping is a product decision: text is aligned to
+        // end against the shape (the §24 "hugs the line" rule generalised), and
+        // the centred placements of §22 centre their text. Before the retype
+        // the planner passed the raw `GanttLabelPosition` straight through as
+        // the text alignment, which this pins.
+        LabelPlanResult result = Plan(Shape(100, 20, 200), "abcde", position);
+
+        Assert.Equal(position, result.Position);
+        Assert.NotNull(result.Primitive);
+        Assert.Equal(expected, result.Primitive!.Alignment);
+    }
+
     private static LabelRequest Request(
         RectD shape,
         string text,
         GanttLabelPosition position = GanttLabelPosition.Auto,
         GanttEntityType type = GanttEntityType.AsPlannedActivity,
-        GanttLabelPosition? alignment = null,
+        GanttLabelPosition? styleDefaultPosition = null,
         SceneStyle? outsideStyle = null,
         SceneStyle? textStyle = null
     ) =>
@@ -653,8 +676,9 @@ public sealed class LabelPlannerTests
             text,
             position,
             shape,
-            textStyle ?? new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 8, alignment: alignment),
+            textStyle ?? new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 8),
             _metrics,
-            outsideStyle
+            outsideStyle,
+            StyleDefaultPosition: styleDefaultPosition ?? GanttLabelPosition.Inside
         );
 }

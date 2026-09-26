@@ -37,10 +37,10 @@ public sealed class PanelCellGridTests
     [Fact]
     public void Columns_default_to_left_alignment_and_may_be_overridden()
     {
-        PanelCellGrid grid = Grid(Col("Type"), Col("Id") with { Alignment = PanelColumnAlignment.Centre });
+        PanelCellGrid grid = Grid(Col("Type"), Col("Id") with { Alignment = GanttTextAlignment.Centre });
 
-        Assert.Equal(PanelColumnAlignment.Left, grid.Columns[0].Alignment);
-        Assert.Equal(PanelColumnAlignment.Centre, grid.Columns[1].Alignment);
+        Assert.Equal(GanttTextAlignment.Left, grid.Columns[0].Alignment);
+        Assert.Equal(GanttTextAlignment.Centre, grid.Columns[1].Alignment);
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public sealed class PanelCellGridTests
     {
         Assert.Equal(
             PanelCellGridRefusal.UndefinedAlignment,
-            PanelCellGrid.TryCreate([Col("Id") with { Alignment = (PanelColumnAlignment)99 }], 12.0, Required)
+            PanelCellGrid.TryCreate([Col("Id") with { Alignment = (GanttTextAlignment)99 }], 12.0, Required)
                 .Refusal);
     }
 

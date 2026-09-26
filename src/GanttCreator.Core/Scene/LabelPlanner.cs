@@ -18,6 +18,12 @@ namespace GanttCreator.Core.Scene;
 /// </param>
 /// <param name="LaneOrder">The lane ordering value, when known.</param>
 /// <param name="StackIndex">The stack ordering value, when known.</param>
+/// <param name="StyleDefaultPosition">
+/// The named style's default position, tried before the <c>Auto</c> cascade.
+/// This was previously smuggled through <see cref="SceneStyle.Alignment"/>,
+/// which conflated a label <em>position</em> with text alignment inside the
+/// resolved box; ADR-0018 gives it its own member.
+/// </param>
 public sealed record LabelRequest(
     GanttEvent Event,
     string? Text,
@@ -27,7 +33,8 @@ public sealed record LabelRequest(
     ITextMetrics Metrics,
     SceneStyle? OutsideTextStyle = null,
     int? LaneOrder = null,
-    int? StackIndex = null
+    int? StackIndex = null,
+    GanttLabelPosition StyleDefaultPosition = GanttLabelPosition.Inside
 );
 
 /// <summary>The resolved bounds and metrics a label planner needs.</summary>
@@ -258,7 +265,7 @@ public static class LabelPlanner
                         finalText,
                         bounds,
                         style,
-                        position,
+                        TextAlignmentFor(position),
                         @event.Type,
                         request.LaneOrder,
                         request.StackIndex,
@@ -278,7 +285,7 @@ public static class LabelPlanner
         // style default and Auto, so a delay that names a position is never
         // re-placed by the delay default below.
         var hasExplicitPosition = request.ResolvedPosition is not (GanttLabelPosition.Auto or GanttLabelPosition.None);
-        GanttLabelPosition styleDefault = request.TextStyle.Alignment ?? GanttLabelPosition.Inside;
+        GanttLabelPosition styleDefault = request.StyleDefaultPosition;
 
         // ADR-0015 D3: the delay event's Inside is a style-level default that is
         // evaluated once and never re-entered. It is the first thing tried, and
@@ -477,6 +484,61 @@ public static class LabelPlanner
             return false;
         }
     }
+
+    /// <summary>
+    /// Maps a resolved label position to the text alignment inside the
+    /// already-resolved label box.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Entity guide §22 fixes label <em>box</em> geometry but never states how
+    /// text sits inside that box, so this mapping is a product decision rather
+    /// than a reading of the guide (product owner, 2026-09-26; ADR-0018 D4).
+    /// </para>
+    /// <para>
+    /// The rule is the §24 "text hugs the line" rule generalised: text is
+    /// aligned so that it ends against the shape it belongs to. A label placed
+    /// to the shape's <c>Left</c> is right-aligned so it terminates at the
+    /// shape's edge; a label placed to the <c>Right</c> starts at that edge.
+    /// <c>Inside</c>, <c>Above</c>, and <c>Below</c> are all centred placements
+    /// per §22, so their text is centred.
+    /// </para>
+    /// <para>
+    /// Every member is listed, following the repository's exhaustive-switch
+    /// convention. The trailing <c>throw</c> guards the unnamed values a
+    /// malformed cast could produce; <c>LabelRequest.ResolvedPosition</c> is
+    /// already rejected by <see cref="LabelRefusal.InvalidPosition"/> before
+    /// any label is planned, so it is unreachable.
+    /// </para>
+    /// </remarks>
+    private static GanttTextAlignment TextAlignmentFor(GanttLabelPosition position) =>
+        position switch
+        {
+            // Text ends against the shape's left edge.
+            GanttLabelPosition.Left => GanttTextAlignment.Right,
+
+            // Centred placements (§22), so their text is centred.
+            GanttLabelPosition.Inside or GanttLabelPosition.Above or GanttLabelPosition.Below
+                => GanttTextAlignment.Centre,
+
+            // Text starts at the shape's right edge.
+            GanttLabelPosition.Right => GanttTextAlignment.Left,
+
+            // Unreachable here: `None` and `Auto` never reach a resolved
+            // placement, and the remaining members belong to splitters (§10)
+            // and delineators (§24), which place their own text.
+            GanttLabelPosition.None
+            or GanttLabelPosition.Auto
+            or GanttLabelPosition.TopLeft
+            or GanttLabelPosition.TopRight
+            or GanttLabelPosition.BottomLeft
+            or GanttLabelPosition.BottomRight
+            or GanttLabelPosition.DataPanelLeft
+            or GanttLabelPosition.PlotCentre
+            or GanttLabelPosition.Both => GanttTextAlignment.Left,
+
+            _ => throw new ArgumentOutOfRangeException(nameof(position)),
+        };
 
     /// <summary>
     /// Builds the candidate geometry for a position and measures the free

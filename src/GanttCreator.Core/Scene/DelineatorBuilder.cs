@@ -278,10 +278,11 @@ public static class DelineatorBuilder
             // §24 is silent on label alignment and SceneText requires a value.
             // The text hugs the line: a right-hand corner reads away from the
             // line, a left-hand corner is right-aligned so it also ends against
-            // the line. Recorded as a Step-0 gap for product confirmation.
-            GanttLabelPosition alignment = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft
-                ? GanttLabelPosition.Right
-                : GanttLabelPosition.Left;
+            // the line (product owner, 2026-09-26). ADR-0018 retypes this to
+            // GanttTextAlignment; the rule and its rationale are unchanged.
+            GanttTextAlignment alignment = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft
+                ? GanttTextAlignment.Right
+                : GanttTextAlignment.Left;
 
             var owner = SceneOwnerId.ForRow(@event.Id);
             label = new SceneText(

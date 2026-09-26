@@ -22,7 +22,7 @@ public sealed record SceneStyle
         string? fontFamily = null,
         double? fontSizePt = null,
         bool? bold = null,
-        GanttLabelPosition? alignment = null)
+        GanttTextAlignment? alignment = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(styleKey);
         if (outlineWidthPt is { } outline && (!double.IsFinite(outline) || outline < 0))
@@ -71,5 +71,5 @@ public sealed record SceneStyle
     public bool? Bold { get; }
 
     /// <summary>Gets the resolved text alignment, if applicable.</summary>
-    public GanttLabelPosition? Alignment { get; }
+    public GanttTextAlignment? Alignment { get; }
 }

@@ -94,7 +94,7 @@ public sealed class SceneSnapshotTests
             "Activity",
             new RectD(0, 0, 20, 10),
             new SceneStyle("Text"),
-            GanttLabelPosition.Auto
+            GanttTextAlignment.Left
         );
         var group = new SceneGroup("row:group", owner, ZLayer.Label, ["row:label", "row:diamond"]);
         ScenePrimitive[] input = [first, second, line, polygon, text, group];

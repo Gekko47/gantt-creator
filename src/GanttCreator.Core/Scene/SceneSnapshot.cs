@@ -204,7 +204,7 @@ public static class SceneSnapshot
                 Required(document.Text, "text"),
                 FromRect(Required(document.TextBounds, "textBounds"), "textBounds"),
                 FromStyle(Required(document.Style, "style")),
-                (GanttLabelPosition)RequiredInt(document.Alignment, "alignment"),
+                (GanttTextAlignment)RequiredInt(document.Alignment, "alignment"),
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
@@ -272,10 +272,10 @@ public static class SceneSnapshot
         GanttHatchPattern hatchPattern = Enum.IsDefined(typeof(GanttHatchPattern), document.HatchPattern)
             ? (GanttHatchPattern)document.HatchPattern
             : throw new InvalidDataException($"Invalid hatch pattern {document.HatchPattern}.");
-        GanttLabelPosition? alignment = document.Alignment is { } value
-            ? Enum.IsDefined(typeof(GanttLabelPosition), value)
-                ? (GanttLabelPosition)value
-                : throw new InvalidDataException($"Invalid label alignment {value}.")
+        GanttTextAlignment? alignment = document.Alignment is { } value
+            ? Enum.IsDefined(typeof(GanttTextAlignment), value)
+                ? (GanttTextAlignment)value
+                : throw new InvalidDataException($"Invalid text alignment {value}.")
             : null;
         return new SceneStyle(
             Required(document.StyleKey, "style.styleKey"),
