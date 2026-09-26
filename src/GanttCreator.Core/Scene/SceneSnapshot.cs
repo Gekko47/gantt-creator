@@ -295,8 +295,21 @@ public static class SceneSnapshot
         : ColourHex.TryParse(value, out ColourHex? colour) && colour is not null ? colour
         : throw new InvalidDataException($"Invalid colour in {field}.");
 
+    // The kind is mapped by an exhaustive switch, never a `Row ? "row" : "chart"`
+    // ternary: a shared (Rows) owner would silently serialise as "chart" and
+    // then fail to parse back, which is exactly the drift ADR-0017 D5 warns about.
     private static OwnerDocument ToOwner(SceneOwnerId owner) =>
-        new() { Kind = owner.Kind == SceneOwnerKind.Row ? "row" : "chart", Value = owner.Value };
+        new()
+        {
+            Kind = owner.Kind switch
+            {
+                SceneOwnerKind.Row => "row",
+                SceneOwnerKind.Chart => "chart",
+                SceneOwnerKind.Rows => "rows",
+                _ => throw new ArgumentOutOfRangeException(nameof(owner), owner.Kind, "Unknown scene owner kind."),
+            },
+            Value = owner.Value,
+        };
 
     private static SceneOwnerId ParseOwner(OwnerDocument document) =>
         SceneOwnerId.TryParse(document.Kind, document.Value, out SceneOwnerId? owner) && owner is not null

@@ -22,6 +22,7 @@
 | ADR-0014 | Versioned frame and title settings | Accepted | 2026-09-25 | [`adr/0014-frame-band-settings.md`](adr/0014-frame-band-settings.md) |
 | ADR-0015 | Label `Auto` cascade order and the widest-gap truncation fallback | Accepted | 2026-09-26 | [`adr/0015-label-cascade-and-widest-gap-fallback.md`](adr/0015-label-cascade-and-widest-gap-fallback.md) |
 | ADR-0016 | Approved date display format for event dates | Accepted | 2026-09-26 | [`adr/0016-date-display-format-setting.md`](adr/0016-date-display-format-setting.md) |
+| ADR-0017 | Shared scene ownership for deduplicated entities | Accepted | 2026-09-26 | [`adr/0017-shared-scene-ownership.md`](adr/0017-shared-scene-ownership.md) |
 
 ## ADR template
 

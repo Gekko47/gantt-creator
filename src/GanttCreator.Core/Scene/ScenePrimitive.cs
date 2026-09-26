@@ -77,9 +77,17 @@ public abstract record ScenePrimitive
     public int? SortOrder { get; }
 
     /// <summary>Creates a stable role-derived primitive identifier.</summary>
-    /// <param name="ownerId">The stable source row identifier.</param>
+    /// <param name="ownerId">The stable source row identifier, or the shared owner for a deduplicated primitive.</param>
     /// <param name="role">The role suffix for this primitive.</param>
     /// <returns>The stable primitive identifier.</returns>
+    /// <remarks>
+    /// A shared owner contributes its whole canonical row set, so the identifier
+    /// is membership-sensitive (ADR-0017 D4): when a contributing row is added
+    /// or removed the identifier changes, and reconciliation removes the stale
+    /// shape and creates the current one rather than mutating an identifier in
+    /// place. A single-row owner produces exactly the identifier ADR-0013
+    /// defined, so existing identifiers are unchanged.
+    /// </remarks>
     public static string CreateId(SceneOwnerId ownerId, string role)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
