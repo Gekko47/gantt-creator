@@ -99,7 +99,7 @@ files only; the local audit verifies every file exists.
 | R3.5 | `R3.5-plot-frame-bands.md` | Landed (`9e088bf`, `0f577bd`) |
 | R3.6 | `R3.6-span-bar-label-layout.md` | Implemented (pending commit) |
 | R3.7 | `R3.7-milestone-marker-layout.md` | Implemented (pending commit) |
-| R3.8 | `R3.8-critical-interval-overlay.md` | Authored (Tier A) |
+| R3.8 | `R3.8-critical-interval-overlay.md` | Implemented (pending commit) |
 | R3.9 | `R3.9-multi-event-stack-lanes.md` | Authored (Tier A) |
 | R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
 | R3.11 | `R3.11-table-header-primitives.md` | Authored (Tier A) |
