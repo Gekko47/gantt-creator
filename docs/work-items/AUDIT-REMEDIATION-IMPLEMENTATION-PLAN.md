@@ -85,7 +85,7 @@ The identified R2 integrity, repair, style, scene, lifecycle, dependency, and Ad
 ## Evidence commands
 
 ```powershell
-dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror
+dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror
 pwsh ./scripts/verify-quick.ps1
 pwsh ./scripts/verify.ps1
 pwsh ./scripts/verify-office.ps1
