@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GanttCreator.Core.Scene;
 
 /// <summary>The reason a scene could not be built.</summary>
@@ -480,6 +482,15 @@ public static class SceneBuilder
             if (markerResult.Primitive is { } markerPrimitive)
             {
                 primitives.Add(markerPrimitive);
+
+                // The marker's own bounds are what its description label anchors to,
+                // so they must be recorded exactly as a span's are. Without this the
+                // label pass finds no entry for the row and skips the milestone's
+                // description entirely -- §22 covers milestone description labels, and
+                // §21's §22-priority rank for them is unreachable if they are never
+                // planned. The same map is read by the critical-overlay pass, where a
+                // milestone is never a parent, so this entry cannot affect clipping.
+                parentVisibleBounds[@event.Id] = EnclosingBounds(markerPrimitive.Points);
             }
         }
     }
@@ -551,6 +562,7 @@ public static class SceneBuilder
 
         BuildLabels(
             request,
+            timeScale,
             plotBounds,
             frameResult.Geometry.ChartBounds,
             placements,
@@ -625,10 +637,28 @@ public static class SceneBuilder
         {
             cells.Add(column.Name switch
             {
-                "Type" => @event.Type.ToString(),
+                // Every schema column is mapped explicitly rather than relying on a
+                // default: a panel cell must reproduce the worksheet value it stands
+                // for, and a silently null column renders as a blank cell that reads
+                // as an empty worksheet cell.
+                "Id" => @event.Id.Value,
+                "Type" => EntityTypeCatalog.GetDefinition(@event.Type)?.DisplayName,
                 "Description" => @event.Description,
                 "Start" => @event.Start is { } start ? GanttDateFormatting.Format(start, request.DateFormat) : null,
                 "Finish" => @event.Finish is { } finish ? GanttDateFormatting.Format(finish, request.DateFormat) : null,
+                "LaneId" => @event.LaneId?.Value,
+                "StackIndex" => @event.StackIndex?.ToString(CultureInfo.InvariantCulture),
+                "ParentId" => @event.ParentId?.Value,
+                "StyleKey" => @event.StyleKey,
+                // The worksheet holds the enum member name, which is also what
+                // GanttRowValidator parses back, so the cell round-trips.
+                "LabelPosition" => @event.LabelPosition?.ToString(),
+                "FillColour" => @event.FillColour,
+                "StrokeColour" => @event.StrokeColour,
+                // ExcelCellConverter.ToText renders a bool as TRUE/FALSE, so the cell
+                // matches the value the table reader would parse back.
+                "Visible" => @event.Visible ? "TRUE" : "FALSE",
+                "SortOrder" => @event.SortOrder?.ToString(CultureInfo.InvariantCulture),
                 _ => null,
             });
         }
@@ -704,15 +734,25 @@ public static class SceneBuilder
     /// for its row.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// §23 requires a date label to avoid the row's own description label, and §22
     /// requires labels to avoid each other. Both are satisfied by one growing
     /// <c>occupants</c> list that every placed label joins, which is also the
     /// contract <see cref="DateLabelRequest.Occupants"/> documents. A label is
     /// registered as an occupant only once it is actually emitted, so a suppressed
     /// label reserves nothing.
+    /// </para>
+    /// <para>
+    /// Rows are visited in §22 placement-priority order, not placement order: the
+    /// guide makes a critical milestone's label outrank a planned activity's, so the
+    /// higher-priority label must be offered its box first. Within one priority the
+    /// placement order already encodes lane, stack, subtype, sort order, and stable
+    /// ID, so a stable sort by priority alone preserves that tie-break.
+    /// </para>
     /// </remarks>
     private static void BuildLabels(
         SceneBuildRequest request,
+        TimeScale timeScale,
         RectD plotBounds,
         RectD chartBounds,
         LaneEventLayoutResult placements,
@@ -734,7 +774,11 @@ public static class SceneBuilder
 
         List<RectD> occupants = [];
 
-        foreach (LaneEventPlacement placement in placements.Placements)
+        // OrderBy is a stable sort, so the placement order the lane layout already
+        // fixed (lane, stack, subtype, sort order, stable ID) survives within one
+        // §22 priority and the scene stays byte-identical across refreshes.
+        foreach (LaneEventPlacement placement in placements.Placements
+            .OrderBy(placement => LabelPriorityFor(placement.Event.Type)))
         {
             GanttEvent @event = placement.Event;
             if (!parentVisibleBounds.TryGetValue(@event.Id, out RectD shapeBounds))
@@ -744,6 +788,14 @@ public static class SceneBuilder
                 // on the shape either.
                 continue;
             }
+
+            // Only occupants sharing a vertical band with this row constrain it. A
+            // label in another lane cannot overlap this one -- the planner's own
+            // Blocked test is a rectangle intersection, so it already ignores them --
+            // but the free-space measure is one-dimensional, and without this filter a
+            // label far to the right of another lane's bar would shrink this row's
+            // measured gap and truncate or suppress a label that has room.
+            List<RectD> relevant = VerticalBand(occupants, shapeBounds);
 
             LabelPlanCreationOutcome description = LabelPlanner.TryPlan(
                 new LabelRequest(
@@ -756,7 +808,7 @@ public static class SceneBuilder
                     LaneOrder: placement.LaneOrder,
                     StackIndex: placement.EffectiveStackIndex),
                 metrics,
-                occupants);
+                relevant);
             if (description.Result is { } described)
             {
                 warnings.AddRange(described.Warnings);
@@ -772,20 +824,26 @@ public static class SceneBuilder
                 continue;
             }
 
-            // The full span is the post-plot-clip bounds with the clip released, so
-            // the builder can tell a clipped event from a whole one. DateLabelBuilder
-            // derives that itself from the two rectangles; the unclipped rectangle is
-            // the visible bounds widened back to the time scale's own extent.
+            // The full span is the event's own unclipped start-to-finish geometry, so
+            // the builder can tell a bar the plot cut from a whole one. Deriving it
+            // from the dates rather than the plot width is what makes that comparison
+            // mean "clipped" instead of "narrower than the plot".
+            // §23 anchors a date label beside the bar, so it must see the description
+            // label just placed for this same row. The band is therefore recomputed
+            // after that placement rather than reused: a band captured before the
+            // description was added would not contain it, and the date label would be
+            // planned as if the row had no description at all -- which is exactly the
+            // collision §23 requires the occupants list to prevent.
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
                     shapeBounds,
-                    FullBoundsOf(shapeBounds, plotBounds),
+                    FullBoundsOf(@event, timeScale, shapeBounds),
                     metrics,
                     request.Metrics!,
                     request.DateFormat,
                     labelStyle,
-                    Occupants: occupants));
+                    Occupants: VerticalBand(occupants, shapeBounds)));
             if (dates.Result is not { } planned)
             {
                 continue;
@@ -800,14 +858,147 @@ public static class SceneBuilder
     }
 
     /// <summary>
-    /// Reconstructs a span's unclipped bounds from its clipped ones, so §23's
-    /// clipped-date rule can fire on a bar the plot cut short.
+    /// The axis-aligned rectangle that encloses a marker's points, used as the shape
+    /// bounds a milestone's description label anchors to.
     /// </summary>
+    /// <param name="points">The polygon's vertices; a milestone diamond is axis-aligned.</param>
+    /// <returns>The enclosing rectangle.</returns>
+    /// <remarks>
+    /// A milestone is a diamond, so the enclosing rectangle is the diamond's own
+    /// tip-to-tip box. The point list is non-empty by <see cref="ScenePolygon"/>'s
+    /// own construction guard, so the seed needs no fallback.
+    /// </remarks>
+    private static RectD EnclosingBounds(IReadOnlyList<PointD> points)
+    {
+        var left = points[0].X;
+        var top = points[0].Y;
+        var right = left;
+        var bottom = top;
+
+        for (var i = 1; i < points.Count; i++)
+        {
+            PointD point = points[i];
+            left = Math.Min(left, point.X);
+            top = Math.Min(top, point.Y);
+            right = Math.Max(right, point.X);
+            bottom = Math.Max(bottom, point.Y);
+        }
+
+        return new RectD(left, top, right - left, bottom - top);
+    }
+
+    /// <summary>
+    /// Selects the occupants whose vertical range overlaps a row's band, which are
+    /// the only ones whose horizontal space the row's labels compete for.
+    /// </summary>
+    /// <param name="occupants">Every label box placed so far, in any lane.</param>
+    /// <param name="band">The row's own shape bounds.</param>
+    /// <returns>The overlapping subset; the same list instance when all of them do.</returns>
+    private static List<RectD> VerticalBand(List<RectD> occupants, RectD band)
+    {
+        // `skipped` is tracked separately from `relevant`: when the *first* occupant
+        // is filtered out there is nothing to copy yet, so a null `relevant` alone
+        // would mean "keep everything" and silently return the unfiltered list.
+        var skipped = false;
+        List<RectD>? relevant = null;
+        for (var i = 0; i < occupants.Count; i++)
+        {
+            RectD occupant = occupants[i];
+            if (occupant.Bottom <= band.Top + GeometryMath.Epsilon
+                || occupant.Top >= band.Bottom - GeometryMath.Epsilon)
+            {
+                skipped = true;
+                continue;
+            }
+
+            relevant ??= [.. occupants.Take(i)];
+            relevant.Add(occupant);
+        }
+
+        return relevant ?? (skipped ? [] : occupants);
+    }
+
+    /// <summary>
+    /// The §22 description-label placement priority for a type, highest first.
+    /// </summary>
+    /// <param name="type">The entity type whose label is being placed.</param>
+    /// <returns>
+    /// The priority rank: critical milestones, then other milestones, delay labels,
+    /// actual labels, planned labels, baseline labels, and procurement/custom labels.
+    /// </returns>
+    /// <remarks>
+    /// §22 states the order as "critical milestones, other milestones, delay labels,
+    /// actual labels, planned labels, baseline labels, procurement/custom labels, date
+    /// labels, and delineator labels". The date and delineator label passes are not
+    /// planned here, so those ranks need no member. A type the list does not name
+    /// sorts last, which is deterministic and cannot outrank a named one.
+    /// </remarks>
+    private static int LabelPriorityFor(GanttEntityType type) =>
+        type switch
+        {
+            GanttEntityType.CriticalMilestone => 0,
+            GanttEntityType.AsPlannedMilestone
+                or GanttEntityType.AsBuiltMilestone
+                or GanttEntityType.BaselineMilestone => 1,
+            GanttEntityType.DelayEvent => 2,
+            GanttEntityType.AsBuiltActivity or GanttEntityType.AsBuiltProcurement => 3,
+            GanttEntityType.AsPlannedActivity or GanttEntityType.AsPlannedProcurement => 4,
+            GanttEntityType.BaselineActivity or GanttEntityType.BaselineProcurement => 5,
+            GanttEntityType.CustomActivity => 6,
+
+            // A Critical Interval and a Delineator have no §22 description label of
+            // their own (the first is an overlay, the second places its own corner
+            // text), and a Splitter or Spacer emits no label at all. Listing them
+            // explicitly rather than folding them into the default arm is what lets
+            // the analyzer prove the switch covers the enum, so a new type cannot be
+            // added without deciding its label priority.
+            GanttEntityType.CriticalInterval => 7,
+            GanttEntityType.Delineator => 8,
+            GanttEntityType.Splitter or GanttEntityType.Spacer => 9,
+            _ => int.MaxValue,
+        };
+
+    /// <summary>
+    /// Reconstructs an entity's unclipped horizontal extent from its own dates, so
+    /// §23's clipped-date rule fires only on a bar the plot actually cut.
+    /// </summary>
+    /// <param name="event">The validated event supplying the dates.</param>
+    /// <param name="timeScale">The scale every date-to-X mapping came from.</param>
     /// <param name="visible">The bar's post-plot-clip bounds.</param>
-    /// <param name="plotBounds">The plot rectangle the clip was taken against.</param>
-    /// <returns>The unclipped bounds: the same vertical extent, spanning the plot width.</returns>
-    private static RectD FullBoundsOf(RectD visible, RectD plotBounds) =>
-        new(plotBounds.Left, visible.Y, plotBounds.Width, visible.Height);
+    /// <returns>
+    /// The unclipped bounds: the same vertical extent, spanning the event's own
+    /// start-to-finish geometry. An entity the plot did not clip gets bounds equal
+    /// to <paramref name="visible"/>, so it is never reported as clipped.
+    /// </returns>
+    /// <remarks>
+    /// The previous form returned the whole plot width, which made every bar
+    /// narrower than the plot compare unequal to its "full" bounds and therefore
+    /// read as clipped -- so almost every date label took §23's never-suppress
+    /// fallback instead of being planned. Deriving the extent from the dates is
+    /// what makes the comparison mean "the plot cut this bar".
+    /// </remarks>
+    private static RectD FullBoundsOf(GanttEvent @event, TimeScale timeScale, RectD visible)
+    {
+        // The unclipped geometry is the time scale's own linear mapping applied
+        // without its range test, so a date outside the plot range extrapolates to
+        // the X it would occupy rather than collapsing onto the plot edge. Collapsing
+        // is what made a clipped bar compare equal to its own full bounds.
+        //
+        // A point event (milestone, delineator) has no span, so its full width is zero
+        // and the plot can never have shortened it: it is never reported as clipped.
+        if (@event.Start is not { } start)
+        {
+            return visible;
+        }
+
+        var left = timeScale.PlotLeftPt
+            + ((start.DayNumber - timeScale.PlotStart.DayNumber) * timeScale.DayWidth);
+        var width = @event.Finish is { } finish
+            ? (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth
+            : 0;
+
+        return new RectD(left, visible.Y, Math.Max(0, width), visible.Height);
+    }
 
     private static string StyleKey(Dictionary<GanttRowId, SceneStyle> styles, GanttEvent @event) =>
         styles.TryGetValue(@event.Id, out SceneStyle? style) ? style.StyleKey : "None";
@@ -835,12 +1026,22 @@ public static class SceneBuilder
         // The resolved height comes from the catalogue definition rather than the
         // style key alone: a capability-only definition has no formatting, and
         // using it would contribute a zero-height lane that silently hides content.
-        var heightPt = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition) && definition is { HasFormatting: true }
-            ? definition.ActivityHeightPt
-            : 0;
+        var hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
+            && definition is { HasFormatting: true };
+        var heightPt = hasDefinition ? definition!.ActivityHeightPt : 0;
 
+        // The hatch pattern and the standard outline width are resolved style
+        // tokens, not renderer choices: the guide requires a renderer's output to
+        // match the scene, so a hatch the scene drops can never be drawn. Both come
+        // from the same resolved definition as the height, and stay at their
+        // defaults for a capability-only definition that supplied no formatting.
         resolved = new ResolvedEventStyle(
-            new SceneStyle(style.StyleKey, style.FillColour, style.StrokeColour),
+            new SceneStyle(
+                style.StyleKey,
+                style.FillColour,
+                style.StrokeColour,
+                hasDefinition ? definition!.StandardOutlinePt : null,
+                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None),
             heightPt);
         return true;
     }

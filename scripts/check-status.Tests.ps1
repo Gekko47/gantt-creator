@@ -424,8 +424,12 @@ Earlier revisions named ``src/GanttCreator.slnx``, which does not exist.
                 $r.Exit | Should -Be 0
             }
 
-            It 'ignores a bare filename with no directory separator' {
-                # The token shape requires a separator, so a leaf name is not a path.
+            It 'exits 0 when a work-item evidence command names an existing bare filename' {
+                # A bare filename is resolved against the repository root, so
+                # `dotnet format README.md` is checked rather than skipped. The
+                # harness repository has a committed README.md, so this token
+                # resolves and the command is legal -- the counterpart tests pin
+                # the missing-filename and root-resolution behaviour.
                 Invoke-WorkItemCommand 'dotnet format README.md'
 
                 $r = Invoke-CheckStatusHarness "# Status`n"

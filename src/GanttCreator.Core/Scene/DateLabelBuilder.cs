@@ -159,9 +159,14 @@ public static class DateLabelBuilder
             return Refused(DateLabelRefusal.InvalidBounds);
         }
 
-        // Geometry-derived, not caller-asserted: a narrower visible span than
-        // full span means the plot clipped the entity.
-        var clipped = request.VisibleBounds != request.FullBounds;
+        // Geometry-derived, not caller-asserted: the plot shortened the entity's
+        // horizontal extent. Compared on width alone, with the epsilon, because
+        // that is precisely what clipping changes -- a caller that supplies
+        // rectangles differing only in X or Y has not clipped anything, and
+        // reading that as clipped would divert the label onto the never-suppress
+        // fallback for a bar the plot never touched.
+        var clipped = request.VisibleBounds.Width
+            < request.FullBounds.Width - GeometryMath.Epsilon;
         List<SceneText> emitted = [];
         List<string> suppressed = [];
 

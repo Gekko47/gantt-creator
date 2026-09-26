@@ -178,5 +178,15 @@ public sealed class SceneBenchmarkTests
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,
+            // Label planning is part of the build the 250 ms budget is stated
+            // against, so the benchmark must actually reach it: a null LabelStyle
+            // makes BuildLabels return before planning anything, and the measured
+            // figure would then cover a scene with no labels at all -- a thousand
+            // descriptions and two thousand date labels unplanned. Zero/zero metrics
+            // would be a second way to plan nothing, so the gap and height are the
+            // same non-zero values the golden fixture uses.
+            LabelGapPt = 2,
+            LabelHeightPt = 8,
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
 }

@@ -20,10 +20,13 @@
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define.
       4. Work-item evidence commands -- inside fenced code blocks in
-         docs/work-items/*.md, every repo-relative path a *command* line
-         names must exist on disk. This exists because 73 work items
-         carried an evidence command naming src/GanttCreator.slnx, which
-         does not exist: the command could not run at all, so the
+         docs/work-items/*.md, every path a *command* line names must exist
+         on disk. Both a separated path (`src/Foo/Bar.cs`) and a bare
+         filename (`GanttCreator.slnx`) are checked, each resolved against the
+         repository root. Roadmap/work-item IDs, quoted search patterns, and
+         `$var.Member` accesses are excluded. This exists because 73 work
+         items carried an evidence command naming src/GanttCreator.slnx,
+         which does not exist: the command could not run at all, so the
          acceptance evidence it claimed was never produced. Comment lines
          (leading '#') are skipped, which is what lets a work item record
          a path it is deliberately correcting. Git tracking is NOT
@@ -232,8 +235,11 @@ foreach ($id in $idTokens)
 #   * only inside fenced code blocks -- prose may name anything;
 #   * only on non-comment lines -- a '#' line is a note, not a command, and
 #     is what lets an item record a path it is deliberately correcting;
-#   * only tokens carrying a separator, so 'README.md' and 'R3.12' are not
-#     treated as paths;
+#   * every filename-shaped token is resolved against the repository root, so
+#     both `src/Foo/Bar.cs` and a bare `GanttCreator.slnx` are checked --
+#     skipping bare names is how the most common evidence-command shape went
+#     unverified. Roadmap/work-item IDs, quoted search patterns, and
+#     `$var.Member` accesses are the measured exclusions;
 #   * existence on disk only, NOT git tracking. Check 2 requires tracking
 #     because STATUS claims describe the repository as it stands; a work
 #     item may legitimately cite a file a later item will create, and

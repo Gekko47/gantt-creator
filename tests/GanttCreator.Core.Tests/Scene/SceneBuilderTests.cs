@@ -498,6 +498,316 @@ public sealed class SceneBuilderTests
         Assert.Equal(baseline, Serialize(Request(second, third, first)));
     }
 
+    [Fact]
+    public void A_panel_cell_reproduces_the_worksheet_Id_and_Type_text()
+    {
+        // The panel is the visible worksheet restated on the chart, so an Id or Type
+        // cell that shows something other than the worksheet value misreports the
+        // data beside the shapes built from it. Type in particular must be the
+        // catalogue DisplayName ('As-Planned Activity'), not the durable enum member
+        // name ('AsPlannedActivity'), which the workbook never shows.
+        SceneBuildRequest request = Request(Event(1)) with
+        {
+            Grid = PanelCellGrid.TryCreate(
+                [new PanelColumn("Id", 120), new PanelColumn("Type", 120)],
+                10,
+                ["Id", "Type"]).Grid,
+            Panel = new PanelTheme(
+                new SceneStyle("BodyFill"),
+                new SceneStyle("BodyText"),
+                new SceneStyle("HeaderFill"),
+                new SceneStyle("HeaderText"),
+                new SceneStyle("Border")),
+        };
+        GanttEvent @event = request.Events[0];
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText idCell = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.EndsWith(":panel-text:Id", StringComparison.Ordinal));
+        SceneText typeCell = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.EndsWith(":panel-text:Type", StringComparison.Ordinal));
+
+        Assert.Equal(@event.Id.Value, idCell.Text);
+        Assert.Equal(EntityTypeCatalog.GetDefinition(@event.Type)!.DisplayName, typeCell.Text);
+        // Non-vacuous: the enum member name is the exact failure this guards, and for
+        // this type the two strings differ.
+        Assert.NotEqual(@event.Type.ToString(), typeCell.Text);
+    }
+
+    [Fact]
+    public void A_resolved_bar_style_carries_the_definition_hatch_and_outline_width()
+    {
+        // The renderer-equivalence rule makes the scene the single source of the
+        // appearance, so a hatch or outline the resolved style carries but the scene
+        // drops can never be drawn. The previous construction left both at their
+        // SceneStyle defaults, silently discarding two resolved tokens.
+        GanttStyleRegistry hatched = new(
+        [
+            new GanttStyleDefinition(
+                "Hatched",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside, GanttLabelPosition.Auto },
+                EntityColourCapability.Fill | EntityColourCapability.Stroke,
+                GanttLabelPosition.Inside,
+                "#92D050",
+                "#404040",
+                "#000000",
+                GanttHatchPattern.Cross,
+                0,
+                0,
+                1.25,
+                8,
+                8),
+        ]);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, styleKey: "Hatched")) with { Registry = hatched });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect bar = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal));
+
+        Assert.Equal(GanttHatchPattern.Cross, bar.Style.HatchPattern);
+        Assert.Equal(1.25, bar.Style.OutlineWidthPt);
+    }
+
+    [Fact]
+    public void A_milestone_emits_its_description_label()
+    {
+        // Milestone bounds must reach the label pass. Without them the planner finds
+        // no entry for the row and skips the description, which left section 22's
+        // "milestone description label" unreachable.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(
+                1,
+                GanttEntityType.AsPlannedMilestone,
+                start: new DateOnly(2024, 1, 15),
+                styleKey: "AsPlannedMilestone"))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText description = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        Assert.Equal("Row 1", description.Text);
+    }
+
+    [Fact]
+    public void A_label_in_another_lane_does_not_constrain_this_rows_free_space()
+    {
+        // The free-space measure is one-dimensional, so before the vertical filter a
+        // label anywhere in the scene shrank every other row's measured gap. Both rows
+        // here take an explicit Right position, which is the section 22 path that
+        // measures FreeRight -- Auto would pick Inside and never reach that code,
+        // leaving the test vacuous. The dates are chosen so row 1's label begins
+        // about 10pt to the right of row 2's bar, which is far less than the 40pt
+        // "Row 2" text needs: with row 1's label counted as an obstruction the free
+        // gap is ~10pt and the label is truncated, and with it correctly ignored the
+        // gap runs to the plot edge.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                RightLabelled(1, new DateOnly(2024, 1, 7), new DateOnly(2024, 1, 7)),
+                RightLabelled(2, new DateOnly(2024, 1, 5), new DateOnly(2024, 1, 6)))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect[] bars =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal)),
+        ];
+        // The rows really are in separate lanes, so their vertical bands cannot
+        // overlap -- proven here rather than assumed, so the assertion below cannot be
+        // vacuous if the lane layout ever changes.
+        Assert.Equal(2, bars.Length);
+        Assert.True(bars[0].Bounds.Bottom <= bars[1].Bounds.Top);
+
+        SceneText[] labels =
+        [
+            .. outcome.Result.Scene.Primitives
+                .OfType<SceneText>()
+                .Where(text => text.OwnerId.Kind == SceneOwnerKind.Row
+                    && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal)),
+        ];
+        Assert.Contains(labels, text => text.Text == "Row 1");
+        SceneText second = Assert.Single(labels, text => text.Text == "Row 2");
+
+        // With the vertical filter the two labels cannot collide, so row 2's
+        // description is emitted whole; without it the measured gap is cut short and
+        // the label is truncated with an ellipsis.
+        Assert.DoesNotContain('…', second.Text);
+
+        // Non-vacuity on the obstruction itself: row 1's label really does begin
+        // inside the gap row 2 measures, so the filter is doing work here rather than
+        // discarding an occupant that could never have limited anything.
+        SceneText first = Assert.Single(labels, text => text.Text == "Row 1");
+        Assert.True(first.TextBounds.Left > bars[1].Bounds.Right);
+    }
+
+    /// <summary>Builds an event whose description label is forced to the §22 Right position.</summary>
+    /// <param name="row">The one-based row number.</param>
+    /// <param name="start">The inclusive start date.</param>
+    /// <param name="finish">The inclusive finish date.</param>
+    /// <returns>The event with an explicit Right label position.</returns>
+    private static GanttEvent RightLabelled(int row, DateOnly start, DateOnly finish) =>
+        Event(row, start: start, finish: finish) with
+        {
+            Description = $"Row {row}",
+            LabelPosition = GanttLabelPosition.Right,
+        };
+
+    [Fact]
+    public void A_critical_milestone_is_planned_before_a_planned_activity()
+    {
+        // Section 22 ranks a critical milestone's description above a planned
+        // activity's, so the higher-priority label must be offered its box first. The
+        // loop is ordered by that rank, which a placement-order loop would invert.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, start: new DateOnly(2024, 1, 10), finish: new DateOnly(2024, 1, 20)),
+                Event(2, GanttEntityType.CriticalMilestone, start: new DateOnly(2024, 1, 10)))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        var activityId = outcome.Result!.Scene.Primitives
+            .OfType<SceneRect>()
+            .First(rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal))
+            .PrimitiveId.Split(':')[0];
+        var milestoneId = outcome.Result.Scene.Primitives
+            .OfType<ScenePolygon>()
+            .Single(marker => marker.PrimitiveId.EndsWith(":marker", StringComparison.Ordinal))
+            .PrimitiveId.Split(':')[0];
+
+        // The milestone is planned first, so it is never the row whose label was
+        // displaced by the higher-ranked one. Both rows are accounted for, so a loop
+        // that planned neither -- or mislabelled the owner -- would fail here.
+        SceneText[] labels =
+        [
+            .. outcome.Result.Scene.Primitives
+                .OfType<SceneText>()
+                .Where(text => text.OwnerId.Kind == SceneOwnerKind.Row
+                    && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(labels);
+        Assert.Contains(labels, text => text.PrimitiveId.StartsWith(milestoneId, StringComparison.Ordinal));
+        Assert.All(
+            labels,
+            text => Assert.True(
+                text.PrimitiveId.StartsWith(milestoneId, StringComparison.Ordinal)
+                    || text.PrimitiveId.StartsWith(activityId, StringComparison.Ordinal),
+                "Unexpected label owner: " + text.PrimitiveId));
+    }
+
+    [Fact]
+    public void An_unclipped_bar_does_not_take_the_clipped_date_fallback()
+    {
+        // Section 23's never-suppress fallback fires only for a bar the plot actually
+        // cut. FullBounds used to be the whole plot width, so every bar narrower than
+        // the plot read as clipped and every date label took the fallback box. A bar
+        // wholly inside the plot must now be planned normally.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 18)))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect bar = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal));
+
+        // Positive control on the input geometry: this bar is wholly inside the plot,
+        // so nothing about it could make it genuinely clipped.
+        Assert.True(bar.Bounds.Left > _plotBounds.Left);
+        Assert.True(bar.Bounds.Right < _plotBounds.Right);
+
+        // A planned date label is never a plausible-looking wrong date (D-G11), so an
+        // ellipsis would mean the clipped path was taken for a bar the plot never cut.
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>().Where(
+                text => text.PrimitiveId.Contains(":date-", StringComparison.Ordinal)),
+            text => text.Text.Contains('…', StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_unclipped_bar_with_no_room_suppresses_its_date_label()
+    {
+        // The discriminating case for the clipped derivation. Section 23 anchors a
+        // finish date label to the Right of the bar, and the event's own Right
+        // description label claims that same box first. The description is long enough
+        // (160pt against a measured 80pt date) that the finish date label cannot be
+        // placed beside it and the planner declines. For an UNCLIPPED bar the correct
+        // outcome is suppression: the never-suppress rule applies only to a bar the
+        // plot cut.
+        //
+        // With the old plot-width FullBounds every bar read as clipped, so this same
+        // declined label was emitted as an unclamped fallback box instead -- which is
+        // why the golden scene carried date labels for bars the plot never touched.
+        // Asserting suppression therefore fails on the old code.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 18))
+                with
+                {
+                    LabelPosition = GanttLabelPosition.Right,
+                    Description = "A description long enough to fill the whole right-hand gap",
+                })
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect bar = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal));
+
+        // Positive control: the bar is wholly inside the plot, so nothing about the
+        // input could make it genuinely clipped.
+        Assert.True(bar.Bounds.Left > _plotBounds.Left);
+        Assert.True(bar.Bounds.Right < _plotBounds.Right);
+
+        SceneText[] rowTexts =
+        [
+            .. outcome.Result.Scene.Primitives
+                .OfType<SceneText>()
+                .Where(text => text.OwnerId.Kind == SceneOwnerKind.Row),
+        ];
+
+        // The description label was placed and really does occupy the finish slot,
+        // so the date label had a reason to decline rather than being lost for want
+        // of a subject.
+        SceneText description = Assert.Single(
+            rowTexts,
+            text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+        Assert.True(description.TextBounds.Left >= bar.Bounds.Right);
+
+        // Declined and not clipped: suppressed, with no fallback box beside the bar.
+        Assert.DoesNotContain(
+            rowTexts,
+            text => text.PrimitiveId.EndsWith(":date-finish", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_bar_the_plot_clipped_still_shows_its_true_off_plot_date()
+    {
+        // The counterpart that must keep working: a bar running off the plot's left
+        // edge is genuinely clipped, and section 23 forbids suppressing its true
+        // date. The fallback box is what guarantees the date is emitted at all.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, start: new DateOnly(2023, 12, 20), finish: new DateOnly(2024, 1, 10)))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText start = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.EndsWith(":date-start", StringComparison.Ordinal));
+
+        // The true, off-plot start date -- not a clamped one and not a truncation.
+        Assert.Equal("20/12/2023", start.Text);
+    }
+
     private static string Serialize(SceneBuildRequest request)
     {
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
