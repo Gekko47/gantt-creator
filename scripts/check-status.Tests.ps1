@@ -73,13 +73,68 @@ Describe 'check-status.ps1' {
             # All three checks pass: real commit hash, real on-disk file,
             # R0.8 in the roadmap. The "path" token must contain a directory
             # separator for the path rule to engage, and the file must exist
-            # in the harness repository before the gate runs.
+            # in the harness repository before the gate runs. It is also
+            # committed, because the path check requires a tracked file (a
+            # clean CI checkout has nothing else) -- not merely one on disk.
             New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
             'exists' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\exists.md') -Encoding utf8
+            git -C $script:tempRoot add docs/exists.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add docs/exists.md' | Out-Null
             $body = @"
 # Status
 
 References the commit ``$($script:realHash)`` and the file ``docs\exists.md`` and the roadmap id ``R0.8``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 1 when STATUS references a path that exists on disk but is untracked by git' {
+            # Regression (CI divergence, 2026-09-26): docs/STATUS.md claimed
+            # `docs/GanttCreator_StageInspect_Code_Audit.md`, a git-ignored
+            # working document. Test-Path passed locally, so pre-commit and
+            # verify-quick were green, but a clean CI checkout never had the
+            # file and the gate failed there. The path check must require git
+            # to know the path, not merely the filesystem.
+            $untracked = Join-Path $script:tempRoot 'docs\untracked.md'
+            # The harness BeforeEach creates only $tempRoot and $tempRoot\scripts,
+            # so the docs directory must be created here before writing into it.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'present but never added' | Set-Content -LiteralPath $untracked -Encoding utf8
+            # Positive control: the file really is on disk, so the violation
+            # below can only come from the tracking requirement.
+            (Test-Path -LiteralPath $untracked) | Should -BeTrue
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/untracked.md' 2>$null) | Should -BeNullOrEmpty
+
+            $body = @"
+# Status
+
+References the file ``docs\untracked.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            # Literal substring, not a regex: the token carries a backslash and
+            # '\u' is an invalid .NET regex escape, and the gate echoes the token
+            # verbatim rather than a git-normalised path.
+            $r.Output.Contains("STATUS references path 'docs\untracked.md' which is not tracked by git") | Should -BeTrue
+            # It must NOT be reported as merely nonexistent: the file is on disk.
+            $r.Output.Contains("STATUS references path 'docs\untracked.md' which does not exist") | Should -BeFalse
+        }
+
+        It 'exits 0 for a path that exists on disk and is tracked by git' {
+            # Positive control for the tracking requirement: a committed file
+            # must still pass, or the new rule would reject every real path.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/tracked.md').Trim() | Should -Be 'docs/tracked.md'
+
+            $body = @"
+# Status
+
+References the file ``docs\tracked.md``.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0

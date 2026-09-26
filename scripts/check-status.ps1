@@ -11,7 +11,11 @@
          characters must resolve to a commit (git rev-parse --verify).
       2. Repo paths     -- every backticked token that looks like a
          repo-relative file path (contains a separator, ends in an
-         extension-like suffix, no globs or URLs) must exist on disk.
+         extension-like suffix, no globs or URLs) must exist on disk
+         AND be tracked by git. The tracking requirement matters because
+         this gate also runs in CI, where only tracked files exist: a
+         git-ignored path referenced here passes locally and fails the
+         checkout, which no local filesystem test can reveal.
       3. Roadmap IDs    -- every backticked R<major>.<minor> token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define.
@@ -142,6 +146,18 @@ foreach ($t in $tokens)
     if (-not (Test-Path -LiteralPath $candidate))
     {
         $violations.Add("STATUS references path '$t' which does not exist.")
+        continue
+    }
+
+    # Existence on disk is not enough. This gate also runs in CI, which
+    # checks out only tracked files, so a path that exists locally but is
+    # untracked (or git-ignored) passes here and fails there -- the exact
+    # divergence the local pre-commit run cannot see. Require git to know
+    # the path, which is the condition a fresh checkout reproduces.
+    $tracked = @(git -C $repoRoot ls-files --error-unmatch -- $t 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $tracked.Count -eq 0)
+    {
+        $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }
 }
 
