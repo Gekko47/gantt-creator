@@ -415,6 +415,13 @@ public enum DelineatorGroupRefusal
 
     /// <summary>The group members are not all delineators on the same date.</summary>
     NotOneDelineatorDate = 4,
+
+    /// <summary>
+    /// A member's own <see cref="DelineatorBuilder.TryBuild"/> refused, so the
+    /// group cannot be laid out honestly. Reported rather than skipped, because a
+    /// skipped member would remove a contributing row from the scene silently.
+    /// </summary>
+    MemberRefused = 5,
 }
 
 /// <summary>The typed result of laying out one same-date group.</summary>
@@ -500,41 +507,60 @@ public static class DelineatorLayout
 
         foreach (DelineatorRequest item in ordered)
         {
-            // Every row in the group shares the one line, so only the first
-            // builds it; the rest contribute only their label. The shared owner
-            // makes the line's identity change when the membership changes,
-            // which is what lets refresh remove and recreate rather than mutate.
-            if (line is null)
+            // Every row in the group shares the one line, so only the first builds
+            // it; the rest contribute only their label. The shared owner makes the
+            // line's identity change when the membership changes, which is what
+            // lets refresh remove and recreate rather than mutate.
+            //
+            // The first member needs one TryBuild, not two: the very same outcome
+            // carries both the group line and that member's label. Building it
+            // twice ran the label placement pass twice for identical inputs, and
+            // the first pass's label was discarded, so the member consumed a stack
+            // offset's worth of gap it never occupied.
+            var needsLabel =
+                item.LabelPosition != GanttLabelPosition.None
+                && !string.IsNullOrEmpty(item.Event?.Description);
+
+            DelineatorCreationOutcome outcome = DelineatorBuilder.TryBuild(
+                item,
+                timeScale,
+                placed,
+                needsLabel ? request.StackGapPt * labelIndex : 0);
+
+            // A refused member is a broken input, not an absent label. Silently
+            // skipping it would drop a contributing row from the scene with no
+            // warning, so the group refuses with the honest reason instead.
+            if (outcome is not { Result: { } result, Refusal: null })
             {
-                DelineatorCreationOutcome outcome = DelineatorBuilder.TryBuild(item, timeScale, placed);
-                if (outcome is { Result: { } result, Refusal: null })
-                {
-                    warnings.AddRange(result.Warnings);
-                    if (result.Primitive is { } builtLine)
-                    {
-                        line = Rebind(builtLine, owner);
-                    }
-                }
+                // A refused member is a broken input, not an absent label. Silently
+                // skipping it would drop a contributing row from the scene with no
+                // warning, so the group refuses with the honest reason instead.
+                return new DelineatorGroupCreationOutcome(null, DelineatorGroupRefusal.MemberRefused);
             }
 
-            if (item.LabelPosition == GanttLabelPosition.None || string.IsNullOrEmpty(item.Event?.Description))
+            // Warnings come from every outcome, not just the line-building one:
+            // a member whose label no corner can hold emits a suppression warning
+            // that would otherwise be lost.
+            warnings.AddRange(result.Warnings);
+
+            if (line is null && result.Primitive is { } builtLine)
+            {
+                line = Rebind(builtLine, owner);
+            }
+
+            if (!needsLabel)
             {
                 continue;
             }
 
-            DelineatorCreationOutcome labelOutcome = DelineatorBuilder.TryBuild(
-                item, timeScale, placed, request.StackGapPt * labelIndex);
-
-            if (labelOutcome is { Result: { } labelResult, Refusal: null })
+            if (result.Label is { } text)
             {
-                if (labelResult.Label is { } text)
-                {
-                    primitives.Add(text);
-                    if (labelResult.LabelBounds is { } bounds)
-                    {
-                        placed.Add(bounds);
-                    }
-                }
+                primitives.Add(text);
+            }
+
+            if (result.LabelBounds is { } bounds)
+            {
+                placed.Add(bounds);
             }
 
             labelIndex++;

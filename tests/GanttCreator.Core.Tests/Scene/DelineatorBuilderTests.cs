@@ -421,6 +421,44 @@ public sealed class DelineatorBuilderTests
     }
 
     [Fact]
+    public void A_group_refuses_when_a_member_would_be_silently_dropped()
+    {
+        // A member whose own TryBuild refuses must refuse the group, not vanish.
+        // The old code ran the member's TryBuild and discarded a refusal without
+        // a warning, so the contributing row disappeared from the scene with no
+        // diagnostic at all.
+        GanttEvent notADelineator = Event() with { Type = GanttEntityType.AsPlannedActivity };
+
+        Assert.Equal(
+            DelineatorGroupRefusal.MemberRefused,
+            DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest([Req(Event()), Req(notADelineator)], 2.0),
+                Scale()).Refusal);
+    }
+
+    [Fact]
+    public void A_group_collects_the_label_warning_of_every_member()
+    {
+        // Warnings come from every member's outcome, not only the one that built
+        // the line. A member whose label no corner can hold emits a suppression
+        // warning that the old code dropped with the discarded label outcome.
+        // Chart bounds far smaller than the plot are shared by both members, so
+        // the group passes its consistency check while no corner can hold a box.
+        var narrow = new RectD(0.0, 0.0, 10.0, 10.0);
+        DelineatorGroupResult r = DelineatorLayout.TryBuildGroup(
+            new DelineatorGroupRequest(
+                [
+                    Req(Event(description: "Alpha")) with { ChartBounds = narrow },
+                    Req(Event(description: "Bravo")) with { ChartBounds = narrow },
+                ],
+                2.0),
+            Scale()).Result!;
+
+        Assert.Equal(2, r.Warnings.Count(warning => warning.Code == DelineatorBuilder.LabelSuppressedCode));
+        Assert.Empty(r.Primitives.OfType<SceneText>());
+    }
+
+    [Fact]
     public void A_group_refuses_mismatched_members()
     {
         DelineatorRequest first = Req(Event());

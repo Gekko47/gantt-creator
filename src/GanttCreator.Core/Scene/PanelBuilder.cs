@@ -325,13 +325,18 @@ public static class PanelBuilder
             }
         }
 
-        // The panel's top edge, then each row's bottom edge. The header's bottom
-        // is the first row's top, so it is not drawn again here.
+        // The panel's top edge, then the header/body boundary, then each row's
+        // bottom edge. The boundary is a distinct shared edge: section 3 requires
+        // a border at every cell edge, and the header's bottom is the first row's
+        // top, so it belongs to the header band and the body alike. With no rows
+        // it is also the panel's bottom edge, which keeps an empty panel closed.
+        // Identifiers are shifted up by one so each stays unique.
         AddHorizontalBorder(primitives, request, "panel-border-h:0", panelLeft, right, headerTop);
+        AddHorizontalBorder(primitives, request, "panel-border-h:1", panelLeft, right, bodyTop);
         for (var index = 0; index < request.Rows.Count; index++)
         {
             var y = bodyTop + ((index + 1) * grid.RowHeightPt);
-            AddHorizontalBorder(primitives, request, $"panel-border-h:{index + 1}", panelLeft, right, y);
+            AddHorizontalBorder(primitives, request, $"panel-border-h:{index + 2}", panelLeft, right, y);
         }
     }
 

@@ -141,6 +141,35 @@ References the file ``docs\tracked.md``.
             $r.Output | Should -Match 'OK'
         }
 
+        It 'exits 1 when STATUS references a path that is staged but not yet committed' {
+            # Regression (index-vs-HEAD): the tracking check used `git ls-files`,
+            # which reads the *index*. A path that is staged but not committed is
+            # reported as tracked, so the gate stayed green locally -- yet a clean
+            # CI checkout of that same commit never had the file, which is the
+            # identical local/CI divergence the untracked case above covers. The
+            # check must read HEAD, the state a fresh checkout reproduces.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            $staged = Join-Path $script:tempRoot 'docs\staged-only.md'
+            'staged, never committed' | Set-Content -LiteralPath $staged -Encoding utf8
+            git -C $script:tempRoot add docs/staged-only.md | Out-Null
+            # Positive controls proving the two git views really do disagree here:
+            # the index knows the path, HEAD does not.
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/staged-only.md').Trim()
+                | Should -Be 'docs/staged-only.md'
+            (& git -C $script:tempRoot ls-tree -r --name-only HEAD -- 'docs/staged-only.md')
+                | Should -BeNullOrEmpty
+            (Test-Path -LiteralPath $staged) | Should -BeTrue
+
+            $body = @"
+# Status
+
+References the file ``docs\staged-only.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output.Contains("STATUS references path 'docs\staged-only.md' which is not tracked by git") | Should -BeTrue
+        }
+
         It 'exits 1 when STATUS references a commit hash that does not resolve' {
             $badHash = '0000000000000000000000000000000000000000'
             $body = @"

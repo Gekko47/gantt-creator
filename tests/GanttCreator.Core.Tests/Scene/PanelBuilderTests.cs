@@ -124,8 +124,10 @@ public sealed class PanelBuilderTests
     public void Adjacent_cells_share_one_border_and_none_is_doubled()
     {
         // Shared borders, not per-cell borders: with N columns there are N+1
-        // vertical edges, and the same holds for rows. A per-cell implementation
-        // would emit N*(N+1) lines and a visibly doubled grid.
+        // vertical edges. Horizontally the edges are the panel top, the
+        // header/body boundary, and each row's bottom, so N rows give N+2. A
+        // per-cell implementation would emit N*(N+1) lines and a visibly
+        // doubled grid.
         PanelBuildResult result = Build().Result!;
         SceneLine[] verticals = [.. result.Primitives.OfType<SceneLine>()
             .Where(line => line.PrimitiveId.Contains("panel-border-v:", StringComparison.Ordinal))];
@@ -136,11 +138,29 @@ public sealed class PanelBuilderTests
         var rows = TwoRows().Length;
 
         Assert.Equal(columns + 1, verticals.Length);
-        Assert.Equal(rows + 1, horizontals.Length);
+        Assert.Equal(rows + 2, horizontals.Length);
         Assert.Equal(verticals.Length, verticals.Select(line => line.PrimitiveId).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(horizontals.Length, horizontals.Select(line => line.PrimitiveId).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(
             verticals.Select(line => (line.From.X, line.To.X)).Distinct(),
             verticals.Select(line => (line.From.X, line.To.X)));
+    }
+
+    [Fact]
+    public void The_header_and_body_are_separated_by_their_shared_border()
+    {
+        // Section 3 requires a border at every cell edge, and the header's
+        // bottom edge is the first row's top edge. Without this border the
+        // header and the body grid run together and the panel has no top edge
+        // at bodyTop at all -- the old code drew only the panel top and the row
+        // bottoms, so the boundary was missing entirely.
+        PanelBuildResult result = Build().Result!;
+        SceneLine boundary = Assert.Single(
+            result.Primitives.OfType<SceneLine>(),
+            line => line.PrimitiveId.EndsWith("panel-border-h:1", StringComparison.Ordinal));
+
+        Assert.Equal(result.HeaderRowBounds.Bottom, boundary.From.Y);
+        Assert.Equal(boundary.From.Y, boundary.To.Y);
     }
 
     [Fact]
@@ -166,12 +186,18 @@ public sealed class PanelBuilderTests
     }
 
     [Fact]
-    public void A_panel_with_no_rows_still_emits_its_header_and_one_top_border()
+    public void A_panel_with_no_rows_still_emits_its_header_and_its_top_and_bottom_borders()
     {
+        // With no rows the header/body boundary is also the panel's bottom edge,
+        // so the panel stays closed rather than showing a dangling open bottom.
         PanelBuildResult result = Build(rows: []).Result!;
 
         Assert.Contains(result.Primitives.OfType<SceneText>(), text => text.Text == "Description");
-        _ = Assert.Single(result.Primitives.OfType<SceneLine>(), line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal));
+        SceneLine[] horizontals = [.. result.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal))];
+        Assert.Equal(2, horizontals.Length);
+        Assert.Equal(result.HeaderRowBounds.Top, horizontals[0].From.Y);
+        Assert.Equal(result.PanelBounds.Bottom, horizontals[1].From.Y);
         Assert.Equal(result.HeaderRowBounds, result.PanelBounds);
     }
 

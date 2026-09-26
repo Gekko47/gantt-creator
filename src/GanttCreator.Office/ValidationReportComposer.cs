@@ -191,11 +191,19 @@ internal static class ValidationReportComposer
             index++;
         }
 
-        // A generated marker only ever carries a canonical one-based row number, so
-        // the digits must be a positive integer with no leading zero. Accepting
-        // "0" or "01" would let a user's own line be mistaken for an add-in
-        // section and silently truncated.
-        if (index == digitsStart || text[digitsStart] == '0')
+        // A generated marker only ever carries a canonical one-based row number,
+        // because BuildNoteText formats an int. Accepting "0" or "01" would let a
+        // user's own line be mistaken for an add-in section and silently
+        // truncated. The digits must additionally parse as a positive int: a
+        // value such as "row 99999999999999" can never be emitted (an int cannot
+        // hold it), so it is not an add-in section and must not be stripped.
+        if (index == digitsStart
+            || text[digitsStart] == '0'
+            || !int.TryParse(
+                text.AsSpan(digitsStart, index - digitsStart),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out _))
         {
             return false;
         }

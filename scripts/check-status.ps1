@@ -149,13 +149,34 @@ foreach ($t in $tokens)
         continue
     }
 
-    # Existence on disk is not enough. This gate also runs in CI, which
-    # checks out only tracked files, so a path that exists locally but is
-    # untracked (or git-ignored) passes here and fails there -- the exact
-    # divergence the local pre-commit run cannot see. Require git to know
-    # the path, which is the condition a fresh checkout reproduces.
-    $tracked = @(git -C $repoRoot ls-files --error-unmatch -- $t 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $tracked.Count -eq 0)
+    # Existence on disk is not enough. This gate also runs in CI, which checks
+    # out only tracked files, so a path that exists locally but is untracked
+    # (or git-ignored) passes here and fails there -- the exact divergence the
+    # local pre-commit run cannot see. Require git to know the path, which is
+    # the condition a fresh checkout reproduces.
+    #
+    # HEAD, not the index: `git ls-files` reads the *index*, so a path that is
+    # staged but not yet committed is reported as tracked and the gate stays
+    # green, while a clean CI checkout of that same commit has no such file --
+    # the same local/CI divergence one commit earlier. A staged-only path is
+    # therefore a false pass, and `git ls-tree HEAD` is the condition CI
+    # actually reproduces. The token is normalised to git's forward-slash
+    # format first, because a backticked STATUS path may use a backslash while
+    # git records and matches with '/'.
+    $gitToken = $t.Replace('\', '/')
+    $committed = @(git -C $repoRoot ls-tree -r --name-only HEAD -- $gitToken 2>$null)
+
+    # A token is known to git when it is exactly a tracked file, or when it is a
+    # directory that contains tracked files. The directory case is required
+    # because git tracks files, not directories: `ls-tree -r` reports the entries
+    # beneath a directory token rather than the token itself, and STATUS cites
+    # project directories such as `src/GanttCreator.Office` as readily as files.
+    $isTrackedFile = @($committed).Count -gt 0 -and $committed -contains $gitToken
+    $isTrackedDirectory = @(
+        $committed | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
+    ).Count -gt 0
+
+    if ($LASTEXITCODE -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
     {
         $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }

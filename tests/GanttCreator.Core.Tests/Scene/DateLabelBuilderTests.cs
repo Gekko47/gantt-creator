@@ -139,6 +139,106 @@ public sealed class DateLabelBuilderTests
     }
 
     [Fact]
+    public void The_placed_start_label_blocks_the_finish_label()
+    {
+        // The finish label is planned after the start label, so the start label's
+        // placed box must be an occupant. The default Left/Right anchors point
+        // away from each other and could never collide, which would make the
+        // assertion vacuous, so both roles are given the same explicit position:
+        // without the registration the two land on the identical box.
+        // The start label takes the box; the finish label is then planned against
+        // it, finds that position occupied, and is declined rather than drawn on
+        // top. One primitive and one suppressed role is the correct outcome.
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request() with
+            {
+                StartPosition = GanttLabelPosition.Right,
+                FinishPosition = GanttLabelPosition.Right,
+            })
+            .Result!;
+
+        SceneText start = Assert.Single(result.Primitives);
+        Assert.EndsWith(":date-start", start.PrimitiveId, StringComparison.Ordinal);
+        Assert.Equal([DateLabelBuilder.FinishRole], result.Suppressed);
+    }
+
+    [Fact]
+    public void A_caller_supplied_occupant_blocks_a_date_label()
+    {
+        // The Occupants member carries the bounds every other LabelPlanner caller
+        // passes -- here the row's own description label. An occupant sitting
+        // exactly where the start label would go must stop it being placed there.
+        DateLabelRequest bare = new(
+            Row(_start, _finish),
+            Visible(),
+            Full(),
+            _labelMetrics,
+            new FakeTextMetrics(_ => 10.0, 10.0),
+            GanttDateDisplayFormat.DdMMyyyy,
+            _style,
+            ShowFinish: false);
+
+        // Where the start label lands with nothing to avoid, established from the
+        // same request so the occupant is the real planned box.
+        SceneText unblocked = Assert.Single(DateLabelBuilder.TryBuild(bare).Result!.Primitives);
+
+        // With that box occupied, the only §22 position for a start date is
+        // blocked, so the planner declines and the role is reported suppressed
+        // rather than a second label being drawn on top of the occupant.
+        DateLabelResult blocked = DateLabelBuilder.TryBuild(bare with { Occupants = [unblocked.TextBounds] }).Result!;
+
+        Assert.Empty(blocked.Primitives);
+        Assert.Equal([DateLabelBuilder.StartRole], blocked.Suppressed);
+    }
+
+    [Fact]
+    public void A_truncated_date_is_never_emitted_as_a_plausible_wrong_date()
+    {
+        // D-G11 and §23 require the *true* date. The planner's widest-gap
+        // fallback truncates with an ellipsis, which would render "05/01/20…"
+        // -- a plausible-looking wrong date that reads as a real date. A
+        // truncated result must therefore take the declined path, never the
+        // emitted one.
+        //
+        // The advance table makes every date character wide (the 10-character
+        // date needs 400pt, far past the 120pt external maximum) while the
+        // ellipsis stays 2pt, so the gap holds the ellipsis and the planner
+        // truncates rather than declining outright. That is the only path that
+        // produces a truncated result, so it is the path under test.
+        var metrics = new LabelMetrics(
+            new RectD(0.0, 0.0, 400.0, 200.0),
+            new RectD(-10.0, -10.0, 420.0, 220.0),
+            4.0,
+            10.0,
+            120.0);
+        var wide = new FakeTextMetrics(c => c == '…' ? 2.0 : 40.0, 10.0);
+        var request = Request() with { TextMetrics = wide, Metrics = metrics };
+
+        // The planner really does offer a truncated label for these inputs, or
+        // this test would be asserting nothing.
+        LabelPlanCreationOutcome plan = LabelPlanner.TryPlan(
+            new LabelRequest(
+                request.Event,
+                "05/01/2024",
+                GanttLabelPosition.Left,
+                request.VisibleBounds,
+                request.TextStyle,
+                wide,
+                Role: DateLabelBuilder.StartRole),
+            metrics);
+        Assert.True(plan.Result!.WasTruncated, "the fixture must reach the truncation path");
+
+        DateLabelResult result = DateLabelBuilder.TryBuild(request).Result!;
+
+        Assert.DoesNotContain(
+            result.Primitives,
+            label => label.Text.Contains('…', StringComparison.Ordinal));
+        Assert.Equal(
+            [DateLabelBuilder.StartRole, DateLabelBuilder.FinishRole],
+            result.Suppressed);
+    }
+
+    [Fact]
     public void A_null_request_is_refused() =>
         Assert.Equal(DateLabelRefusal.NullRequest, DateLabelBuilder.TryBuild(null).Refusal);
 

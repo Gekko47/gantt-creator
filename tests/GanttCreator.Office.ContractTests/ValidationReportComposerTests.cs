@@ -382,6 +382,10 @@ public class ValidationReportComposerTests
                                                     // marker is on a later line
     [InlineData(" row 0, column 'Id':")]     // zero is not a one-based body row
     [InlineData(" row 01, column 'Id':")]    // a leading zero is not canonical
+    [InlineData(" row 99999999999999, column 'Id':")]  // BuildNoteText formats an int,
+                                                        // so no such row can be
+                                                        // emitted; it is a user line
+    [InlineData(" row 2147483648, column 'Id':")]      // one past int.MaxValue
     public void IsOwnedByAddIn_rejects_an_incomplete_marker(string headerSuffix)
     {
         // Each variant is a near-miss that a looser check would accept and then

@@ -21,6 +21,14 @@ namespace GanttCreator.Core.Scene;
 /// <param name="ShowFinish">Whether the finish-date label is requested.</param>
 /// <param name="StartPosition">The explicit start-label position, else <see cref="GanttLabelPosition.Auto"/>.</param>
 /// <param name="FinishPosition">The explicit finish-label position, else <see cref="GanttLabelPosition.Auto"/>.</param>
+/// <param name="Occupants">
+/// Already-placed label boxes the date labels must not intersect — the row's own
+/// description label and any higher-priority label, exactly the bounds the caller
+/// passes to every other <see cref="LabelPlanner"/> caller. Without them the
+/// planner is asked to place each date label in an empty world, so §23's
+/// "collision with the description label" rule could never fire and overlapping
+/// labels would be emitted rather than resolved.
+/// </param>
 public sealed record DateLabelRequest(
     GanttEvent Event,
     RectD VisibleBounds,
@@ -32,7 +40,9 @@ public sealed record DateLabelRequest(
     bool ShowStart = true,
     bool ShowFinish = true,
     GanttLabelPosition? StartPosition = null,
-    GanttLabelPosition? FinishPosition = null);
+    GanttLabelPosition? FinishPosition = null,
+    IReadOnlyList<RectD>? Occupants = null
+);
 
 /// <summary>The reason a date-label build was refused.</summary>
 public enum DateLabelRefusal
@@ -155,15 +165,21 @@ public static class DateLabelBuilder
         List<SceneText> emitted = [];
         List<string> suppressed = [];
 
+        // The caller's already-placed labels block both date labels, and the
+        // start label this builder places then blocks the finish label, so the
+        // two dates of one row are planned against each other rather than each
+        // being planned in isolation and overlapping.
+        List<RectD> occupied = [.. request.Occupants ?? []];
+
         DateLabelRefusal? refusal = null;
         if (request.ShowStart && request.Event.Start is { } start)
         {
-            refusal = Plan(request, start, StartRole, request.StartPosition, clipped, emitted, suppressed);
+            refusal = Plan(request, start, StartRole, request.StartPosition, clipped, occupied, emitted, suppressed);
         }
 
         if (refusal is null && request.ShowFinish && request.Event.Finish is { } finish)
         {
-            refusal = Plan(request, finish, FinishRole, request.FinishPosition, clipped, emitted, suppressed);
+            refusal = Plan(request, finish, FinishRole, request.FinishPosition, clipped, occupied, emitted, suppressed);
         }
 
         // A planner refusal is a broken dependency, not a placement decision, so
@@ -184,6 +200,7 @@ public static class DateLabelBuilder
         string role,
         GanttLabelPosition? explicitPosition,
         bool clipped,
+        List<RectD> occupied,
         List<SceneText> emitted,
         List<string> suppressed)
     {
@@ -206,11 +223,23 @@ public static class DateLabelBuilder
                 request.TextStyle,
                 request.TextMetrics,
                 Role: role),
-            request.Metrics);
+            request.Metrics,
+            occupied);
 
-        if (planned.Succeeded && planned.Result!.Primitive is { } primitive)
+        // A truncated date is not a date. D-G11 and §23 require the *true* date,
+        // so an ellipsised "05/01/20…" is treated exactly as a declined
+        // placement: it falls through to the clipped/unclipped and suppressed
+        // paths below rather than being emitted as a plausible-looking wrong date.
+        if (planned.Succeeded && planned.Result!.Primitive is { } primitive && !planned.Result.WasTruncated)
         {
             emitted.Add(primitive);
+            if (planned.Result.Bounds is { } placed)
+            {
+                // Register the placed box so the finish label is planned against
+                // the start label rather than overlapping it.
+                occupied.Add(placed);
+            }
+
             return null;
         }
 

@@ -103,7 +103,7 @@ files only; the local audit verifies every file exists.
 | R3.8 | `R3.8-critical-interval-overlay.md` | Landed (`31b72ac`, `eb00c71`) |
 | R3.9 | `R3.9-multi-event-stack-lanes.md` | Landed (`6b733a4`) |
 | R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
-| R3.11 | `R3.11-table-header-primitives.md` | Partially implemented (step 1 of 3: `PanelCellGrid`) |
+| R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
 | R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Authored (Tier A) |
