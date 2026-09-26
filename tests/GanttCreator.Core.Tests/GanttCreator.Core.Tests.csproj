@@ -27,5 +27,16 @@
     <None Include="..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!--
+      R3.12: the golden scene snapshot is committed under tests/golden/scene/. It is
+      a *scene* baseline derived from the canonical fixture, not a golden image, so
+      it needs no human image review - but the change policy is the same: an update
+      is a dedicated commit with a stated reason, and the comparison is
+      byte-for-byte. Copied to the output so the test reads the committed file
+      rather than a path relative to the source tree (checklist G).
+    -->
+    <None Include="..\golden\**\*.json" Link="golden\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

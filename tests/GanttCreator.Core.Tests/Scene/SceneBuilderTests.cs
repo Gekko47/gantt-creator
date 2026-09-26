@@ -359,27 +359,63 @@ public sealed class SceneBuilderTests
         return SceneSnapshot.Serialize(outcome.Result!.Scene);
     }
 
-    /// <summary>
-    /// Builds a representative multi-entity scene for the validator's end-to-end
-    /// test, so SceneValidator and SceneBuilder are proven against the same
-    /// orchestrator output the renderers will consume rather than a hand-built one.
-    /// </summary>
+    /// <summary>Builds the representative scene from the committed neutral fixture.</summary>
+    /// <param name="rows">
+    /// The rows to build from, or <see langword="null"/> to load the committed
+    /// fixture. Passing rows explicitly is how the golden test proves that a
+    /// shuffled input order produces an identical scene.
+    /// </param>
     /// <returns>The built scene.</returns>
-    internal static GanttScene BuildScene()
+    internal static GanttScene BuildScene(IReadOnlyList<GanttRowDto>? rows = null)
     {
-        GanttEvent parent = Event(1, start: new DateOnly(2024, 1, 3), finish: new DateOnly(2024, 1, 12));
-        GanttEvent actual = Event(2, GanttEntityType.AsBuiltActivity, new DateOnly(2024, 1, 6), new DateOnly(2024, 1, 15), "AsBuiltActivity");
-        GanttEvent critical = Event(
-            3,
-            GanttEntityType.CriticalInterval,
-            new DateOnly(2024, 1, 7),
-            new DateOnly(2024, 1, 10),
-            "CriticalInterval",
-            parentId: parent.Id);
-        GanttEvent milestone = Event(4, GanttEntityType.AsPlannedMilestone, new DateOnly(2024, 1, 20), styleKey: "AsPlannedMilestone");
+        GanttValidationOutcome outcome = rows is null
+            ? ReferenceSceneFixture.LoadValidated()
+            : GanttRowValidator.Validate([.. rows]);
+        SceneBuildRequest request = new()
+        {
+            Events = outcome.Events.ToList(),
+            Registry = ReferenceSceneBuilder.StyleRegistry,
+            Grid = PanelCellGrid.TryCreate(
+                [
+                    new PanelColumn("Id", 80),
+                    new PanelColumn("Type", 120),
+                    new PanelColumn("Description", 180),
+                    new PanelColumn("Start", 70),
+                    new PanelColumn("Finish", 70),
+                ],
+                10,
+                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+            // The data panel and the plot are unioned by FrameBandsBuilder to find
+            // the content origin, and the title band is placed above that origin.
+            // The panel therefore cannot start at y=0 or the title would sit above
+            // the chart; it starts below the band stack instead.
+            PanelBounds = new RectD(0, 20, 520, 200),
+            PlotBounds = new RectD(520, 110, 600, 290),
+            ChartBounds = new RectD(0, 0, 1400, 420),
+            Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
+            LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
+            FrameTheme = ReferenceSceneBuilder.FrameTheme,
+            PlotStart = ReferenceSceneFixture.PlotStart,
+            PlotFinish = ReferenceSceneFixture.PlotFinish,
+            Scale = GanttTimeScale.Month,
+            PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
+            DateFormat = GanttDateDisplayFormat.DdMMyyyy,
+            Title = ReferenceSceneFixture.Title,
+            GridLinePt = 0.5,
+            MajorBoundaryPt = 1,
+            MilestoneSizePt = 8,
+            CriticalLinePt = 1,
+            // The three header bands total 50pt and stack above the plot, which
+            // starts at 110 so they all fit inside the chart. FrameBandsBuilder does
+            // not itself check this fit (an R3.5 finding recorded in the work item),
+            // so the caller must supply a plot top that accommodates them.
+            TitleBandHeightPt = 14,
+            YearBandHeightPt = 16,
+            PeriodBandHeightPt = 20,
+        };
 
-        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, actual, critical, milestone));
-        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        return outcome.Result!.Scene;
+        SceneBuildOutcome build = SceneBuilder.TryBuild(request);
+        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
+        return build.Result!.Scene;
     }
 }

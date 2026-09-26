@@ -238,13 +238,28 @@ public static class SceneBuilder
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
         foreach (GanttEvent @event in renderable)
         {
-            if (!TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) || resolved is null)
+            // A Splitter, Spacer, or Delineator has no named-style default, so
+            // requiring a resolvable style for one would refuse a valid workbook.
+            // A Type that does have a default is still refused when it cannot
+            // resolve, which is the R2.7c Custom Activity rule.
+            ResolvedEventStyle? resolved = null;
+            var requiresStyle = @event.Type is not (GanttEntityType.Splitter
+                or GanttEntityType.Spacer
+                or GanttEntityType.Delineator);
+            if (requiresStyle)
             {
-                return Refused(SceneBuilderRefusal.UnresolvableStyle);
+                if (!TryResolveStyle(request.Registry, @event, out resolved) || resolved is null)
+                {
+                    return Refused(SceneBuilderRefusal.UnresolvableStyle);
+                }
             }
 
-            styles[@event.Id] = resolved;
-            laneInputs.Add(new LaneEventInput(@event, resolved.HeightPt));
+            // A style-less Type still occupies a lane, so it carries an explicit
+            // zero-height marker style rather than being dropped from the map that
+            // the milestone and overlay passes read.
+            ResolvedEventStyle style = resolved ?? new ResolvedEventStyle(new SceneStyle("None"), 0);
+            styles[@event.Id] = style;
+            laneInputs.Add(new LaneEventInput(@event, style.HeightPt));
         }
 
         if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
