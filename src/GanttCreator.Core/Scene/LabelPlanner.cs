@@ -24,6 +24,12 @@ namespace GanttCreator.Core.Scene;
 /// which conflated a label <em>position</em> with text alignment inside the
 /// resolved box; ADR-0018 gives it its own member.
 /// </param>
+/// <param name="Role">
+/// The role-derived primitive-ID suffix, so the caller can own identity without
+/// bypassing the planner. The description label uses the default <c>label</c>;
+/// section 23's date labels pass <c>date-start</c> and <c>date-finish</c> so a
+/// row's two labels cannot collide (R3.11 D4).
+/// </param>
 public sealed record LabelRequest(
     GanttEvent Event,
     string? Text,
@@ -34,7 +40,8 @@ public sealed record LabelRequest(
     SceneStyle? OutsideTextStyle = null,
     int? LaneOrder = null,
     int? StackIndex = null,
-    GanttLabelPosition StyleDefaultPosition = GanttLabelPosition.Inside
+    GanttLabelPosition StyleDefaultPosition = GanttLabelPosition.Inside,
+    string Role = "label"
 );
 
 /// <summary>The resolved bounds and metrics a label planner needs.</summary>
@@ -88,6 +95,9 @@ public enum LabelRefusal
 
     /// <summary>The shape bounds were not finite.</summary>
     InvalidShapeBounds = 6,
+
+    /// <summary>The primitive role was blank or whitespace.</summary>
+    BlankRole = 7,
 }
 
 /// <summary>The typed result of attempting to plan one label.</summary>
@@ -194,6 +204,11 @@ public static class LabelPlanner
             return Refused(LabelRefusal.InvalidPosition);
         }
 
+        if (string.IsNullOrWhiteSpace(request.Role))
+        {
+            return Refused(LabelRefusal.BlankRole);
+        }
+
         if (!IsFinite(request.ShapeBounds))
         {
             return Refused(LabelRefusal.InvalidShapeBounds);
@@ -259,7 +274,7 @@ public static class LabelPlanner
             return new LabelPlanCreationOutcome(
                 new LabelPlanResult(
                     new SceneText(
-                        $"{@event.Id.Value}:label",
+                        $"{@event.Id.Value}:{request.Role}",
                         SceneOwnerId.ForRow(@event.Id),
                         ZLayer.Label,
                         finalText,
