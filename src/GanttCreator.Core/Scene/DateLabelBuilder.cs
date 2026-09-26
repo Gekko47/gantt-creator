@@ -252,7 +252,15 @@ public static class DateLabelBuilder
 
         if (clipped)
         {
-            emitted.Add(Unclipped(request, text, role, position, owner, @event));
+            SceneText fallback = Unclipped(request, text, role, position, owner, @event);
+            emitted.Add(fallback);
+
+            // The fallback box is an emitted label like any other, so it is
+            // registered as an occupant. Without this the finish label would be
+            // planned as if the start date had never been drawn, and the two
+            // could land on the same box -- the exact overlap the occupant list
+            // exists to prevent.
+            occupied.Add(fallback.TextBounds);
             return null;
         }
 

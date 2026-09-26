@@ -179,6 +179,12 @@ foreach ($t in $tokens)
     $gitToken = $t.Replace('\', '/')
     $committed = @(git -C $repoRoot ls-tree -r --name-only HEAD -- $gitToken 2>$null)
 
+    # Captured immediately after the call, before any other command runs. Reading
+    # $LASTEXITCODE further down would be reading whatever ran last, not git's
+    # status, and the commands between (Join-Path, Where-Object, .StartsWith) are
+    # exactly the kind that can move it.
+    $lsTreeExitCode = $LASTEXITCODE
+
     # A token is known to git when it is exactly a tracked file, or when it is a
     # directory that contains tracked files. The directory case is required
     # because git tracks files, not directories: `ls-tree -r` reports the entries
@@ -189,7 +195,7 @@ foreach ($t in $tokens)
         $committed | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
     ).Count -gt 0
 
-    if ($LASTEXITCODE -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
+    if ($lsTreeExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
     {
         $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }

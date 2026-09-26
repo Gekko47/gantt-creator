@@ -91,9 +91,12 @@ public sealed class DateLabelBuilderTests
     public void A_clipped_event_still_shows_its_true_off_plot_date()
     {
         // D-G11: a plot-clipped event always displays the true date and the
-        // off-plot date is never suppressed. Visible is narrower than Full, and
-        // the label text is the real date, not a clamped one.
-        DateLabelResult result = Build().Result!;
+        // off-plot date is never suppressed. Visible must be *narrower* than Full
+        // -- the builder derives "clipped" by comparing the two, so passing the
+        // same rectangle twice would leave clipped false and this test would
+        // never reach the clipped path it names. The label text is the real date,
+        // not a clamped one.
+        DateLabelResult result = Build(full: new RectD(150.0, 100.0, 180.0, 12.0)).Result!;
 
         Assert.Empty(result.Suppressed);
         Assert.Equal(2, result.Primitives.Count);

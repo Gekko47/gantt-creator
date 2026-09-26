@@ -422,6 +422,14 @@ public enum DelineatorGroupRefusal
     /// skipped member would remove a contributing row from the scene silently.
     /// </summary>
     MemberRefused = 5,
+
+    /// <summary>
+    /// The members do not share one resolved line style. §24 draws the line once
+    /// per resolved line style, so a mixed group has no single line to emit: the
+    /// members must be grouped by style first, and silently styling them all from
+    /// the first request would discard the others' resolved appearance.
+    /// </summary>
+    InconsistentLineStyle = 6,
 }
 
 /// <summary>The typed result of laying out one same-date group.</summary>
@@ -475,6 +483,19 @@ public static class DelineatorLayout
             !ReferenceEquals(item.LabelMetrics, first.LabelMetrics) || item.LabelGapPt != first.LabelGapPt))
         {
             return new DelineatorGroupCreationOutcome(null, DelineatorGroupRefusal.InconsistentLabelSeam);
+        }
+
+        // §24 draws one line per *resolved line style*, so a group is only a group
+        // when every member resolved the same style and width. The group emits a
+        // single line taken from the first member; without this check a mixed group
+        // would silently restyle every other member's line as the first's. The
+        // caller groups by style before building, so mixed styles are a broken
+        // request, not a placement decision. Compared by value because SceneStyle
+        // is a record and two independently resolved equal styles are the same
+        // resolved style.
+        if (request.Requests.Any(item => item.LineStyle != first.LineStyle || item.LineWidthPt != first.LineWidthPt))
+        {
+            return new DelineatorGroupCreationOutcome(null, DelineatorGroupRefusal.InconsistentLineStyle);
         }
 
         if (request.Requests.Any(item => item.Event is null || item.Event.Start != first.Event?.Start))

@@ -80,9 +80,12 @@ public class SceneOwnerIdTests
     public void A_shared_owner_requires_at_least_two_distinct_rows(int distinctCount)
     {
         // Positive test for the D2 guard: one spelling per ownership, so a
-        // single row can never be written as a shared owner.
+        // single row can never be written as a shared owner. The rows are built
+        // from distinctCount directly: the zero case must pass an *empty*
+        // collection, and clamping to one row would make it a duplicate of the
+        // one case instead of exercising the empty input.
         var id = Row('a');
-        var rows = Enumerable.Range(0, Math.Max(distinctCount, 1)).Select(_ => id).ToList();
+        var rows = Enumerable.Range(0, distinctCount).Select(_ => id).ToList();
 
         Assert.Throws<ArgumentOutOfRangeException>(() => SceneOwnerId.ForRows(rows));
     }

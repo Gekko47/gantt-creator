@@ -353,6 +353,43 @@ public sealed class DelineatorBuilderTests
         return SceneSnapshot.Serialize(GanttScene.TryCreate(Chart, Plot, primitives, []).Scene!);
     }
 
+    [Fact]
+    public void A_group_whose_members_disagree_on_line_style_is_refused()
+    {
+        // Positive test for the InconsistentLineStyle guard: §24 draws the line
+        // once per resolved line style, so a group with two styles has no single
+        // line to emit. Both halves are covered, because either alone would still
+        // restyle the mixed member: a different stroke colour, and the same colour
+        // at a different width.
+        GanttEvent a = Event(description: "Alpha");
+        GanttEvent b = Event(description: "Bravo");
+        DelineatorRequest odd = Req(b) with
+        {
+            LineStyle = new SceneStyle("DefaultDelineator", strokeColour: ColourHex.Parse("#802020")),
+        };
+
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentLineStyle,
+            DelineatorLayout.TryBuildGroup(new DelineatorGroupRequest([Req(a), odd], 2.0), Scale()).Refusal);
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentLineStyle,
+            DelineatorLayout
+                .TryBuildGroup(new DelineatorGroupRequest([Req(a), Req(b) with { LineWidthPt = 1.5 }], 2.0), Scale())
+                .Refusal);
+    }
+
+    [Fact]
+    public void A_group_of_equal_but_separately_resolved_line_styles_still_builds()
+    {
+        // The counterweight to the guard above, and the reason it compares by
+        // value: Req builds a fresh SceneStyle per call, so every existing group
+        // test already exercises equal-but-distinct instances. Comparing by
+        // reference would refuse all of them.
+        DelineatorGroupResult r = Group(Event(description: "Alpha"), Event(description: "Bravo"));
+
+        Assert.Single(r.Primitives.OfType<SceneLine>());
+    }
+
     // ------------------------------------------------------------------
     // Guard refusals, each with its positive test
     // ------------------------------------------------------------------
