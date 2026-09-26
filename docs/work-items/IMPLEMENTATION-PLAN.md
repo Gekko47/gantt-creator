@@ -1,22 +1,30 @@
 # Implementation guides manifest and execution plan
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md). The manifest now covers 90 roadmap-guide records: 27 Tier A and 63 Tier B. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **92** roadmap-guide records: **39 Tier A and 53 Tier B** — counts taken from the table itself on 2026-09-26, which corrected the earlier "90 / 27 / 63" (the two later insertions `R5.6b` and `R2.7d` had never been counted). R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
-- **Tier A — prescriptive.** 27 guides: the Phase 2 remainder plus eight R2
-  hardening rows, and Phase 3. They name exact files, types, seams, tests, and
+- **Tier A — prescriptive.** 39 guides: the Phase 2 remainder plus eight R2
+  hardening rows, Phase 3, and the ten Phase-4 rows upgraded at the
+  Phase-3 exit. They name exact files, types, seams, tests, and
   evidence commands; each is re-verified at implementation time.
-- **Tier B — binding contract.** 63 guides for Phases 4–10. They fix the
+- **Tier B — binding contract.** 53 guides for Phases 5–10. They fix the
   behaviour, acceptance criteria, governing document sections, design
   decisions, stop-points, and evidence commands, while implementation steps
   reference predecessor artifacts by work-item ID plus a mandatory Step 0
-  verification, because the scene/renderer types they build on do not exist
+  verification, because the renderer types they build on do not exist
   yet. Inventing them now would violate the anti-hallucination rules.
 - **Just-in-time upgrade.** At each phase exit, the next phase's Tier-B
   guides are upgraded to Tier A detail against the landed code (exact
   files, tests, commands; prerequisites re-verified) **before any of them
   is implemented**. The upgrade is recorded in each guide's status line.
+  The 2026-09-26 Phase-3 exit upgrade deliberately left four questions
+  **unprobed rather than guessed** — the Office shape kind for scene
+  lines (R4.3), the freeform point semantics (R4.5), the pattern/alpha
+  members (R4.6), and the per-property interop shapes (R4.2). Each is a
+  named Step-0 obligation in its guide with an `unknown until probed`
+  ledger row; a Tier-A upgrade fixes names against landed code, it does
+  not license inventing host behaviour.
 
 ## Implementer contract (read before executing any guide)
 
@@ -113,16 +121,16 @@ files only; the local audit verifies every file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R4.1 | `R4.1-excel-adapter-interfaces.md` | Authored (Tier B) |
-| R4.2 | `R4.2-application-state-scope.md` | Authored (Tier B) |
-| R4.3 | `R4.3-shape-render-conversion.md` | Authored (Tier B) |
-| R4.4 | `R4.4-text-alignment-conversion.md` | Authored (Tier B) |
-| R4.5 | `R4.5-polygons-z-order.md` | Authored (Tier B) |
-| R4.6 | `R4.6-style-token-mapping.md` | Authored (Tier B) |
-| R4.7 | `R4.7-refresh-idempotence.md` | Authored (Tier B) |
-| R4.8 | `R4.8-unowned-content-preservation.md` | Authored (Tier B) |
-| R4.9 | `R4.9-refresh-command.md` | Authored (Tier B; first live slice) |
-| R4.10 | `R4.10-thousand-event-performance.md` | Authored (Tier B) |
+| R4.1 | `R4.1-excel-adapter-interfaces.md` | Upgraded to Tier A (2026-09-26) |
+| R4.2 | `R4.2-application-state-scope.md` | Upgraded to Tier A (2026-09-26) |
+| R4.3 | `R4.3-shape-render-conversion.md` | Upgraded to Tier A (2026-09-26) |
+| R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |
+| R4.5 | `R4.5-polygons-z-order.md` | Upgraded to Tier A (2026-09-26) |
+| R4.6 | `R4.6-style-token-mapping.md` | Upgraded to Tier A (2026-09-26) |
+| R4.7 | `R4.7-refresh-idempotence.md` | Upgraded to Tier A (2026-09-26) |
+| R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
+| R4.9 | `R4.9-refresh-command.md` | Upgraded to Tier A (2026-09-26; first live slice) |
+| R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26) |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
 
