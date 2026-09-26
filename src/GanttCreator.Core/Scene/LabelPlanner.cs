@@ -8,8 +8,14 @@ namespace GanttCreator.Core.Scene;
 /// default, else <see cref="GanttLabelPosition.Auto"/>.
 /// </param>
 /// <param name="ShapeBounds">The visible (post-clip) bounds of the owning shape.</param>
-/// <param name="TextStyle">The resolved text style.</param>
+/// <param name="TextStyle">The resolved text style used inside the body.</param>
 /// <param name="Metrics">The injected deterministic text-metrics seam.</param>
+/// <param name="OutsideTextStyle">
+/// The resolved text style for a label placed outside the body. §17 requires the
+/// delay event to switch from <c>DelayText</c> inside the red body to
+/// <c>DefaultText</c> outside it, so this is the style such a label carries. When
+/// it is <see langword="null"/>, <paramref name="TextStyle"/> is used.
+/// </param>
 /// <param name="LaneOrder">The lane ordering value, when known.</param>
 /// <param name="StackIndex">The stack ordering value, when known.</param>
 public sealed record LabelRequest(
@@ -19,6 +25,7 @@ public sealed record LabelRequest(
     RectD ShapeBounds,
     SceneStyle TextStyle,
     ITextMetrics Metrics,
+    SceneStyle? OutsideTextStyle = null,
     int? LaneOrder = null,
     int? StackIndex = null
 );
@@ -125,6 +132,20 @@ public static class LabelPlanner
     /// </summary>
     private static readonly GanttLabelPosition[] _delayAutoOrder = [GanttLabelPosition.Right, GanttLabelPosition.Left];
 
+    /// <summary>
+    /// The milestone <c>Auto</c> order (ADR-0015 D2): <c>Right → Left → Above →
+    /// Below</c>. <c>Inside</c> is excluded because it is invalid for a milestone
+    /// at the initial minimum size, so trying it would be a position the entity
+    /// may not use.
+    /// </summary>
+    private static readonly GanttLabelPosition[] _milestoneAutoOrder =
+    [
+        GanttLabelPosition.Right,
+        GanttLabelPosition.Left,
+        GanttLabelPosition.Above,
+        GanttLabelPosition.Below,
+    ];
+
     /// <summary>Attempts to plan one label.</summary>
     /// <param name="request">The typed label request.</param>
     /// <param name="metrics">The resolved label bounds and metrics.</param>
@@ -192,6 +213,9 @@ public static class LabelPlanner
         GanttEvent @event = request.Event;
         IReadOnlyList<RectD> blocked = occupants ?? [];
         var isDelay = @event.Type == GanttEntityType.DelayEvent;
+        // §20/ADR-0015 D2: a milestone's Auto order is not the span order, so the
+        // cascade is selected from the entity kind rather than assumed.
+        var isMilestone = EntityTypeCatalog.GetDefinition(@event.Type)?.Kind == EntityKind.Milestone;
 
         LabelPlanCreationOutcome Suppressed()
         {
@@ -217,6 +241,14 @@ public static class LabelPlanner
                 ]
                 : [];
 
+            // §17: the delay event's text is DelayText inside the red body and
+            // DefaultText outside it. The switch is a property of the resolved
+            // position, so it is applied here — the single point where the
+            // position is final — rather than inside a candidate attempt.
+            SceneStyle style = isDelay && position != GanttLabelPosition.Inside
+                ? request.OutsideTextStyle ?? request.TextStyle
+                : request.TextStyle;
+
             return new LabelPlanCreationOutcome(
                 new LabelPlanResult(
                     new SceneText(
@@ -225,7 +257,7 @@ public static class LabelPlanner
                         ZLayer.Label,
                         finalText,
                         bounds,
-                        request.TextStyle,
+                        style,
                         position,
                         @event.Type,
                         request.LaneOrder,
@@ -241,22 +273,33 @@ public static class LabelPlanner
             );
         }
 
-        GanttLabelPosition[] cascade =
-            isDelay ? _delayAutoOrder
-            : request.ResolvedPosition == GanttLabelPosition.Auto ? _spanAutoOrder
-            : [request.ResolvedPosition];
+        // An explicit row value is the single position honoured, whatever the
+        // entity family: §22's precedence puts "explicit row value" above both the
+        // style default and Auto, so a delay that names a position is never
+        // re-placed by the delay default below.
+        var hasExplicitPosition = request.ResolvedPosition is not (GanttLabelPosition.Auto or GanttLabelPosition.None);
+        GanttLabelPosition styleDefault = request.TextStyle.Alignment ?? GanttLabelPosition.Inside;
 
         // ADR-0015 D3: the delay event's Inside is a style-level default that is
         // evaluated once and never re-entered. It is the first thing tried, and
-        // the cascade above deliberately omits Inside.
-        if (isDelay)
+        // the delay cascade below deliberately omits Inside. An explicit row
+        // position skips this branch entirely, so the style default cannot
+        // override what the user asked for.
+        if (isDelay && !hasExplicitPosition)
         {
-            GanttLabelPosition styleDefault = request.TextStyle.Alignment ?? GanttLabelPosition.Inside;
             if (TryAccept(styleDefault, out RectD insideBounds, out _))
             {
                 return Placed(text, insideBounds, styleDefault, false);
             }
         }
+
+        GanttLabelPosition[] cascade = hasExplicitPosition
+            ? [request.ResolvedPosition]
+            : isDelay
+                ? _delayAutoOrder
+                : isMilestone
+                    ? _milestoneAutoOrder
+                    : _spanAutoOrder;
 
         foreach (GanttLabelPosition position in cascade)
         {
@@ -316,10 +359,19 @@ public static class LabelPlanner
 
             // The text fits, so the box hugs the measured text rather than
             // stretching across the whole free gap. Left stays anchored at the
-            // shape's near edge; every other position starts at the geometry's
-            // left edge.
+            // shape's near edge and Right at its far edge; the three positions
+            // §22 describes as centred (Inside, Above, Below) centre the fitted
+            // text inside the shape's own horizontal extent.
             var textWidth = Math.Min(measured.WidthPt, width);
-            var left = position == GanttLabelPosition.Left ? geometry.Right - textWidth : geometry.X;
+            var left = geometry.X;
+            if (position == GanttLabelPosition.Left)
+            {
+                left = geometry.Right - textWidth;
+            }
+            else if (position is GanttLabelPosition.Inside or GanttLabelPosition.Above or GanttLabelPosition.Below)
+            {
+                left = geometry.X + ((geometry.Width - textWidth) / 2);
+            }
             var effective = new RectD(left, geometry.Y, textWidth, geometry.Height);
 
             // Containment is against the chart bounds, which enclose the plot.
@@ -368,7 +420,12 @@ public static class LabelPlanner
                     continue;
                 }
 
-                var candidate = new RectD(geometry.X, geometry.Y, usable, geometry.Height);
+                // The same anchor rule as TryAccept: Left is anchored by its right
+                // edge to the gap boundary, every other position by its left edge.
+                // Without this the truncated Left label would sit `freeWidth -
+                // usable` to the left of the boundary the untruncated one uses.
+                var left = position == GanttLabelPosition.Left ? geometry.Right - usable : geometry.X;
+                var candidate = new RectD(left, geometry.Y, usable, geometry.Height);
                 if (Blocked(candidate, position))
                 {
                     continue;
@@ -473,12 +530,23 @@ public static class LabelPlanner
                 }
 
             case GanttLabelPosition.Above:
+                {
+                    // §22: "Above: horizontally centred; label bottom = shape top −
+                    // LabelGapPt". The vertical placement therefore comes from the
+                    // shape's top edge, not from the vertically-centred default.
+                    freeWidth = Math.Max(0, shape.Width);
+                    var aboveTop = shape.Top - metrics.LabelGapPt - metrics.LabelHeightPt;
+                    bounds = new RectD(shape.X, aboveTop, freeWidth, height);
+                    break;
+                }
+
             case GanttLabelPosition.Below:
                 {
-                    // Horizontally centred on the shape; these are reachable only
-                    // through a named style, never as an unbounded cascade.
+                    // §22: "Below: horizontally centred; label top = shape bottom +
+                    // LabelGapPt".
                     freeWidth = Math.Max(0, shape.Width);
-                    bounds = new RectD(shape.X, top, freeWidth, height);
+                    var belowTop = shape.Bottom + metrics.LabelGapPt;
+                    bounds = new RectD(shape.X, belowTop, freeWidth, height);
                     break;
                 }
 

@@ -157,6 +157,54 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
+    public void Emits_the_visible_overlap_for_a_child_starting_before_the_plot()
+    {
+        // The child starts 28 Dec, four days before the plot opens, but finishes
+        // on 8 Jan inside the parent. Only the visible overlap may be emitted, and
+        // it must be emitted: dropping it would lose real schedule information.
+        var outcome = CriticalOverlayBuilder.TryBuild(
+            new CriticalOverlayRequest(
+                ChildOn(new DateOnly(2023, 12, 28), new DateOnly(2024, 1, 8)),
+                _style,
+                _parentBounds,
+                2.25
+            ),
+            _scale,
+            Parents()
+        );
+
+        Assert.True(outcome.Succeeded);
+        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // The start collapses onto the plot's left edge (0) and is then clipped to
+        // the parent's left edge (40); 8 Jan is the inclusive right edge at 80.
+        Assert.Equal(40, overlay.Bounds.Left);
+        Assert.Equal(80, overlay.Bounds.Right, 10);
+    }
+
+    [Fact]
+    public void Emits_the_visible_overlap_for_a_child_finishing_after_the_plot()
+    {
+        // The mirror case: the child ends 5 Feb, well after the plot closes, and
+        // must be clipped to the plot and then to the parent's visible right edge.
+        var outcome = CriticalOverlayBuilder.TryBuild(
+            new CriticalOverlayRequest(
+                ChildOn(new DateOnly(2024, 1, 12), new DateOnly(2024, 2, 5)),
+                _style,
+                _parentBounds,
+                2.25
+            ),
+            _scale,
+            Parents()
+        );
+
+        Assert.True(outcome.Succeeded);
+        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // 12 Jan is 110 and the parent's visible span ends at 150.
+        Assert.Equal(110, overlay.Bounds.Left);
+        Assert.Equal(150, overlay.Bounds.Right, 10);
+    }
+
+    [Fact]
     public void Never_increments_the_finish_date_for_a_one_day_interval()
     {
         CriticalOverlayCreationOutcome outcome = Build(5, 5);
@@ -311,6 +359,25 @@ public sealed class CriticalOverlayBuilderTests
             new DateOnly(2024, 1, startDay),
             new DateOnly(2024, 1, finishDay),
             parentId ?? _parentId,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null
+        );
+
+    private static GanttEvent ChildOn(DateOnly start, DateOnly finish) =>
+        new(
+            2,
+            _childId,
+            null,
+            null,
+            GanttEntityType.CriticalInterval,
+            "Critical",
+            start,
+            finish,
+            _parentId,
             null,
             null,
             null,

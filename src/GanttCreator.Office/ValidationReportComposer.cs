@@ -191,7 +191,11 @@ internal static class ValidationReportComposer
             index++;
         }
 
-        if (index == digitsStart)
+        // A generated marker only ever carries a canonical one-based row number, so
+        // the digits must be a positive integer with no leading zero. Accepting
+        // "0" or "01" would let a user's own line be mistaken for an add-in
+        // section and silently truncated.
+        if (index == digitsStart || text[digitsStart] == '0')
         {
             return false;
         }

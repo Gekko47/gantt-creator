@@ -116,6 +116,21 @@ public sealed class SpanBarBuilderTests
     }
 
     [Fact]
+    public void Refuses_a_reversed_span_rather_than_building_a_zero_width_bar()
+    {
+        // The enum documents NotASpan as "no finish after its start", so a finish
+        // before the start is refused instead of reaching the clip branch, where
+        // the two collapsed edges would otherwise produce a bar.
+        SpanBarCreationOutcome outcome = SpanBarBuilder.TryBuild(
+            new SpanBarRequest(Event(new DateOnly(2024, 1, 9), new DateOnly(2024, 1, 5)), _style, 60, 8),
+            _scale
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SpanBarRefusal.NotASpan, outcome.Refusal);
+    }
+
+    [Fact]
     public void Refuses_an_event_with_no_start_date()
     {
         SpanBarCreationOutcome outcome = SpanBarBuilder.TryBuild(

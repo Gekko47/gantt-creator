@@ -45,7 +45,21 @@ internal class ExcelInsertedRowSelector : IInsertedRowSelector
     internal ExcelInsertedRowSelector(object? application)
     {
         var excel = application as Excel.Application;
-        _workbook = excel?.ActiveWorkbook;
+
+        // CA1031: the workbook capture is a best-effort read performed before the
+        // row exists. A host failure here must degrade to "no selection change" —
+        // exactly as a failed Select does — instead of escaping RunForExcel and
+        // preventing the insert the user asked for.
+#pragma warning disable CA1031
+        try
+        {
+            _workbook = excel?.ActiveWorkbook;
+        }
+        catch
+        {
+            // Intentionally empty: the row is still added; only the cursor stays put.
+        }
+#pragma warning restore CA1031
     }
 
     /// <inheritdoc />

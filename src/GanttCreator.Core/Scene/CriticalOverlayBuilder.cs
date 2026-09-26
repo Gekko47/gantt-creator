@@ -148,17 +148,18 @@ public static class CriticalOverlayBuilder
 
         List<SceneWarning> warnings = [];
 
-        // The child span is mapped with the inclusive rule and then intersected
-        // with the parent's visible span. The `Try*` forms are used throughout:
-        // DateToX throws for an out-of-range date, and a clipped interval must
-        // warn rather than throw.
-        var hasStart = timeScale.TryDateToX(start, out var startX);
-        var hasFinish = timeScale.TryDurationDays(start, finish, out var durationDays);
-        var ownRight = hasFinish ? startX + (durationDays * timeScale.DayWidth) : startX;
-        var ownLeft = hasStart ? startX : timeScale.PlotLeftPt;
+        // The child span is mapped with the inclusive rule, clamped to the plot, and
+        // only then intersected with the parent's visible span. §16 requires both
+        // clips, and the order matters: a child that starts before the plot or ends
+        // after it must keep the part that *is* on screen, so the date edges are
+        // collapsed onto the plot edges first. The `Try*` forms are used throughout
+        // because DateToX throws for an out-of-range date, and a clipped interval
+        // must warn rather than throw.
+        var ownLeft = ClampStartToScale(start, timeScale);
+        var ownRight = ClampFinishToScale(finish, timeScale);
 
-        var clippedLeft = Math.Max(Math.Min(ownLeft, ownRight), parent.Left);
-        var clippedRight = Math.Min(Math.Max(ownLeft, ownRight), parent.Right);
+        var clippedLeft = Math.Max(ownLeft, parent.Left);
+        var clippedRight = Math.Min(ownRight, parent.Right);
 
         if (clippedRight <= clippedLeft + GeometryMath.Epsilon)
         {
@@ -212,6 +213,32 @@ public static class CriticalOverlayBuilder
             null
         );
     }
+
+    /// <summary>
+    /// Maps an interval start to its start-of-day X, collapsing a date before the
+    /// plot onto the plot's left edge so a child crossing the left boundary keeps
+    /// the portion that is visible.
+    /// </summary>
+    /// <param name="date">The interval start date.</param>
+    /// <param name="timeScale">The validated time scale.</param>
+    /// <returns>The start X, clamped to the plot.</returns>
+    private static double ClampStartToScale(DateOnly date, TimeScale timeScale) =>
+        timeScale.TryDateToX(date, out var x)
+            ? x
+            : date < timeScale.PlotStart ? timeScale.PlotLeftPt : timeScale.PlotRightPt;
+
+    /// <summary>
+    /// Maps an inclusive finish date to the exclusive right edge, adding one day
+    /// width only when the finish is itself inside the scale, and collapsing a
+    /// finish after the plot onto the plot's right edge.
+    /// </summary>
+    /// <param name="date">The interval finish date.</param>
+    /// <param name="timeScale">The validated time scale.</param>
+    /// <returns>The right edge, clamped to the plot.</returns>
+    private static double ClampFinishToScale(DateOnly date, TimeScale timeScale) =>
+        date < timeScale.PlotStart || date > timeScale.PlotFinish
+            ? ClampStartToScale(date, timeScale)
+            : timeScale.DateToX(date) + timeScale.DayWidth;
 
     private static CriticalOverlayCreationOutcome Refused(CriticalOverlayRefusal refusal) => new(null, refusal);
 }

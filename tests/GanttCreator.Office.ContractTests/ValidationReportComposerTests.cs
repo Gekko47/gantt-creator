@@ -380,6 +380,8 @@ public class ValidationReportComposerTests
     [InlineData(" row 1, column 'Id")]    // no closing quote/colon on the header line
     [InlineData(" row 1, column 'Id\n'Id': tail")]  // header wraps; the closing
                                                     // marker is on a later line
+    [InlineData(" row 0, column 'Id':")]     // zero is not a one-based body row
+    [InlineData(" row 01, column 'Id':")]    // a leading zero is not canonical
     public void IsOwnedByAddIn_rejects_an_incomplete_marker(string headerSuffix)
     {
         // Each variant is a near-miss that a looser check would accept and then

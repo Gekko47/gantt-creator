@@ -164,6 +164,141 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
+    public void The_delay_event_switches_text_colour_between_inside_and_outside()
+    {
+        // §17: the delay's text is DelayText inside the red body and DefaultText
+        // outside it, so the same request must resolve to two different styles
+        // depending only on which side the label lands.
+        SceneStyle inside = new("Delay", strokeColour: ColourHex.Parse("#FF0000"), alignment: GanttLabelPosition.Inside);
+        SceneStyle outside = new("Default");
+
+        // Wide enough for the 20pt text inside, so the style default applies.
+        LabelPlanResult inner = Plan(
+            Request(
+                Shape(100, 20, 200),
+                "abcde",
+                GanttLabelPosition.Auto,
+                GanttEntityType.DelayEvent,
+                alignment: GanttLabelPosition.Inside,
+                outsideStyle: outside,
+                textStyle: inside
+            )
+        );
+        // Too narrow for the text inside, so it escapes to the right of the body.
+        LabelPlanResult outer = Plan(
+            Request(
+                Shape(100, 20, 10),
+                "abcde",
+                GanttLabelPosition.Auto,
+                GanttEntityType.DelayEvent,
+                alignment: GanttLabelPosition.Inside,
+                outsideStyle: outside,
+                textStyle: inside
+            )
+        );
+
+        Assert.Equal(GanttLabelPosition.Inside, inner.Position);
+        Assert.Same(inside, inner.Primitive!.Style);
+
+        Assert.Equal(GanttLabelPosition.Right, outer.Position);
+        Assert.Same(outside, outer.Primitive!.Style);
+    }
+
+    [Fact]
+    public void A_delay_with_an_explicit_position_ignores_the_style_default()
+    {
+        // §22 precedence: an explicit row value outranks the named-style default,
+        // so a delay that names Right must not be moved back inside the body by
+        // the delay style default.
+        LabelPlanResult result = Plan(
+            Request(
+                Shape(100, 20, 200),
+                "abcde",
+                GanttLabelPosition.Right,
+                GanttEntityType.DelayEvent,
+                alignment: GanttLabelPosition.Inside
+            )
+        );
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+    }
+
+    [Fact]
+    public void A_milestone_never_uses_inside_and_falls_through_to_above()
+    {
+        // §20/ADR-0015 D2: a milestone's Auto order is Right → Left → Above →
+        // Below, so a milestone boxed in on both sides lands Above and never
+        // considers the Inside position a span would use.
+        LabelPlanResult result = Plan(
+            Request(
+                Shape(100, 20, 20),
+                "abcde",
+                GanttLabelPosition.Auto,
+                GanttEntityType.AsPlannedMilestone
+            ),
+            [
+                new RectD(0, 20, 97, 10),
+                new RectD(123, 20, 187, 10),
+            ]
+        );
+
+        Assert.Equal(GanttLabelPosition.Above, result.Position);
+    }
+
+    [Fact]
+    public void An_inside_label_is_centred_in_the_shape()
+    {
+        // §22: Inside is centred in the visible rectangle, so the fitted 20pt text
+        // in a 100pt bar starts 40pt in rather than flush against the bar's edge.
+        LabelPlanResult result = Plan(Shape(100, 20, 100), "abcde", GanttLabelPosition.Inside);
+
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal(140, result.Bounds!.Value.Left);
+        Assert.Equal(160, result.Bounds.Value.Right);
+    }
+
+    [Fact]
+    public void An_above_label_sits_one_gap_above_the_shape_top_edge()
+    {
+        // §22: "Above: horizontally centred; label bottom = shape top −
+        // LabelGapPt", so the 10pt label spans 7..17 on a bar whose top is 20.
+        LabelPlanResult result = Plan(Shape(100, 20, 100), "abcde", GanttLabelPosition.Above);
+
+        Assert.Equal(GanttLabelPosition.Above, result.Position);
+        Assert.Equal(17, result.Bounds!.Value.Bottom);
+        Assert.Equal(7, result.Bounds.Value.Top);
+        // Horizontally centred: 100 + ((100 - 20) / 2).
+        Assert.Equal(140, result.Bounds.Value.Left);
+    }
+
+    [Fact]
+    public void A_below_label_sits_one_gap_below_the_shape_bottom_edge()
+    {
+        // §22: "Below: horizontally centred; label top = shape bottom + LabelGapPt",
+        // and the bar's bottom is 28, so the label starts at 31.
+        LabelPlanResult result = Plan(Shape(100, 20, 100), "abcde", GanttLabelPosition.Below);
+
+        Assert.Equal(GanttLabelPosition.Below, result.Position);
+        Assert.Equal(31, result.Bounds!.Value.Top);
+        Assert.Equal(140, result.Bounds.Value.Left);
+    }
+
+    [Fact]
+    public void The_widest_gap_fallback_anchors_a_left_label_to_the_gap_boundary()
+    {
+        // A 10pt bar at 250 leaves a 247pt gap to its left, which the 144pt
+        // external maximum caps. The truncated label is anchored by its right edge
+        // to shape.left − LabelGapPt = 247, exactly as an untruncated Left label
+        // would be, rather than starting at the far end of the whole gap.
+        LabelPlanResult result = Plan(Shape(250, 20, 10), new string('x', 40));
+
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(247, result.Bounds!.Value.Right);
+        Assert.Equal(103, result.Bounds.Value.Left);
+    }
+
+    [Fact]
     public void The_widest_gap_fallback_takes_the_interior_when_it_is_the_widest()
     {
         // Box the bar in so no cascade position can hold the full 40 characters
@@ -423,7 +558,9 @@ public sealed class LabelPlannerTests
         string text,
         GanttLabelPosition position = GanttLabelPosition.Auto,
         GanttEntityType type = GanttEntityType.AsPlannedActivity,
-        GanttLabelPosition? alignment = null
+        GanttLabelPosition? alignment = null,
+        SceneStyle? outsideStyle = null,
+        SceneStyle? textStyle = null
     ) =>
         new(
             new GanttEvent(
@@ -446,7 +583,8 @@ public sealed class LabelPlannerTests
             text,
             position,
             shape,
-            new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 8, alignment: alignment),
-            _metrics
+            textStyle ?? new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 8, alignment: alignment),
+            _metrics,
+            outsideStyle
         );
 }

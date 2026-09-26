@@ -99,8 +99,11 @@ public static class SpanBarBuilder
 
         // A milestone or a dateless type reaching this builder is a scene
         // construction error, not a silently empty result: the inclusive span
-        // rule needs both dates and the guide forbids inventing one.
-        if (@event.Finish is not { } finish)
+        // rule needs both dates and the guide forbids inventing one. A finish
+        // before the start is refused for the same reason — it is not a span, and
+        // letting it reach the clip branch would let a reversed range produce a
+        // bar from two collapsed edges.
+        if (@event.Finish is not { } finish || finish < start)
         {
             return Refused(SpanBarRefusal.NotASpan);
         }
