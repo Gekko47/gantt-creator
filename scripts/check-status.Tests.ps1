@@ -67,8 +67,11 @@ Describe 'check-status.ps1' {
             }
 
             # Writes one work item whose only fenced block is the supplied
-            # command, so a test states just the command under test.
-            function Set-WorkItemCommand {
+            # command, so a test states just the command under test. Named
+            # Invoke- rather than Set- because PSScriptAnalyzer treats a Set-
+            # verb as state-changing and demands a ShouldProcess parameter a
+            # test helper has no use for; Invoke- matches the sibling helper.
+            function Invoke-WorkItemCommand {
                 param([string]$Command)
                 $dir = Join-Path $script:tempRoot 'WORK-ITEMS'
                 New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -324,7 +327,7 @@ References an absolute location ``C:\windows\evil.md``.
             # could not run and the evidence it promised was never produced.
 
             It 'exits 1 when a work-item evidence command names a path that does not exist' {
-                Set-WorkItemCommand 'dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror'
+                Invoke-WorkItemCommand 'dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror'
 
                 $r = Invoke-CheckStatusHarness "# Status`n"
 
@@ -336,7 +339,7 @@ References an absolute location ``C:\windows\evil.md``.
                 # Positive control: a real path must still pass, or the rule would
                 # reject every legitimate evidence block.
                 'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'GanttCreator.slnx') -Encoding utf8
-                Set-WorkItemCommand 'dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror'
+                Invoke-WorkItemCommand 'dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror'
 
                 $r = Invoke-CheckStatusHarness "# Status`n"
 
@@ -347,7 +350,7 @@ References an absolute location ``C:\windows\evil.md``.
                 # A comment is a note, not a command. This is what lets a work item
                 # record the path it is deliberately correcting (R3.12 does exactly
                 # this) without tripping the gate.
-                Set-WorkItemCommand "# src/GanttCreator.slnx is wrong; use GanttCreator.slnx`ndotnet build GanttCreator.slnx"
+                Invoke-WorkItemCommand "# src/GanttCreator.slnx is wrong; use GanttCreator.slnx`ndotnet build GanttCreator.slnx"
 
                 $r = Invoke-CheckStatusHarness "# Status`n"
 
@@ -372,7 +375,7 @@ Earlier revisions named ``src/GanttCreator.slnx``, which does not exist.
 
             It 'ignores a bare filename with no directory separator' {
                 # The token shape requires a separator, so a leaf name is not a path.
-                Set-WorkItemCommand 'dotnet format README.md'
+                Invoke-WorkItemCommand 'dotnet format README.md'
 
                 $r = Invoke-CheckStatusHarness "# Status`n"
 
