@@ -303,8 +303,54 @@ public sealed class DelineatorBuilderTests
         List<SceneText> labels = [.. r.Primitives.OfType<SceneText>()];
 
         Assert.Equal(2, labels.Count);
-        Assert.Equal(6.0, Math.Abs(labels[1].TextBounds.Top - labels[0].TextBounds.Top));
+
+        // §24: distinct labels are "stacked deterministically with StackGapPt", so
+        // the gap is the space *between* two labels, not the step from the plot
+        // edge to each one. The second label must therefore clear the first one's
+        // whole height and then the gap. Advancing by one gap per label put the
+        // second label inside the first whenever the gap was smaller than the
+        // label height, and it only avoided an intersection by being pushed onto
+        // the opposite side of the line -- a different corner, not a stack.
+        Assert.Equal(labels[0].TextBounds.Bottom + 6.0, labels[1].TextBounds.Top);
         Assert.False(labels[0].TextBounds.IntersectsWith(labels[1].TextBounds));
+
+        // The stack is a stack: both labels sit against the same plot edge, so the
+        // second is directly below the first rather than across the line from it.
+        Assert.Equal(labels[0].TextBounds.Left, labels[1].TextBounds.Left);
+    }
+
+    [Fact]
+    public void Stacked_labels_do_not_overlap_when_the_gap_is_smaller_than_the_label()
+    {
+        // The discriminating case for the cumulative offset. FakeTextMetrics
+        // measures every label 10pt tall, and the gap here is 2pt, so the old
+        // "one gap per label" step put the second label's top 2pt below the
+        // first's -- eight points inside it. The only reason the overlap never
+        // showed was that the colliding corner was rejected and the label moved
+        // to the opposite side of the line, which is a flip, not a stack.
+        const double gap = 2.0;
+        DelineatorGroupResult r = DelineatorLayout.TryBuildGroup(
+            new DelineatorGroupRequest(
+                [
+                    Req(Event(description: "Alpha", sortOrder: 1)),
+                    Req(Event(description: "Bravo", sortOrder: 2)),
+                    Req(Event(description: "Charlie", sortOrder: 3)),
+                ],
+                gap),
+            Scale()).Result!;
+
+        List<SceneText> labels = [.. r.Primitives.OfType<SceneText>()];
+
+        Assert.Equal(3, labels.Count);
+        Assert.All(labels, label => Assert.Equal(10.0, label.TextBounds.Height));
+
+        // Each label clears the previous one by exactly the gap, so no two boxes
+        // can intersect however small the gap is relative to the label height.
+        for (var i = 1; i < labels.Count; i++)
+        {
+            Assert.Equal(labels[i - 1].TextBounds.Bottom + gap, labels[i].TextBounds.Top);
+            Assert.False(labels[i - 1].TextBounds.IntersectsWith(labels[i].TextBounds));
+        }
     }
 
     [Fact]

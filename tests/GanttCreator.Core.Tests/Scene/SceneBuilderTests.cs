@@ -45,13 +45,15 @@ public sealed class SceneBuilderTests
             height,
             8);
 
-    private static readonly GanttStyleRegistry _registry = new(
+    private static readonly IReadOnlyList<GanttStyleDefinition> SharedStyles =
     [
         Style("AsPlannedActivity", 8),
         Style("AsBuiltActivity", 8),
         Style("CriticalInterval", 8),
         Style("AsPlannedMilestone", 8),
-    ]);
+    ];
+
+    private static readonly GanttStyleRegistry _registry = new(SharedStyles);
 
     private static PanelCellGrid Grid() =>
         PanelCellGrid.TryCreate(
@@ -519,6 +521,61 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
+    public void Same_date_delineators_with_different_stroke_overrides_each_keep_their_own_line()
+    {
+        // §24 draws "same-date lines ... once per resolved line style", and a
+        // per-row StrokeColour override is part of the resolved line style, not a
+        // separate concern. Grouping by the style *name* put both rows in one
+        // group, DelineatorLayout then refused it as InconsistentLineStyle, and
+        // SceneBuilder reported one group refusal -- so both rows lost their line
+        // entirely and neither was drawn. Two lines must now survive, one per
+        // resolved colour.
+        //
+        // The registry carries DefaultDelineator because that is how a real
+        // workbook reaches this path: the per-row override is applied during style
+        // resolution, so a registry that cannot resolve the style never sees the
+        // override at all and the two rows would resolve identically -- making the
+        // assertion below vacuous for the wrong reason.
+        GanttEvent plain = Event(1, GanttEntityType.Delineator, new DateOnly(2024, 1, 8), null, styleKey: null);
+        GanttEvent overridden = Event(
+            2,
+            GanttEntityType.Delineator,
+            new DateOnly(2024, 1, 8),
+            null,
+            styleKey: null) with { StrokeColour = "#FF0000" };
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(3), plain, overridden) with { Registry = RegistryWithDelineator() });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneLine[] lines =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneLine>()
+                .Where(line => line.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal)),
+        ];
+
+        Assert.Equal(2, lines.Length);
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Warnings,
+            warning => warning.Code == "DelineatorGroupRefused");
+
+        // Both lines stand at the same X (one date) and carry the two resolved
+        // stroke colours, which is exactly "one line per resolved line style".
+        Assert.Equal(lines[0].From.X, lines[1].From.X);
+        Assert.Equal(2, lines.Select(line => line.Style.StrokeColour).Distinct().Count());
+        Assert.Contains(lines, line => line.Style.StrokeColour == ColourHex.Parse("#FF0000"));
+    }
+
+    /// <summary>The shared test styles plus a resolvable <c>DefaultDelineator</c> style.</summary>
+    private static GanttStyleRegistry RegistryWithDelineator() => new(
+    [
+        .. SharedStyles,
+        Style("DefaultDelineator", 8),
+    ]);
+
+    [Fact]
     public void A_rendered_panel_emits_a_cell_per_grid_column_with_invariant_dates()
     {
         // The panel pass populates cells in grid-column order and formats dates through
@@ -772,6 +829,84 @@ public sealed class SceneBuilderTests
                 text.PrimitiveId.StartsWith(milestoneId, StringComparison.Ordinal)
                     || text.PrimitiveId.StartsWith(activityId, StringComparison.Ordinal),
                 "Unexpected label owner: " + text.PrimitiveId));
+    }
+
+    [Fact]
+    public void A_procurement_label_is_ordered_after_every_activity_label()
+    {
+        // §22's priority list reads "actual labels, planned labels, baseline labels,
+        // procurement/custom labels" as four consecutive groups, so procurement sits
+        // after all three activity groups. Ranking procurement with the activity
+        // family it belongs to (as-built procurement at rank 3, tied with as-built
+        // *activity*) let a procurement label outrank a planned or baseline activity
+        // label, which is the reverse of the stated order.
+        //
+        // The order is asserted on the published rank rather than through a built
+        // scene. The lane layout gives every row in a lane its own slot, so two
+        // rows' description labels sit in separate vertical bands and never compete
+        // for one box; a scene-level test would therefore pass under either ranking
+        // and prove nothing.
+        Assert.Equal(3, LabelPlacementPriority.For(GanttEntityType.AsBuiltActivity));
+        Assert.Equal(4, LabelPlacementPriority.For(GanttEntityType.AsPlannedActivity));
+        Assert.Equal(5, LabelPlacementPriority.For(GanttEntityType.BaselineActivity));
+
+        // Every procurement type shares the custom rank and every activity rank is
+        // strictly lower, which is what makes the two groups ordered rather than
+        // interleaved.
+        foreach (GanttEntityType procurement in new[]
+        {
+            GanttEntityType.AsBuiltProcurement,
+            GanttEntityType.AsPlannedProcurement,
+            GanttEntityType.BaselineProcurement,
+        })
+        {
+            Assert.Equal(LabelPlacementPriority.For(GanttEntityType.CustomActivity), LabelPlacementPriority.For(procurement));
+            Assert.True(
+                LabelPlacementPriority.For(procurement) > LabelPlacementPriority.For(GanttEntityType.BaselineActivity),
+                $"{procurement} must rank after every activity label.");
+        }
+    }
+
+    [Fact]
+    public void The_section_22_label_priority_covers_every_entity_type_in_order()
+    {
+        // The whole §22 list, pinned by name rather than by enum declaration order,
+        // because the enum's numeric order is a workbook-schema contract that does
+        // not follow §22. Asserting the complete map means an unranked or
+        // mis-ordered type fails here rather than sorting silently to the end.
+        (GanttEntityType Type, int Rank)[] expected =
+        [
+            (GanttEntityType.CriticalMilestone, 0),
+            (GanttEntityType.AsPlannedMilestone, 1),
+            (GanttEntityType.AsBuiltMilestone, 1),
+            (GanttEntityType.BaselineMilestone, 1),
+            (GanttEntityType.DelayEvent, 2),
+            (GanttEntityType.AsBuiltActivity, 3),
+            (GanttEntityType.AsPlannedActivity, 4),
+            (GanttEntityType.BaselineActivity, 5),
+            (GanttEntityType.AsBuiltProcurement, 6),
+            (GanttEntityType.AsPlannedProcurement, 6),
+            (GanttEntityType.BaselineProcurement, 6),
+            (GanttEntityType.CustomActivity, 6),
+            (GanttEntityType.CriticalInterval, 7),
+            (GanttEntityType.Delineator, 8),
+            (GanttEntityType.Splitter, 9),
+            (GanttEntityType.Spacer, 9),
+        ];
+
+        // Every enum member is covered, so a type added later fails this test
+        // until its rank is decided rather than inheriting int.MaxValue.
+        Assert.Equal(
+            expected.Select(entry => entry.Type).Order(),
+            Enum.GetValues<GanttEntityType>().Order());
+
+        foreach ((GanttEntityType type, int rank) in expected)
+        {
+            Assert.Equal(rank, LabelPlacementPriority.For(type));
+        }
+
+        // §22 order is non-decreasing, so no later group can outrank an earlier one.
+        Assert.Equal(expected.Select(entry => entry.Rank), expected.Select(entry => entry.Rank).Order());
     }
 
     [Fact]

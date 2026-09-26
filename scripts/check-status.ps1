@@ -183,10 +183,15 @@ foreach ($t in $tokens)
     # file is in the commit, so a CI checkout of that commit does have it.
     #
     # CI behaviour is unchanged: in a clean checkout the index equals its HEAD,
-    # so the two forms agree there. The token is normalised to git's forward-slash
-    # format first, because a backticked STATUS path may use a backslash while
-    # git records and matches with '/'.
-    $gitToken = $t.Replace('\', '/')
+    # so the two forms agree there. The token is matched in the canonical
+    # root-relative form -- the same $rel the traversal check above already
+    # computed -- rather than the raw backticked text, because that text may use a
+    # backslash, carry a redundant './' or '../' segment, or end in a separator,
+    # none of which is the spelling git records or prints. Deriving it from the raw
+    # token made a genuinely tracked path fail the `-contains` test below and be
+    # reported as untracked. A trailing separator is trimmed because the
+    # tracked-directory test appends its own.
+    $gitToken = $rel.TrimEnd('/')
     $tracked = @(git -C $repoRoot ls-files -- $gitToken 2>$null)
 
     # Captured immediately after the call, before any other command runs. Reading

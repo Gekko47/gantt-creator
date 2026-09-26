@@ -165,6 +165,53 @@ References the file ``docs\tracked.md``.
             $r.Output | Should -Match 'OK'
         }
 
+        It 'exits 0 for a tracked path written with a redundant parent segment' {
+            # The gate matches the canonical root-relative path, not the raw
+            # backticked text. git resolves a pathspec for us -- `ls-files --
+            # docs/../docs/tracked.md` prints `docs/tracked.md` -- so comparing the
+            # printed name against the raw token failed `-contains` and reported a
+            # genuinely tracked path as untracked. Both spellings name the same
+            # tracked file, and a backticked path is prose, not a git pathspec.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+
+            # Non-vacuity: the raw token is genuinely not the name git prints.
+            $printed = (& git -C $script:tempRoot ls-files -- 'docs/../docs/tracked.md').Trim()
+            $printed | Should -Be 'docs/tracked.md'
+            $printed | Should -Not -Be 'docs/../docs/tracked.md'
+
+            $body = @"
+# Status
+
+References the file ``docs/../docs/tracked.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 0 for a tracked directory written with a trailing separator' {
+            # A directory token may end in a separator. The tracked-directory test
+            # appends its own '/', so a trailing one on the token would have
+            # produced 'docs//' and matched nothing -- a false "untracked"
+            # rejection for a real project directory.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+
+            $body = @"
+# Status
+
+References the directory ``docs/``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
         It 'exits 0 when STATUS references a path that is staged but not yet committed' {
             # The gate is a pre-commit hook, so it validates the tree of the commit
             # about to be made -- the index. A new file that STATUS names in the same

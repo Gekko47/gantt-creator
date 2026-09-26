@@ -524,7 +524,16 @@ public static class DelineatorLayout
         List<ScenePrimitive> primitives = [];
         SceneLine? line = null;
         List<RectD> placed = [];
-        var labelIndex = 0;
+
+        // The cumulative stack offset, in points away from the plot edge the
+        // label sits against. It advances by each *successfully placed* label's
+        // own height plus StackGapPt, not by one gap per label: a gap is the
+        // space between two labels, so advancing by the gap alone left the second
+        // label overlapping the first whenever StackGapPt was smaller than the
+        // label height, which §24's "stacked deterministically with StackGapPt"
+        // forbids. A member whose label was suppressed advances nothing, because
+        // it occupied no space.
+        var stackOffsetPt = 0.0;
 
         foreach (DelineatorRequest item in ordered)
         {
@@ -546,7 +555,7 @@ public static class DelineatorLayout
                 item,
                 timeScale,
                 placed,
-                needsLabel ? request.StackGapPt * labelIndex : 0);
+                needsLabel ? stackOffsetPt : 0);
 
             // A refused member is a broken input, not an absent label. Silently
             // skipping it would drop a contributing row from the scene with no
@@ -582,9 +591,16 @@ public static class DelineatorLayout
             if (result.LabelBounds is { } bounds)
             {
                 placed.Add(bounds);
-            }
 
-            labelIndex++;
+                // The next label clears this one entirely: the placed box's own
+                // height is the space it occupies, and StackGapPt is the space left
+                // between them. Advancing by the height rather than by one gap per
+                // label is what keeps a stack correct when the gap is smaller than
+                // the label height, and for labels of differing heights. The offset
+                // is a distance from the plot edge whichever corner the label took,
+                // so accumulating it is correct for a top and a bottom label alike.
+                stackOffsetPt += bounds.Height + request.StackGapPt;
+            }
         }
 
         if (line is not null)

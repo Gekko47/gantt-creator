@@ -78,9 +78,17 @@ public enum DateLabelRefusal
 /// The roles that were requested but not emitted. Section 23's never-suppress
 /// rule guarantees this is empty for a plot-clipped entity.
 /// </param>
+/// <param name="Warnings">
+/// The deterministic non-blocking warnings. A never-suppress fallback that had to
+/// move its box to keep the label on the chart reports
+/// <see cref="DateLabelBuilder.PositionChangedCode"/>, because a position the
+/// caller never asked for must be visible in the scene rather than inferred from
+/// the emitted geometry.
+/// </param>
 public sealed record DateLabelResult(
     IReadOnlyList<SceneText> Primitives,
-    IReadOnlyList<string> Suppressed);
+    IReadOnlyList<string> Suppressed,
+    IReadOnlyList<SceneWarning> Warnings);
 
 /// <summary>The typed result of building the date labels.</summary>
 /// <param name="Result">The planned labels, or <see langword="null"/>.</param>
@@ -118,6 +126,12 @@ public static class DateLabelBuilder
 
     /// <summary>The finish-date label role.</summary>
     public const string FinishRole = "date-finish";
+
+    /// <summary>
+    /// The warning code emitted when the never-suppress fallback had to place an
+    /// off-plot date label somewhere other than the requested position.
+    /// </summary>
+    public const string PositionChangedCode = "DateLabelPositionChanged";
 
     /// <summary>Attempts to plan both date labels.</summary>
     /// <param name="request">The typed date-label request.</param>
@@ -175,21 +189,22 @@ public static class DateLabelBuilder
         // two dates of one row are planned against each other rather than each
         // being planned in isolation and overlapping.
         List<RectD> occupied = [.. request.Occupants ?? []];
+        List<SceneWarning> warnings = [];
 
         DateLabelRefusal? refusal = null;
         if (request.ShowStart && request.Event.Start is { } start)
         {
-            refusal = Plan(request, start, StartRole, request.StartPosition, clipped, occupied, emitted, suppressed);
+            refusal = Plan(request, start, StartRole, request.StartPosition, clipped, occupied, emitted, suppressed, warnings);
         }
 
         if (refusal is null && request.ShowFinish && request.Event.Finish is { } finish)
         {
-            refusal = Plan(request, finish, FinishRole, request.FinishPosition, clipped, occupied, emitted, suppressed);
+            refusal = Plan(request, finish, FinishRole, request.FinishPosition, clipped, occupied, emitted, suppressed, warnings);
         }
 
         // A planner refusal is a broken dependency, not a placement decision, so
         // it is never reported as a merely missing date.
-        return refusal is { } reason ? Refused(reason) : new DateLabelOutcome(new DateLabelResult(emitted, suppressed), null);
+        return refusal is { } reason ? Refused(reason) : new DateLabelOutcome(new DateLabelResult(emitted, suppressed, warnings), null);
     }
     /// <summary>
     /// Plans one date label.
@@ -207,7 +222,8 @@ public static class DateLabelBuilder
         bool clipped,
         List<RectD> occupied,
         List<SceneText> emitted,
-        List<string> suppressed)
+        List<string> suppressed,
+        List<SceneWarning> warnings)
     {
         // Section 23: the start label anchors Left of the visible bar and the
         // finish label Right, unless the row names an explicit position.
@@ -257,8 +273,28 @@ public static class DateLabelBuilder
 
         if (clipped)
         {
-            SceneText fallback = Unclipped(request, text, role, position, owner, @event);
+            SceneText fallback = Unclipped(
+                request,
+                text,
+                role,
+                position,
+                owner,
+                @event,
+                out GanttLabelPosition used);
             emitted.Add(fallback);
+
+            // A position the caller did not ask for is recorded, not hidden: the
+            // scene is the only place a reader can see that the never-suppress
+            // fallback moved the date off the requested side to keep it on the
+            // chart. Silently flipping would make the emitted geometry disagree
+            // with the resolved position with nothing to explain the difference.
+            if (used != position)
+            {
+                warnings.Add(new SceneWarning(
+                    owner,
+                    PositionChangedCode,
+                    "The off-plot date label was placed on a different side so it would stay inside the chart."));
+            }
 
             // The fallback box is an emitted label like any other, so it is
             // registered as an occupant. Without this the finish label would be
@@ -274,16 +310,42 @@ public static class DateLabelBuilder
     }
 
     /// <summary>
-    /// Emits the true date for a clipped event at a deterministic box beside the
-    /// visible edge, because section 23 forbids suppressing an off-plot date.
+    /// Emits the true date for a clipped event at a deterministic box, because
+    /// section 23 forbids suppressing an off-plot date.
     /// </summary>
+    /// <param name="request">The typed date-label request.</param>
+    /// <param name="text">The true, unclamped date text.</param>
+    /// <param name="role">The date-label role, which names the emitted primitive.</param>
+    /// <param name="position">The requested position.</param>
+    /// <param name="owner">The owning scene row.</param>
+    /// <param name="event">The validated event the label belongs to.</param>
+    /// <param name="used">The position the box was finally placed at.</param>
+    /// <returns>The emitted scene text.</returns>
+    /// <remarks>
+    /// <para>
+    /// The never-suppress rule requires a label, not a particular box, so this
+    /// fallback owns three things the planner's own contract assumes: the box is
+    /// contained within the chart bounds, an explicit position is honoured rather
+    /// than silently replaced by the start role's Left, and the position actually
+    /// used is reported back so a caller can record the change.
+    /// </para>
+    /// <para>
+    /// A clipped bar sits against a plot edge, which is exactly where an external
+    /// box escapes the chart. Each position is tried, then its opposite side, and
+    /// only then is the box clamped into the chart. Clamping is the last resort
+    /// because §23 requires the true date to be emitted and a box outside the
+    /// chart would be invisible; it shifts the box rather than shortening it, so
+    /// the text is never elided into a plausible-looking wrong date (D-G11).
+    /// </para>
+    /// </remarks>
     private static SceneText Unclipped(
         DateLabelRequest request,
         string text,
         string role,
         GanttLabelPosition position,
         SceneOwnerId owner,
-        GanttEvent @event)
+        GanttEvent @event,
+        out GanttLabelPosition used)
     {
         if (!request.TextMetrics.TryMeasure(text, out TextMeasurement? measured) || measured is null)
         {
@@ -291,21 +353,115 @@ public static class DateLabelBuilder
         }
 
         var height = request.Metrics.LabelHeightPt;
-        var top = request.VisibleBounds.Y + ((request.VisibleBounds.Height - height) / 2);
-        var left =
-            position is GanttLabelPosition.Right
-                ? request.VisibleBounds.Right + request.Metrics.LabelGapPt
-                : request.VisibleBounds.Left - request.Metrics.LabelGapPt - measured.WidthPt;
+        var gap = request.Metrics.LabelGapPt;
+        RectD visible = request.VisibleBounds;
+        RectD chart = request.Metrics.ChartBounds;
 
-        return new SceneText(
-            $"{@event.Id.Value}:{role}",
-            owner,
-            ZLayer.Label,
-            text,
-            new RectD(left, top, measured.WidthPt, height),
-            request.TextStyle,
-            position is GanttLabelPosition.Right ? GanttTextAlignment.Left : GanttTextAlignment.Right,
-            @event.Type);
+        // The §22 candidate geometry, resolved here because this path is reached
+        // only after the planner has already declined every candidate.
+        var top = visible.Top + ((visible.Height - height) / 2);
+        var centred = visible.Left + ((visible.Width - measured.WidthPt) / 2);
+
+        // Every enum member is listed rather than folded into a default arm, so a
+        // position added to GanttLabelPosition later cannot silently acquire this
+        // builder's geometry. The corners, the splitter placements, and None/Auto
+        // are not date-label positions; they take the Left box, which is what the
+        // two-case form this replaces did for every non-Right value.
+        RectD Box(GanttLabelPosition candidate)
+        {
+            return candidate switch
+            {
+                GanttLabelPosition.Right => new RectD(visible.Right + gap, top, measured.WidthPt, height),
+                GanttLabelPosition.Inside => new RectD(centred, top, measured.WidthPt, height),
+                GanttLabelPosition.Above => new RectD(centred, visible.Top - gap - height, measured.WidthPt, height),
+                GanttLabelPosition.Below => new RectD(centred, visible.Bottom + gap, measured.WidthPt, height),
+
+                GanttLabelPosition.None
+                or GanttLabelPosition.Auto
+                or GanttLabelPosition.Left
+                or GanttLabelPosition.TopLeft
+                or GanttLabelPosition.TopRight
+                or GanttLabelPosition.BottomLeft
+                or GanttLabelPosition.BottomRight
+                or GanttLabelPosition.DataPanelLeft
+                or GanttLabelPosition.PlotCentre
+                or GanttLabelPosition.Both
+                    => new RectD(visible.Left - gap - measured.WidthPt, top, measured.WidthPt, height),
+                _ => throw new ArgumentOutOfRangeException(nameof(candidate)),
+            };
+        }
+
+        // Above and Below flip to each other; everything else tries the two
+        // external sides. Inside is deliberately absent: a box inside a clipped
+        // sliver is unreadable, and §23 wants the date legible.
+        GanttLabelPosition[] order = position switch
+        {
+            GanttLabelPosition.Above => [GanttLabelPosition.Above, GanttLabelPosition.Below],
+            GanttLabelPosition.Below => [GanttLabelPosition.Below, GanttLabelPosition.Above],
+            GanttLabelPosition.None
+            or GanttLabelPosition.Auto
+            or GanttLabelPosition.Left
+            or GanttLabelPosition.Right
+            or GanttLabelPosition.Inside
+            or GanttLabelPosition.TopLeft
+            or GanttLabelPosition.TopRight
+            or GanttLabelPosition.BottomLeft
+            or GanttLabelPosition.BottomRight
+            or GanttLabelPosition.DataPanelLeft
+            or GanttLabelPosition.PlotCentre
+            or GanttLabelPosition.Both => [position, GanttLabelPosition.Right, GanttLabelPosition.Left],
+            _ => throw new ArgumentOutOfRangeException(nameof(position)),
+        };
+
+        used = order[0];
+        foreach (GanttLabelPosition candidate in order)
+        {
+            if (Contains(chart, Box(candidate)))
+            {
+                used = candidate;
+                return Emit(Box(candidate), candidate);
+            }
+        }
+
+        // Nothing fits: keep the requested position and clamp, so the true date is
+        // still emitted inside a chart too small to hold it beside the bar.
+        return Emit(Clamp(chart, Box(position)), position);
+
+        SceneText Emit(RectD box, GanttLabelPosition placed)
+        {
+            return new SceneText(
+                $"{@event.Id.Value}:{role}",
+                owner,
+                ZLayer.Label,
+                text,
+                box,
+                request.TextStyle,
+
+                // §22's alignment rule: a right-hand box reads away from the shape,
+                // a left-hand box ends against it, and the centred positions centre.
+                placed is GanttLabelPosition.Left ? GanttTextAlignment.Right
+                    : placed is GanttLabelPosition.Right ? GanttTextAlignment.Left
+                    : GanttTextAlignment.Centre,
+                @event.Type);
+        }
+    }
+
+    /// <summary>Returns whether the box lies entirely within the chart bounds.</summary>
+    private static bool Contains(RectD outer, RectD inner) =>
+        inner.Left >= outer.Left - GeometryMath.Epsilon
+        && inner.Top >= outer.Top - GeometryMath.Epsilon
+        && inner.Right <= outer.Right + GeometryMath.Epsilon
+        && inner.Bottom <= outer.Bottom + GeometryMath.Epsilon;
+
+    /// <summary>
+    /// Shifts a box the minimum distance needed to bring it inside the chart,
+    /// keeping its size.
+    /// </summary>
+    private static RectD Clamp(RectD chart, RectD box)
+    {
+        var left = Math.Clamp(box.Left, chart.Left, Math.Max(chart.Left, chart.Right - box.Width));
+        var top = Math.Clamp(box.Top, chart.Top, Math.Max(chart.Top, chart.Bottom - box.Height));
+        return new RectD(left, top, box.Width, box.Height);
     }
 
     private static bool IsPositive(RectD rect) =>

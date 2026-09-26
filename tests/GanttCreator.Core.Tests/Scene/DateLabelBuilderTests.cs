@@ -119,6 +119,135 @@ public sealed class DateLabelBuilderTests
     }
 
     [Fact]
+    public void An_unclipped_fallback_label_stays_inside_the_chart_bounds()
+    {
+        // §24 requires a label box to be "contained within chart bounds" and §22
+        // makes containment a condition of acceptance. A bar pinned hard against
+        // the chart's left edge has no room for a Left box, so the fallback used to
+        // emit one starting left of the chart -- a label no renderer can draw,
+        // which is the same as suppressing it while claiming never to suppress.
+        // The box is still emitted (the rule holds); it is only kept on the chart.
+        RectD chart = LabelEdge();
+        RectD pinned = new(chart.Left, 100.0, 40.0, 12.0);
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(visible: pinned, full: new RectD(-500.0, 100.0, 600.0, 12.0)))
+            .Result!;
+
+        Assert.Empty(result.Suppressed);
+        Assert.Equal(2, result.Primitives.Count);
+        foreach (SceneText label in result.Primitives)
+        {
+            Assert.True(
+                label.TextBounds.Left >= chart.Left && label.TextBounds.Right <= chart.Right
+                && label.TextBounds.Top >= chart.Top && label.TextBounds.Bottom <= chart.Bottom,
+                $"The {label.PrimitiveId} fallback box {label.TextBounds} escapes the chart {chart}.");
+        }
+    }
+
+    [Fact]
+    public void An_unclipped_fallback_keeps_the_true_date_rather_than_fitting_it_to_the_chart()
+    {
+        // The counterpart to the containment rule: bringing the box inside the chart
+        // must not shorten the text. §23 and D-G11 require the *true* date, and an
+        // ellipsised "05/01/20…" is a plausible-looking wrong date, so the fallback
+        // shifts the box and keeps every character.
+        RectD chart = LabelEdge();
+        RectD pinned = new(chart.Left, 100.0, 40.0, 12.0);
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(visible: pinned, full: new RectD(-500.0, 100.0, 600.0, 12.0)))
+            .Result!;
+
+        Assert.All(result.Primitives, label => Assert.DoesNotContain('…', label.Text));
+        Assert.Contains(result.Primitives, label => label.Text == "05/01/2024");
+    }
+
+    [Fact]
+    public void An_unclipped_fallback_records_a_position_it_could_not_keep()
+    {
+        // A position the caller never asked for must be visible in the scene rather
+        // than inferable only from the geometry. Without this the fallback could
+        // flip a date to the opposite side of a clipped bar and nothing in the
+        // emitted scene would say so.
+        RectD chart = LabelEdge();
+        RectD pinned = new(chart.Left, 100.0, 40.0, 12.0);
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(visible: pinned, full: new RectD(-500.0, 100.0, 600.0, 12.0)))
+            .Result!;
+
+        Assert.Contains(result.Warnings, warning => warning.Code == DateLabelBuilder.PositionChangedCode);
+    }
+
+    [Fact]
+    public void A_clipped_fallback_that_keeps_the_requested_position_warns_about_nothing()
+    {
+        // The control on the warning above: a fallback that honoured the position it
+        // was asked for must not emit the change warning, or every clipped date
+        // label would report a change that never happened.
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(full: new RectD(150.0, 100.0, 180.0, 12.0)))
+            .Result!;
+
+        Assert.DoesNotContain(result.Warnings, warning => warning.Code == DateLabelBuilder.PositionChangedCode);
+    }
+
+    [Fact]
+    public void An_explicit_vertical_date_label_position_is_not_routed_through_the_left_branch()
+    {
+        // §23 allows the same external positions as a span label, and §22 gives
+        // Above and Below their own geometry: horizontally centred, with the label
+        // above or below the shape. The fallback had a two-case branch that sent
+        // every non-Right position to the left of the bar, so an explicit Above
+        // produced a label beside the bar instead of above it.
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(full: new RectD(150.0, 100.0, 180.0, 12.0)) with
+            {
+                StartPosition = GanttLabelPosition.Above,
+                FinishPosition = GanttLabelPosition.Below,
+            })
+            .Result!;
+
+        SceneText start = result.Primitives[0];
+        SceneText finish = result.Primitives[1];
+
+        // Above sits entirely above the visible bar; Below entirely below it. The
+        // old two-case branch placed both to the left, inside the bar's own band.
+        Assert.True(start.TextBounds.Bottom <= Visible().Top, "the start label belongs above the bar");
+        Assert.True(finish.TextBounds.Top >= Visible().Bottom, "the finish label belongs below the bar");
+    }
+
+    [Fact]
+    public void An_explicit_inside_date_label_position_is_not_routed_through_the_left_branch()
+    {
+        // Inside is the third §22 position with its own geometry: the label is
+        // centred on the visible rectangle. The old two-case branch sent it to the
+        // left of the bar, which is exactly the position §22's Inside exists to
+        // distinguish, so centring on the bar's centre is the property under test.
+        //
+        // The box is wider than the 40pt bar because the measured date is 100pt and
+        // §23 forbids suppressing it. §22 allows an Inside label only when the text
+        // fits the inner bounds, so containment within the bar is NOT asserted here
+        // -- what must hold is that the box is centred on the bar rather than
+        // displaced beside it.
+        RectD visible = Visible();
+        DateLabelResult result = DateLabelBuilder
+            .TryBuild(Request(full: new RectD(150.0, 100.0, 180.0, 12.0)) with
+            {
+                StartPosition = GanttLabelPosition.Inside,
+                FinishPosition = GanttLabelPosition.Inside,
+            })
+            .Result!;
+
+        var centre = visible.Left + (visible.Width / 2);
+        foreach (SceneText label in result.Primitives)
+        {
+            Assert.Equal(centre, label.TextBounds.Left + (label.TextBounds.Width / 2));
+            Assert.False(
+                label.TextBounds.Right <= visible.Left,
+                $"The {label.PrimitiveId} Inside label sits left of the bar rather than on it.");
+        }
+    }
+
+    [Fact]
     public void A_same_date_start_and_finish_resolve_deterministically()
     {
         // One request, built once: Row() mints a new id per call, so rebuilding

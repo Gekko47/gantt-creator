@@ -705,6 +705,17 @@ public static class SceneBuilder
     /// and two sharing a date but not a style get one line each. Grouping by date
     /// alone would make <c>DelineatorLayout</c> refuse the mixed group, and grouping
     /// by style alone would emit several lines for one date.
+    /// <para>
+    /// The grouping key is the resolved <see cref="SceneStyle"/> value, not its
+    /// <c>StyleKey</c> name. Two rows can name the same style and still resolve to
+    /// different line styles when one carries a per-row <c>StrokeColour</c> override
+    /// (AGENTS.md: per-row fill/line/label overrides apply to the visible row).
+    /// Grouping by name put those rows in one group, and <c>DelineatorLayout</c>
+    /// then refused it as <c>InconsistentLineStyle</c> -- so two same-date lines
+    /// with different override colours produced *no* line at all, each row silently
+    /// lost rather than rendered. The key is the style value because
+    /// <c>SceneStyle</c> is a record, so grouping compares resolved colours.
+    /// </para>
     /// </remarks>
     private static void BuildDelineators(
         SceneBuildRequest request,
@@ -716,15 +727,18 @@ public static class SceneBuilder
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
-        // Grouping is by (date, style), and the members inside a group are ordered by
-        // the stable row ID. The input is not ordered -- the R3.12 determinism contract
-        // is that a shuffled input produces a byte-identical scene -- so using the
-        // first member in *input* order would make the group's owning row depend on
-        // the caller's row order. Grouping preserves first-appearance order, so an
-        // explicit order-by is required for determinism, not just tidiness.
-        foreach (IGrouping<(DateOnly Date, string Style), GanttEvent> group in delineators
+        // Grouping is by (date, resolved style), and the members inside a group are
+        // ordered by the stable row ID. The input is not ordered -- the R3.12
+        // determinism contract is that a shuffled input produces a byte-identical
+        // scene -- so using the first member in *input* order would make the group's
+        // owning row depend on the caller's row order. Grouping preserves
+        // first-appearance order, so an explicit order-by is required for
+        // determinism, not just tidiness. The style is read straight from the map,
+        // which is populated for every visible delineator above, so a missing entry
+        // is impossible here rather than something to default around.
+        foreach (IGrouping<(DateOnly Date, SceneStyle Style), GanttEvent> group in delineators
             .OrderBy(@event => @event.Id.Value, StringComparer.Ordinal)
-            .GroupBy(@event => (@event.Start!.Value, StyleKey(delineatorStyles, @event))))
+            .GroupBy(@event => (@event.Start!.Value, delineatorStyles[@event.Id])))
         {
             DelineatorRequest[] requests =
             [
@@ -808,7 +822,7 @@ public static class SceneBuilder
         // fixed (lane, stack, subtype, sort order, stable ID) survives within one
         // §22 priority and the scene stays byte-identical across refreshes.
         foreach (LaneEventPlacement placement in placements.Placements
-            .OrderBy(placement => LabelPriorityFor(placement.Event.Type)))
+            .OrderBy(placement => LabelPlacementPriority.For(placement.Event.Type)))
         {
             GanttEvent @event = placement.Event;
             if (!parentVisibleBounds.TryGetValue(@event.Id, out RectD shapeBounds))
@@ -888,6 +902,7 @@ public static class SceneBuilder
             }
 
             primitives.AddRange(planned.Primitives);
+            warnings.AddRange(planned.Warnings);
             foreach (SceneText dateLabel in planned.Primitives)
             {
                 occupants.Add(dateLabel.TextBounds);
@@ -957,46 +972,6 @@ public static class SceneBuilder
     }
 
     /// <summary>
-    /// The §22 description-label placement priority for a type, highest first.
-    /// </summary>
-    /// <param name="type">The entity type whose label is being placed.</param>
-    /// <returns>
-    /// The priority rank: critical milestones, then other milestones, delay labels,
-    /// actual labels, planned labels, baseline labels, and procurement/custom labels.
-    /// </returns>
-    /// <remarks>
-    /// §22 states the order as "critical milestones, other milestones, delay labels,
-    /// actual labels, planned labels, baseline labels, procurement/custom labels, date
-    /// labels, and delineator labels". The date and delineator label passes are not
-    /// planned here, so those ranks need no member. A type the list does not name
-    /// sorts last, which is deterministic and cannot outrank a named one.
-    /// </remarks>
-    private static int LabelPriorityFor(GanttEntityType type) =>
-        type switch
-        {
-            GanttEntityType.CriticalMilestone => 0,
-            GanttEntityType.AsPlannedMilestone
-                or GanttEntityType.AsBuiltMilestone
-                or GanttEntityType.BaselineMilestone => 1,
-            GanttEntityType.DelayEvent => 2,
-            GanttEntityType.AsBuiltActivity or GanttEntityType.AsBuiltProcurement => 3,
-            GanttEntityType.AsPlannedActivity or GanttEntityType.AsPlannedProcurement => 4,
-            GanttEntityType.BaselineActivity or GanttEntityType.BaselineProcurement => 5,
-            GanttEntityType.CustomActivity => 6,
-
-            // A Critical Interval and a Delineator have no §22 description label of
-            // their own (the first is an overlay, the second places its own corner
-            // text), and a Splitter or Spacer emits no label at all. Listing them
-            // explicitly rather than folding them into the default arm is what lets
-            // the analyzer prove the switch covers the enum, so a new type cannot be
-            // added without deciding its label priority.
-            GanttEntityType.CriticalInterval => 7,
-            GanttEntityType.Delineator => 8,
-            GanttEntityType.Splitter or GanttEntityType.Spacer => 9,
-            _ => int.MaxValue,
-        };
-
-    /// <summary>
     /// Reconstructs an entity's unclipped horizontal extent from its own dates, so
     /// §23's clipped-date rule fires only on a bar the plot actually cut.
     /// </summary>
@@ -1042,9 +1017,6 @@ public static class SceneBuilder
 
         return new RectD(left, visible.Y, Math.Max(0, width), visible.Height);
     }
-
-    private static string StyleKey(Dictionary<GanttRowId, SceneStyle> styles, GanttEvent @event) =>
-        styles.TryGetValue(@event.Id, out SceneStyle? style) ? style.StyleKey : "None";
 
     private static bool TryResolveStyle(
         GanttStyleRegistry registry,
