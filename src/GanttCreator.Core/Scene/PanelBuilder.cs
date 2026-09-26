@@ -197,10 +197,10 @@ public static class PanelBuilder
         // Section 3: the panel's right edge touches the plot's left edge. Deriving
         // the panel origin from PlotBounds.Left rather than from the panel's own
         // width makes a gap or an overlap unrepresentable.
-        double panelLeft = plot.Left - grid.TotalWidthPt;
-        double headerTop = request.HeaderBottomPt - request.HeaderHeightPt;
-        double bodyTop = request.HeaderBottomPt;
-        double panelBottom = bodyTop + (request.Rows.Count * grid.RowHeightPt);
+        var panelLeft = plot.Left - grid.TotalWidthPt;
+        var headerTop = request.HeaderBottomPt - request.HeaderHeightPt;
+        var bodyTop = request.HeaderBottomPt;
+        var panelBottom = bodyTop + (request.Rows.Count * grid.RowHeightPt);
 
         List<ScenePrimitive> primitives = [];
         AddHeader(primitives, request, grid, panelLeft, headerTop);
@@ -221,7 +221,7 @@ public static class PanelBuilder
         double panelLeft,
         double headerTop)
     {
-        double x = panelLeft;
+        var x = panelLeft;
         foreach (PanelColumn column in grid.Columns)
         {
             var bounds = new RectD(x, headerTop, column.WidthPt, request.HeaderHeightPt);
@@ -252,14 +252,14 @@ public static class PanelBuilder
         double panelLeft,
         double bodyTop)
     {
-        for (int rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
+        for (var rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
         {
             PanelRow row = request.Rows[rowIndex];
             var owner = SceneOwnerId.ForRow(row.RowId);
-            double top = bodyTop + (rowIndex * grid.RowHeightPt);
-            double x = panelLeft;
+            var top = bodyTop + (rowIndex * grid.RowHeightPt);
+            var x = panelLeft;
 
-            for (int columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
+            for (var columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
             {
                 PanelColumn column = grid.Columns[columnIndex];
                 var bounds = new RectD(x, top, column.WidthPt, grid.RowHeightPt);
@@ -271,7 +271,7 @@ public static class PanelBuilder
                         bounds,
                         request.Theme.BodyFill));
 
-                string? text = row.Cells[columnIndex];
+                var text = row.Cells[columnIndex];
                 if (!string.IsNullOrWhiteSpace(text))
                 {
                     primitives.Add(
@@ -305,9 +305,9 @@ public static class PanelBuilder
     {
         // One vertical line per column boundary, including both outer edges, each
         // spanning the whole panel so no cell edge is drawn twice.
-        double right = panelLeft;
-        double x = panelLeft;
-        for (int index = 0; index <= grid.Columns.Count; index++)
+        var right = panelLeft;
+        var x = panelLeft;
+        for (var index = 0; index <= grid.Columns.Count; index++)
         {
             primitives.Add(
                 new SceneLine(
@@ -328,9 +328,9 @@ public static class PanelBuilder
         // The panel's top edge, then each row's bottom edge. The header's bottom
         // is the first row's top, so it is not drawn again here.
         AddHorizontalBorder(primitives, request, "panel-border-h:0", panelLeft, right, headerTop);
-        for (int index = 0; index < request.Rows.Count; index++)
+        for (var index = 0; index < request.Rows.Count; index++)
         {
-            double y = bodyTop + ((index + 1) * grid.RowHeightPt);
+            var y = bodyTop + ((index + 1) * grid.RowHeightPt);
             AddHorizontalBorder(primitives, request, $"panel-border-h:{index + 1}", panelLeft, right, y);
         }
     }

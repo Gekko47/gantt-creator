@@ -1,5 +1,4 @@
 using System.Globalization;
-using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Core.Tests.Scene;
@@ -60,7 +59,7 @@ public sealed class PanelBuilderTests
         // so that is the value the caller must pass; this asserts the panel lands
         // on it rather than near it.
         PanelBuildResult result = Build().Result!;
-        double periodHeaderBottom = _plotY - _yearBandHeight;
+        var periodHeaderBottom = _plotY - _yearBandHeight;
 
         Assert.Equal(periodHeaderBottom, result.HeaderRowBounds.Bottom);
         Assert.Equal(periodHeaderBottom - _headerHeight, result.HeaderRowBounds.Y);
@@ -91,11 +90,11 @@ public sealed class PanelBuilderTests
         PanelCellGrid grid = Grid();
         PanelBuildResult result = Build().Result!;
 
-        double expectedLeft = _plotLeft - grid.TotalWidthPt;
-        for (int index = 0; index < grid.Columns.Count; index++)
+        var expectedLeft = _plotLeft - grid.TotalWidthPt;
+        for (var index = 0; index < grid.Columns.Count; index++)
         {
             PanelColumn column = grid.Columns[index];
-            var header = result.Primitives.OfType<SceneRect>()
+            SceneRect header = result.Primitives.OfType<SceneRect>()
                 .Single(rect => rect.PrimitiveId.EndsWith($"header-cell:{column.Name}", StringComparison.Ordinal));
             Assert.Equal(new RectD(expectedLeft, _plotY - _yearBandHeight - _headerHeight, column.WidthPt, _headerHeight), header.Bounds);
             expectedLeft += column.WidthPt;
@@ -133,8 +132,8 @@ public sealed class PanelBuilderTests
         SceneLine[] horizontals = [.. result.Primitives.OfType<SceneLine>()
             .Where(line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal))];
 
-        int columns = Grid().Columns.Count;
-        int rows = TwoRows().Length;
+        var columns = Grid().Columns.Count;
+        var rows = TwoRows().Length;
 
         Assert.Equal(columns + 1, verticals.Length);
         Assert.Equal(rows + 1, horizontals.Length);
@@ -172,7 +171,7 @@ public sealed class PanelBuilderTests
         PanelBuildResult result = Build(rows: []).Result!;
 
         Assert.Contains(result.Primitives.OfType<SceneText>(), text => text.Text == "Description");
-        Assert.Single(result.Primitives.OfType<SceneLine>(), line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal));
+        _ = Assert.Single(result.Primitives.OfType<SceneLine>(), line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal));
         Assert.Equal(result.HeaderRowBounds, result.PanelBounds);
     }
 
@@ -184,13 +183,13 @@ public sealed class PanelBuilderTests
         CultureInfo original = CultureInfo.CurrentCulture;
         try
         {
-            string[] observed = _cultures.Select(culture =>
+            string[] observed = [.. _cultures.Select(culture =>
             {
                 CultureInfo.CurrentCulture = new CultureInfo(culture);
                 SceneText start = Build().Result!.Primitives.OfType<SceneText>()
                     .First(text => text.PrimitiveId.EndsWith(":panel-text:Start", StringComparison.Ordinal));
                 return start.Text;
-            }).ToArray();
+            })];
 
             Assert.All(observed, text => Assert.Equal("05/01/2024", text));
         }
@@ -356,14 +355,14 @@ public sealed class PanelBuilderTests
 
     private static string?[] Cells(IReadOnlyList<string>? blankColumns = null)
     {
-        string?[] cells = new string?[GanttTableSchema.Default.Columns.Count];
+        var cells = new string?[GanttTableSchema.Default.Columns.Count];
         Array.Fill(cells, "x");
         cells[SchemaIndex("Start")] = GanttDateFormatting.FormatDdMMyyyy(new DateOnly(2024, 1, 5));
         cells[SchemaIndex("Finish")] = GanttDateFormatting.FormatDdMMyyyy(new DateOnly(2024, 1, 9));
 
         // Blanking is keyed by column name, not index, so a schema change cannot
         // silently redirect a fixture at a different column.
-        foreach (string column in blankColumns ?? [])
+        foreach (var column in blankColumns ?? [])
         {
             cells[SchemaIndex(column)] = "  ";
         }
@@ -373,7 +372,7 @@ public sealed class PanelBuilderTests
 
     private static int SchemaIndex(string name)
     {
-        for (int index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
+        for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
         {
             if (string.Equals(GanttTableSchema.Default.Columns[index].Name, name, StringComparison.Ordinal))
             {
