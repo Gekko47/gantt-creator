@@ -84,6 +84,7 @@ files only; the local audit verifies every file exists.
 | R2.6a | `R2.6a-validation-reporter-boundary.md` | Landed (`bf9727c`) |
 | R2.7b | `R2.7b-style-capability-schema.md` | Landed (`49abd4f`; ADR-0009) |
 | R2.7c | `R2.7c-style-registry-formatting.md` | Implemented (working-tree implementation with observed gates; pending commit) |
+| R2.7d | `R2.7d-date-display-format-setting.md` | Approved (ADR-0016 accepted; not implemented) |
 | R2.8 | `R2.8-add-row-commands.md` | Implemented (working-tree implementation with observed gates; pending commit) |
 | R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
 | R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |
@@ -218,6 +219,8 @@ files only; the local audit verifies every file exists.
 | D-G7 | Named-style label/colour capability schema | R2.7b | ADR-0009 | Accepted 2026-09-23 |
 | D-G8 | Defer R2.10 and R3.13 until after the R4.9 first-live slice | R2.9/R3.12 | ADR-0010 | Accepted 2026-09-23 |
 | D-G9 | Label `Auto` cascade order and the blocked-label widest-gap truncation fallback | R3.6 | ADR-0015 | Accepted 2026-09-26 |
+| D-G10 | Approved event-date display format | R3.11 | ADR-0016 | Accepted 2026-09-26 — `dd/mm/yyyy`, new `DateDisplayFormat` setting, schema 2→3 |
+| D-G11 | Clipped-event date-label policy setting | R3.11 | Pending — a new setting and ADR required | Open — §23 requires "one approved chart setting" that does not exist |
 
 ## Known drift resolved by revision 5
 

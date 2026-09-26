@@ -1,6 +1,6 @@
-# Gantt visual entity guide — revision 4
+# Gantt visual entity guide — revision 5
 
-> Created 2 September 2026 under a new filename. Revision 4 (26 September 2026) applies [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
+> Created 2 September 2026 under a new filename. Revision 5 (26 September 2026) applies [ADR-0016](adr/0016-date-display-format-setting.md): §3 and §23 named the "approved display format" without specifying one, so both now name the approved value `dd/mm/yyyy`, its `DateDisplayFormat` setting, and the culture-invariant rendering rule. **§23's clipped-date policy still references an unnamed "one approved chart setting"** — that setting is not defined in this revision, and an implementation needing it must stop for a decision rather than infer one. No token value, label position, or z-layer changes in this revision. Revision 4 (26 September 2026) applied [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
 
 
 <!-- SKILL-SUMMARY:START -->
@@ -315,7 +315,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Style:** workbook cell styles in the live sheet; export uses `DataPanelFill`, `DefaultText`, and the resolved border/font tokens. User-defined arbitrary cell formatting is not automatically interpreted as Gantt semantics.
 
-**Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format.
+**Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format `dd/mm/yyyy`, selected by the `DateDisplayFormat` setting and rendered culture-invariantly ([ADR-0016](adr/0016-date-display-format-setting.md)).
 
 **Validation:** required columns exist once; no merged body cells; supported date/value types; positive visible column widths.
 
@@ -621,7 +621,7 @@ Placement priority is: explicit manual positions first; then critical milestones
 
 **Purpose:** optionally show dates independently of the description.
 
-**Source:** event Start/Finish and approved invariant display format.
+**Source:** event Start/Finish and the approved invariant display format `dd/mm/yyyy`, selected by the `DateDisplayFormat` setting and rendered culture-invariantly ([ADR-0016](adr/0016-date-display-format-setting.md)).
 
 **Geometry:** start label anchors Left of the visible bar by default; finish label anchors Right. Explicit positions may use the same external choices as a span label. They are separate scene text entities with IDs derived from the parent event ID and label role.
 
