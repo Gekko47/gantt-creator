@@ -158,7 +158,7 @@ public static class LaneEventLayout
                     return Refused(LaneEventLayoutRefusal.InvalidSlotIndex);
                 }
 
-                if (!slotsByLane[lane.LaneKey].TryGetValue(effective, out var slot))
+                if (!slotsByLane[lane.LaneKey].TryGetValue(effective, out SlotGeometry? slot))
                 {
                     return Refused(LaneEventLayoutRefusal.MissingLayout);
                 }

@@ -136,7 +136,7 @@ public static class CriticalOverlayBuilder
 
         // The parent bar's *visible* bounds are authoritative, so a parent that
         // was itself plot-clipped constrains the overlay to what is on screen.
-        if (parentVisibleBounds is null || !parentVisibleBounds.TryGetValue(parentId, out var parent))
+        if (parentVisibleBounds is null || !parentVisibleBounds.TryGetValue(parentId, out RectD parent))
         {
             return Refused(CriticalOverlayRefusal.UnresolvedParent);
         }
