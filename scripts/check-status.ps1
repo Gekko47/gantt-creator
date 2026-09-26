@@ -168,34 +168,41 @@ foreach ($t in $tokens)
     # local pre-commit run cannot see. Require git to know the path, which is
     # the condition a fresh checkout reproduces.
     #
-    # HEAD, not the index: `git ls-files` reads the *index*, so a path that is
-    # staged but not yet committed is reported as tracked and the gate stays
-    # green, while a clean CI checkout of that same commit has no such file --
-    # the same local/CI divergence one commit earlier. A staged-only path is
-    # therefore a false pass, and `git ls-tree HEAD` is the condition CI
-    # actually reproduces. The token is normalised to git's forward-slash
+    # The *index*, not HEAD. This gate is a pre-commit hook, so what it must
+    # validate is the tree of the commit about to be made, and the index is
+    # exactly that tree. `git ls-tree HEAD` excluded staged content, so a new
+    # file that STATUS names in the same commit that introduces it was reported
+    # as untracked and the commit was blocked -- a false rejection of a correct
+    # change. `git ls-files` reads the index, so a staged path is accepted while
+    # a path that exists only in the working tree (never added) is still rejected,
+    # which is the distinction that actually matters. The earlier reasoning that
+    # a staged-only path is a false pass for CI did not hold: once committed, the
+    # file is in the commit, so a CI checkout of that commit does have it.
+    #
+    # CI behaviour is unchanged: in a clean checkout the index equals its HEAD,
+    # so the two forms agree there. The token is normalised to git's forward-slash
     # format first, because a backticked STATUS path may use a backslash while
     # git records and matches with '/'.
     $gitToken = $t.Replace('\', '/')
-    $committed = @(git -C $repoRoot ls-tree -r --name-only HEAD -- $gitToken 2>$null)
+    $tracked = @(git -C $repoRoot ls-files -- $gitToken 2>$null)
 
     # Captured immediately after the call, before any other command runs. Reading
     # $LASTEXITCODE further down would be reading whatever ran last, not git's
     # status, and the commands between (Join-Path, Where-Object, .StartsWith) are
     # exactly the kind that can move it.
-    $lsTreeExitCode = $LASTEXITCODE
+    $lsFilesExitCode = $LASTEXITCODE
 
     # A token is known to git when it is exactly a tracked file, or when it is a
     # directory that contains tracked files. The directory case is required
     # because git tracks files, not directories: `ls-tree -r` reports the entries
     # beneath a directory token rather than the token itself, and STATUS cites
     # project directories such as `src/GanttCreator.Office` as readily as files.
-    $isTrackedFile = @($committed).Count -gt 0 -and $committed -contains $gitToken
+    $isTrackedFile = @($tracked).Count -gt 0 -and $tracked -contains $gitToken
     $isTrackedDirectory = @(
-        $committed | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
+        $tracked | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
     ).Count -gt 0
 
-    if ($lsTreeExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
+    if ($lsFilesExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
     {
         $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }
@@ -256,8 +263,54 @@ if (Test-Path -LiteralPath $workItemsDir)
             foreach ($match in [regex]::Matches($command, '[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+'))
             {
                 $token = $match.Value
-                if ($token -notmatch '[/\\]') { continue }
+
+                # A URL is not a repository path. `https://example.com/build.json`
+                # tokenises to `//example.com/build.json`, which carries a separator
+                # and would otherwise be joined onto the repo root and tested as a
+                # local path that can never exist. The scheme and the `//` authority
+                # marker are both excluded, so a genuine relative path is unaffected.
+                if ($token -match '://') { continue }
+                if ($token.StartsWith('//')) { continue }
+
                 if ($token -match '[?*\[\]]') { continue }
+
+                # A bare filename is a legitimate file argument: `dotnet build
+                # GanttCreator.slnx` names a real repository-root file, and the whole
+                # reason this check exists is a command naming a path that cannot
+                # resolve. So a token with no separator is tested against the repo
+                # root instead of skipped -- with two exclusions, both measured
+                # against the current corpus rather than guessed:
+                #   * a roadmap/work-item ID (R3.12, R2.7d) is an identifier, not a file;
+                #   * a PowerShell member access on a *variable* (`$r.FailedCount`,
+                #     `_.FullName`) is a property on an object, not a filename. The
+                #     `$`/`_` prefix is required: without it this rule swallowed every
+                #     `Word.Word` token, including the real filenames it exists to
+                #     check (`GanttCreator.slnx` matched it too).
+                if ($token -notmatch '[/\\]')
+                {
+                    if ($token -match '^R\d+(\.\d+[a-z]?)?$') { continue }
+
+                    # A quoted token is a search pattern, not a path the command opens:
+                    # `Get-ChildItem -Filter 'UnitTest1.cs'` is a command whose expected
+                    # result is that the file is *absent*, and R0.5 records exactly that.
+                    # Requiring the file to exist would invert its meaning.
+                    if ($command -match ('[\''"]' + [regex]::Escape($token) + '[\''"]')) { continue }
+
+                    # A PowerShell variable member access: the token's first segment
+                    # must actually be written with a `$` on the command line, so a
+                    # bare `Word.Word` filename is still checked. The `$`/`_` prefix
+                    # alone was not enough -- it matched every `Word.Word` token,
+                    # including GanttCreator.slnx, making the check vacuous.
+                    $isVariableMember = $false
+                    if ($token -match '^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z][A-Za-z0-9]*)$')
+                    {
+                        $isVariableMember = $command -match ('[\$]' + [regex]::Escape($Matches[1]) + '\.')
+                    }
+
+                    if ($isVariableMember) { continue }
+                    if ($token -notmatch '^[\w.-]+\.[A-Za-z][A-Za-z0-9]*$') { continue }
+                }
+
                 $candidate = Join-Path $repoRoot $token
                 if (-not (Test-Path -LiteralPath $candidate))
                 {
