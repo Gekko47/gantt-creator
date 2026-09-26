@@ -14,4 +14,18 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    R3.12: the canonical neutral fixture is one committed file consumed by the Core
+    scene tests and the Office integration tests, so it is copied to the test output
+    rather than being restated in code. The copy is what makes
+    tests/fixtures/reference-gantt.json reachable at runtime; checklist G requires
+    this step to be traceable, and scripts/verify.ps1 runs the tests that depend on
+    it, so a missing file fails the gate rather than being silently skipped.
+  -->
+  <ItemGroup>
+    <None Include="..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
