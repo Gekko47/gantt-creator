@@ -201,8 +201,19 @@ internal static class ValidationReportComposer
             return false;
         }
 
-        var closing = text.IndexOf("':", index, StringComparison.Ordinal);
-        return closing > index;
+        // The closing marker must close the header on the same line. A sentinel
+        // whose header wraps onto a following line is an incomplete marker, not
+        // a generated section, so the user's text is left untouched rather than
+        // truncated at the sentinel.
+        var lineEnd = index;
+        while (lineEnd < text.Length && text[lineEnd] is not ('\r' or '\n'))
+        {
+            lineEnd++;
+        }
+
+        // Greater than zero, so the column name itself cannot be empty.
+        var closing = text.AsSpan(index, lineEnd - index).IndexOf("':", StringComparison.Ordinal);
+        return closing > 0;
     }
 
     /// <summary>Advances <paramref name="index"/> past <paramref name="literal"/> when it matches there.</summary>

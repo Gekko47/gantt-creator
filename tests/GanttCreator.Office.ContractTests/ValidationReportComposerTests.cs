@@ -377,6 +377,9 @@ public class ValidationReportComposerTests
     [InlineData(" row 1 column 'Id':")]    // missing comma before column
     [InlineData(" row 1, column Id:")]     // missing quotes around the column
     [InlineData(" column 'Id':")]         // missing row segment
+    [InlineData(" row 1, column 'Id")]    // no closing quote/colon on the header line
+    [InlineData(" row 1, column 'Id\n'Id': tail")]  // header wraps; the closing
+                                                    // marker is on a later line
     public void IsOwnedByAddIn_rejects_an_incomplete_marker(string headerSuffix)
     {
         // Each variant is a near-miss that a looser check would accept and then

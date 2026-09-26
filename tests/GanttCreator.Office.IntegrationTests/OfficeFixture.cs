@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -762,26 +763,33 @@ internal class OfficeFixture : IAsyncLifetime
     /// <remarks>
     /// Virtual so a contract test can substitute the kill and drive the
     /// escalation path without spawning Excel, mirroring the COM indexer seams
-    /// elsewhere in this harness. The default kills by PID only; it never matches
-    /// on the process name, so a user-owned Excel can never be terminated here.
-    /// The start time recorded in <see cref="OwnedProcessIdEntry"/> is re-checked
-    /// first, because a PID alone is not identity: Windows recycles process IDs,
-    /// so between the launch and this escalation a seeded PID can name a process
-    /// this fixture never started. A mismatch means the PID is no longer ours, and
-    /// killing it would terminate an unrelated process. An unreadable start time
-    /// (zero) is likewise not proof of ownership, so it refuses rather than kills.
+    /// elsewhere in this harness. The default never matches on the process name,
+    /// so a user-owned Excel can never be terminated here. The start time
+    /// recorded in <see cref="OwnedProcessIdEntry"/> is re-checked first,
+    /// because a PID alone is not identity: Windows recycles process IDs, so
+    /// between the launch and this escalation a seeded PID can name a process
+    /// this fixture never started. A mismatch means the PID is no longer ours,
+    /// and killing it would terminate an unrelated process. An unreadable start
+    /// time (zero) is likewise not proof of ownership, so it refuses rather than
+    /// kills. The check reads the start time from the same
+    /// <see cref="Process"/> that <c>Kill</c> is issued on, so the verified
+    /// process is always the terminated one.
     /// </remarks>
     /// <param name="processId">The owned process ID.</param>
     /// <returns>Whether the kill was issued successfully.</returns>
     internal virtual bool KillOwnedProcess(int processId)
     {
         if (processId == 0) return false;
-        if (!IsOwnedProcessIdentity(processId)) return false;
 
         try
         {
+            // One lookup, one identity check, one kill: resolving the process
+            // separately for the check and again for the kill would leave a
+            // window in which the PID is recycled, so the process that was
+            // verified would not be the process that is terminated.
             using var process = Process.GetProcessById(processId);
             if (process.HasExited) return false;
+            if (!IsOwnedProcessIdentity(processId, process)) return false;
 
             process.Kill(entireProcessTree: true);
             return true;
@@ -832,9 +840,41 @@ internal class OfficeFixture : IAsyncLifetime
     /// <param name="processId">The owned process ID.</param>
     /// <returns><see langword="true"/> when the start time still matches.</returns>
     private bool IsOwnedProcessIdentity(int processId) =>
+        TryGetProcess(processId, out Process? process)
+        && IsOwnedProcessIdentity(processId, process);
+
+    /// <summary>
+    /// Identity check against an already-resolved <see cref="Process"/>, so the
+    /// process that was verified is the one the caller terminates.
+    /// </summary>
+    /// <param name="processId">The owned process ID.</param>
+    /// <param name="process">The process resolved for that ID.</param>
+    /// <returns><see langword="true"/> when the start time still matches.</returns>
+    private bool IsOwnedProcessIdentity(int processId, Process process) =>
         _ownedProcessStartTicks.TryGetValue(processId, out long recordedTicks)
         && recordedTicks > 0
-        && ReadStartTimeUtcTicks(processId) == recordedTicks;
+        && ReadStartTimeUtcTicks(process) == recordedTicks;
+
+    /// <summary>
+    /// Resolves a process by ID, reporting <see langword="false"/> for a PID
+    /// that names no live process instead of throwing.
+    /// </summary>
+    /// <param name="processId">The process to resolve.</param>
+    /// <param name="process">The resolved process, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> when the process was resolved.</returns>
+    private static bool TryGetProcess(int processId, [NotNullWhen(true)] out Process? process)
+    {
+        try
+        {
+            process = Process.GetProcessById(processId);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            process = null;
+            return false;
+        }
+    }
 
     /// <summary>
     /// Test-only entry point for <see cref="IsOwnedProcessIdentity"/>. Kept
@@ -902,9 +942,30 @@ internal class OfficeFixture : IAsyncLifetime
         try
         {
             using var process = Process.GetProcessById(processId);
-            return process.StartTime.ToUniversalTime().Ticks;
+            return ReadStartTimeUtcTicks(process);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Reads a resolved process's start time in UTC ticks, or zero when it cannot
+    /// be read. A process that exits, or whose handle the OS refuses, surfaces as
+    /// <see cref="System.ComponentModel.Win32Exception"/>; that is the same
+    /// unverifiable case as a missing process, so it is reported as zero rather
+    /// than escaping to fail a teardown.
+    /// </summary>
+    /// <param name="process">The process to sample.</param>
+    /// <returns>The UTC start time in ticks, or zero when unreadable.</returns>
+    private static long ReadStartTimeUtcTicks(Process process)
+    {
+        try
+        {
+            return process.StartTime.ToUniversalTime().Ticks;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
         {
             return 0;
         }
