@@ -46,20 +46,41 @@ Describe 'check-status.ps1' {
             # Helper defined at script scope so Pester's `It` blocks can
             # call it directly without a `$script:` indirection.
             function Invoke-CheckStatusHarness {
-                param([string]$StatusBody)
+                param(
+                    [string]$StatusBody,
+                    [string]$WorkItemsRelativePath = 'WORK-ITEMS'
+                )
                 $statusFile = Join-Path $script:tempRoot 'STATUS.md'
-                $statusBody | Set-Content -LiteralPath $statusFile -Encoding utf8
+                $StatusBody | Set-Content -LiteralPath $statusFile -Encoding utf8
                 $outFile = Join-Path $script:tempRoot 'out.txt'
                 $errFile = Join-Path $script:tempRoot 'err.txt'
                 $proc = Start-Process -FilePath pwsh -ArgumentList @(
                     '-NoProfile','-File',(Join-Path $script:harness 'check-status.ps1'),
                     '-StatusPath','STATUS.md',
-                    '-RoadmapPath','ROADMAP.md'
+                    '-RoadmapPath','ROADMAP.md',
+                    '-WorkItemsPath',$WorkItemsRelativePath
                 ) -NoNewWindow -Wait -PassThru `
                     -WorkingDirectory $script:tempRoot `
                     -RedirectStandardOutput $outFile -RedirectStandardError $errFile
                 $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
                 return [pscustomobject]@{ Exit = $proc.ExitCode; Output = $combined }
+            }
+
+            # Writes one work item whose only fenced block is the supplied
+            # command, so a test states just the command under test.
+            function Set-WorkItemCommand {
+                param([string]$Command)
+                $dir = Join-Path $script:tempRoot 'WORK-ITEMS'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                @"
+# Work item
+
+## Evidence
+
+``````powershell
+$Command
+``````
+"@ | Set-Content -LiteralPath (Join-Path $dir 'R9.9-fixture.md') -Encoding utf8
             }
         }
 
@@ -295,6 +316,76 @@ References an absolute location ``C:\windows\evil.md``.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit | Should -Not -Be 0
+        }
+
+        Context 'work-item evidence commands' {
+            # The defect this rule exists for: 73 work items carried an evidence
+            # command naming a solution file that does not exist, so the command
+            # could not run and the evidence it promised was never produced.
+
+            It 'exits 1 when a work-item evidence command names a path that does not exist' {
+                Set-WorkItemCommand 'dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Not -Be 0
+                $r.Output.Contains("names 'src/GanttCreator.slnx' in an evidence command") | Should -BeTrue
+            }
+
+            It 'exits 0 when the work-item evidence command names a path that exists' {
+                # Positive control: a real path must still pass, or the rule would
+                # reject every legitimate evidence block.
+                'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'GanttCreator.slnx') -Encoding utf8
+                Set-WorkItemCommand 'dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'ignores a non-existent path named on a comment line' {
+                # A comment is a note, not a command. This is what lets a work item
+                # record the path it is deliberately correcting (R3.12 does exactly
+                # this) without tripping the gate.
+                Set-WorkItemCommand "# src/GanttCreator.slnx is wrong; use GanttCreator.slnx`ndotnet build GanttCreator.slnx"
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'ignores a non-existent path named in prose outside a fenced block' {
+                # Only commands are checked. Prose may discuss a path that does not
+                # exist -- an item describing a defect, for instance.
+                $dir = Join-Path $script:tempRoot 'WORK-ITEMS'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                @'
+# Work item
+
+Earlier revisions named ``src/GanttCreator.slnx``, which does not exist.
+'@ | Set-Content -LiteralPath (Join-Path $dir 'R9.9-fixture.md') -Encoding utf8
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'ignores a bare filename with no directory separator' {
+                # The token shape requires a separator, so a leaf name is not a path.
+                Set-WorkItemCommand 'dotnet format README.md'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'exits 0 when the work-items directory does not exist' {
+                # The rule is additive: a repository without work items must not
+                # fail the status gate for that reason alone.
+                $r = Invoke-CheckStatusHarness "# Status`n" 'NO-SUCH-DIRECTORY'
+
+                $r.Exit | Should -Be 0
+            }
         }
     }
 }

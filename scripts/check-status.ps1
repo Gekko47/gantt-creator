@@ -19,6 +19,18 @@
       3. Roadmap IDs    -- every backticked R<major>.<minor> token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define.
+      4. Work-item evidence commands -- inside fenced code blocks in
+         docs/work-items/*.md, every repo-relative path a *command* line
+         names must exist on disk. This exists because 73 work items
+         carried an evidence command naming src/GanttCreator.slnx, which
+         does not exist: the command could not run at all, so the
+         acceptance evidence it claimed was never produced. Comment lines
+         (leading '#') are skipped, which is what lets a work item record
+         a path it is deliberately correcting. Git tracking is NOT
+         required here, unlike check 2: a work item may legitimately cite
+         a file a later item will create, and refusing that would make the
+         gate cry wolf. Measured before this check was added: zero
+         violations across every work item, so the rule is quiet today.
 
     Globs (tokens containing *) are skipped: the R0.6 entry legitimately
     references a file that does not exist.
@@ -29,7 +41,8 @@
 [CmdletBinding()]
 param(
     [string]$StatusPath = 'docs/STATUS.md',
-    [string]$RoadmapPath = 'docs/03-ROADMAP.md'
+    [string]$RoadmapPath = 'docs/03-ROADMAP.md',
+    [string]$WorkItemsPath = 'docs/work-items'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -195,6 +208,60 @@ foreach ($id in $idTokens)
     }
 }
 
+# --- 4. Work-item evidence commands ---
+# A work item's evidence block is a promise: "run these and the gates are
+# green". A command naming a path that does not exist cannot run, so the
+# evidence was never produced and the promise was never kept. 73 items
+# carried `src/GanttCreator.slnx` for exactly this reason.
+#
+# Scope is deliberately narrow, because a doc scanner that flags legitimate
+# text gets disabled and then catches nothing:
+#   * only inside fenced code blocks -- prose may name anything;
+#   * only on non-comment lines -- a '#' line is a note, not a command, and
+#     is what lets an item record a path it is deliberately correcting;
+#   * only tokens carrying a separator, so 'README.md' and 'R3.12' are not
+#     treated as paths;
+#   * existence on disk only, NOT git tracking. Check 2 requires tracking
+#     because STATUS claims describe the repository as it stands; a work
+#     item may legitimately cite a file a later item will create, and
+#     refusing that would be a false positive.
+$workItemsDir = Join-Path $repoRoot $WorkItemsPath
+$workItemCommandLineCount = 0
+if (Test-Path -LiteralPath $workItemsDir)
+{
+    foreach ($item in Get-ChildItem -LiteralPath $workItemsDir -Filter '*.md' -File)
+    {
+        $inFence = $false
+        $lineNumber = 0
+        foreach ($line in [System.IO.File]::ReadAllLines($item.FullName))
+        {
+            $lineNumber++
+            if ($line -match '^\s*```')
+            {
+                $inFence = -not $inFence
+                continue
+            }
+            if (-not $inFence) { continue }
+
+            $command = $line.Trim()
+            if ($command.StartsWith('#')) { continue }
+            $workItemCommandLineCount++
+
+            foreach ($match in [regex]::Matches($command, '[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+'))
+            {
+                $token = $match.Value
+                if ($token -notmatch '[/\\]') { continue }
+                if ($token -match '[?*\[\]]') { continue }
+                $candidate = Join-Path $repoRoot $token
+                if (-not (Test-Path -LiteralPath $candidate))
+                {
+                    $violations.Add("$WorkItemsPath/$($item.Name) line $lineNumber names '$token' in an evidence command, but that path does not exist; the command cannot run.")
+                }
+            }
+        }
+    }
+}
+
 if ($violations.Count -gt 0)
 {
     Write-Host "check-status: $($violations.Count) violation(s):"
@@ -207,5 +274,5 @@ if ($violations.Count -gt 0)
 # total never reports a rejected token as verified.
 $verifiedPathCount = ($tokens | ForEach-Object { Get-RepoPathTokenStatus -Token $_ } |
     Where-Object { $_.IsPath -and -not $_.HasWildcard }).Count
-Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs verified)" -f $hashTokens.Count, $verifiedPathCount, $idTokens.Count)
+Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs, {3} work-item evidence lines verified)" -f $hashTokens.Count, $verifiedPathCount, $idTokens.Count, $workItemCommandLineCount)
 exit 0
