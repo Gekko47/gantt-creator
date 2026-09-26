@@ -2,7 +2,16 @@ using System.Globalization;
 
 namespace GanttCreator.Core.Scene;
 
-/// <summary>Injected deterministic text-width measurement seam for scene construction.</summary>
+/// <summary>
+/// A width-only view over the single <see cref="ITextMetrics"/> seam, kept so the
+/// R3.5 frame/band builder reads naturally without measuring a label box it
+/// never uses.
+/// </summary>
+/// <remarks>
+/// <c>docs/02-ARCHITECTURE.md</c> allows exactly one text-metrics service, so
+/// this is an adapter over <see cref="ITextMetrics"/>, not a second measuring
+/// implementation. R3.6 widened the port to return a height as well as a width.
+/// </remarks>
 public interface ITextWidthMeasurer
 {
     /// <summary>Attempts to measure text width in points.</summary>
@@ -10,6 +19,55 @@ public interface ITextWidthMeasurer
     /// <param name="widthPt">The measured width when successful.</param>
     /// <returns><see langword="true"/> when a finite non-negative width was measured.</returns>
     bool TryMeasure(string text, out double widthPt);
+}
+
+/// <summary>
+/// Presents an <see cref="ITextWidthMeasurer"/> as an <see cref="ITextMetrics"/>
+/// so the width-only seam can reach the shared truncation helper.
+/// </summary>
+/// <param name="measurer">The width-only seam to adapt.</param>
+/// <remarks>
+/// The height is reported as zero because no caller of the shared truncation
+/// helper needs it: the helper compares widths only.
+/// </remarks>
+public sealed class WidthOnlyMetrics(ITextWidthMeasurer measurer) : ITextMetrics
+{
+    private readonly ITextWidthMeasurer _measurer =
+        measurer ?? throw new ArgumentNullException(nameof(measurer));
+
+    /// <inheritdoc />
+    public bool TryMeasure(string text, out TextMeasurement? measurement)
+    {
+        if (_measurer.TryMeasure(text, out var widthPt))
+        {
+            measurement = new TextMeasurement(widthPt, 0);
+            return true;
+        }
+
+        measurement = null;
+        return false;
+    }
+}
+
+/// <summary>Adapts an <see cref="ITextMetrics"/> to the width-only seam.</summary>
+/// <param name="metrics">The injected deterministic text-metrics seam.</param>
+public sealed class TextWidthMeasurer(ITextMetrics metrics) : ITextWidthMeasurer
+{
+    private readonly ITextMetrics _metrics =
+        metrics ?? throw new ArgumentNullException(nameof(metrics));
+
+    /// <inheritdoc />
+    public bool TryMeasure(string text, out double widthPt)
+    {
+        if (_metrics.TryMeasure(text, out TextMeasurement? measurement) && measurement is not null)
+        {
+            widthPt = measurement.WidthPt;
+            return true;
+        }
+
+        widthPt = 0;
+        return false;
+    }
 }
 
 /// <summary>Builds chart-owned frame, header, band, title, and grid primitives.</summary>
@@ -347,19 +405,15 @@ public static class FrameBandsBuilder
 
     private static bool IsFinitePositive(double value) => double.IsFinite(value) && value > 0;
 
-    private static string Ellipsize(string text, double availableWidth, ITextWidthMeasurer measurer)
-    {
-        for (var length = text.Length - 1; length >= 0; length--)
-        {
-            var candidate = string.Concat(text.AsSpan(0, length), "…");
-            if (measurer.TryMeasure(candidate, out var width) && width <= availableWidth)
-            {
-                return candidate;
-            }
-        }
-
-        return "…";
-    }
+    /// <summary>
+    /// Truncates the title to the available width through the shared
+    /// <see cref="LabelText"/> helper, so the chart title and the R3.6 description
+    /// labels truncate by one implementation and one marker.
+    /// </summary>
+    private static string Ellipsize(string text, double availableWidth, ITextWidthMeasurer measurer) =>
+        measurer.TryMeasure(text, out var width) && width <= availableWidth
+            ? text
+            : LabelText.Ellipsize(text, availableWidth, new WidthOnlyMetrics(measurer));
 
     private static RectD Union(params RectD[] rectangles)
     {

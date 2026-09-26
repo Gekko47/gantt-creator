@@ -1,0 +1,452 @@
+using GanttCreator.Core.Scene;
+
+namespace GanttCreator.Core.Tests.Scene;
+
+public sealed class LabelPlannerTests
+{
+    private static readonly GanttRowId _rowId = GanttRowId.New();
+    private static readonly GanttRowId _laneId = GanttRowId.New();
+
+    // Every character advances 4pt, so a 5-character label is exactly 20pt wide
+    // and the tests can pin gap arithmetic by hand.
+    private static readonly FakeTextMetrics _metrics = new(_ => 4.0, 10.0);
+
+    // A 310pt-wide plot inside chart bounds that leave 6pt of margin on each side.
+    private static readonly LabelMetrics _labelMetrics = new(
+        new RectD(0, 0, 310, 100),
+        new RectD(-6, -6, 322, 112),
+        LabelGapPt: 3,
+        LabelHeightPt: 10,
+        MaximumExternalLabelWidthPt: 144
+    );
+
+    [Fact]
+    public void Auto_places_a_span_label_to_the_right_of_the_shape()
+    {
+        LabelPlanResult result = Plan(Shape(100, 20, 50), "abcde");
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.Equal(153, result.Bounds!.Value.Left);
+        Assert.False(result.WasTruncated);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Auto_prefers_a_fitting_left_over_a_fitting_inside()
+    {
+        // ADR-0015 D1: a bar whose right edge is 7pt from the plot's right edge
+        // cannot fit a 20pt label to its right, so Right is refused and Left is
+        // chosen even though Inside (60pt) would also fit. This assertion is the
+        // whole point of the amendment and fails against the superseded
+        // Right -> Inside -> Left order, which would have chosen Inside.
+        LabelPlanResult result = Plan(Shape(240, 20, 63), "abcde");
+
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        // §22: the label's right edge sits at shape.left - LabelGapPt = 237, and
+        // the 20pt-wide box is anchored to that edge.
+        Assert.Equal(237, result.Bounds!.Value.Right);
+        Assert.Equal(217, result.Bounds!.Value.Left);
+    }
+
+    [Fact]
+    public void Auto_falls_back_to_inside_only_when_both_external_sides_are_blocked()
+    {
+        // A 100pt bar boxed in by occupants: the right one starts at 203, leaving
+        // no room for a 20pt label, and the left one ends at 97, likewise. Inside
+        // (100pt) is then the only position that can hold the text.
+        LabelPlanResult result = Plan(
+            Shape(100, 20, 100),
+            "abcde",
+            occupants:
+            [
+                new RectD(0, 20, 97, 10),
+                new RectD(203, 20, 107, 10),
+            ]
+        );
+
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+    }
+
+    [Fact]
+    public void Inside_is_rejected_by_the_cascade_when_the_text_does_not_fit_the_inner_bounds()
+    {
+        // A 10pt-wide bar boxed in on both sides so Inside is the only remaining
+        // cascade candidate. Because 160pt of text cannot fit a 10pt interior,
+        // the cascade refuses Inside outright rather than overflowing the body.
+        LabelPlanResult result = Plan(
+            Shape(100, 20, 10),
+            new string('x', 40),
+            occupants:
+            [
+                new RectD(0, 20, 97, 10),
+                new RectD(113, 20, 197, 10),
+            ]
+        );
+
+        // The widest-gap fallback then finds only the same 10pt interior, which
+        // does hold an ellipsis, so the label is placed there truncated. The
+        // rejection proven here is the cascade's, not the fallback's.
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(LabelText.Ellipsis, result.Primitive!.Text[^1]);
+    }
+
+    [Fact]
+    public void An_explicit_position_beats_the_auto_cascade()
+    {
+        // Right is requested explicitly on a bar sitting 10pt from the plot's
+        // right edge. The 20pt text cannot fit the 7pt gap to its right, so the
+        // cascade refuses it; the explicit position is still the only candidate
+        // honoured, and the widest-gap measure across its own cascade truncates
+        // rather than silently switching to Left or Inside.
+        LabelPlanResult result = Plan(Shape(290, 20, 10), "abcde", GanttLabelPosition.Right);
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.True(result.WasTruncated);
+    }
+
+    [Fact]
+    public void The_delay_event_resolves_its_style_default_inside_once()
+    {
+        LabelRequest request = Request(
+            Shape(100, 20, 200),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            alignment: GanttLabelPosition.Inside
+        );
+
+        LabelPlanResult result = Plan(request);
+
+        // The style default is tried first, so a delay bar wide enough for the
+        // text keeps its label inside the red body.
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.False(result.WasTruncated);
+    }
+
+    [Fact]
+    public void The_delay_event_never_retries_inside_after_its_style_default_fails()
+    {
+        // A 10pt-wide delay bar: the style default Inside cannot fit 20pt of text.
+        LabelRequest request = Request(
+            Shape(100, 20, 10),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            alignment: GanttLabelPosition.Inside
+        );
+
+        LabelPlanResult result = Plan(request);
+
+        // ADR-0015 D3: the escape cascade is Right then Left, and Inside is never
+        // re-entered, so the position that just failed cannot succeed on a
+        // second pass through the same evaluation.
+        Assert.NotEqual(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+    }
+
+    [Fact]
+    public void The_delay_event_escapes_to_right_then_left()
+    {
+        // Right is blocked by an occupant starting at 120, so the escape cascade
+        // must continue to Left rather than retrying the rejected Inside.
+        LabelRequest request = Request(
+            Shape(100, 20, 10),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            alignment: GanttLabelPosition.Inside
+        );
+
+        LabelPlanResult result = Plan(request, [new RectD(120, 20, 6, 10)]);
+
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+    }
+
+    [Fact]
+    public void The_widest_gap_fallback_takes_the_interior_when_it_is_the_widest()
+    {
+        // Box the bar in so no cascade position can hold the full 40 characters
+        // (160pt): Right is pinned to a 4pt gap at 58, Left to a 4pt gap ending
+        // at 42, and the interior is 10pt. The interior is the widest gap, so
+        // ADR-0015 D4 puts the truncated label there, and §22's rule that Inside
+        // is only used when the text fits does not apply to the fallback, whose
+        // whole purpose is to cut the text to the space available.
+        LabelPlanResult result = Plan(
+            Shape(45, 20, 10),
+            new string('x', 40),
+            occupants:
+            [
+                new RectD(0, 20, 38, 10),
+                new RectD(58, 20, 252, 10),
+            ]
+        );
+
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.True(result.WasTruncated);
+        Assert.Equal(LabelText.Ellipsis, result.Primitive!.Text[^1]);
+        Assert.Equal(LabelPlanner.TruncatedToFitCode, Assert.Single(result.Warnings).Code);
+    }
+
+    [Fact]
+    public void The_widest_gap_fallback_takes_the_widest_of_the_three_positions()
+    {
+        // Pin the right side shut with an occupant starting at 303, so Right has
+        // no usable gap while Left keeps 237pt and Inside only 10pt.
+        LabelPlanResult result = Plan(
+            Shape(290, 20, 10),
+            "abcde",
+            occupants: [new RectD(303, 20, 7, 10)]
+        );
+
+        // The widest gap is Left, so the label goes left and fits uncut.
+        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.False(result.WasTruncated);
+    }
+
+    [Fact]
+    public void The_widest_gap_fallback_breaks_an_equal_gap_tie_on_the_cascade_order()
+    {
+        // A 50pt bar centred in a 310pt plot leaves equal ~128pt gaps on both
+        // sides, so the Right-first cascade order must win the tie.
+        LabelPlanResult result = Plan(Shape(130, 20, 50), new string('x', 30));
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+    }
+
+    [Fact]
+    public void Suppresses_the_label_with_one_warning_when_no_gap_holds_an_ellipsis()
+    {
+        // A 10pt-wide bar in a 120pt plot, boxed in so that neither side leaves
+        // room for even the 4pt single-character ellipsis. Right would start at
+        // 113 and Left would end at 97, so both are pinned shut.
+        LabelPlanResult result = Plan(
+            Shape(50, 20, 10),
+            "abcde",
+            occupants:
+            [
+                new RectD(40, 20, 10, 10),
+                new RectD(63, 20, 67, 10),
+            ]
+        );
+
+        Assert.Null(result.Primitive);
+        SceneWarning warning = Assert.Single(result.Warnings);
+        Assert.Equal(LabelPlanner.SuppressedNoSpaceCode, warning.Code);
+    }
+
+    [Fact]
+    public void A_candidate_blocked_by_a_higher_priority_label_is_rejected()
+    {
+        // The single free candidate (Right) is occupied, so the plan falls to the
+        // widest-gap measure, which must not hand back the blocked space.
+        LabelPlanResult result = Plan(
+            Shape(100, 20, 10),
+            "abcde",
+            occupants:
+            [
+                new RectD(113, 20, 4, 10),
+                new RectD(0, 20, 98, 10),
+            ]
+        );
+
+        Assert.NotEqual(GanttLabelPosition.Right, result.Position);
+    }
+
+    [Fact]
+    public void Truncation_never_splits_a_surrogate_pair()
+    {
+        // Each emoji is two UTF-16 code units, so an odd-length cut would land
+        // between a high and low surrogate. 4pt per code unit is 8pt per emoji.
+        var text = string.Concat(Enumerable.Repeat("\U0001F600", 6));
+        var wideningMetrics = new FakeTextMetrics(
+            character => char.IsLowSurrogate(character) ? 0 : 4.0,
+            10.0
+        );
+
+        var truncated = LabelText.Ellipsize(text, 20, wideningMetrics);
+
+        Assert.False(char.IsHighSurrogate(truncated[^2]), "The truncation must not leave an orphaned high surrogate.");
+        Assert.False(char.IsLowSurrogate(truncated[^1]), "The truncation must not leave an orphaned low surrogate.");
+        Assert.Equal(LabelText.Ellipsis, truncated[^1]);
+    }
+
+    [Fact]
+    public void Ellipsize_returns_the_full_text_when_it_already_fits()
+    {
+        var truncated = LabelText.Ellipsize("abcde", 20, _metrics);
+
+        Assert.Equal("abcd…", truncated);
+    }
+
+    [Fact]
+    public void Ellipsize_returns_the_bare_marker_when_nothing_fits()
+    {
+        var truncated = LabelText.Ellipsize("abcde", 2, _metrics);
+
+        Assert.Equal(LabelText.Ellipsis.ToString(), truncated);
+    }
+
+    [Fact]
+    public void Emits_the_label_at_the_label_layer_with_a_role_derived_id()
+    {
+        LabelPlanResult result = Plan(Shape(100, 20, 50), "abcde");
+
+        SceneText label = Assert.IsType<SceneText>(result.Primitive);
+        Assert.Equal(ZLayer.Label, label.ZLayer);
+        Assert.EndsWith(":label", label.PrimitiveId, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_blank_description_produces_no_label_and_no_warning()
+    {
+        LabelPlanResult result = Plan(Shape(100, 20, 50), "   ");
+
+        Assert.Null(result.Primitive);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void The_none_position_produces_no_label()
+    {
+        LabelPlanResult result = Plan(Shape(100, 20, 50), "abcde", GanttLabelPosition.None);
+
+        Assert.Null(result.Primitive);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Placement_is_identical_across_repeated_runs()
+    {
+        for (var run = 0; run < 3; run++)
+        {
+            LabelPlanResult result = Plan(Shape(130, 20, 50), new string('x', 30));
+
+            Assert.Equal(GanttLabelPosition.Right, result.Position);
+            // Right starts at shape.right + LabelGapPt = 180 + 3.
+            Assert.Equal(183, result.Bounds!.Value.Left);
+        }
+    }
+
+    [Fact]
+    public void Refuses_a_null_request()
+    {
+        LabelPlanCreationOutcome outcome = LabelPlanner.TryPlan(null, _labelMetrics);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LabelRefusal.NullRequest, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Refuses_null_metrics()
+    {
+        LabelPlanCreationOutcome outcome = LabelPlanner.TryPlan(Request(Shape(100, 20, 50), "abcde"), null);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LabelRefusal.NullMetrics, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Refuses_an_undefined_position()
+    {
+        LabelPlanCreationOutcome outcome = LabelPlanner.TryPlan(
+            Request(Shape(100, 20, 50), "abcde", (GanttLabelPosition)999),
+            _labelMetrics
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LabelRefusal.InvalidPosition, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Refuses_shape_bounds_that_cannot_be_finite() =>
+        // RectD itself rejects a non-finite coordinate at construction, so the
+        // planner's own guard is a defence in depth against a future caller
+        // that bypasses the value object. The value object is the contract.
+        _ = Assert.Throws<ArgumentOutOfRangeException>(() => new RectD(double.NaN, 20, 50, 8));
+
+    [Fact]
+    public void Refuses_a_non_finite_gap()
+    {
+        LabelPlanCreationOutcome outcome = LabelPlanner.TryPlan(
+            Request(Shape(100, 20, 50), "abcde"),
+            _labelMetrics with
+            {
+                LabelGapPt = double.PositiveInfinity,
+            }
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LabelRefusal.InvalidMetrics, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Refuses_a_negative_label_height()
+    {
+        LabelPlanCreationOutcome outcome = LabelPlanner.TryPlan(
+            Request(Shape(100, 20, 50), "abcde"),
+            _labelMetrics with
+            {
+                LabelHeightPt = -1,
+            }
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LabelRefusal.InvalidMetrics, outcome.Refusal);
+    }
+
+    private static RectD Shape(double x, double y, double width) => new(x, y, width, 8);
+
+    private static LabelPlanCreationOutcome PlanOutcome(
+        LabelRequest request,
+        IReadOnlyList<RectD>? occupants = null
+    ) => LabelPlanner.TryPlan(request, _labelMetrics, occupants);
+
+    private static LabelPlanResult Plan(LabelRequest request, IReadOnlyList<RectD>? occupants = null) =>
+        PlanOutcome(request, occupants).Result!;
+
+    private static LabelPlanResult Plan(
+        RectD shape,
+        string text,
+        GanttLabelPosition position = GanttLabelPosition.Auto,
+        IReadOnlyList<RectD>? occupants = null
+    ) => Plan(Request(shape, text, position), occupants);
+
+    private static LabelPlanResult Plan(
+        RectD shape,
+        string text,
+        IReadOnlyList<RectD>? occupants
+    ) => PlanOutcome(Request(shape, text), occupants).Result!;
+
+    private static LabelRequest Request(
+        RectD shape,
+        string text,
+        GanttLabelPosition position = GanttLabelPosition.Auto,
+        GanttEntityType type = GanttEntityType.AsPlannedActivity,
+        GanttLabelPosition? alignment = null
+    ) =>
+        new(
+            new GanttEvent(
+                1,
+                _rowId,
+                _laneId,
+                null,
+                type,
+                text,
+                new DateOnly(2024, 1, 5),
+                new DateOnly(2024, 1, 9),
+                null,
+                null,
+                null,
+                null,
+                null,
+                true,
+                null
+            ),
+            text,
+            position,
+            shape,
+            new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 8, alignment: alignment),
+            _metrics
+        );
+}
