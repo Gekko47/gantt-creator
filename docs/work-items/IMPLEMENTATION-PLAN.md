@@ -102,7 +102,7 @@ files only; the local audit verifies every file exists.
 | R3.7 | `R3.7-milestone-marker-layout.md` | Landed (`e518ca6`) |
 | R3.8 | `R3.8-critical-interval-overlay.md` | Landed (`31b72ac`, `eb00c71`) |
 | R3.9 | `R3.9-multi-event-stack-lanes.md` | Landed (`6b733a4`) |
-| R3.10 | `R3.10-delineator-lines-labels.md` | Authored (Tier A) |
+| R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
 | R3.11 | `R3.11-table-header-primitives.md` | Authored (Tier A) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Authored (Tier A) |
 | R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
