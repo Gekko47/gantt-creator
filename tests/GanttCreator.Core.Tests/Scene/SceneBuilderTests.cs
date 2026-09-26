@@ -383,6 +383,75 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
+    public void A_span_bar_that_cannot_be_placed_warns_instead_of_vanishing_silently()
+    {
+        // SpanBarBuilder refuses an event that is not a span (no Finish, or a Finish
+        // before its Start). The span pass used to `continue` with no warning, so a
+        // row whose bar could not be placed was indistinguishable from a row whose
+        // bar was clipped away. The other three placement passes already warn.
+        //
+        // The build still succeeds: a refused bar is a per-entity warning, not a
+        // whole-scene refusal, exactly as the milestone and overlay passes behave.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, start: new DateOnly(2024, 1, 10), finish: new DateOnly(2024, 1, 5)))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        // Positive control: the reversed range really is refused, so the warning
+        // below is not passing on some unrelated row's own warning.
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Primitives,
+            primitive => primitive.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal));
+
+        SceneWarning warning = Assert.Single(
+            outcome.Result!.Scene.Warnings,
+            candidate => candidate.Code == "SpanBarRefused");
+        Assert.Equal(SceneOwnerKind.Row, warning.OwnerId.Kind);
+        Assert.False(string.IsNullOrWhiteSpace(warning.Message));
+    }
+
+    [Fact]
+    public void An_external_label_is_capped_by_the_configured_maximum_width_not_the_plot_width()
+    {
+        // The regression the request property fixes. LabelMetrics' maximum external
+        // width was the plot width, so the cap moved with the time axis rather than
+        // following the approved MaximumExternalLabelWidthPt token. Here the plot is
+        // 300pt wide but the configured cap is 36pt, so a long description must be
+        // truncated to the cap rather than allowed the whole 300pt gap.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                with
+                {
+                    LabelPosition = GanttLabelPosition.Right,
+                    Description = new string('W', 60),
+                })
+            with
+            {
+                LabelStyle = new SceneStyle("DefaultText"),
+                MaximumExternalLabelWidthPt = 36,
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.True(_plotBounds.Width > 36, "The plot must be wider than the cap for this test to discriminate.");
+
+        // Filtered to row-owned text: the frame's own period/year labels also end in
+        // ":label", so an unfiltered match would pick a chart label instead.
+        SceneText description = Assert.Single(
+            outcome.Result!.Scene.Primitives
+                .OfType<SceneText>(),
+            text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+        Assert.True(
+            description.TextBounds.Width <= 36 + 1e-9,
+            "An external label must respect the configured cap, not the plot width.");
+        Assert.Contains(
+            outcome.Result!.Scene.Warnings,
+            warning => warning.Code == LabelPlanner.TruncatedToFitCode);
+    }
+
+    [Fact]
     public void Every_bar_and_marker_lies_inside_the_plot_bounds()
     {
         // The regression the plot-top offset fixes. The lane layout is lane-relative
@@ -787,6 +856,86 @@ public sealed class SceneBuilderTests
         Assert.DoesNotContain(
             rowTexts,
             text => text.PrimitiveId.EndsWith(":date-finish", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_point_event_keeps_its_start_date_label_instead_of_being_refused()
+    {
+        // The regression the FullBoundsOf guard fixes. A milestone has a Start and no
+        // Finish, so the unclipped extent was built with width 0. DateLabelBuilder
+        // refuses a non-positive FullBounds, so every milestone's start date label was
+        // refused and then dropped without a trace. A point event has nothing the
+        // plot can shorten, so `visible` is returned and the label is planned.
+        // A blank description is legal (R2.5 U2) and emits no description label, so
+        // the start date label is not competing with one for the same gap. The
+        // milestone sits late in the month so the gap to its Left is inside the
+        // plot; a marker at the plot's own left edge has no room for a Left label and
+        // would be suppressed for that reason rather than the one under test.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.AsPlannedMilestone, start: new DateOnly(2024, 1, 20), styleKey: "AsPlannedMilestone")
+                with { Description = null })
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        // Positive control: the marker exists, so the row genuinely reached the
+        // label pass and has something to anchor a label to.
+        Assert.Contains(
+            outcome.Result!.Scene.Primitives,
+            primitive => primitive.ZLayer == ZLayer.Milestone);
+
+        SceneText startLabel = Assert.Single(
+            outcome.Result!.Scene.Primitives
+                .OfType<SceneText>(),
+            text => text.PrimitiveId.EndsWith(":date-start", StringComparison.Ordinal));
+        Assert.StartsWith(
+            GanttDateFormatting.Format(new DateOnly(2024, 1, 20), GanttDateDisplayFormat.DdMMyyyy),
+            startLabel.Text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Warnings,
+            warning => warning.Code == "DateLabelRefused");
+    }
+
+    [Fact]
+    public void A_refused_date_label_is_reported_as_a_warning()
+    {
+        // A date-label refusal is a broken dependency, not a placement decision, and
+        // must be visible in the scene rather than dropping the label silently. A
+        // failing text-metrics seam makes the planner refuse: it cannot measure the
+        // text it is required to place.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1))
+            with
+            {
+                LabelStyle = new SceneStyle("DefaultText"),
+                Metrics = new FailingTextMetrics(),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneWarning warning = Assert.Single(
+            outcome.Result!.Scene.Warnings,
+            candidate => candidate.Code == "DateLabelRefused");
+        Assert.Equal(SceneOwnerKind.Row, warning.OwnerId.Kind);
+        Assert.False(string.IsNullOrWhiteSpace(warning.Message));
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.Contains(":date-", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A text-metrics seam that cannot measure, so the label planner refuses rather
+    /// than guessing a width. Used to drive the date-label refusal path.
+    /// </summary>
+    private sealed class FailingTextMetrics : ITextMetrics
+    {
+        public bool TryMeasure(string text, out TextMeasurement? measurement)
+        {
+            measurement = null;
+            return false;
+        }
     }
 
     [Fact]

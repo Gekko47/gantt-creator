@@ -131,6 +131,26 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the one-line label box height.</summary>
     public double LabelHeightPt { get; init; }
 
+    /// <summary>
+    /// Gets the maximum width of an external label, transcribed from the
+    /// <c>MaximumExternalLabelWidthPt</c> metric token.
+    /// </summary>
+    /// <remarks>
+    /// Entity guide section 22 makes this token the maximum external width, and
+    /// <see cref="LabelPlanner"/> already honours whatever it is given. Passing the
+    /// plot width instead made the cap depend on how wide the caller happened to
+    /// draw the time axis rather than on the approved token, so a wide plot
+    /// produced a label wider than the 36-360pt the catalogue allows.
+    /// </remarks>
+    /// <remarks>
+    /// The default is the code-owned catalogue value, not zero. The planner accepts
+    /// a zero maximum as valid, so a request that omitted the property would have
+    /// silently suppressed every external label rather than failing; seeding the
+    /// approved default keeps an incomplete request behaving like the catalogue.
+    /// </remarks>
+    public double MaximumExternalLabelWidthPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "MaximumExternalLabelWidthPt").DefaultValue;
+
     /// <summary>Gets the vertical gap between stacked same-date delineator labels.</summary>
     public double DelineatorStackGapPt { get; init; }
 
@@ -370,6 +390,16 @@ public static class SceneBuilder
                 timeScale);
             if (bar.Result is not { } result)
             {
+                // A span bar that cannot be placed is not the same as a span that
+                // was clipped away: the first is a broken dependency and the second
+                // is ordinary geometry. Silently continuing made the two
+                // indistinguishable, so a row whose bar vanished reported nothing at
+                // all. The other three placement passes (overlay, milestone,
+                // delineator) already warn on a refusal, and this is the fourth.
+                warnings.Add(new SceneWarning(
+                    SceneOwnerId.ForRow(@event.Id),
+                    "SpanBarRefused",
+                    "The activity bar could not be placed."));
                 continue;
             }
 
@@ -770,7 +800,7 @@ public static class SceneBuilder
             chartBounds,
             request.LabelGapPt,
             request.LabelHeightPt,
-            plotBounds.Width);
+            request.MaximumExternalLabelWidthPt);
 
         List<RectD> occupants = [];
 
@@ -846,6 +876,14 @@ public static class SceneBuilder
                     Occupants: VerticalBand(occupants, shapeBounds)));
             if (dates.Result is not { } planned)
             {
+                // A refused date label is a broken dependency, not a placement
+                // decision: the overlay, milestone, and span passes all warn rather
+                // than continuing, and dropping it silently here meant a row could
+                // lose both date labels with nothing in the scene recording why.
+                warnings.Add(new SceneWarning(
+                    SceneOwnerId.ForRow(@event.Id),
+                    "DateLabelRefused",
+                    "The start or finish date label could not be placed."));
                 continue;
             }
 
@@ -986,16 +1024,21 @@ public static class SceneBuilder
         //
         // A point event (milestone, delineator) has no span, so its full width is zero
         // and the plot can never have shortened it: it is never reported as clipped.
-        if (@event.Start is not { } start)
+        //
+        // Both dates are required, and the missing-Finish case must return `visible`
+        // rather than a zero-width rectangle. `DateLabelBuilder` refuses a
+        // non-positive `FullBounds` outright, so a Start-only event that reached it
+        // with a constructed zero-width bound was refused and its date label dropped
+        // rather than planned. A point event has nothing the plot can shorten, so
+        // `visible` is both the truthful and the usable answer.
+        if (@event.Start is not { } start || @event.Finish is not { } finish)
         {
             return visible;
         }
 
         var left = timeScale.PlotLeftPt
             + ((start.DayNumber - timeScale.PlotStart.DayNumber) * timeScale.DayWidth);
-        var width = @event.Finish is { } finish
-            ? (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth
-            : 0;
+        var width = (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth;
 
         return new RectD(left, visible.Y, Math.Max(0, width), visible.Height);
     }
