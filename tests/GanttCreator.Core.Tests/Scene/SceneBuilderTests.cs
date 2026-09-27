@@ -1165,4 +1165,106 @@ public sealed class SceneBuilderTests
         Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
         return build.Result!.Scene;
     }
+
+    /// <summary>
+    /// Gets the reference fixture's first As-Planned Activity row, whose <c>:bar</c>
+    /// and <c>:label</c> primitives the R3.16 field catalogue asserts against.
+    /// </summary>
+    internal static GanttRowId BarProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000b1");
+
+    /// <summary>Gets the fixture's first milestone row, whose <c>:marker</c> is asserted.</summary>
+    internal static GanttRowId MilestoneProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000f1");
+
+    /// <summary>Gets the fixture's As-Planned Procurement row, whose <c>:bar</c> is asserted.</summary>
+    internal static GanttRowId ProcurementProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000e1");
+
+    /// <summary>Gets the fixture's first Critical Interval row, whose <c>:critical</c> is asserted.</summary>
+    internal static GanttRowId CriticalProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000c1");
+
+    /// <summary>
+    /// Gets the fixture's first delineator row, which contributes to the shared
+    /// same-date line and keeps its own label.
+    /// </summary>
+    internal static GanttRowId DelineatorProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000a2");
+
+    /// <summary>
+    /// Gets the identifier of the shared same-date delineator line. ADR-0017 gives a
+    /// deduplicated entity a membership-sensitive owner, so the identifier carries
+    /// both contributing rows joined by the pipe that no row id can contain.
+    /// </summary>
+    internal static string SharedDelineatorPrimitiveId { get; } = $"{GanttRowId.Parse("G-000000000000000000000000000000a2")}|{GanttRowId.Parse("G-000000000000000000000000000000a3")}:delineator";
+
+    /// <summary>
+    /// Gets the row whose panel cells the R3.16 data-panel row asserts against.
+    /// </summary>
+    /// <remarks>
+    /// The canonical <see cref="BuildScene"/> supplies no <c>PanelTheme</c>, so the
+    /// committed golden contains no panel primitive at all. The panel row is therefore
+    /// exercised against <see cref="BuildSceneWithPanel"/>, a purpose-built scene that
+    /// adds only the optional panel - it never touches the golden fixture.
+    /// </remarks>
+    internal static GanttRowId PanelProbeRow { get; } = GanttRowId.Parse("G-000000000000000000000000000000b1");
+
+    /// <summary>
+    /// Builds a scene that additionally carries the §3 data panel.
+    /// </summary>
+    /// <returns>A built scene containing the panel's cell, text, and border primitives.</returns>
+    /// <remarks>
+    /// <c>SceneBuilder</c> emits panel primitives only when a <see cref="PanelTheme"/>
+    /// is supplied, and the canonical reference scene deliberately does not supply
+    /// one, so the committed golden stays free of them. This builds the same scene with
+    /// the panel added, which is what lets the R3.16 data-panel row be exercised at all.
+    /// </remarks>
+    internal static GanttScene BuildSceneWithPanel()
+    {
+        GanttValidationOutcome outcome = ReferenceSceneFixture.LoadValidated();
+        SceneBuildRequest request = new()
+        {
+            Events = outcome.Events.ToList(),
+            Registry = ReferenceSceneBuilder.StyleRegistry,
+            Grid = PanelCellGrid.TryCreate(
+                [
+                    new PanelColumn("Id", 80),
+                    new PanelColumn("Type", 120),
+                    new PanelColumn("Description", 180),
+                    new PanelColumn("Start", 70),
+                    new PanelColumn("Finish", 70),
+                ],
+                10,
+                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+            PanelBounds = new RectD(0, 20, 520, 200),
+            PlotBounds = new RectD(520, 110, 600, 290),
+            Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
+            LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
+            FrameTheme = ReferenceSceneBuilder.FrameTheme,
+            PlotStart = ReferenceSceneFixture.PlotStart,
+            PlotFinish = ReferenceSceneFixture.PlotFinish,
+            Scale = GanttTimeScale.Month,
+            PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
+            DateFormat = GanttDateDisplayFormat.DdMMyyyy,
+            Title = ReferenceSceneFixture.Title,
+            GridLinePt = 0.5,
+            MajorBoundaryPt = 1,
+            MilestoneSizePt = 8,
+            CriticalLinePt = 1,
+            TitleBandHeightPt = 14,
+            YearBandHeightPt = 16,
+            PeriodBandHeightPt = 20,
+            DelineatorLinePt = 1,
+            DelineatorStackGapPt = 10,
+            LabelGapPt = 2,
+            LabelHeightPt = 8,
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            Panel = new PanelTheme(
+                new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),
+                new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+                new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
+                new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
+                new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5)),
+        };
+
+        SceneBuildOutcome build = SceneBuilder.TryBuild(request);
+        Assert.True(build.Succeeded, "The panel-bearing scene build refused: " + build.Refusal);
+        return build.Result!.Scene;
+    }
 }

@@ -3,8 +3,8 @@ using GanttCreator.Core.Scene;
 namespace GanttCreator.Core.Tests.Scene;
 
 /// <summary>
-/// One required field of one entity-guide equivalence-table row, as transcribed at
-/// R3.14 Step 0 against <c>docs/07-GANTT-ENTITY-GUIDE.md</c> revision 5.
+/// One required field of one entity-guide field-contract row, as transcribed at R3.16
+/// from <c>docs/07-GANTT-ENTITY-GUIDE.md</c> revision 6 "Per-entity field contract".
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,14 +14,14 @@ namespace GanttCreator.Core.Tests.Scene;
 /// renderer-side workaround (R3.14 D1).
 /// </para>
 /// <para>
-/// <b>Why the list is assembled rather than lifted from one table.</b> The guide's
-/// "Entity-to-renderer equivalence" section states which representation each entity
-/// takes in each of the four renderers; the per-entity <em>fields</em> those
-/// representations need come from the same guide's "Shared entity contract" bullet
-/// list plus the per-entity section for the row. Amending the guide to add a field
-/// table would be an entity-contract change, so it is not done here: the transcription
-/// cites both and <c>EquivalenceThinSliceTests</c> guards that every field keeps a
-/// citation.
+/// <b>Why a field names a member.</b> A field-contract row names <em>every</em>
+/// primitive the row spans - a header is a rectangle plus a label, the data panel is
+/// five families of primitive - and its fields are per primitive, not per row. A field
+/// therefore states which member it is read from, so "the header text is centred" and
+/// "the body cell fill sits at Background" are both stated without either being
+/// checked against the wrong primitive. The panel row is the concrete case: R3.16
+/// corrected it to name three z-layers, and a single-primitive row could not have
+/// carried that correction at all.
 /// </para>
 /// <para>
 /// <b>Ownership.</b> "Shared entity contract" requires ownership metadata beginning
@@ -35,6 +35,7 @@ namespace GanttCreator.Core.Tests.Scene;
 /// </remarks>
 /// <param name="Name">The stable field name reported when the scene fails the field.</param>
 /// <param name="GuideCitation">The entity-guide section this field is transcribed from.</param>
+/// <param name="Member">The key of the row member this field is read from.</param>
 /// <param name="IsSatisfied">
 /// Whether the scene carries this field with a non-default, correctly typed value.
 /// The whole scene is passed because one field - an external label's placement - is
@@ -43,343 +44,102 @@ namespace GanttCreator.Core.Tests.Scene;
 internal sealed record EquivalenceField(
     string Name,
     string GuideCitation,
+    string Member,
     Func<GanttScene, ScenePrimitive, bool> IsSatisfied);
 
+/// <summary>One primitive of a field-contract row, keyed by the role its fields name it by.</summary>
+/// <param name="Key">The member key that fields refer to this primitive by.</param>
+/// <param name="PrimitiveId">The stable role-derived identifier of that primitive.</param>
+internal sealed record EquivalenceMember(string Key, string PrimitiveId);
+
 /// <summary>
-/// One entity-guide equivalence-table row, with every field it requires of all four
-/// renderers.
+/// One entity-guide field-contract row, with every field a renderer must read.
 /// </summary>
 /// <param name="Name">The row's name, used in assertion messages.</param>
-/// <param name="GuideCitation">The equivalence-table row this transcription covers.</param>
+/// <param name="GuideRowName">
+/// The row's name exactly as the guide's table spells it. The drift guard compares this
+/// set against the parsed guide, so a renamed guide row fails the suite.
+/// </param>
+/// <param name="GuideCitation">The guide row this transcription covers.</param>
+/// <param name="Members">The primitives this row spans, in transcription order.</param>
 /// <param name="Fields">The required fields, in transcription order.</param>
+/// <param name="Exclusion">
+/// For a row the model deliberately does not carry: the token that must appear in no
+/// primitive identifier. A row is either asserted against real members or excluded,
+/// never silently empty.
+/// </param>
 internal sealed record EquivalenceRow(
     string Name,
+    string GuideRowName,
     string GuideCitation,
-    IReadOnlyList<EquivalenceField> Fields)
+    IReadOnlyList<EquivalenceMember> Members,
+    IReadOnlyList<EquivalenceField> Fields,
+    string? Exclusion = null)
 {
+    /// <summary>Gets whether this row asserts that the model carries nothing at all.</summary>
+    public bool IsExclusion => Exclusion is not null;
+
     /// <summary>
     /// Collects the names of the fields this row does not find satisfied in the scene.
     /// </summary>
     /// <param name="scene">The scene under test.</param>
-    /// <param name="primitiveId">The stable identifier of the row's primitive.</param>
     /// <returns>
-    /// The unsatisfied field names, or a single entry naming the absent primitive.
-    /// An empty list means the scene carries every field of the row.
+    /// The unsatisfied field names, with one entry naming any absent primitive rather
+    /// than passing silently. An empty list means the scene carries every field.
     /// </returns>
     /// <remarks>
     /// This collects rather than asserts so a test can prove which field a
     /// deliberately field-stripped variant loses, which is the row's positive test.
     /// </remarks>
-    public IReadOnlyList<string> UnsatisfiedFields(GanttScene scene, string primitiveId)
+    public IReadOnlyList<string> UnsatisfiedFields(GanttScene scene)
     {
         ArgumentNullException.ThrowIfNull(scene);
 
-        ScenePrimitive? primitive = scene.Primitives.FirstOrDefault(candidate =>
-            string.Equals(candidate.PrimitiveId, primitiveId, StringComparison.Ordinal));
-        if (primitive is null)
+        List<string> unsatisfied = [];
+        foreach (EquivalenceField field in Fields)
         {
-            return [$"the primitive '{primitiveId}' is absent from the scene"];
+            EquivalenceMember? member = Members.FirstOrDefault(candidate =>
+                string.Equals(candidate.Key, field.Member, StringComparison.Ordinal));
+            if (member is null)
+            {
+                unsatisfied.Add($"{field.Name} (no member '{field.Member}' is declared)");
+                continue;
+            }
+
+            ScenePrimitive? primitive = scene.Primitives.FirstOrDefault(candidate =>
+                string.Equals(candidate.PrimitiveId, member.PrimitiveId, StringComparison.Ordinal));
+            if (primitive is null)
+            {
+                unsatisfied.Add($"the primitive '{member.PrimitiveId}' is absent from the scene");
+                continue;
+            }
+
+            if (!field.IsSatisfied(scene, primitive))
+            {
+                unsatisfied.Add(field.Name);
+            }
         }
 
-        return
-        [
-            .. Fields.Where(field => !field.IsSatisfied(scene, primitive)).Select(field => field.Name),
-        ];
-    }
-}
-
-/// <summary>
-/// The R3.14 thin slice: the three equivalence-table rows the row names, each
-/// transcribed field by field from the entity guide.
-/// </summary>
-internal static class EquivalenceFields
-{
-    private const string _shared = "Entity guide 'Shared entity contract' (lines 41-51)";
-    private const string _zOrder = "Entity guide 'Z-order contract' (lines 255-274)";
-    private const string _identity = "Entity guide 'Shared entity contract' - stable EntityId, resolved StyleKey, z-layer with deterministic order (lines 43-48)";
-
-    /// <summary>
-    /// The span-bar row. The equivalence table's "Activity/delay" row requires a
-    /// rectangle shape in the live worksheet, a rectangle shape in the editable
-    /// composition and PowerPoint, and a raster rectangle in the PNG; all three are
-    /// the same <see cref="SceneRect"/>, so the fields below are what each renderer
-    /// reads to draw it.
-    /// </summary>
-    public static EquivalenceRow SpanBar { get; } =
-        new(
-            "span bar",
-            "Entity guide 'Entity-to-renderer equivalence', row 'Activity/delay' (line 697); geometry and style from §12 'General span activity' (lines 448-462) and §13 'As-planned activity' (lines 464-474)",
-            [
-                new("the primitive kind is a rectangle", $"{_shared} - point-based geometry", static (_, primitive) => primitive is SceneRect),
-                new(
-                    "resolved bar geometry with non-zero extents",
-                    "Entity guide §12 'Geometry' (line 454) and 'Shared coordinate rules' (lines 243-253)",
-                    static (_, primitive) => primitive is SceneRect rect && HasPositiveExtents(rect.Bounds)),
-                FillResolved("§12 'Style' (line 456): fill and outline are explicit; no renderer defaults"),
-                StrokeResolved("§12 'Style' (line 456): fill and outline are explicit; no renderer defaults"),
-                OutlineWidthResolved("§12 'Style' (line 456): the standard outline is resolved before rendering"),
-                NoHatch("Entity guide 'Type catalogue' - an activity is Fill + outline, never Hatch + outline (line 88)"),
-                new("the activity-body z-layer", $"{_zOrder} - layer 40", static (_, primitive) => primitive.ZLayer == ZLayer.ActivityBody),
-                OrderKeys("Entity guide 'Z-order contract' (line 272): after subtype priority, order by lane, stack, SortOrder, and stable ID"),
-                RoleDerivedId("bar", "Entity guide §12 with the R3.6 role-derived ':bar' identifier"),
-                RowOwnership("Entity guide 'Shared entity contract' (line 43): a stable EntityId unrelated to worksheet row number"),
-            ]);
-
-    /// <summary>
-    /// The external description-label row. The equivalence table's "Labels" row
-    /// requires a text box shape in the live worksheet, a text box shape in the
-    /// editable composition and PowerPoint, and raster text at the scene bounds in
-    /// the PNG, so the same resolved bounds serve all three.
-    /// </summary>
-    public static EquivalenceRow ExternalDescriptionLabel { get; } =
-        new(
-            "external description label",
-            "Entity guide 'Entity-to-renderer equivalence', row 'Labels' (line 701); fields from §22 'Activity or milestone description label' (lines 592-618)",
-            [
-                new("the primitive kind is text", $"{_shared} - point-based geometry", static (_, primitive) => primitive is SceneText),
-                new(
-                    "the label text content",
-                    "Entity guide §22 - the description is user-facing text (line 596)",
-                    static (_, primitive) => primitive is SceneText text && !string.IsNullOrWhiteSpace(text.Text)),
-                new(
-                    "the resolved text bounds",
-                    "Entity guide §22 'Text measurement' (line 614): the label bounds are resolved during scene construction and renderers consume them without reselecting the side",
-                    static (_, primitive) => primitive is SceneText text && HasPositiveExtents(text.TextBounds)),
-                new(
-                    "the external placement, resolved into the text bounds",
-                    "Entity guide §22 'Candidate geometry' (lines 600-608): an external candidate stands off the shape by LabelGapPt, and the cascade is resolved in the scene",
-                    static (scene, primitive) => IsOutsideParentBar(scene, primitive)),
-                TextColourResolved("Entity guide §13 (line 470): a label uses DefaultText and Auto unless explicitly set"),
-                TextAlignmentResolved("Entity guide 'Shared colour and typography tokens' - text alignment is a resolved style value, not a label position (ADR-0018)"),
-                new("the label z-layer", $"{_zOrder} - layer 70", static (_, primitive) => primitive.ZLayer == ZLayer.Label),
-                OrderKeys("Entity guide 'Z-order contract' (line 272): after subtype priority, order by lane, stack, SortOrder, and stable ID"),
-                RoleDerivedId("label", "Entity guide §22 (line 626): label IDs are derived from the parent event ID and label role"),
-                SharedParentRowOwnership("Entity guide §22 - a description label is owned by the event it describes"),
-            ]);
-
-    /// <summary>
-    /// The milestone row. The equivalence table's "Milestone" row requires a
-    /// four-point freeform polygon in the live worksheet, a freeform polygon in the
-    /// editable composition and PowerPoint, and a raster polygon in the PNG.
-    /// </summary>
-    public static EquivalenceRow MilestoneDiamond { get; } =
-        new(
-            "milestone diamond",
-            "Entity guide 'Entity-to-renderer equivalence', row 'Milestone' (line 700); geometry from §20 'General milestone diamond' (lines 554-575) and style from §21 (lines 577-590)",
-            [
-                new("the primitive kind is a polygon", $"{_shared} - point-based geometry", static (_, primitive) => primitive is ScenePolygon),
-                new(
-                    "the four points in draw order (top, right, bottom, left)",
-                    "Entity guide §20 'Geometry' (line 560): build a four-point polygon - not a rotated square",
-                    static (_, primitive) => HasDiamondDrawOrder(primitive)),
-                new(
-                    "the tip-to-tip extent, MilestoneSizePt on both axes",
-                    "Entity guide §20 'Geometry' (line 569): size = MilestoneSizePt makes the tip-to-tip bounds exact and consistent across Excel, PowerPoint, and PNG",
-                    static (_, primitive) => HasTipToTipExtent(primitive, MilestoneSizePt)),
-                FillResolved("Entity guide §21 (line 583): a planned milestone fills with PlannedFill"),
-                StrokeResolved("Entity guide §21 (line 583): a planned milestone outlines with PlannedOutline"),
-                OutlineWidthResolved("Entity guide §21 (line 583): the resolved outline is drawn as resolved"),
-                NoHatch("Entity guide 'Type catalogue' - a milestone is Fill + outline, never Hatch + outline (lines 97-100)"),
-                new("the milestone z-layer", $"{_zOrder} - layer 60", static (_, primitive) => primitive.ZLayer == ZLayer.Milestone),
-                OrderKeys("Entity guide 'Z-order contract' (line 272): after subtype priority, order by lane, stack, SortOrder, and stable ID"),
-                RoleDerivedId("marker", "Entity guide §20 with the R3.7 role-derived ':marker' identifier"),
-                RowOwnership("Entity guide 'Shared entity contract' (line 43): a stable EntityId unrelated to worksheet row number"),
-            ]);
-
-    /// <summary>Every row of the thin slice, in the order the work item names them.</summary>
-    public static IReadOnlyList<EquivalenceRow> All { get; } = [SpanBar, ExternalDescriptionLabel, MilestoneDiamond];
-
-    /// <summary>
-    /// Gets the milestone tip-to-tip size the thin slice is built with, in points.
-    /// </summary>
-    /// <remarks>
-    /// This is the <c>MilestoneSizePt</c> the reference scene is built with; the
-    /// value is repeated here rather than read from a production default because
-    /// §20 makes it a caller-supplied token, not a fixed one.
-    /// </remarks>
-    public const double MilestoneSizePt = 8.0;
-
-    private static EquivalenceField FillResolved(string citation) =>
-        new(
-            "the resolved fill colour",
-            $"{citation} ({_identity})",
-            static (_, primitive) => StyleOf(primitive)?.FillColour is not null);
-
-    private static EquivalenceField StrokeResolved(string citation) =>
-        new(
-            "the resolved stroke colour",
-            $"{citation} ({_identity})",
-            static (_, primitive) =>
-                StyleOf(primitive) is { } style &&
-                style.StrokeColour is not null &&
-                !string.IsNullOrWhiteSpace(style.StyleKey));
-
-    private static EquivalenceField OutlineWidthResolved(string citation) =>
-        new(
-            "the resolved outline width",
-            $"{citation} ({_identity})",
-            static (_, primitive) => StyleOf(primitive)?.OutlineWidthPt is { } width && width > 0);
-
-    private static EquivalenceField NoHatch(string citation) =>
-        new(
-            "no hatch pattern on this row",
-            citation,
-            static (_, primitive) => StyleOf(primitive)?.HatchPattern is GanttHatchPattern.None);
-
-    private static EquivalenceField TextColourResolved(string citation) =>
-        new(
-            "the resolved text colour and style key",
-            citation,
-            static (_, primitive) =>
-                StyleOf(primitive) is { } style &&
-                style.FillColour is not null &&
-                !string.IsNullOrWhiteSpace(style.StyleKey));
-
-    /// <summary>
-    /// Gets the resolved style of a styled primitive, or <see langword="null"/> for a
-    /// primitive that carries none.
-    /// </summary>
-    /// <param name="primitive">The primitive under test.</param>
-    /// <returns>The primitive's resolved style, or <see langword="null"/>.</returns>
-    /// <remarks>
-    /// <see cref="ScenePrimitive"/> deliberately does not expose a style: a
-    /// <see cref="SceneGroup"/> has none, so the property lives on each styled
-    /// primitive instead of being an uninitialised base member.
-    /// </remarks>
-    private static SceneStyle? StyleOf(ScenePrimitive primitive) =>
-        primitive switch
-        {
-            SceneRect rect => rect.Style,
-            SceneLine line => line.Style,
-            ScenePolygon polygon => polygon.Style,
-            SceneText text => text.Style,
-            _ => null,
-        };
-
-    private static EquivalenceField TextAlignmentResolved(string citation) =>
-        new(
-            "the resolved text alignment",
-            citation,
-            static (_, primitive) => primitive is SceneText text && Enum.IsDefined(text.Alignment));
-
-    private static EquivalenceField OrderKeys(string citation) =>
-        new(
-            "the deterministic lane and stack order keys",
-            citation,
-            static (_, primitive) => primitive.LaneOrder is not null && primitive.StackIndex is not null);
-
-    private static EquivalenceField RoleDerivedId(string role, string citation) =>
-        new(
-            $"the role-derived ':{role}' identifier",
-            citation,
-            (_, primitive) => string.Equals(
-                primitive.PrimitiveId,
-                ScenePrimitive.CreateId(primitive.OwnerId, role),
-                StringComparison.Ordinal));
-
-    private static EquivalenceField RowOwnership(string citation) =>
-        new(
-            "the owning row identity",
-            citation,
-            static (_, primitive) =>
-                primitive.OwnerId.Kind == SceneOwnerKind.Row && primitive.OwnerId.OwnedRows.Count == 1);
-
-    private static EquivalenceField SharedParentRowOwnership(string citation) =>
-        new(
-            "the owning row identity, shared with the parent event",
-            citation,
-            static (scene, primitive) =>
-                primitive.OwnerId.Kind == SceneOwnerKind.Row &&
-                primitive.OwnerId.OwnedRows.Count == 1 &&
-                FindSibling<SceneRect>(scene, primitive.OwnerId, "bar") is not null);
-
-    private static bool HasPositiveExtents(RectD bounds) =>
-        double.IsFinite(bounds.X) &&
-        double.IsFinite(bounds.Y) &&
-        bounds.Width > 0 &&
-        bounds.Height > 0;
-
-    /// <summary>
-    /// Determines whether a primitive is a four-point polygon whose vertices are in
-    /// the §20 draw order: top, right, bottom, left.
-    /// </summary>
-    /// <param name="primitive">The primitive under test.</param>
-    /// <returns>
-    /// <see langword="true"/> when the polygon has four vertices and the first is the
-    /// topmost, the second the rightmost, the third the bottommost, and the fourth the
-    /// leftmost.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// The scene's coordinate convention is screen-like: Y grows downwards, so the top
-    /// vertex is the one with the minimum Y and the right vertex the maximum X, exactly
-    /// as <c>MilestoneMarkerBuilder</c> emits them. A vertex count alone is not the
-    /// field §20 requires: a polygon with four vertices in any other order would draw a
-    /// different shape in a freeform renderer, which is why the order is asserted here
-    /// and not inferred from the count.
-    /// </para>
-    /// <para>
-    /// A polygon rotated one step (right, bottom, left, top) keeps the same four points
-    /// and the same tip-to-tip extent, so <c>HasTipToTipExtent</c> cannot catch it; only
-    /// this can.
-    /// </para>
-    /// </remarks>
-    private static bool HasDiamondDrawOrder(ScenePrimitive primitive)
-    {
-        if (primitive is not ScenePolygon { Points.Count: 4 } polygon)
-        {
-            return false;
-        }
-
-        // §20's draw order: the top vertex, then the right, the bottom, and the left.
-        // The scene's Y axis grows downwards, so top is the minimum Y and the right
-        // vertex is the maximum X - matching the order MilestoneMarkerBuilder emits.
-        double minX = polygon.Points.Min(point => point.X);
-        double maxX = polygon.Points.Max(point => point.X);
-        double minY = polygon.Points.Min(point => point.Y);
-        double maxY = polygon.Points.Max(point => point.Y);
-
-        return GeometryMath.ApproximatelyEqual(polygon.Points[0].Y, minY)
-            && GeometryMath.ApproximatelyEqual(polygon.Points[1].X, maxX)
-            && GeometryMath.ApproximatelyEqual(polygon.Points[2].Y, maxY)
-            && GeometryMath.ApproximatelyEqual(polygon.Points[3].X, minX);
+        return unsatisfied;
     }
 
-    private static bool HasTipToTipExtent(ScenePrimitive primitive, double size) =>
-        primitive is ScenePolygon polygon &&
-        polygon.Points.Count > 0 &&
-        GeometryMath.ApproximatelyEqual(polygon.Points.Max(point => point.X) - polygon.Points.Min(point => point.X), size) &&
-        GeometryMath.ApproximatelyEqual(polygon.Points.Max(point => point.Y) - polygon.Points.Min(point => point.Y), size);
-
     /// <summary>
-    /// Finds the sibling primitive of the requested kind that the same row owns under
-    /// the given role, or <see langword="null"/> when the row owns no such primitive.
+    /// Finds the first primitive identifier in the scene containing the given token.
     /// </summary>
-    /// <typeparam name="TPrimitive">The primitive kind to find.</typeparam>
     /// <param name="scene">The scene under test.</param>
-    /// <param name="ownerId">The owning row.</param>
-    /// <param name="role">The role suffix of the sibling's identifier.</param>
-    /// <returns>The sibling primitive, or <see langword="null"/>.</returns>
+    /// <param name="token">The identifier fragment to look for.</param>
+    /// <returns>The offending identifier, or <see langword="null"/> when there is none.</returns>
     /// <remarks>
-    /// A field that is only decidable against a sibling - an external label's
-    /// placement against its bar - resolves it here from the scene the probe was
-    /// handed. Nothing is cached in static state, so the catalogue stays safe for
-    /// xUnit's parallel test collections.
+    /// Used by an exclusion row, whose contract is that the model carries no such
+    /// primitive, so the test proves the absence is real rather than untested.
     /// </remarks>
-    private static TPrimitive? FindSibling<TPrimitive>(GanttScene scene, SceneOwnerId ownerId, string role)
-        where TPrimitive : ScenePrimitive
+    public static string? FirstIdentifierContaining(GanttScene scene, string token)
     {
-        string siblingId = ScenePrimitive.CreateId(ownerId, role);
-        return scene.Primitives
-            .OfType<TPrimitive>()
-            .FirstOrDefault(candidate => string.Equals(candidate.PrimitiveId, siblingId, StringComparison.Ordinal));
-    }
+        ArgumentNullException.ThrowIfNull(scene);
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
 
-    private static bool IsOutsideParentBar(GanttScene scene, ScenePrimitive primitive)
-    {
-        SceneRect? bar = FindSibling<SceneRect>(scene, primitive.OwnerId, "bar");
-        return bar is not null
-            && primitive is SceneText text
-            && !text.TextBounds.IntersectsWith(bar.Bounds);
+        return scene.Primitives
+            .Select(primitive => primitive.PrimitiveId)
+            .FirstOrDefault(identifier => identifier.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 }
