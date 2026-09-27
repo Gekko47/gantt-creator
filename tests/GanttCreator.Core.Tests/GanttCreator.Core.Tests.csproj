@@ -38,5 +38,21 @@
     <None Include="..\golden\**\*.json" Link="golden\%(RecursiveDir)%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!--
+      R3.16: the entity guide's "Per-entity field contract" table is the contract the
+      equivalence catalogue transcribes, and the drift guard compares the two so a
+      guide edit that adds, renames, or removes a row fails the suite instead of
+      drifting silently. The guard therefore has to read the guide at runtime, so the
+      one file it needs is copied to the output for the same reason the fixture and
+      golden are (checklist G): the test reads the committed file rather than a path
+      relative to the source tree, and scripts/verify.ps1 runs the test that depends
+      on it, so a missing file fails the gate rather than being silently skipped.
+
+      The copy is deliberately narrow - this one file, not the whole docs tree - so
+      the guard cannot come to depend on other documentation.
+    -->
+    <None Include="..\..\docs\07-GANTT-ENTITY-GUIDE.md" Link="docs\07-GANTT-ENTITY-GUIDE.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>
