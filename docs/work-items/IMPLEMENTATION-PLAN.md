@@ -114,8 +114,9 @@ files only; the local audit verifies every file exists.
 | R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Landed (`abd52c9` steps 1-2, `808162f` step 3, `2e40998` step 4, `b46c59c` steps 5-6) |
 | R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
-| R3.14 | `R3.14-equivalence-thin-slice.md` | Landed (`aa50633`; the Phase-4 guide upgrade follows) |
+| R3.14 | `R3.14-equivalence-thin-slice.md` | Landed (`aa50633`, exit record `0b985bb`, guide upgrade `98e744a`) |
 | R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Landed (`e3efd4e`; golden `d8acd0d`) |
+| R3.16 | `R3.16-equivalence-field-table.md` | Authored (Tier A; step 2 blocked on D-G14 approval) |
 
 ### Phase 4 — live renderer (Tier B; upgrade to Tier A at Phase 3 exit)
 
@@ -232,6 +233,7 @@ files only; the local audit verifies every file exists.
 | D-G11 | Clipped-event date-label policy | R3.11 | Entity guide §23 revision 5; product owner 2026-09-26 | Accepted — a clipped event always shows the TRUE date; code-owned rule, not a workbook setting, so no schema advance |
 | D-G12 | Shared scene ownership for a deduplicated entity | R3.10 | ADR-0017 | Accepted 2026-09-26 — third owner kind `Rows`; amends ADR-0013 |
 | D-G13 | Text alignment gets its own enum | R3.11 | [ADR-0018](../adr/0018-text-alignment-is-not-a-label-position.md) | Accepted 2026-09-26 - add a closed `GanttTextAlignment` (`Left`, `Centre`, `Right`) and retype `SceneText.Alignment` and `SceneStyle.Alignment` from `GanttLabelPosition`. Section 4's centred-header rule is currently inexpressible because a label-position enum is being reused as a text-alignment enum. **Landed before `R3.12`**, which is the row that commits the golden scene snapshot. Landing it first avoided a golden-fixture regeneration, not a frozen format: `SceneSnapshot` carries an explicit `Version` and refuses anything else, so a later change is a version bump plus a regenerated fixture (ADR-0018 D2, which corrects the earlier "point of no return" claim). ADR-0013's real constraint is that *consumers* migrate together, and there are none yet. Rejected: adding `Centre` to `GanttLabelPosition` (entrenches the type confusion); shipping `Left`/`Right` only (a visible section 4 violation) |
+| D-G14 | The per-entity equivalence field table is a **restatement** of the landed model, not an extension of it | R3.16 | R3.16 guide; entity guide revision 6 | Proposed 2026-09-26 — product-owner approval required before the guide is edited. The table names only fields the model already carries; any cell needing a new field reads "not carried by the model; excluded", and no token value, z-layer, or label position changes. Chosen over extending the model to fill the table (which would have made the contract fit the model instead of recording it) and over leaving the field lists in the test file (which leaves the renderer contract in an agent's reading rather than in the guide). The optional legend §25 becomes an eleventh row marked empty rather than an omission. Instrument is a decision-register entry, not a new ADR, because no architectural rule changes — D-G14 makes an existing model rule explicit and consultable |
 
 ## Known drift resolved by revision 5
 
