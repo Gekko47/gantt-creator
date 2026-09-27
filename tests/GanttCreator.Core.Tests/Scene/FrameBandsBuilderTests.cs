@@ -47,7 +47,12 @@ public sealed class FrameBandsBuilderTests
             result.Primitives.OfType<SceneRect>().Count(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal))
         );
         Assert.Single(result.Primitives.OfType<SceneRect>(), rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal));
-        Assert.Equal(3, result.Primitives.OfType<SceneText>().Count(text => text.PrimitiveId.Contains(":label", StringComparison.Ordinal)));
+
+        // Four header labels: one year plus three periods. Before R3.17 the year
+        // label used a "chart:year-label:" prefix, so this count silently covered
+        // only the periods and the year label was unasserted; the convention fix
+        // made it visible.
+        Assert.Equal(4, result.Primitives.OfType<SceneText>().Count(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal)));
         Assert.Equal(
             "Jan",
             result.Primitives.OfType<SceneText>().Single(text => text.PrimitiveId.Contains("2024-01-01", StringComparison.Ordinal)).Text
@@ -276,6 +281,35 @@ public sealed class FrameBandsBuilderTests
             true,
             _theme
         );
+    }
+
+    [Fact]
+    public void Every_header_label_is_named_after_its_own_band_primitive()
+    {
+        // A header label names its parent by appending ":label" to the parent's
+        // identifier. The year header used to use a "chart:year-label:" prefix
+        // while the period header appended ":label", so the two header kinds
+        // disagreed about how a child names its parent; a renderer reconciles on
+        // this exact text, so the disagreement was a real reconciliation hazard
+        // (R3.17). This is convention-agnostic: it pins the relationship, not a
+        // literal spelling, so a future rename cannot silently break it.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+
+        HashSet<string> rectIds =
+        [
+            .. result.Primitives.OfType<SceneRect>().Select(rect => rect.PrimitiveId),
+        ];
+
+        SceneText[] labels = [.. result.Primitives.OfType<SceneText>().Where(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))];
+
+        // The period header emits three labels and the year header one, so a
+        // non-empty set is required: an empty one would make All vacuous.
+        Assert.NotEmpty(labels);
+        Assert.All(labels, label =>
+        {
+            string parentId = label.PrimitiveId[..^":label".Length];
+            Assert.Contains(parentId, rectIds);
+        });
     }
 
     private sealed class FixedMeasurer(Func<string, double> measure) : ITextWidthMeasurer

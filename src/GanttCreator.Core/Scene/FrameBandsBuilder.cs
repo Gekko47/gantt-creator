@@ -207,15 +207,23 @@ public static class FrameBandsBuilder
         for (var index = 0; index < sequence.Years.Count; index++)
         {
             BandInterval year = sequence.Years[index];
+            var id = $"chart:year:{year.Start.Year}";
             RectD bounds = new(year.Left, request.PlotBounds.Y - request.YearBandHeightPt, year.Width, request.YearBandHeightPt);
             primitives.Add(
-                new SceneRect($"chart:year:{year.Start.Year}", SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
+                new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
             );
             if (year.ShowLabel)
             {
                 primitives.Add(
                     new SceneText(
-                        $"chart:year-label:{year.Start.Year}",
+                        // A header label names its parent by appending ":label" to
+                        // the parent's identifier, the same convention the period
+                        // header below and the row description label already use.
+                        // The year header previously used a "chart:year-label:"
+                        // prefix, so the two header kinds disagreed about how a
+                        // child names its parent - and a renderer reconciles on
+                        // exactly this text (R3.17).
+                        $"{id}:label",
                         SceneOwnerId.Chart,
                         ZLayer.Frame,
                         year.Label,

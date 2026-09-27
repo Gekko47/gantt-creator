@@ -1,6 +1,6 @@
-# Gantt visual entity guide — revision 5
+# Gantt visual entity guide — revision 6
 
-> Created 2 September 2026 under a new filename. Revision 5 (26 September 2026) applies [ADR-0016](adr/0016-date-display-format-setting.md): §3 and §23 named the "approved display format" without specifying one, so both now name the approved value `dd/mm/yyyy`, its `DateDisplayFormat` setting, and the culture-invariant rendering rule. This revision also resolves §23's clipped-date policy, which previously referred to an unnamed "one approved chart setting": the product owner decided on 2026-09-26 that a clipped event always shows the **true** date, so the rule is code-owned rather than a workbook setting — a setting with one legal value would not be an option, and it would cost a schema advance for no capability. No token value, label position, or z-layer changes in this revision. Revision 4 (26 September 2026) applied [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
+> Created 2 September 2026 under a new filename. **Revision 6 (27 September 2026) adds a "Per-entity field contract" table** to "Entity-to-renderer equivalence", after product-owner approval of the R3.16 proposal and decision D-G14. The existing representation table is unchanged; the new table sits beside it and states, per row, the scene primitive and its role-derived identifier, the fields a renderer must read beyond the shared contract, and the translation the host object needs. It exists because the representation table alone was insufficient in three verified ways: the critical interval is a thin `SceneRect` in the scene but a **line** in every host renderer, and the translation was unstated; the data panel and the validation indicator draw **no live host object** at all, which the text did not convey; and seven of the ten rows had no field-level contract. **No token value, label position, or z-layer changes in this revision, and no scene member was added or removed** — the table names only what the model already carries, and every field list was verified field-by-field against the committed golden scene. A header-label identifier convention was normalised alongside it (`chart:year-label:{yyyy}` became `chart:year:{yyyy}:label`, matching the period header); that is a model change recorded as R3.17, and it changed two identifiers in the golden snapshot. Revision 5 (26 September 2026) applies [ADR-0016](adr/0016-date-display-format-setting.md): §3 and §23 named the "approved display format" without specifying one, so both now name the approved value `dd/mm/yyyy`, its `DateDisplayFormat` setting, and the culture-invariant rendering rule. This revision also resolves §23's clipped-date policy, which previously referred to an unnamed "one approved chart setting": the product owner decided on 2026-09-26 that a clipped event always shows the **true** date, so the rule is code-owned rather than a workbook setting — a setting with one legal value would not be an option, and it would cost a schema advance for no capability. No token value, label position, or z-layer changes in this revision. Revision 4 (26 September 2026) applied [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
 
 
 <!-- SKILL-SUMMARY:START -->
@@ -703,6 +703,49 @@ Placement priority is: explicit manual positions first; then critical milestones
 | Validation indicator | live cells/dialog only | excluded | excluded |
 
 If a renderer cannot represent a primitive faithfully, implementation stops for an ADR. It must not silently substitute a flattened image in the editable composition.
+
+### Per-entity field contract
+
+The table above states which **representation** each entity takes in each
+renderer. This one states what a renderer must **read** to produce it, and
+what it must translate. "§Shared" means the nine items every entity already
+has in "Shared entity contract"; this table adds only what is row-specific,
+so the two cannot drift into a duplicate contract.
+
+| Entity | Scene primitive and role ID | Required fields beyond §Shared | Live worksheet | Editable / PowerPoint | PNG | Translation |
+| --- | --- | --- | --- | --- | --- | --- |
+| Data panel/header | chart: `rect chart:header-cell:{column}`, `text chart:header-text:{column}`, `line chart:panel-border-v:{index}`; row: `rect {row}:panel-cell:{column}`, `text {row}:panel-text:{column}` | `Bounds`, `From`/`To`, `Text`, `TextBounds`, `Alignment`, resolved panel/header/`DefaultText` styles, `ZLayer.Frame` | **Excel cells — draw no shapes** | rectangle/text/line shapes at the measured cell bounds | raster primitives | the scene primitives exist for the **export** composition; the live renderer must not draw them over the visible table. **No committed scene contains these primitives** — the panel theme is optional and the reference build omits it, so this row is specified but not yet exercised |
+| Title | `rect chart:title-band`, `text chart:title-text` | `Text`, `TextBounds`, `Alignment` (centred), `Bounds`, resolved title style, `ZLayer.Title` | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a hidden title (`ShowTitle=false`) emits **no** primitives; do not draw an empty band |
+| Year header | `rect chart:year:{yyyy}`, `text chart:year:{yyyy}:label` | `Bounds`, `Text`, `TextBounds`, `Alignment` (centred), resolved year style, `ZLayer.Frame`; **no lane/stack keys** | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a year too narrow for its label emits the rectangle but **no** label primitive; do not re-add the text |
+| Period header | `rect chart:period:{yyyy-MM-dd}`, `text chart:period:{yyyy-MM-dd}:label` | as Year header, resolved period style | as Year header | grouped native shapes | raster primitives | same suppression rule |
+| Bands/grid/frame | `rect chart:background`, `rect chart:band:{index}`, `line chart:grid:{x}`, `line chart:grid:edge:{x}`, `line chart:frame:{top,bottom,left,right}` | `Bounds`, `From`/`To`, resolved background/band/grid styles, `ZLayer.Background`/`AlternateBand`/`Grid`/`Frame`, the scene's derived `ChartBounds` | owned shapes or cell formatting under one policy | native shapes | raster primitives | chart-owned: never a row-reconciliation deletion candidate |
+| Activity/delay | `rect {row}:bar` | `Bounds` (already plot-clipped), `Style` fill + stroke + width, no hatch, `ZLayer.ActivityBody`, lane/stack order keys | rectangle shapes | rectangle shapes | raster rectangles | draw the clipped rectangle; do not recompute the span from dates |
+| Procurement | `rect {row}:bar` with `HatchPattern` | as Activity/delay, plus `HatchPattern` and its pitch/line tokens | **unresolved** — native pattern or editable hatch group | editable hatch group | clipped raster hatch | host representation is `unknown` until the R4.6/R8.3 compatibility proof; do not choose one here |
+| Critical interval | **`rect {row}:critical`**, height `CriticalLinePt` | `Bounds` (top edge = parent's post-clip top, height = `CriticalLinePt`), `Style` stroke + width, `ZLayer.CriticalOverlay` | **line** | **line** | raster line | **the scene rect is not the host object**: draw a line along the rect's top edge at its resolved thickness. Filling the rect is a defect |
+| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | four-point freeform polygon | freeform polygon | raster polygon | emit the four points in order; do not substitute a rotated square or an ellipse |
+| Description/date labels | `text {row}:label`, `{row}:date-start`, `{row}:date-finish` | `Text`, `TextBounds` (already measured), `Alignment`, `Style` (`DefaultText`/`DelayText`), `ZLayer.Label`, lane and stack order keys **present** | text box shapes | text box shapes | raster text at scene bounds | the label **side is already resolved into `TextBounds`**; do not re-measure, re-truncate, or reselect a side |
+| Delineator | `line {row}:delineator` + `text {row}:delineator-label` | line: `From`/`To` spanning `PlotBounds` top to bottom, `Style` stroke + width, `ZLayer.Delineator`. label: `Text`, `TextBounds`, `Alignment`, `Style`, `ZLayer.DelineatorLabel`, **no lane/stack keys** | line plus text box | line plus text box | raster line/text | a same-date pair emits **one shared line** but **one label per row**; the line's owner may be a `Rows` set, so a membership change is remove-then-recreate, never in-place |
+| Validation indicator | **none** | none | cells/dialog only | **excluded** | **excluded** | the model carries no primitive; a renderer must not invent one |
+| Legend (§25, optional) | **none today** | none | not built | not built | not built | an optional, product-owner-gated feature with no scene primitive yet |
+
+Four notes that govern the whole table:
+
+- **The panel row is specified but unexercised.** Panel primitives are emitted
+  only when a `PanelTheme` is supplied, and the canonical reference scene does
+  not supply one. The table states the contract; it does not claim test
+  coverage that does not exist.
+- **Identifier scope.** The role suffix and the `{placeholder}` structure are
+  contractual, because the identifier is the shape name and the reconciliation
+  key. The *formatting* of an interpolated value is not: `chart:grid:{x}`
+  formats a point and `chart:period:{yyyy-MM-dd}` a date, and changing either
+  changes the identifier for every affected shape. Reformatting is therefore an
+  owned-set replacement, not a cosmetic edit.
+- **Ownership inputs.** The scene supplies `OwnerId` and the role-derived
+  `PrimitiveId`; the `GanttCreator.`-prefixed ownership tag is written by the
+  shape-write adapter, not by the scene.
+- **Grouping is out of scope here.** `SceneGroup` membership and child order
+  belong to the editable-export work. Their absence from this table means "not
+  yet specified", not "not required".
 
 ## Minimum visual reference fixture
 
