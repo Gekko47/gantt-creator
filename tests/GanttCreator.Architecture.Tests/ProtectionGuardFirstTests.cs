@@ -69,6 +69,7 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelConfigSheetVisibilityRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelPlotAnchorRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelGanttRowIdentityRepairer.cs", "Repair"),
+        new("src/GanttCreator.Office/ExcelShapeWriter.cs", "Create"),
     ];
 
     /// <summary>
@@ -95,6 +96,13 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
+        "src/GanttCreator.Office/IShapeWritePort.cs",
+        "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
+        "src/GanttCreator.Office/ShapeWriteOutcome.cs",
+        "src/GanttCreator.Office/ShapeOwnershipTag.cs",
+        "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
+        "src/GanttCreator.Office/ExcelInsertedRowSelector.cs",
+        "src/GanttCreator.Office/IInsertedRowSelector.cs",
         "src/GanttCreator.Office/IGanttRowInserter.cs",
         "src/GanttCreator.Office/GanttTableReadOutcome.cs",
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
@@ -154,6 +162,19 @@ public sealed class ProtectionGuardFirstTests
         "Comment.Delete(",
         "comment.Delete(",
         ".Visible=",
+        // R4.1: the live shape writer. A shape is generated content on the
+        // user's visible worksheet, so creating one is a data mutation under
+        // ADR-0008 D4 and must consult the protection guard first. Without these
+        // three patterns the writer would have been auto-classified read-only and
+        // would have escaped the guard ordering silently.
+        "Shapes.AddShape(",
+        "shapes.AddShape(",
+        "Shapes.AddLine(",
+        "shapes.AddLine(",
+        "Shapes.AddTextbox(",
+        "shapes.AddTextbox(",
+        "Shapes.BuildFreeform(",
+        "shapes.BuildFreeform(",
     ];
 
     /// <summary>
@@ -404,6 +425,61 @@ public sealed class ProtectionGuardFirstTests
             ["src/GanttCreator.Office/Adapter.cs"]);
 
         Assert.NotEmpty(violations);
+    }
+
+    [Fact]
+    public void Checker_treats_shape_creation_as_a_data_mutation()
+    {
+        // Positive control for the four R4.1 shape-creation patterns: a file whose
+        // only mutation is AddShape must be discovered as mutating, so the live
+        // shape writer cannot be auto-classified read-only and escape the guard
+        // ordering.
+        const string ShapeWriterShape = """
+            class Writer
+            {
+                void Create()
+                {
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+
+                    shapes.AddShape(0, 0f, 0f, 10f, 10f);
+                }
+            }
+            """;
+
+        var registered = new[] { "src/GanttCreator.Office/Writer.cs" };
+
+        Assert.Empty(DiscoveryViolations(
+            Sources(("src/GanttCreator.Office/Writer.cs", ShapeWriterShape)),
+            registered));
+        Assert.Empty(ProtectionOrderViolations(
+            Sources(("src/GanttCreator.Office/Writer.cs", ShapeWriterShape)),
+            [new MutatingAdapter("src/GanttCreator.Office/Writer.cs", "Create")]));
+    }
+
+    [Fact]
+    public void Checker_flags_a_shape_writer_that_mutates_before_the_guard()
+    {
+        // The negative of the control above: same patterns, wrong order.
+        const string MutationFirst = """
+            class Writer
+            {
+                void Create()
+                {
+                    shapes.AddShape(0, 0f, 0f, 10f, 10f);
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+                }
+            }
+            """;
+
+        Assert.NotEmpty(ProtectionOrderViolations(
+            Sources(("src/GanttCreator.Office/Writer.cs", MutationFirst)),
+            [new MutatingAdapter("src/GanttCreator.Office/Writer.cs", "Create")]));
     }
 
     [Fact]

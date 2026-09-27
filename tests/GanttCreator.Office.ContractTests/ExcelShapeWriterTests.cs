@@ -1,0 +1,265 @@
+using GanttCreator.Core;
+using GanttCreator.Core.Scene;
+using Excel = Microsoft.Office.Interop.Excel;
+using Moq;
+
+namespace GanttCreator.Office.ContractTests;
+
+/// <summary>
+/// Contract tests for the R4.1 shape-write port. No live Excel: the adapter's
+/// <c>internal virtual</c> seams are derived so the observable operation
+/// sequence and the ownership members ADR-0019 defines are both asserted.
+/// </summary>
+/// <remarks>
+/// The fake is deliberately narrow — it records what the adapter asked the host
+/// to do, not a fake Excel object model (docs/04-TEST-STRATEGY.md "Excel shape
+/// contract tests").
+/// </remarks>
+public class ExcelShapeWriterTests
+{
+    /// <summary>
+    /// The writer with its COM seams substituted. Every host call the adapter
+    /// makes is recorded so a test can assert sequence and values rather than
+    /// inspect a proxy.
+    /// </summary>
+    private sealed class TestableWriter(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        params Excel.Shape[] existingShapes)
+        : ExcelShapeWriter(application, guard)
+    {
+        private readonly List<Excel.Shape> _shapes = [.. existingShapes];
+
+        /// <summary>The shapes the adapter created, in order.</summary>
+        public List<Excel.Shape> Created { get; } = [];
+
+        /// <summary>The z-order commands the adapter issued.</summary>
+        public List<string> ZOrderCommands { get; } = [];
+
+        internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
+            new Mock<Excel._Worksheet>().Object;
+
+        internal override Excel.Shapes? GetShapes(Excel._Worksheet sheet) =>
+            new Mock<Excel.Shapes>().Object;
+
+        internal override int GetShapeCount(Excel.Shapes shapes) => _shapes.Count;
+
+        internal override Excel.Shape? GetShapeAt(Excel.Shapes shapes, int index) =>
+            index >= 1 && index <= _shapes.Count ? _shapes[index - 1] : null;
+
+        internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) =>
+            _shapes.FirstOrDefault(shape => string.Equals(shape.Name, name, StringComparison.Ordinal));
+
+        internal override Excel.Shape? AddShape(Excel.Shapes shapes, OfficeShapeRequest request)
+        {
+            // The real adapter refuses the unprobed polygon kind; the fake mirrors
+            // that so a test cannot pass by the fake being more permissive.
+            if (request.Kind == OfficeShapeKind.Polygon)
+            {
+                return null;
+            }
+
+            // Backing fields, not a loose mock: the adapter *writes* Name and
+            // AlternativeText, and a loose mock discards writes, which would make
+            // the ADR-0019 ownership assertions pass or fail for the wrong reason.
+            string name = string.Empty;
+            string alternativeText = string.Empty;
+            var mock = new Mock<Excel.Shape>();
+            _ = mock.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => name = value);
+            _ = mock.SetupGet(s => s.Name).Returns(() => name);
+            _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
+                .Callback<string>(value => alternativeText = value);
+            _ = mock.SetupGet(s => s.AlternativeText).Returns(() => alternativeText);
+
+            var created = mock.Object;
+            Created.Add(created);
+            _shapes.Add(created);
+            return created;
+        }
+    }
+
+    private static Mock<IWorksheetProtectionGuard> ClearGuard()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object>())).Returns(ProtectionGuardOutcome.NotProtected);
+        return guard;
+    }
+
+    private static Mock<Excel.Application> ActiveApplication()
+    {
+        var workbook = new Mock<Excel.Workbook>();
+        _ = workbook.Setup(w => w.Sheets).Returns(new Mock<Excel.Sheets>().Object);
+        var application = new Mock<Excel.Application>();
+        _ = application.Setup(a => a.ActiveWorkbook).Returns(workbook.Object);
+        return application;
+    }
+
+    private static OfficeShapeRequest RectangleRequest(
+        string id = "row-1:bar",
+        double x = 10,
+        double y = 20,
+        double width = 100,
+        double height = 30) =>
+        new(id, OfficeShapeKind.Rectangle, new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)), ZLayer.ActivityBody);
+
+    [Fact]
+    public void Create_writes_the_primitive_id_as_the_shape_name_and_the_tag_as_the_alternative_text()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.Equal("row-1:bar", created.Name);
+        Assert.Equal(ShapeOwnershipTag.ForPrimitiveId("row-1:bar"), created.AlternativeText);
+        Assert.StartsWith(ShapeOwnershipTag.Prefix, created.AlternativeText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Create_refuses_a_blank_primitive_id_before_touching_the_host()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest(id: "   "));
+
+        Assert.Equal(ShapeWriteRefusal.BlankIdentifier, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Create_refuses_a_rectangle_with_no_bounds_rather_than_defaulting_them_to_the_origin()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var request = new OfficeShapeRequest(
+            "row-1:bar", OfficeShapeKind.Rectangle, new OfficeShapeGeometry(), ZLayer.ActivityBody);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Create_refuses_a_line_with_a_non_finite_endpoint()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var request = new OfficeShapeRequest(
+            "row-1:critical",
+            OfficeShapeKind.Line,
+            new OfficeShapeGeometry(From: new PointD(double.NaN, 0), To: new PointD(10, 10)),
+            ZLayer.CriticalOverlay);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+    [Fact]
+    public void Create_refuses_the_unprobed_polygon_kind_rather_than_placing_it_on_an_assumption()
+    {
+        // R4.5 owns the freeform point semantics. A silent success here would be a
+        // shape placed from an unprobed reading of the API.
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var request = new OfficeShapeRequest(
+            "row-1:marker",
+            OfficeShapeKind.Polygon,
+            new OfficeShapeGeometry(Points: [new PointD(0, 0), new PointD(10, 0), new PointD(5, 10)]),
+            ZLayer.Milestone);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Create_refuses_a_duplicate_name_rather_than_creating_a_second_shape()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.Equal(ShapeWriteRefusal.AlreadyExists, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Create_refuses_before_any_mutation_when_the_worksheet_is_protected()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
+        var writer = new TestableWriter(ActiveApplication().Object, guard.Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.Equal(ShapeWriteRefusal.TargetProtected, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Create_refuses_when_the_target_worksheet_alone_is_protected()
+    {
+        // The active sheet is clear but the resolved Gantt target is protected.
+        // A guard that only read the active sheet would authorise this write.
+        var guard = ClearGuard();
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object>())).Returns(ProtectionGuardOutcome.SheetProtected);
+        var writer = new TestableWriter(ActiveApplication().Object, guard.Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.Equal(ShapeWriteRefusal.TargetProtected, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    [Fact]
+    public void Every_entry_point_refuses_without_an_application_object()
+    {
+        var writer = new TestableWriter(null, ClearGuard().Object);
+
+        Assert.Equal(ShapeWriteRefusal.NoActiveWorkbook, writer.Create(RectangleRequest()).Refusal);
+        Assert.Equal(ShapeWriteRefusal.NoActiveWorkbook, writer.Update(RectangleRequest()).Refusal);
+        Assert.Equal(ShapeWriteRefusal.NoActiveWorkbook, writer.Delete("row-1:bar").Refusal);
+        Assert.Empty(writer.ListOwned());
+    }
+
+    [Fact]
+    public void Delete_never_deletes_a_shape_whose_alternative_text_is_not_a_valid_tag()
+    {
+        // R4.8 D1: the ownership filter authorises the delete, not the name. The
+        // sentinel deliberately carries the requested name.
+        bool deleted = false;
+        var foreign = NewShape("row-1:bar", "a note the user typed", onDelete: () => deleted = true);
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, foreign);
+
+        ShapeWriteOutcome outcome = writer.Delete("row-1:bar");
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        Assert.False(deleted, "An unowned shape must never be deleted.");
+    }
+
+    [Fact]
+    public void ListOwned_returns_only_validly_tagged_shapes_in_ordinal_name_order()
+    {
+        var writer = new TestableWriter(
+            ActiveApplication().Object,
+            ClearGuard().Object,
+            NewShape("z-last", ShapeOwnershipTag.ForPrimitiveId("z-last")),
+            NewShape("user-shape", null),
+            NewShape("a-first", ShapeOwnershipTag.ForPrimitiveId("a-first")),
+            NewShape("broken", ShapeOwnershipTag.Prefix + "not-a-hash"));
+
+        Assert.Equal(["a-first", "z-last"], writer.ListOwned());
+    }
+
+    private static Excel.Shape NewShape(string name, string? alternativeText, Action? onDelete = null)
+    {
+        var shape = new Mock<Excel.Shape>();
+        _ = shape.SetupGet(s => s.Name).Returns(name);
+        _ = shape.SetupGet(s => s.AlternativeText).Returns(alternativeText ?? string.Empty);
+        _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
+        return shape.Object;
+    }
+}
