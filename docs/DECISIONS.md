@@ -25,6 +25,7 @@
 | ADR-0017 | Shared scene ownership for deduplicated entities | Accepted | 2026-09-26 | [`adr/0017-shared-scene-ownership.md`](adr/0017-shared-scene-ownership.md) |
 | ADR-0018 | Text alignment is its own type, not a label position | Accepted | 2026-09-26 | [`adr/0018-text-alignment-is-not-a-label-position.md`](adr/0018-text-alignment-is-not-a-label-position.md) |
 | ADR-0019 | Shape ownership carrier is `AlternativeText`, with a bounded versioned tag | Accepted | 2026-09-27 | [`adr/0019-shape-ownership-carrier.md`](adr/0019-shape-ownership-carrier.md) |
+| ADR-0020 | The application-state scope covers five settings, not six | Accepted | 2026-09-27 | [`adr/0020-application-state-scope-five-settings.md`](adr/0020-application-state-scope-five-settings.md) |
 
 ## ADR template
 

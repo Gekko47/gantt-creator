@@ -2,29 +2,6 @@ using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
 
-/// <summary>
-/// The workbook recalculation modes the application-state scope can switch
-/// between.
-/// </summary>
-/// <remarks>
-/// The PIA's <c>XlCalculation</c> is an interop enum, and the AddIn must never
-/// name an interop type (the CS0433 hazard documented on
-/// <see cref="IExcelApplicationAdapter"/>). This is the Office-owned,
-/// interop-free mirror, and <see cref="ExcelApplicationStateScope"/> maps it by
-/// an exhaustive switch rather than by a numeric cast, so the two vocabularies
-/// cannot drift silently.
-/// </remarks>
-public enum GanttCalculationMode
-{
-    /// <summary>Excel recalculates on every change.</summary>
-    Automatic = 0,
-
-    /// <summary>Excel recalculates automatically except for data tables.</summary>
-    Semiautomatic = 1,
-
-    /// <summary>Excel recalculates only when the user requests it.</summary>
-    Manual = 2,
-}
 
 /// <summary>
 /// One application-state setting captured for restoration, paired with the
@@ -199,36 +176,6 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
         SetStatusBarTextCore(text);
     }
 
-    /// <summary>
-    /// Sets the calculation mode, capturing the previous mode only when the host
-    /// is not already in the requested one.
-    /// </summary>
-    /// <param name="mode">The mode to switch to.</param>
-    public void SetCalculationMode(GanttCalculationMode mode)
-    {
-        // The argument is validated BEFORE the availability check: an undefined
-        // mode is a caller defect, and returning silently because no Excel host
-        // happens to be present would hide it. The reverse order would make the
-        // guard unreachable in exactly the situation a unit test exercises.
-        if (!Enum.IsDefined(mode))
-        {
-            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Undefined calculation mode.");
-        }
-
-        if (!IsAvailable)
-        {
-            return;
-        }
-
-        GanttCalculationMode current = GetCalculationMode();
-        if (current == mode)
-        {
-            return;
-        }
-
-        Record(GetCalculationMode, SetCalculationModeCore);
-        SetCalculationModeCore(mode);
-    }
 
     /// <summary>
     /// Captures the current selection so it can be restored after the command.
@@ -444,44 +391,6 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// <summary>Writes <c>Application.StatusBar</c>. Test seam.</summary>
     /// <param name="value">The value to write.</param>
     internal virtual void SetStatusBarTextCore(object? value) => _application!.StatusBar = value;
-
-    /// <summary>Reads <c>Application.Calculation</c> as the interop-free mode. Test seam.</summary>
-    /// <returns>The current calculation mode.</returns>
-    /// <remarks>
-    /// Read through the <c>_Application</c> interface reference, never the
-    /// coclass. The installed PIA declares <c>Calculation</c> only on the
-    /// interface, and reading an enum-typed property through the
-    /// <c>Application</c> coclass proxy raises
-    /// <c>DISP_E_TYPEMISMATCH (0x80020005)</c> on the live host — observed
-    /// 2026-09-27 by this row's Office gate, which is exactly the class of
-    /// defect the live gate exists to catch and which no metadata probe can
-    /// reveal, because the member is present and read/write on paper.
-    /// </remarks>
-    internal virtual GanttCalculationMode GetCalculationMode() =>
-        ToMode(InteropApplication.Calculation);
-
-    /// <summary>Writes <c>Application.Calculation</c>. Test seam.</summary>
-    /// <param name="mode">The mode to write.</param>
-    /// <remarks>
-    /// Written through the same <c>_Application</c> interface reference as the
-    /// read, for the same live-host reason.
-    /// </remarks>
-    internal virtual void SetCalculationModeCore(GanttCalculationMode mode) =>
-        InteropApplication.Calculation = ToInterop(mode);
-
-    /// <summary>
-    /// The application as its PIA <em>interface</em>, which is the form the
-    /// calculation members must be reached through.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// The host supplied an object that is not an Excel application interface.
-    /// Reaching this point means the scope was constructed with a usable
-    /// application, so the cast cannot legitimately fail.
-    /// </exception>
-    private Excel._Application InteropApplication =>
-        _application as Excel._Application
-        ?? throw new InvalidOperationException("The application object does not expose the Excel interface.");
-
     /// <summary>Reads <c>Application.Selection</c>. Test seam.</summary>
     /// <returns>The current selection, or <see langword="null"/>.</returns>
     internal virtual object? GetSelection() => _application!.Selection;
@@ -503,26 +412,4 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             range.Select();
         }
     }
-
-    /// <summary>Maps the interop calculation enum by name, never by a numeric cast.</summary>
-    /// <param name="value">The interop enum value.</param>
-    /// <returns>The interop-free mode.</returns>
-    private static GanttCalculationMode ToMode(Excel.XlCalculation value) => value switch
-    {
-        Excel.XlCalculation.xlCalculationAutomatic => GanttCalculationMode.Automatic,
-        Excel.XlCalculation.xlCalculationSemiautomatic => GanttCalculationMode.Semiautomatic,
-        Excel.XlCalculation.xlCalculationManual => GanttCalculationMode.Manual,
-        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown Excel calculation mode."),
-    };
-
-    /// <summary>Maps the interop-free mode onto the interop calculation enum.</summary>
-    /// <param name="mode">The interop-free mode.</param>
-    /// <returns>The interop enum value.</returns>
-    private static Excel.XlCalculation ToInterop(GanttCalculationMode mode) => mode switch
-    {
-        GanttCalculationMode.Automatic => Excel.XlCalculation.xlCalculationAutomatic,
-        GanttCalculationMode.Semiautomatic => Excel.XlCalculation.xlCalculationSemiautomatic,
-        GanttCalculationMode.Manual => Excel.XlCalculation.xlCalculationManual,
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Undefined calculation mode."),
-    };
 }

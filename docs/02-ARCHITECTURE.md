@@ -322,6 +322,6 @@ Do not optimise before profiling. Record the reference hardware and Office build
 - Avoid `dynamic` unless an isolated, documented late-binding compatibility adapter requires it.
 - Avoid chained COM property calls. Hold each COM proxy in a local variable and release it through one tested ownership helper.
 - Excel/PowerPoint calls execute on the required STA/main thread. Do not use `Task.Run` around COM.
-- Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, calculation mode, status bar, and selection only when changed, using `try/finally`.
+- Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, status bar (both `DisplayStatusBar` and `StatusBar`), and selection only when changed, using `try/finally`. Calculation mode is **not** in this list: `Application.Calculation` is unusable on the reference host and [ADR-0020](adr/0020-application-state-scope-five-settings.md) removed it because rendering writes shapes, never cells. A command that writes cells must reinstate it with a probed path.
 - User errors are concise and actionable. Technical details go to a local rolling log with no workbook content unless explicitly opted in.
 - Every public member carries XML documentation, enforced by `GenerateDocumentationFile` + CS1591 with warnings-as-errors; add detail beyond the summary when the contract is non-obvious. Internal comments explain why, invariants, or Office quirks—not line-by-line mechanics.

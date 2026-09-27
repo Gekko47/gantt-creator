@@ -47,9 +47,6 @@ public class ExcelApplicationStateScopeTests
         /// <summary>The current status-bar text.</summary>
         public object? StatusBarTextState { get; internal set; } = "Ready";
 
-        /// <summary>The current calculation mode.</summary>
-        public GanttCalculationMode CalculationState { get; internal set; } = GanttCalculationMode.Automatic;
-
         /// <summary>The captured selection, or null.</summary>
         public object? SelectionState { get; internal set; } = new object();
 
@@ -121,17 +118,6 @@ public class ExcelApplicationStateScopeTests
             StatusBarTextState = value;
             StatusBarTextState = value;
         }
-
-        internal override GanttCalculationMode GetCalculationMode() => CalculationState;
-
-        internal override void SetCalculationModeCore(GanttCalculationMode mode)
-        {
-            CountWrites?.Invoke("CalculationMode", mode);
-            MaybeFail("CalculationMode");
-            CalculationState = mode;;
-            CalculationState = mode;
-        }
-
         internal override object? GetSelection() => SelectionState;
 
         internal override void RestoreSelection(object selection)
@@ -153,7 +139,6 @@ public class ExcelApplicationStateScopeTests
         scope.SuppressAlerts();
         scope.SuppressStatusBar();
         scope.SetStatusBarText("Rendering...");
-        scope.SetCalculationMode(GanttCalculationMode.Manual);
     }
     [Fact]
     public void Every_setting_is_captured_changed_and_put_back()
@@ -166,7 +151,6 @@ public class ExcelApplicationStateScopeTests
         Assert.False(scope.DisplayAlertsState);
         Assert.False(scope.DisplayStatusBarState);
         Assert.Equal("Rendering...", scope.StatusBarTextState);
-        Assert.Equal(GanttCalculationMode.Manual, scope.CalculationState);
 
         scope.Dispose();
 
@@ -175,7 +159,6 @@ public class ExcelApplicationStateScopeTests
         Assert.True(scope.DisplayAlertsState);
         Assert.True(scope.DisplayStatusBarState);
         Assert.Equal("Ready", scope.StatusBarTextState);
-        Assert.Equal(GanttCalculationMode.Automatic, scope.CalculationState);
     }
 
     [Fact]
@@ -190,14 +173,12 @@ public class ExcelApplicationStateScopeTests
         scope.DisplayAlertsState = false;
         scope.DisplayStatusBarState = false;
         scope.StatusBarTextState = "Rendering...";
-        scope.CalculationState = GanttCalculationMode.Manual;
 
         var screenWrites = 0;
         var eventWrites = 0;
         var alertWrites = 0;
         var statusBarWrites = 0;
         var textWrites = 0;
-        var calculationWrites = 0;
         scope.CountWrites = (member, _) =>
         {
             switch (member)
@@ -207,7 +188,6 @@ public class ExcelApplicationStateScopeTests
                 case "DisplayAlerts": alertWrites++; break;
                 case "DisplayStatusBar": statusBarWrites++; break;
                 case "StatusBarText": textWrites++; break;
-                case "CalculationMode": calculationWrites++; break;
             }
         };
 
@@ -219,7 +199,6 @@ public class ExcelApplicationStateScopeTests
         Assert.Equal(0, alertWrites);
         Assert.Equal(0, statusBarWrites);
         Assert.Equal(0, textWrites);
-        Assert.Equal(0, calculationWrites);
     }
 
     [Fact]
@@ -272,7 +251,6 @@ public class ExcelApplicationStateScopeTests
         scope.SuppressAlerts();
         scope.SuppressStatusBar();
         scope.SetStatusBarText("x");
-        scope.SetCalculationMode(GanttCalculationMode.Manual);
         scope.CaptureSelection();
 
         Assert.Null(Record.Exception(scope.Dispose));
@@ -287,14 +265,7 @@ public class ExcelApplicationStateScopeTests
         Assert.Null(Record.Exception(scope.Dispose));
     }
 
-    [Fact]
-    public void An_undefined_calculation_mode_is_refused()
-    {
-        using var scope = new ExcelApplicationStateScope(null);
 
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => scope.SetCalculationMode((GanttCalculationMode)99));
-    }
     /// <summary>
     /// One row per application-state setting. Each is a separate injection point
     /// (docs/08-TEST-CHECKLIST.md section K: "failure injection around each
@@ -307,9 +278,7 @@ public class ExcelApplicationStateScopeTests
         "DisplayAlerts",
         "DisplayStatusBar",
         "StatusBarText",
-        "CalculationMode",
     ];
-
     [Theory]
     [MemberData(nameof(FailingWrites))]
     public void A_failure_at_each_setting_still_restores_everything_captured_before_it(string failing)
@@ -336,7 +305,6 @@ public class ExcelApplicationStateScopeTests
         Assert.True(scope.EnableEventsState || failing == "EnableEvents");
         Assert.True(scope.DisplayAlertsState || failing == "DisplayAlerts");
         Assert.True(scope.DisplayStatusBarState || failing == "DisplayStatusBar");
-        Assert.True(scope.CalculationState == GanttCalculationMode.Automatic || failing == "CalculationMode");
     }
 
     [Fact]
@@ -348,7 +316,7 @@ public class ExcelApplicationStateScopeTests
         var scope = new TestableScope(records.Add);
         SuppressAll(scope);
         scope.CaptureSelection();
-        scope.FailOn = "CalculationMode";
+        scope.FailOn = "DisplayStatusBar";
         scope.ScreenUpdatingState = false;
         scope.DisplayAlertsState = false;
         scope.DisplayStatusBarState = false;
@@ -356,13 +324,15 @@ public class ExcelApplicationStateScopeTests
 
         scope.Dispose();
 
-        // The restore of CalculationMode throws; ScreenUpdating, DisplayAlerts,
-        // DisplayStatusBar and StatusBarText must still have been restored.
+        // The restore of DisplayStatusBar throws, so it stays false; the other
+        // four captured settings must still have been restored. This is the D2
+        // guarantee: one failing restore cannot skip the rest.
+        Assert.False(scope.DisplayStatusBarState, "The injected failure should have left this setting un-restored.");
         Assert.True(scope.ScreenUpdatingState);
+        Assert.True(scope.EnableEventsState);
         Assert.True(scope.DisplayAlertsState);
-        Assert.True(scope.DisplayStatusBarState);
         Assert.Equal("Ready", scope.StatusBarTextState);
-        Assert.Contains(records, record => record.Contains("CalculationMode", StringComparison.Ordinal));
+        Assert.Contains(records, record => record.Contains("DisplayStatusBar", StringComparison.Ordinal));
     }
 
     [Fact]
