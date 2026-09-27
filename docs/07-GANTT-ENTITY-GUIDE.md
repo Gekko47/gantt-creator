@@ -691,7 +691,8 @@ Placement priority is: explicit manual positions first; then critical milestones
 - Live shapes are generated artifacts. Direct manual formatting of them is not a persistent input and may be overwritten on Refresh.
 - User changes persist through table fields, Ribbon style settings, or approved named styles.
 - Editable export and PowerPoint shapes are unlocked normal Office shapes; every rectangle, diamond, line, and label can be selected after ungrouping.
-- Refresh touches only shapes carrying valid Gantt Creator ownership metadata.
+- The live renderer writes two ownership members on every shape it creates: the shape **name**, which is the stable scene primitive identifier, and the shape **alternative text**, which carries the ownership tag `GanttCreator.Owned.v1:{hash}`. The alternative-text member is the carrier because the Excel shape object has no `Tag` member (ADR-0019).
+- Refresh touches only shapes whose alternative text carries a valid `GanttCreator.Owned.v1:` tag.
 - Unknown or malformed ownership tags are reported; unowned shapes are never deleted.
 
 ## Entity-to-renderer equivalence
