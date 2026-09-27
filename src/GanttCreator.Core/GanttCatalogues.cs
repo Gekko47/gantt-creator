@@ -194,7 +194,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 12 schema-v2 setting definitions approved by ADR-0007 and ADR-0014.
+    /// The 13 schema-v3 setting definitions approved by ADR-0007, ADR-0014, and
+    /// ADR-0016. The <c>DateDisplayFormat</c> key is appended last so the
+    /// existing contract order is preserved; the order is part of the schema
+    /// contract, not an incidental listing detail.
     /// </summary>
     public static IReadOnlyList<GanttSettingDefinition> Settings { get; } =
     [
@@ -210,6 +213,7 @@ public static class GanttCatalogues
         new("AlternateBanding", "TRUE"),
         new("ShowMinorGrid", "TRUE"),
         new("ShowMajorGrid", "TRUE"),
+        new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMyyyy)),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

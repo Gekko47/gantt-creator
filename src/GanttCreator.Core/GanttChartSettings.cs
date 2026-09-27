@@ -81,6 +81,28 @@ public static class GanttChartSettings
         }
     }
 
+    /// <summary>Attempts to parse a stored event-date format using exact ordinal text.</summary>
+    /// <param name="text">The stored setting text.</param>
+    /// <param name="format">The parsed format when successful.</param>
+    /// <returns><see langword="true"/> when the text is a known format.</returns>
+    /// <remarks>
+    /// The set is closed (ADR-0016 D3), so an unrecognised stored value is
+    /// refused rather than coerced or defaulted: a silently wrong date format
+    /// would change every rendered date without any visible error.
+    /// </remarks>
+    public static bool TryParseDateDisplayFormat(string? text, out GanttDateDisplayFormat format)
+    {
+        switch (text)
+        {
+            case nameof(GanttDateDisplayFormat.DdMMyyyy):
+                format = GanttDateDisplayFormat.DdMMyyyy;
+                return true;
+            default:
+                format = default;
+                return false;
+        }
+    }
+
     /// <summary>Determines whether a scale and period format are a permitted pair.</summary>
     /// <param name="scale">The stored time scale.</param>
     /// <param name="format">The stored period format.</param>

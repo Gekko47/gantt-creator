@@ -11,10 +11,29 @@
          characters must resolve to a commit (git rev-parse --verify).
       2. Repo paths     -- every backticked token that looks like a
          repo-relative file path (contains a separator, ends in an
-         extension-like suffix, no globs or URLs) must exist on disk.
+         extension-like suffix, no globs or URLs) must exist on disk
+         AND be tracked by git. The tracking requirement matters because
+         this gate also runs in CI, where only tracked files exist: a
+         git-ignored path referenced here passes locally and fails the
+         checkout, which no local filesystem test can reveal.
       3. Roadmap IDs    -- every backticked R<major>.<minor> token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define.
+      4. Work-item evidence commands -- inside fenced code blocks in
+         docs/work-items/*.md, every path a *command* line names must exist
+         on disk. Both a separated path (`src/Foo/Bar.cs`) and a bare
+         filename (`GanttCreator.slnx`) are checked, each resolved against the
+         repository root. Roadmap/work-item IDs, quoted search patterns, and
+         `$var.Member` accesses are excluded. This exists because 73 work
+         items carried an evidence command naming src/GanttCreator.slnx,
+         which does not exist: the command could not run at all, so the
+         acceptance evidence it claimed was never produced. Comment lines
+         (leading '#') are skipped, which is what lets a work item record
+         a path it is deliberately correcting. Git tracking is NOT
+         required here, unlike check 2: a work item may legitimately cite
+         a file a later item will create, and refusing that would make the
+         gate cry wolf. Measured before this check was added: zero
+         violations across every work item, so the rule is quiet today.
 
     Globs (tokens containing *) are skipped: the R0.6 entry legitimately
     references a file that does not exist.
@@ -25,7 +44,8 @@
 [CmdletBinding()]
 param(
     [string]$StatusPath = 'docs/STATUS.md',
-    [string]$RoadmapPath = 'docs/03-ROADMAP.md'
+    [string]$RoadmapPath = 'docs/03-ROADMAP.md',
+    [string]$WorkItemsPath = 'docs/work-items'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -142,6 +162,57 @@ foreach ($t in $tokens)
     if (-not (Test-Path -LiteralPath $candidate))
     {
         $violations.Add("STATUS references path '$t' which does not exist.")
+        continue
+    }
+
+    # Existence on disk is not enough. This gate also runs in CI, which checks
+    # out only tracked files, so a path that exists locally but is untracked
+    # (or git-ignored) passes here and fails there -- the exact divergence the
+    # local pre-commit run cannot see. Require git to know the path, which is
+    # the condition a fresh checkout reproduces.
+    #
+    # The *index*, not HEAD. This gate is a pre-commit hook, so what it must
+    # validate is the tree of the commit about to be made, and the index is
+    # exactly that tree. `git ls-tree HEAD` excluded staged content, so a new
+    # file that STATUS names in the same commit that introduces it was reported
+    # as untracked and the commit was blocked -- a false rejection of a correct
+    # change. `git ls-files` reads the index, so a staged path is accepted while
+    # a path that exists only in the working tree (never added) is still rejected,
+    # which is the distinction that actually matters. The earlier reasoning that
+    # a staged-only path is a false pass for CI did not hold: once committed, the
+    # file is in the commit, so a CI checkout of that commit does have it.
+    #
+    # CI behaviour is unchanged: in a clean checkout the index equals its HEAD,
+    # so the two forms agree there. The token is matched in the canonical
+    # root-relative form -- the same $rel the traversal check above already
+    # computed -- rather than the raw backticked text, because that text may use a
+    # backslash, carry a redundant './' or '../' segment, or end in a separator,
+    # none of which is the spelling git records or prints. Deriving it from the raw
+    # token made a genuinely tracked path fail the `-contains` test below and be
+    # reported as untracked. A trailing separator is trimmed because the
+    # tracked-directory test appends its own.
+    $gitToken = $rel.TrimEnd('/')
+    $tracked = @(git -C $repoRoot ls-files -- $gitToken 2>$null)
+
+    # Captured immediately after the call, before any other command runs. Reading
+    # $LASTEXITCODE further down would be reading whatever ran last, not git's
+    # status, and the commands between (Join-Path, Where-Object, .StartsWith) are
+    # exactly the kind that can move it.
+    $lsFilesExitCode = $LASTEXITCODE
+
+    # A token is known to git when it is exactly a tracked file, or when it is a
+    # directory that contains tracked files. The directory case is required
+    # because git tracks files, not directories: `ls-tree -r` reports the entries
+    # beneath a directory token rather than the token itself, and STATUS cites
+    # project directories such as `src/GanttCreator.Office` as readily as files.
+    $isTrackedFile = @($tracked).Count -gt 0 -and $tracked -contains $gitToken
+    $isTrackedDirectory = @(
+        $tracked | Where-Object { $_.StartsWith($gitToken + '/', [StringComparison]::Ordinal) }
+    ).Count -gt 0
+
+    if ($lsFilesExitCode -ne 0 -or -not ($isTrackedFile -or $isTrackedDirectory))
+    {
+        $violations.Add("STATUS references path '$t' which is not tracked by git; it exists on disk but is untracked or ignored, so a clean checkout (CI) will not have it.")
     }
 }
 
@@ -158,6 +229,109 @@ foreach ($id in $idTokens)
     }
 }
 
+# --- 4. Work-item evidence commands ---
+# A work item's evidence block is a promise: "run these and the gates are
+# green". A command naming a path that does not exist cannot run, so the
+# evidence was never produced and the promise was never kept. 73 items
+# carried `src/GanttCreator.slnx` for exactly this reason.
+#
+# Scope is deliberately narrow, because a doc scanner that flags legitimate
+# text gets disabled and then catches nothing:
+#   * only inside fenced code blocks -- prose may name anything;
+#   * only on non-comment lines -- a '#' line is a note, not a command, and
+#     is what lets an item record a path it is deliberately correcting;
+#   * every filename-shaped token is resolved against the repository root, so
+#     both `src/Foo/Bar.cs` and a bare `GanttCreator.slnx` are checked --
+#     skipping bare names is how the most common evidence-command shape went
+#     unverified. Roadmap/work-item IDs, quoted search patterns, and
+#     `$var.Member` accesses are the measured exclusions;
+#   * existence on disk only, NOT git tracking. Check 2 requires tracking
+#     because STATUS claims describe the repository as it stands; a work
+#     item may legitimately cite a file a later item will create, and
+#     refusing that would be a false positive.
+$workItemsDir = Join-Path $repoRoot $WorkItemsPath
+$workItemCommandLineCount = 0
+if (Test-Path -LiteralPath $workItemsDir)
+{
+    foreach ($item in Get-ChildItem -LiteralPath $workItemsDir -Filter '*.md' -File)
+    {
+        $inFence = $false
+        $lineNumber = 0
+        foreach ($line in [System.IO.File]::ReadAllLines($item.FullName))
+        {
+            $lineNumber++
+            if ($line -match '^\s*```')
+            {
+                $inFence = -not $inFence
+                continue
+            }
+            if (-not $inFence) { continue }
+
+            $command = $line.Trim()
+            if ($command.StartsWith('#')) { continue }
+            $workItemCommandLineCount++
+
+            foreach ($match in [regex]::Matches($command, '[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+'))
+            {
+                $token = $match.Value
+
+                # A URL is not a repository path. `https://example.com/build.json`
+                # tokenises to `//example.com/build.json`, which carries a separator
+                # and would otherwise be joined onto the repo root and tested as a
+                # local path that can never exist. The scheme and the `//` authority
+                # marker are both excluded, so a genuine relative path is unaffected.
+                if ($token -match '://') { continue }
+                if ($token.StartsWith('//')) { continue }
+
+                if ($token -match '[?*\[\]]') { continue }
+
+                # A bare filename is a legitimate file argument: `dotnet build
+                # GanttCreator.slnx` names a real repository-root file, and the whole
+                # reason this check exists is a command naming a path that cannot
+                # resolve. So a token with no separator is tested against the repo
+                # root instead of skipped -- with two exclusions, both measured
+                # against the current corpus rather than guessed:
+                #   * a roadmap/work-item ID (R3.12, R2.7d) is an identifier, not a file;
+                #   * a PowerShell member access on a *variable* (`$r.FailedCount`,
+                #     `_.FullName`) is a property on an object, not a filename. The
+                #     `$`/`_` prefix is required: without it this rule swallowed every
+                #     `Word.Word` token, including the real filenames it exists to
+                #     check (`GanttCreator.slnx` matched it too).
+                if ($token -notmatch '[/\\]')
+                {
+                    if ($token -match '^R\d+(\.\d+[a-z]?)?$') { continue }
+
+                    # A quoted token is a search pattern, not a path the command opens:
+                    # `Get-ChildItem -Filter 'UnitTest1.cs'` is a command whose expected
+                    # result is that the file is *absent*, and R0.5 records exactly that.
+                    # Requiring the file to exist would invert its meaning.
+                    if ($command -match ('[\''"]' + [regex]::Escape($token) + '[\''"]')) { continue }
+
+                    # A PowerShell variable member access: the token's first segment
+                    # must actually be written with a `$` on the command line, so a
+                    # bare `Word.Word` filename is still checked. The `$`/`_` prefix
+                    # alone was not enough -- it matched every `Word.Word` token,
+                    # including GanttCreator.slnx, making the check vacuous.
+                    $isVariableMember = $false
+                    if ($token -match '^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z][A-Za-z0-9]*)$')
+                    {
+                        $isVariableMember = $command -match ('[\$]' + [regex]::Escape($Matches[1]) + '\.')
+                    }
+
+                    if ($isVariableMember) { continue }
+                    if ($token -notmatch '^[\w.-]+\.[A-Za-z][A-Za-z0-9]*$') { continue }
+                }
+
+                $candidate = Join-Path $repoRoot $token
+                if (-not (Test-Path -LiteralPath $candidate))
+                {
+                    $violations.Add("$WorkItemsPath/$($item.Name) line $lineNumber names '$token' in an evidence command, but that path does not exist; the command cannot run.")
+                }
+            }
+        }
+    }
+}
+
 if ($violations.Count -gt 0)
 {
     Write-Host "check-status: $($violations.Count) violation(s):"
@@ -170,5 +344,5 @@ if ($violations.Count -gt 0)
 # total never reports a rejected token as verified.
 $verifiedPathCount = ($tokens | ForEach-Object { Get-RepoPathTokenStatus -Token $_ } |
     Where-Object { $_.IsPath -and -not $_.HasWildcard }).Count
-Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs verified)" -f $hashTokens.Count, $verifiedPathCount, $idTokens.Count)
+Write-Host ("check-status: OK ({0} hashes, {1} paths, {2} roadmap IDs, {3} work-item evidence lines verified)" -f $hashTokens.Count, $verifiedPathCount, $idTokens.Count, $workItemCommandLineCount)
 exit 0

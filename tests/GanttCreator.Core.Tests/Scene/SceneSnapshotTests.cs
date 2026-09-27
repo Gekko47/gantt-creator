@@ -94,7 +94,7 @@ public sealed class SceneSnapshotTests
             "Activity",
             new RectD(0, 0, 20, 10),
             new SceneStyle("Text"),
-            GanttLabelPosition.Auto
+            GanttTextAlignment.Left
         );
         var group = new SceneGroup("row:group", owner, ZLayer.Label, ["row:label", "row:diamond"]);
         ScenePrimitive[] input = [first, second, line, polygon, text, group];
@@ -224,6 +224,35 @@ public sealed class SceneSnapshotTests
                 GanttEntityType.AsPlannedActivity
             ),
         ]);
+
+    [Fact]
+    public void Shared_owned_primitive_round_trips_through_the_snapshot()
+    {
+        // ADR-0017 D5: a shared owner must serialise as kind "rows". The previous
+        // `Row ? "row" : "chart"` mapping would have written "chart" here, and the
+        // round trip below is what proves it no longer does.
+        var a = GanttRowId.New();
+        var b = GanttRowId.New();
+        var owner = SceneOwnerId.ForRows([b, a]);
+        GanttScene scene = CreateScene([
+            new SceneRect(
+                $"{owner.Value}:delineator",
+                owner,
+                ZLayer.Delineator,
+                new RectD(5, 0, 0, 90),
+                new SceneStyle("DefaultDelineator")
+            ),
+        ]);
+
+        var json = SceneSnapshot.Serialize(scene);
+
+        Assert.Contains("\"Kind\":\"rows\"", json, StringComparison.Ordinal);
+        GanttScene roundTripped = SceneSnapshot.Deserialize(json);
+        SceneRect line = Assert.IsType<SceneRect>(roundTripped.Primitives.Single());
+        Assert.Equal(SceneOwnerKind.Rows, line.OwnerId.Kind);
+        Assert.Equal(owner.OwnedRows, line.OwnerId.OwnedRows);
+        Assert.Equal(json, SceneSnapshot.Serialize(roundTripped));
+    }
 
     private static GanttScene CreateScene(IReadOnlyList<ScenePrimitive> primitives)
     {

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using GanttCreator.Office;
 using Moq;
@@ -153,5 +154,27 @@ public class ExcelInsertedRowSelectorTests
         Assert.Empty(selector.RequestedBodyIndexes);
         Assert.Equal(0, graph.Activations);
         graph.RowRanges[0].Verify(r => r.Select(), Times.Never);
+    }
+
+    [Fact]
+    public void A_host_failure_reading_the_active_workbook_degrades_to_no_selection()
+    {
+        // The workbook is captured in the constructor, which runs *before* the
+        // insert. A host failure there must therefore be contained: the row is
+        // still added, only the cursor stays put, and nothing escapes into Excel.
+        var graph = new Graph();
+        _ = graph
+            .Application.SetupGet(a => a.ActiveWorkbook)
+            .Throws<COMException>();
+
+        TestableSelector? selector = null;
+        Assert.Null(Record.Exception(() => selector = graph.Build()));
+        Assert.NotNull(selector);
+
+        Assert.Null(Record.Exception(() => selector!.SelectBodyRow(2)));
+
+        Assert.Empty(selector!.RequestedBodyIndexes);
+        Assert.Equal(0, graph.Activations);
+        graph.RowRanges[1].Verify(r => r.Select(), Times.Never);
     }
 }

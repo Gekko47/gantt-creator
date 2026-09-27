@@ -49,15 +49,15 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_12_approved_keys()
+    public void Settings_contains_exactly_the_13_approved_keys()
     {
-        Assert.Equal(12, GanttCatalogues.Settings.Count);
+        Assert.Equal(13, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
     }
 
-    /// <summary>The approved first-release setting keys, in contract order.</summary>
+    /// <summary>The approved setting keys, in contract order.</summary>
     private static readonly string[] SettingsKeys =
     [
         "ChartTitle",
@@ -72,6 +72,7 @@ public class GanttConfigCatalogueTests
         "AlternateBanding",
         "ShowMinorGrid",
         "ShowMajorGrid",
+        "DateDisplayFormat",
     ];
 
     [Fact]
@@ -488,15 +489,22 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// The pinned hash of the current schema-v2 catalogue as transcribed from
-    /// the entity guide and ADR-0014. The hash changes whenever any code-owned
-    /// catalogue value changes — that is the drift-detection contract
-    /// (ADR-0007 D6): a failing pin means a deliberate catalogue change,
-    /// which must first be an entity-guide change and a schema-version
-    /// decision, then a deliberate pin update in the same commit.
+    /// The pinned hash of the current schema-v3 catalogue as transcribed from
+    /// the entity guide, ADR-0014, and ADR-0016. The hash changes whenever any
+    /// code-owned catalogue value changes — that is the drift-detection
+    /// contract (ADR-0007 D6): a failing pin means a deliberate catalogue
+    /// change, which must first be an entity-guide change and a
+    /// schema-version decision, then a deliberate pin update in the same
+    /// commit.
     /// </summary>
+    /// <remarks>
+    /// Advanced from the schema-v2 pin by R2.7d: ADR-0016 D2 adds the
+    /// <c>DateDisplayFormat</c> setting and D6 advances the schema version, so
+    /// the hash change here is the recorded, expected consequence of that ADR
+    /// rather than unapproved catalogue drift.
+    /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "55aa653f5f0d54b5811140c9d2b07341fc4b86d663ad10987dc42180d1b75e20";
+        "fb7c3299fcf37475be7ac958ce08a9f9e0fd589846b8d5daaa4af7577400013c";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

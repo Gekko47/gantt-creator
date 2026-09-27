@@ -20,7 +20,7 @@ The identified R2 integrity, repair, style, scene, lifecycle, dependency, and Ad
 ### Phase 1 — Protection, identity, and anchor safety
 
 - Implement target-aware protection while preserving the pristine adoption rule.
-- Build reference-aware row identity repair; remap unambiguous ParentId references and refuse ambiguous duplicate-parent repairs.
+- Build reference-aware row identity repair; remap unambiguous ParentId references. A ParentId naming a duplicated Id is ambiguous, so it is left unchanged while the row Id repairs themselves still proceed, and `GanttRowValidator` reports it as `ParentAmbiguous` rather than the repair failing.
 - Locate plot-anchor repair by `tblGanttData`, use the live table column count, and cover suffixed/arbitrary worksheet names.
 - Add positive refusal tests and Office contract coverage for non-active protected targets and repair mutations.
 
@@ -85,7 +85,7 @@ The identified R2 integrity, repair, style, scene, lifecycle, dependency, and Ad
 ## Evidence commands
 
 ```powershell
-dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror
+dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror
 pwsh ./scripts/verify-quick.ps1
 pwsh ./scripts/verify.ps1
 pwsh ./scripts/verify-office.ps1

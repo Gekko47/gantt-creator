@@ -1,6 +1,6 @@
-# Gantt visual entity guide — revision 3
+# Gantt visual entity guide — revision 7
 
-> Created 2 September 2026 under a new filename. This revision uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
+> Created 2 September 2026 under a new filename. **Revision 7 (2026-09-27) records a provisional origin rule in §1** ("Origin and outer padding"), answering the question R3.15 left open: because `ChartBounds` is derived by expanding the content union by `ChartOuterPaddingPt`, a chart whose content starts at the origin has a **negative** bounds origin — which is legal in the scene (`RectD` permits negative coordinates deliberately) but cannot be expressed as an Excel shape offset. The product owner decided that a renderer **translates the chart bounds to a zero origin and carries the delta**, and that **the padding is inside the bounds on all four sides** so the delta must be carried into export bounds too; §1 also says empty whitespace outside the bounds is not exported, so dropping the delta on the way to a crop would silently remove exactly `ChartOuterPaddingPt` of margin. **The rule is provisional:** what the host actually does is a named Step-0 probe obligation in R4.3, not something this revision can settle. Both rules are pinned in Core by two tests, each observed non-vacuous. **No token value, geometry rule, or scene member changed in this revision** — the padding was already inside the bounds, and this makes that explicit and adds the placement rule. Revision 6 (27 September 2026) adds a "Per-entity field contract" table** to "Entity-to-renderer equivalence", after product-owner approval of the R3.16 proposal and decision D-G14. The existing representation table is unchanged; the new table sits beside it and states, per row, the scene primitive and its role-derived identifier, the fields a renderer must read beyond the shared contract, and the translation the host object needs. It exists because the representation table alone was insufficient in three verified ways: the critical interval is a thin `SceneRect` in the scene but a **line** in every host renderer, and the translation was unstated; the data panel and the validation indicator draw **no live host object** at all, which the text did not convey; and seven of the ten rows had no field-level contract. **No token value, label position, or z-layer changes in this revision, and no scene member was added or removed** — the table names only what the model already carries, and every field list was verified field-by-field against the committed golden scene. **Two field-list corrections were made to this table after it was first approved, both bringing the table into line with the code rather than changing the contract:** the data-panel row named a single `ZLayer.Frame`, but `PanelBuilder` emits three layers (body cell fills at `Background` 0, body cell text at `Label` 70, header cells/text and shared borders at `Frame` 80), so the cell now names all three; and the procurement row did not record that `HatchPattern` resolves to `None` for every reference style, so no committed primitive carries a hatch and the field is unexercised. **No token value, z-layer value, label position, or scene member changed in either correction** — the code was already correct in both cases, and a field test transcribed from the uncorrected panel cell would have failed on every body cell. A header-label identifier convention was normalised alongside it (`chart:year-label:{yyyy}` became `chart:year:{yyyy}:label`, matching the period header); that is a model change recorded as R3.17, and it changed two identifiers in the golden snapshot. Revision 5 (26 September 2026) applies [ADR-0016](adr/0016-date-display-format-setting.md): §3 and §23 named the "approved display format" without specifying one, so both now name the approved value `dd/mm/yyyy`, its `DateDisplayFormat` setting, and the culture-invariant rendering rule. This revision also resolves §23's clipped-date policy, which previously referred to an unnamed "one approved chart setting": the product owner decided on 2026-09-26 that a clipped event always shows the **true** date, so the rule is code-owned rather than a workbook setting — a setting with one legal value would not be an option, and it would cost a schema advance for no capability. No token value, label position, or z-layer changes in this revision. Revision 4 (26 September 2026) applied [ADR-0015](adr/0015-label-cascade-and-widest-gap-fallback.md): §12 span `Auto` is `Right → Left → Inside`, §17 states the delay event's `Inside` as a style-level default evaluated once, and §22 gains the widest-gap truncation fallback that replaces the previously undefined "entity's defined fallback". Milestone `Auto`, the §22 placement-priority list, and every token value are unchanged. Revision 3 uses full Type names backed by `GanttCreator.TypeOptions` on `_GanttCreatorConfig`, while keeping schedule rows and per-entity overrides on the visible worksheet. When installed, use the path `docs/07-GANTT-ENTITY-GUIDE.md`.
 
 
 <!-- SKILL-SUMMARY:START -->
@@ -281,6 +281,13 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** `ChartBounds` is the union of the title, data panel, time headers, and plot plus `ChartOuterPaddingPt`. The outer frame follows the final bounds. Empty whitespace outside these bounds is not exported.
 
+**Origin and outer padding.** The padding is *inside* `ChartBounds` on all four sides; it is not a renderer-side margin. Because the bounds are derived by expanding the content union, a chart whose content starts at the origin has a **negative** `ChartBounds` origin, and negative coordinates are legal in the scene (`RectD` permits them deliberately). Two rules follow, and both are provisional pending the R4.3 Step-0 probe:
+
+- A renderer **translates the chart bounds to a zero origin and carries the delta**. Excel cannot express a negative shape offset, so the placement must be computed, not copied. The translation is uniform across every primitive kind — a rect's `Bounds`, a line's `From`/`To`, a polygon's `Points`, and a text's `TextBounds` all shift by the same constant — and it must not change any relationship inside the scene, including whether a label sits outside the chart.
+- **The delta must be carried into the export bounds.** Since empty whitespace outside the bounds is not exported, dropping the delta on the way to an export or PNG crop would silently remove exactly `ChartOuterPaddingPt` of the margin the token exists to create.
+
+`FrameBandsBuilderTests.The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides` and `SceneBuilderTests.The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship` pin both rules in Core. What remains unprobed is how the host behaves, not what the contract is.
+
 **Style:** `ChartBackground`, `MajorGridStroke`, and `MajorBoundaryPt`.
 
 **Labels:** none; the title is a separate entity.
@@ -315,7 +322,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Style:** workbook cell styles in the live sheet; export uses `DataPanelFill`, `DefaultText`, and the resolved border/font tokens. User-defined arbitrary cell formatting is not automatically interpreted as Gantt semantics.
 
-**Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format.
+**Labels:** column headings are separate header entities. Body text follows cell alignment policy; dates use the approved display format `dd/mm/yyyy`, selected by the `DateDisplayFormat` setting and rendered culture-invariantly ([ADR-0016](adr/0016-date-display-format-setting.md)).
 
 **Validation:** required columns exist once; no merged body cells; supported date/value types; positive visible column widths.
 
@@ -455,7 +462,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Style:** resolved by subtype. Fill and outline are explicit; no renderer defaults.
 
-**Label positions:** `Auto`, `Left`, `Right`, `Inside`, `Above`, `Below`, `None`. Manual value wins. `Auto` tries Right → Inside → Left. Above/Below are only used automatically by a named style, not as an unbounded collision cascade.
+**Label positions:** `Auto`, `Left`, `Right`, `Inside`, `Above`, `Below`, `None`. Manual value wins. `Auto` tries Right → Left → Inside. Above/Below are only used automatically by a named style, not as an unbounded collision cascade. When no `Auto` candidate accepts the full text, the widest-gap truncation fallback in §22 applies.
 
 **Clipping:** use visible rectangle bounds for label candidates. An arrow or continuation glyph is not shown unless later approved.
 
@@ -519,7 +526,7 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Base:** general span activity.
 
-**Default style:** `DelayFill`, critical/red outline, `DelayText`, standard activity height. Initial label position is `Inside`; if text does not fit, `Auto` tries Right then Left and changes to `DefaultText` outside the red body.
+**Default style:** `DelayFill`, critical/red outline, `DelayText`, standard activity height. `Inside` is the named style's default label position, not merely the first `Auto` candidate: it is evaluated once and never re-entered. If the text does not fit inside, the remaining cascade is Right then Left — `Inside` is not retried — and the text changes to `DefaultText` outside the red body. The Delay Event's style default therefore overrides the general span cascade in §12.
 
 **Semantics:** dates and description are supplied by the user. The add-in does not calculate responsibility, causation, or entitlement.
 
@@ -607,7 +614,9 @@ A milestone does not inherit critical styling merely because it shares a date wi
 
 Candidate acceptance requires containment within allowed chart bounds and no intersection with registered foreground shapes or higher-priority labels, except an `Inside` label may occupy its own parent rectangle. Maximum external width is `MaximumExternalLabelWidthPt`.
 
-Placement priority is: explicit manual positions first; then critical milestones, other milestones, delay labels, actual labels, planned labels, baseline labels, procurement/custom labels, date labels, and delineator labels. Within a priority use lane, stack, sort order, then stable ID. If no candidate is clear, use the entity's defined fallback and emit one warning; do not move labels differently on each refresh.
+Placement priority is: explicit manual positions first; then critical milestones, other milestones, delay labels, actual labels, planned labels, baseline labels, procurement/custom labels, date labels, and delineator labels. Within a priority use lane, stack, sort order, then stable ID. If no candidate is clear, use the widest-gap truncation fallback below and emit one warning; do not move labels differently on each refresh.
+
+**Widest-gap truncation fallback.** When no `Auto` candidate accepts the full text, measure the free horizontal space at each of the entity's applicable positions — for a span, `Left`, `Right`, and `Inside` — and place the label at the widest. Free space is the distance from the shape's edge to the nearest obstruction, where obstructions are in-lane shapes, already-placed higher-priority labels, and the `PlotBounds` boundary alike. The label text is cut to the measured width with a single-character ellipsis `…` and exactly one warning is emitted; the font is never shrunk and the text is never wrapped. Equal-width gaps are broken by the entity's `Auto` order, so the placement is stable across refreshes. If every measured gap is too small to hold even the ellipsis, the label is suppressed and exactly one warning is emitted; no position is invented and no label is drawn over an obstruction.
 
 **Text measurement:** use one injected deterministic text-metrics service during scene construction. The service implementation/version/font is pinned for tests. Excel and raster renderers consume the resulting label bounds and do not reselect the side.
 
@@ -619,13 +628,13 @@ Placement priority is: explicit manual positions first; then critical milestones
 
 **Purpose:** optionally show dates independently of the description.
 
-**Source:** event Start/Finish and approved invariant display format.
+**Source:** event Start/Finish and the approved invariant display format `dd/mm/yyyy`, selected by the `DateDisplayFormat` setting and rendered culture-invariantly ([ADR-0016](adr/0016-date-display-format-setting.md)).
 
 **Geometry:** start label anchors Left of the visible bar by default; finish label anchors Right. Explicit positions may use the same external choices as a span label. They are separate scene text entities with IDs derived from the parent event ID and label role.
 
 **Style:** body font and default text unless a named style says otherwise.
 
-**Validation:** no start/finish date label for a field the event type does not use. A clipped event may either display the true date or suppress the off-plot date according to one approved chart setting; never infer per renderer.
+**Validation:** no start/finish date label for a field the event type does not use. A clipped event always displays the **true** date, even when that date falls outside the plot; the off-plot date is never suppressed. The policy is code-owned and resolved in the scene, never inferred per renderer (product owner, 2026-09-26).
 
 **Tests:** display formats, clipping policy, same date, independent visibility, collision with description label, stable IDs.
 
@@ -701,6 +710,59 @@ Placement priority is: explicit manual positions first; then critical milestones
 | Validation indicator | live cells/dialog only | excluded | excluded |
 
 If a renderer cannot represent a primitive faithfully, implementation stops for an ADR. It must not silently substitute a flattened image in the editable composition.
+
+### Per-entity field contract
+
+The table above states which **representation** each entity takes in each
+renderer. This one states what a renderer must **read** to produce it, and
+what it must translate. "§Shared" means the nine items every entity already
+has in "Shared entity contract"; this table adds only what is row-specific,
+so the two cannot drift into a duplicate contract.
+
+| Entity | Scene primitive and role ID | Required fields beyond §Shared | Live worksheet | Editable / PowerPoint | PNG | Translation |
+| --- | --- | --- | --- | --- | --- | --- |
+| Data panel/header | chart: `rect chart:header-cell:{column}`, `text chart:header-text:{column}`, `line chart:panel-border-v:{index}`; row: `rect {row}:panel-cell:{column}`, `text {row}:panel-text:{column}` | `Bounds`, `From`/`To`, `Text`, `TextBounds`, `Alignment`, resolved panel/header/`DefaultText` styles, and **three** z-layers: `ZLayer.Background` (0) for body cell fills, `ZLayer.Label` (70) for body cell text, and `ZLayer.Frame` (80) for the header cells, the header text, and every shared border line | **Excel cells — draw no shapes** | rectangle/text/line shapes at the measured cell bounds | raster primitives | the scene primitives exist for the **export** composition; the live renderer must not draw them over the visible table. **No committed scene contains these primitives** — the panel theme is optional and the reference build omits it, so the golden contains no panel primitive. This row is nevertheless exercised: the `EquivalenceThinSliceTests` data-panel field and z-layer tests assert it against `SceneBuilderTests.BuildSceneWithPanel()`, a panel-bearing build that never touches the golden |
+| Title | `rect chart:title-band`, `text chart:title-text` | `Text`, `TextBounds`, `Alignment` (centred), `Bounds`, resolved title style, `ZLayer.Title` | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a hidden title (`ShowTitle=false`) emits **no** primitives; do not draw an empty band |
+| Year header | `rect chart:year:{yyyy}`, `text chart:year:{yyyy}:label` | `Bounds`, `Text`, `TextBounds`, `Alignment` (centred), resolved year style, `ZLayer.Frame`; **no lane/stack keys** | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a year too narrow for its label emits the rectangle but **no** label primitive; do not re-add the text |
+| Period header | `rect chart:period:{yyyy-MM-dd}`, `text chart:period:{yyyy-MM-dd}:label` | as Year header, resolved period style | as Year header | grouped native shapes | raster primitives | same suppression rule |
+| Bands/grid/frame | `rect chart:background`, `rect chart:band:{index}`, `line chart:grid:{x}`, `line chart:grid:edge:{x}`, `line chart:frame:{top,bottom,left,right}` | `Bounds`, `From`/`To`, resolved background/band/grid styles, `ZLayer.Background`/`AlternateBand`/`Grid`/`Frame`, the scene's derived `ChartBounds` | owned shapes or cell formatting under one policy | native shapes | raster primitives | chart-owned: never a row-reconciliation deletion candidate |
+| Activity/delay | `rect {row}:bar` | `Bounds` (already plot-clipped), `Style` fill + stroke + width, no hatch, `ZLayer.ActivityBody`, lane/stack order keys | rectangle shapes | rectangle shapes | raster rectangles | draw the clipped rectangle; do not recompute the span from dates |
+| Procurement | `rect {row}:bar` with `HatchPattern` | as Activity/delay, plus `HatchPattern` and its pitch/line tokens | **unresolved** — native pattern or editable hatch group | editable hatch group | clipped raster hatch | host representation is `unknown` until the R4.6/R8.3 compatibility proof; do not choose one here. **The hatch field is also unexercised**: the reference style set resolves `HatchPattern` to `None` for every style, so no committed scene primitive carries a hatch. Assert the scene fields, not a hatch value |
+| Critical interval | **`rect {row}:critical`**, height `CriticalLinePt` | `Bounds` (top edge = parent's post-clip top, height = `CriticalLinePt`), `Style` stroke + width, `ZLayer.CriticalOverlay` | **line** | **line** | raster line | **the scene rect is not the host object**: draw a line along the rect's top edge at its resolved thickness. Filling the rect is a defect |
+| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | four-point freeform polygon | freeform polygon | raster polygon | emit the four points in order; do not substitute a rotated square or an ellipse |
+| Description/date labels | `text {row}:label`, `{row}:date-start`, `{row}:date-finish` | `Text`, `TextBounds` (already measured), `Alignment`, `Style` (`DefaultText`/`DelayText`), `ZLayer.Label`, lane and stack order keys **present** | text box shapes | text box shapes | raster text at scene bounds | the label **side is already resolved into `TextBounds`**; do not re-measure, re-truncate, or reselect a side |
+| Delineator | `line {row}:delineator` + `text {row}:delineator-label` | line: `From`/`To` spanning `PlotBounds` top to bottom, `Style` stroke + width, `ZLayer.Delineator`. label: `Text`, `TextBounds`, `Alignment`, `Style`, `ZLayer.DelineatorLabel`, **no lane/stack keys** | line plus text box | line plus text box | raster line/text | a same-date pair emits **one shared line** but **one label per row**; the line's owner may be a `Rows` set, so a membership change is remove-then-recreate, never in-place |
+| Validation indicator | **none** | none | cells/dialog only | **excluded** | **excluded** | the model carries no primitive; a renderer must not invent one |
+| Legend (§25, optional) | **none today** | none | not built | not built | not built | an optional, product-owner-gated feature with no scene primitive yet |
+
+Four notes that govern the whole table:
+
+- **The panel row is exercised against a panel-bearing build, not the golden.**
+  Panel primitives are emitted only when a `PanelTheme` is supplied, and the
+  canonical reference scene does not supply one — so the committed golden
+  contains no panel primitive. The `EquivalenceThinSliceTests` data-panel field
+  and z-layer tests therefore assert this row against
+  `SceneBuilderTests.BuildSceneWithPanel()`, a purpose-built scene that adds only
+  the panel and never changes the golden. The contract and its coverage are both
+  real; only the golden is panel-free.
+- **The procurement hatch is unexercised too.** The reference style set resolves
+  `HatchPattern` to `None` for every style, so no committed scene primitive
+  carries a hatch. A test may assert the procurement row's other scene fields,
+  but it may not assert a hatch *value* until a scene resolves a non-`None`
+  pattern. This is separate from the row's host representation, which is
+  `unknown` until the R4.6/R8.3 compatibility proof.
+- **Identifier scope.** The role suffix and the `{placeholder}` structure are
+  contractual, because the identifier is the shape name and the reconciliation
+  key. The *formatting* of an interpolated value is not: `chart:grid:{x}`
+  formats a point and `chart:period:{yyyy-MM-dd}` a date, and changing either
+  changes the identifier for every affected shape. Reformatting is therefore an
+  owned-set replacement, not a cosmetic edit.
+- **Ownership inputs.** The scene supplies `OwnerId` and the role-derived
+  `PrimitiveId`; the `GanttCreator.`-prefixed ownership tag is written by the
+  shape-write adapter, not by the scene.
+- **Grouping is out of scope here.** `SceneGroup` membership and child order
+  belong to the editable-export work. Their absence from this table means "not
+  yet specified", not "not required".
 
 ## Minimum visual reference fixture
 

@@ -14,4 +14,45 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    R3.12: the canonical neutral fixture is one committed file consumed by the Core
+    scene tests and the Office integration tests, so it is copied to the test output
+    rather than being restated in code. The copy is what makes
+    tests/fixtures/reference-gantt.json reachable at runtime; checklist G requires
+    this step to be traceable, and scripts/verify.ps1 runs the tests that depend on
+    it, so a missing file fails the gate rather than being silently skipped.
+  -->
+  <ItemGroup>
+    <None Include="..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!--
+      R3.12: the golden scene snapshot is committed under tests/golden/scene/. It is
+      a *scene* baseline derived from the canonical fixture, not a golden image, so
+      it needs no human image review - but the change policy is the same: an update
+      is a dedicated commit with a stated reason, and the comparison is
+      byte-for-byte. Copied to the output so the test reads the committed file
+      rather than a path relative to the source tree (checklist G).
+    -->
+    <None Include="..\golden\**\*.json" Link="golden\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!--
+      R3.16: the entity guide's "Per-entity field contract" table is the contract the
+      equivalence catalogue transcribes, and the drift guard compares the two so a
+      guide edit that adds, renames, or removes a row fails the suite instead of
+      drifting silently. The guard therefore has to read the guide at runtime, so the
+      one file it needs is copied to the output for the same reason the fixture and
+      golden are (checklist G): the test reads the committed file rather than a path
+      relative to the source tree, and scripts/verify.ps1 runs the test that depends
+      on it, so a missing file fails the gate rather than being silently skipped.
+
+      The copy is deliberately narrow - this one file, not the whole docs tree - so
+      the guard cannot come to depend on other documentation.
+    -->
+    <None Include="..\..\docs\07-GANTT-ENTITY-GUIDE.md" Link="docs\07-GANTT-ENTITY-GUIDE.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

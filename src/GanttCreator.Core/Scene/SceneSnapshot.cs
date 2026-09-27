@@ -204,7 +204,7 @@ public static class SceneSnapshot
                 Required(document.Text, "text"),
                 FromRect(Required(document.TextBounds, "textBounds"), "textBounds"),
                 FromStyle(Required(document.Style, "style")),
-                (GanttLabelPosition)RequiredInt(document.Alignment, "alignment"),
+                (GanttTextAlignment)RequiredInt(document.Alignment, "alignment"),
                 entityType,
                 document.LaneOrder,
                 document.StackIndex,
@@ -272,10 +272,10 @@ public static class SceneSnapshot
         GanttHatchPattern hatchPattern = Enum.IsDefined(typeof(GanttHatchPattern), document.HatchPattern)
             ? (GanttHatchPattern)document.HatchPattern
             : throw new InvalidDataException($"Invalid hatch pattern {document.HatchPattern}.");
-        GanttLabelPosition? alignment = document.Alignment is { } value
-            ? Enum.IsDefined(typeof(GanttLabelPosition), value)
-                ? (GanttLabelPosition)value
-                : throw new InvalidDataException($"Invalid label alignment {value}.")
+        GanttTextAlignment? alignment = document.Alignment is { } value
+            ? Enum.IsDefined(typeof(GanttTextAlignment), value)
+                ? (GanttTextAlignment)value
+                : throw new InvalidDataException($"Invalid text alignment {value}.")
             : null;
         return new SceneStyle(
             Required(document.StyleKey, "style.styleKey"),
@@ -295,8 +295,21 @@ public static class SceneSnapshot
         : ColourHex.TryParse(value, out ColourHex? colour) && colour is not null ? colour
         : throw new InvalidDataException($"Invalid colour in {field}.");
 
+    // The kind is mapped by an exhaustive switch, never a `Row ? "row" : "chart"`
+    // ternary: a shared (Rows) owner would silently serialise as "chart" and
+    // then fail to parse back, which is exactly the drift ADR-0017 D5 warns about.
     private static OwnerDocument ToOwner(SceneOwnerId owner) =>
-        new() { Kind = owner.Kind == SceneOwnerKind.Row ? "row" : "chart", Value = owner.Value };
+        new()
+        {
+            Kind = owner.Kind switch
+            {
+                SceneOwnerKind.Row => "row",
+                SceneOwnerKind.Chart => "chart",
+                SceneOwnerKind.Rows => "rows",
+                _ => throw new ArgumentOutOfRangeException(nameof(owner), owner.Kind, "Unknown scene owner kind."),
+            },
+            Value = owner.Value,
+        };
 
     private static SceneOwnerId ParseOwner(OwnerDocument document) =>
         SceneOwnerId.TryParse(document.Kind, document.Value, out SceneOwnerId? owner) && owner is not null

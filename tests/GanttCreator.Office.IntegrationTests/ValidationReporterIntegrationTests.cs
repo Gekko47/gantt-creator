@@ -100,8 +100,15 @@ public class ValidationReporterIntegrationTests(ITestOutputHelper output)
             SetBodyCell(body, invalidOffset, "Visible", true);
 
             // A stale add-in section on a cell the invalid row has no finding for.
+            // The text must be a *complete* generated section — the sentinel plus
+            // the " row N, column 'F':" header BuildNoteText always emits. Ownership
+            // deliberately requires that full marker (review finding 5), so a bare
+            // sentinel is a user note and is never cleared; a stale section is
+            // always cleared.
             Excel.Range staleCell = body.Cells[invalidOffset, GetColumnIndex("Description")];
-            _ = staleCell.AddComment($"{Sentinel()} stale section from an earlier run");
+            _ = staleCell.AddComment(
+                $"{Sentinel()} row {invalidOffset}, column 'Description':\n"
+                + "Error: stale finding from an earlier run");
             Assert.NotNull(staleCell.Comment);
 
             List<string> before = SnapshotFingerprints(body);

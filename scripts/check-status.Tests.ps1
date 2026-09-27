@@ -46,20 +46,44 @@ Describe 'check-status.ps1' {
             # Helper defined at script scope so Pester's `It` blocks can
             # call it directly without a `$script:` indirection.
             function Invoke-CheckStatusHarness {
-                param([string]$StatusBody)
+                param(
+                    [string]$StatusBody,
+                    [string]$WorkItemsRelativePath = 'WORK-ITEMS'
+                )
                 $statusFile = Join-Path $script:tempRoot 'STATUS.md'
-                $statusBody | Set-Content -LiteralPath $statusFile -Encoding utf8
+                $StatusBody | Set-Content -LiteralPath $statusFile -Encoding utf8
                 $outFile = Join-Path $script:tempRoot 'out.txt'
                 $errFile = Join-Path $script:tempRoot 'err.txt'
                 $proc = Start-Process -FilePath pwsh -ArgumentList @(
                     '-NoProfile','-File',(Join-Path $script:harness 'check-status.ps1'),
                     '-StatusPath','STATUS.md',
-                    '-RoadmapPath','ROADMAP.md'
+                    '-RoadmapPath','ROADMAP.md',
+                    '-WorkItemsPath',$WorkItemsRelativePath
                 ) -NoNewWindow -Wait -PassThru `
                     -WorkingDirectory $script:tempRoot `
                     -RedirectStandardOutput $outFile -RedirectStandardError $errFile
                 $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
                 return [pscustomobject]@{ Exit = $proc.ExitCode; Output = $combined }
+            }
+
+            # Writes one work item whose only fenced block is the supplied
+            # command, so a test states just the command under test. Named
+            # Invoke- rather than Set- because PSScriptAnalyzer treats a Set-
+            # verb as state-changing and demands a ShouldProcess parameter a
+            # test helper has no use for; Invoke- matches the sibling helper.
+            function Invoke-WorkItemCommand {
+                param([string]$Command)
+                $dir = Join-Path $script:tempRoot 'WORK-ITEMS'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                @"
+# Work item
+
+## Evidence
+
+``````powershell
+$Command
+``````
+"@ | Set-Content -LiteralPath (Join-Path $dir 'R9.9-fixture.md') -Encoding utf8
             }
         }
 
@@ -73,9 +97,13 @@ Describe 'check-status.ps1' {
             # All three checks pass: real commit hash, real on-disk file,
             # R0.8 in the roadmap. The "path" token must contain a directory
             # separator for the path rule to engage, and the file must exist
-            # in the harness repository before the gate runs.
+            # in the harness repository before the gate runs. It is also
+            # committed, because the path check requires a tracked file (a
+            # clean CI checkout has nothing else) -- not merely one on disk.
             New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
             'exists' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\exists.md') -Encoding utf8
+            git -C $script:tempRoot add docs/exists.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add docs/exists.md' | Out-Null
             $body = @"
 # Status
 
@@ -84,6 +112,150 @@ References the commit ``$($script:realHash)`` and the file ``docs\exists.md`` an
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0
             $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 1 when STATUS references a path that exists on disk but is untracked by git' {
+            # Regression (CI divergence, 2026-09-26): docs/STATUS.md claimed
+            # `docs/GanttCreator_StageInspect_Code_Audit.md`, a git-ignored
+            # working document. Test-Path passed locally, so pre-commit and
+            # verify-quick were green, but a clean CI checkout never had the
+            # file and the gate failed there. The path check must require git
+            # to know the path, not merely the filesystem.
+            $untracked = Join-Path $script:tempRoot 'docs\untracked.md'
+            # The harness BeforeEach creates only $tempRoot and $tempRoot\scripts,
+            # so the docs directory must be created here before writing into it.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'present but never added' | Set-Content -LiteralPath $untracked -Encoding utf8
+            # Positive control: the file really is on disk, so the violation
+            # below can only come from the tracking requirement.
+            (Test-Path -LiteralPath $untracked) | Should -BeTrue
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/untracked.md' 2>$null) | Should -BeNullOrEmpty
+
+            $body = @"
+# Status
+
+References the file ``docs\untracked.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            # Literal substring, not a regex: the token carries a backslash and
+            # '\u' is an invalid .NET regex escape, and the gate echoes the token
+            # verbatim rather than a git-normalised path.
+            $r.Output.Contains("STATUS references path 'docs\untracked.md' which is not tracked by git") | Should -BeTrue
+            # It must NOT be reported as merely nonexistent: the file is on disk.
+            $r.Output.Contains("STATUS references path 'docs\untracked.md' which does not exist") | Should -BeFalse
+        }
+
+        It 'exits 0 for a path that exists on disk and is tracked by git' {
+            # Positive control for the tracking requirement: a committed file
+            # must still pass, or the new rule would reject every real path.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/tracked.md').Trim() | Should -Be 'docs/tracked.md'
+
+            $body = @"
+# Status
+
+References the file ``docs\tracked.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 0 for a tracked path written with a redundant parent segment' {
+            # The gate matches the canonical root-relative path, not the raw
+            # backticked text. git resolves a pathspec for us -- `ls-files --
+            # docs/../docs/tracked.md` prints `docs/tracked.md` -- so comparing the
+            # printed name against the raw token failed `-contains` and reported a
+            # genuinely tracked path as untracked. Both spellings name the same
+            # tracked file, and a backticked path is prose, not a git pathspec.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+
+            # Non-vacuity: the raw token is genuinely not the name git prints.
+            $printed = (& git -C $script:tempRoot ls-files -- 'docs/../docs/tracked.md').Trim()
+            $printed | Should -Be 'docs/tracked.md'
+            $printed | Should -Not -Be 'docs/../docs/tracked.md'
+
+            $body = @"
+# Status
+
+References the file ``docs/../docs/tracked.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 0 for a tracked directory written with a trailing separator' {
+            # A directory token may end in a separator. The tracked-directory test
+            # appends its own '/', so a trailing one on the token would have
+            # produced 'docs//' and matched nothing -- a false "untracked"
+            # rejection for a real project directory.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'docs\tracked.md') -Encoding utf8
+            git -C $script:tempRoot add docs/tracked.md | Out-Null
+            git -C $script:tempRoot commit -q -m 'add tracked doc' | Out-Null
+
+            $body = @"
+# Status
+
+References the directory ``docs/``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
+        }
+
+        It 'exits 0 when STATUS references a path that is staged but not yet committed' {
+            # The gate is a pre-commit hook, so it validates the tree of the commit
+            # about to be made -- the index. A new file that STATUS names in the same
+            # commit that introduces it must NOT be rejected: that was a false
+            # rejection of a correct change, caused by reading HEAD instead. The
+            # positive controls below prove the index and HEAD genuinely disagree,
+            # so this is not a vacuous assertion.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            $staged = Join-Path $script:tempRoot 'docs\staged-only.md'
+            'staged, never committed' | Set-Content -LiteralPath $staged -Encoding utf8
+            git -C $script:tempRoot add docs/staged-only.md | Out-Null
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/staged-only.md').Trim()
+                | Should -Be 'docs/staged-only.md'
+            (& git -C $script:tempRoot ls-tree -r --name-only HEAD -- 'docs/staged-only.md')
+                | Should -BeNullOrEmpty
+            (Test-Path -LiteralPath $staged) | Should -BeTrue
+
+            $body = @"
+# Status
+
+References the file ``docs\staged-only.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+        }
+
+        It 'exits 1 when STATUS references a path that exists only in the working tree' {
+            # The counterpart that must still fail: on disk, but never added to git,
+            # so no checkout -- local or CI -- will ever have it.
+            New-Item -ItemType Directory -Path (Join-Path $script:tempRoot 'docs') -Force | Out-Null
+            $untracked = Join-Path $script:tempRoot 'docs\never-added.md'
+            'never added' | Set-Content -LiteralPath $untracked -Encoding utf8
+            (Test-Path -LiteralPath $untracked) | Should -BeTrue
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'docs/never-added.md' 2>$null)
+                | Should -BeNullOrEmpty
+
+            $body = @"
+# Status
+
+References the file ``docs\never-added.md``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output.Contains("STATUS references path 'docs\never-added.md' which is not tracked by git") | Should -BeTrue
         }
 
         It 'exits 1 when STATUS references a commit hash that does not resolve' {
@@ -211,6 +383,114 @@ References an absolute location ``C:\windows\evil.md``.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit | Should -Not -Be 0
+        }
+
+        Context 'work-item evidence commands' {
+            # The defect this rule exists for: 73 work items carried an evidence
+            # command naming a solution file that does not exist, so the command
+            # could not run and the evidence it promised was never produced.
+
+            It 'exits 1 when a work-item evidence command names a path that does not exist' {
+                Invoke-WorkItemCommand 'dotnet build src/GanttCreator.slnx /p:Configuration=Release /warnaserror'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Not -Be 0
+                $r.Output.Contains("names 'src/GanttCreator.slnx' in an evidence command") | Should -BeTrue
+            }
+
+            It 'exits 0 when the work-item evidence command names a path that exists' {
+                # Positive control: a real path must still pass, or the rule would
+                # reject every legitimate evidence block.
+                'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'GanttCreator.slnx') -Encoding utf8
+                Invoke-WorkItemCommand 'dotnet build GanttCreator.slnx /p:Configuration=Release /warnaserror'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'ignores a non-existent path named on a comment line' {
+                # A comment is a note, not a command. This is what lets a work item
+                # record the path it is deliberately correcting (R3.12 does exactly
+                # this) without tripping the gate.
+                #
+                # The real command names GanttCreator.slnx, which must exist: bare
+                # filenames are checked too (that is what catches a command naming a
+                # file that cannot resolve), so a missing one would be a genuine
+                # violation rather than a comment false positive. The bad path here is
+                # the one confined to the comment.
+                'committed' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'GanttCreator.slnx') -Encoding utf8
+                Invoke-WorkItemCommand "# src/GanttCreator.slnx is wrong; use GanttCreator.slnx`ndotnet build GanttCreator.slnx"
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+                $r.Output | Should -Not -Match "src/GanttCreator.slnx"
+            }
+
+            It 'exits 1 when a work-item evidence command names a bare filename that does not exist' {
+                # The bare-filename case: `dotnet build GanttCreator.slnx` names a
+                # file at the repository root, so the file argument must be checked
+                # rather than skipped. Without this, the most common shape of evidence
+                # command is unchecked -- which is exactly how 73 work items came to
+                # name a non-existent solution path.
+                Invoke-WorkItemCommand 'dotnet build GanttCreator.slnx'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Not -Be 0
+                $r.Output.Contains("names 'GanttCreator.slnx' in an evidence command") | Should -BeTrue
+            }
+
+            It 'exits 0 when a work-item evidence command names a URL' {
+                # A URL is not a repository path. The `//authority/...` fragment that
+                # the tokeniser sees carries separators and would otherwise be joined
+                # onto the repo root and tested as a local path that never exists.
+                Invoke-WorkItemCommand 'pwsh -c "Invoke-WebRequest https://example.com/build.json"'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+                $r.Output | Should -Not -Match 'example\.com'
+            }
+
+            It 'ignores a non-existent path named in prose outside a fenced block' {
+                # Only commands are checked. Prose may discuss a path that does not
+                # exist -- an item describing a defect, for instance.
+                $dir = Join-Path $script:tempRoot 'WORK-ITEMS'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                @'
+# Work item
+
+Earlier revisions named ``src/GanttCreator.slnx``, which does not exist.
+'@ | Set-Content -LiteralPath (Join-Path $dir 'R9.9-fixture.md') -Encoding utf8
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'exits 0 when a work-item evidence command names an existing bare filename' {
+                # A bare filename is resolved against the repository root, so
+                # `dotnet format README.md` is checked rather than skipped. The
+                # harness repository has a committed README.md, so this token
+                # resolves and the command is legal -- the counterpart tests pin
+                # the missing-filename and root-resolution behaviour.
+                Invoke-WorkItemCommand 'dotnet format README.md'
+
+                $r = Invoke-CheckStatusHarness "# Status`n"
+
+                $r.Exit | Should -Be 0
+            }
+
+            It 'exits 0 when the work-items directory does not exist' {
+                # The rule is additive: a repository without work items must not
+                # fail the status gate for that reason alone.
+                $r = Invoke-CheckStatusHarness "# Status`n" 'NO-SUCH-DIRECTORY'
+
+                $r.Exit | Should -Be 0
+            }
         }
     }
 }

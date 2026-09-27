@@ -32,6 +32,45 @@ public sealed class FrameBandsBuilderTests
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Frame);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Title);
     }
+    [Fact]
+    public void The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides()
+    {
+        // Entity guide §1: ChartBounds is the union of the title, data panel, time
+        // headers, and plot "plus ChartOuterPaddingPt". The product decision recorded
+        // there is that the padding is INSIDE the bounds, not a renderer-side margin -
+        // which matters because §1 also says empty whitespace outside the bounds is
+        // not exported, so a renderer that treated the padding as outside would export
+        // a chart missing exactly ChartOuterPaddingPt of margin.
+        //
+        // Checked against the content and title rectangles the builder reports, not
+        // against a restatement of its own arithmetic, so this is a real cross-check
+        // of the derived bounds rather than a tautology.
+        const double padding = 6;
+        ChartFrameGeometry geometry = Build(CreateRequest() with { ChartOuterPaddingPt = padding }).Result!.Geometry;
+
+        RectD content = Assert.IsType<RectD>(geometry.ContentBounds);
+        RectD title = Assert.IsType<RectD>(geometry.TitleBounds);
+
+        // The union is content plus the title, because the title band sits above the
+        // content and is part of the chart.
+        double unionLeft = Math.Min(content.Left, title.Left);
+        double unionTop = Math.Min(content.Top, title.Top);
+        double unionRight = Math.Max(content.Right, title.Right);
+        double unionBottom = Math.Max(content.Bottom, title.Bottom);
+
+        Assert.Equal(unionLeft - padding, geometry.ChartBounds.Left, precision: 9);
+        Assert.Equal(unionTop - padding, geometry.ChartBounds.Top, precision: 9);
+        Assert.Equal(unionRight + padding, geometry.ChartBounds.Right, precision: 9);
+        Assert.Equal(unionBottom + padding, geometry.ChartBounds.Bottom, precision: 9);
+
+        // The negative origin is a real, reachable outcome of that rule, not a
+        // hypothetical: Excel cannot express a negative shape offset, which is why the
+        // renderer translation rule exists.
+        Assert.True(
+            geometry.ChartBounds.Left < 0,
+            $"Expected the derived origin to be negative with content at the origin, got {geometry.ChartBounds}.");
+    }
+
 
     [Fact]
     public void Emits_clipped_year_and_period_headers_with_alternating_bands()
@@ -47,11 +86,32 @@ public sealed class FrameBandsBuilderTests
             result.Primitives.OfType<SceneRect>().Count(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal))
         );
         Assert.Single(result.Primitives.OfType<SceneRect>(), rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal));
-        Assert.Equal(3, result.Primitives.OfType<SceneText>().Count(text => text.PrimitiveId.Contains(":label", StringComparison.Ordinal)));
+
+        // Four header labels: one year plus three periods. Before R3.17 the year
+        // label used a "chart:year-label:" prefix, so this count silently covered
+        // only the periods and the year label was unasserted; the convention fix
+        // made it visible.
+        Assert.Equal(4, result.Primitives.OfType<SceneText>().Count(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal)));
         Assert.Equal(
             "Jan",
             result.Primitives.OfType<SceneText>().Single(text => text.PrimitiveId.Contains("2024-01-01", StringComparison.Ordinal)).Text
         );
+    }
+
+    [Fact]
+    public void Band_and_title_text_is_centred_in_its_resolved_bounds()
+    {
+        // §2 fixes the title as "horizontally centred and vertically
+        // middle-aligned", and the year/period band labels are centred in their
+        // band. Before ADR-0018 these carried GanttLabelPosition.Auto, which is
+        // a label *position* and meaningless as a text alignment, so nothing
+        // pinned the centring. This is the positive pin for that behaviour.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+
+        SceneText[] texts = [.. result.Primitives.OfType<SceneText>()];
+        Assert.NotEmpty(texts);
+        Assert.All(texts, text => Assert.Equal(GanttTextAlignment.Centre, text.Alignment));
+        Assert.Equal(GanttTextAlignment.Centre, result.Primitives.OfType<SceneText>().Single(text => text.PrimitiveId == "chart:title-text").Alignment);
     }
 
     [Fact]
@@ -260,6 +320,35 @@ public sealed class FrameBandsBuilderTests
             true,
             _theme
         );
+    }
+
+    [Fact]
+    public void Every_header_label_is_named_after_its_own_band_primitive()
+    {
+        // A header label names its parent by appending ":label" to the parent's
+        // identifier. The year header used to use a "chart:year-label:" prefix
+        // while the period header appended ":label", so the two header kinds
+        // disagreed about how a child names its parent; a renderer reconciles on
+        // this exact text, so the disagreement was a real reconciliation hazard
+        // (R3.17). This is convention-agnostic: it pins the relationship, not a
+        // literal spelling, so a future rename cannot silently break it.
+        FrameBandsResult result = Build(CreateRequest()).Result!;
+
+        HashSet<string> rectIds =
+        [
+            .. result.Primitives.OfType<SceneRect>().Select(rect => rect.PrimitiveId),
+        ];
+
+        SceneText[] labels = [.. result.Primitives.OfType<SceneText>().Where(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))];
+
+        // The period header emits three labels and the year header one, so a
+        // non-empty set is required: an empty one would make All vacuous.
+        Assert.NotEmpty(labels);
+        Assert.All(labels, label =>
+        {
+            string parentId = label.PrimitiveId[..^":label".Length];
+            Assert.Contains(parentId, rectIds);
+        });
     }
 
     private sealed class FixedMeasurer(Func<string, double> measure) : ITextWidthMeasurer

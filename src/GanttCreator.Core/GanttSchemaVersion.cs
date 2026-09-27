@@ -22,7 +22,7 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 2 for ADR-0014.
+    /// monotonically, and is currently 3 for ADR-0016.
     /// </summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 }

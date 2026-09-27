@@ -14,4 +14,11 @@ public enum SceneCreationRefusal
 
     /// <summary>A group references a primitive that is not in the scene.</summary>
     UnresolvedGroupChild = 3,
+
+    /// <summary>
+    /// The groups in the scene form a cycle, so expanding them would not
+    /// terminate. A group naming itself directly is refused earlier, by
+    /// <see cref="SceneGroup"/>; this covers cycles spanning several groups.
+    /// </summary>
+    CyclicGroupChild = 4,
 }
