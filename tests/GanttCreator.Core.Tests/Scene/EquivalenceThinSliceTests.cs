@@ -132,6 +132,19 @@ public sealed class EquivalenceThinSliceTests
     }
 
     [Fact]
+    public void A_milestone_marker_whose_vertices_are_reordered_is_reported_as_missing_the_draw_order()
+    {
+        // Four points in the wrong order still form a valid ScenePolygon and still
+        // satisfy the tip-to-tip extent, so only the order assertion can catch it: a
+        // renderer walking the vertices in that order draws a different shape.
+        GanttScene rotated = ReplacePrimitive(SceneBuilderTests.BuildScene(), _markerId, WithRotatedVertices);
+
+        Assert.Equal<string>(
+            ["the four points in draw order (top, right, bottom, left)"],
+            EquivalenceFields.MilestoneDiamond.UnsatisfiedFields(rotated, _markerId));
+    }
+
+    [Fact]
     public void An_absent_primitive_is_reported_rather_than_passing_silently()
     {
         // A renamed or dropped role must not turn the row into a vacuous pass, so the
@@ -217,6 +230,23 @@ public sealed class EquivalenceThinSliceTests
             label.LaneOrder,
             label.StackIndex,
             label.SortOrder);
+    }
+
+    private static ScenePrimitive WithRotatedVertices(ScenePrimitive primitive)
+    {
+        ScenePolygon diamond = Assert.IsType<ScenePolygon>(primitive);
+
+        // One step round: right, bottom, left, top. Same four points, same bounds.
+        return new ScenePolygon(
+            diamond.PrimitiveId,
+            diamond.OwnerId,
+            diamond.ZLayer,
+            [diamond.Points[1], diamond.Points[2], diamond.Points[3], diamond.Points[0]],
+            diamond.Style,
+            diamond.EntityType,
+            diamond.LaneOrder,
+            diamond.StackIndex,
+            diamond.SortOrder);
     }
 
     private static ScenePrimitive WithoutLeftTip(ScenePrimitive primitive)

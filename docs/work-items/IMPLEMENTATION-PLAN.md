@@ -1,10 +1,10 @@
 # Implementation guides manifest and execution plan
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **92** roadmap-guide records: **39 Tier A and 53 Tier B** — counts taken from the table itself on 2026-09-26, which corrected the earlier "90 / 27 / 63" (the two later insertions `R5.6b` and `R2.7d` had never been counted). R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **94** roadmap-guide records: **41 Tier A and 53 Tier B** — counts re-taken from the table itself on 2026-09-27, superseding the "92 / 39 / 53" of 2026-09-26, which had itself corrected the earlier "90 / 27 / 63" (`R5.6b` and `R2.7d` had never been counted). The two rows still uncounted were `R3.16` and `R3.17`, both Tier A: the Phase-3 exit had already landed them, so the 2026-09-26 recount of 92 predated them. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
-- **Tier A — prescriptive.** 39 guides: the Phase 2 remainder plus eight R2
+- **Tier A — prescriptive.** 41 guides: the Phase 2 remainder plus nine R2
   hardening rows, Phase 3, and the ten Phase-4 rows upgraded at the
   Phase-3 exit. They name exact files, types, seams, tests, and
   evidence commands; each is re-verified at implementation time.
@@ -70,7 +70,7 @@ above. Phase 3's guides are Tier A from initial authoring. ADR-0010 is the
 only approved exception to table-order execution: after R4.9, execute R2.10,
 then R3.13, before R4.10.
 
-## Index of guides (90)
+## Index of guides (94)
 
 One row per roadmap-guide record. Status values: `Landed`, `Implemented`
 (working-tree implementation with observed gates; pending commit), `Approved`

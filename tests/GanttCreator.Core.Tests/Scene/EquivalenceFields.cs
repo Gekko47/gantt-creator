@@ -171,7 +171,7 @@ internal static class EquivalenceFields
                 new(
                     "the four points in draw order (top, right, bottom, left)",
                     "Entity guide §20 'Geometry' (line 560): build a four-point polygon - not a rotated square",
-                    static (_, primitive) => primitive is ScenePolygon polygon && polygon.Points.Count == 4),
+                    static (_, primitive) => HasDiamondDrawOrder(primitive)),
                 new(
                     "the tip-to-tip extent, MilestoneSizePt on both axes",
                     "Entity guide §20 'Geometry' (line 569): size = MilestoneSizePt makes the tip-to-tip bounds exact and consistent across Excel, PowerPoint, and PNG",
@@ -298,6 +298,52 @@ internal static class EquivalenceFields
         double.IsFinite(bounds.Y) &&
         bounds.Width > 0 &&
         bounds.Height > 0;
+
+    /// <summary>
+    /// Determines whether a primitive is a four-point polygon whose vertices are in
+    /// the §20 draw order: top, right, bottom, left.
+    /// </summary>
+    /// <param name="primitive">The primitive under test.</param>
+    /// <returns>
+    /// <see langword="true"/> when the polygon has four vertices and the first is the
+    /// topmost, the second the rightmost, the third the bottommost, and the fourth the
+    /// leftmost.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The scene's coordinate convention is screen-like: Y grows downwards, so the top
+    /// vertex is the one with the minimum Y and the right vertex the maximum X, exactly
+    /// as <c>MilestoneMarkerBuilder</c> emits them. A vertex count alone is not the
+    /// field §20 requires: a polygon with four vertices in any other order would draw a
+    /// different shape in a freeform renderer, which is why the order is asserted here
+    /// and not inferred from the count.
+    /// </para>
+    /// <para>
+    /// A polygon rotated one step (right, bottom, left, top) keeps the same four points
+    /// and the same tip-to-tip extent, so <c>HasTipToTipExtent</c> cannot catch it; only
+    /// this can.
+    /// </para>
+    /// </remarks>
+    private static bool HasDiamondDrawOrder(ScenePrimitive primitive)
+    {
+        if (primitive is not ScenePolygon { Points.Count: 4 } polygon)
+        {
+            return false;
+        }
+
+        // §20's draw order: the top vertex, then the right, the bottom, and the left.
+        // The scene's Y axis grows downwards, so top is the minimum Y and the right
+        // vertex is the maximum X - matching the order MilestoneMarkerBuilder emits.
+        double minX = polygon.Points.Min(point => point.X);
+        double maxX = polygon.Points.Max(point => point.X);
+        double minY = polygon.Points.Min(point => point.Y);
+        double maxY = polygon.Points.Max(point => point.Y);
+
+        return GeometryMath.ApproximatelyEqual(polygon.Points[0].Y, minY)
+            && GeometryMath.ApproximatelyEqual(polygon.Points[1].X, maxX)
+            && GeometryMath.ApproximatelyEqual(polygon.Points[2].Y, maxY)
+            && GeometryMath.ApproximatelyEqual(polygon.Points[3].X, minX);
+    }
 
     private static bool HasTipToTipExtent(ScenePrimitive primitive, double size) =>
         primitive is ScenePolygon polygon &&
