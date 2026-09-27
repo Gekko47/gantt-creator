@@ -103,6 +103,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
         "src/GanttCreator.Office/ExcelInsertedRowSelector.cs",
         "src/GanttCreator.Office/IInsertedRowSelector.cs",
+        "src/GanttCreator.Office/ExcelApplicationStateScope.cs",
         "src/GanttCreator.Office/IGanttRowInserter.cs",
         "src/GanttCreator.Office/GanttTableReadOutcome.cs",
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",

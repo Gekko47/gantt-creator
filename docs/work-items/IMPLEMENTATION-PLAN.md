@@ -141,7 +141,7 @@ files only; the local audit verifies every file exists.
 | ID | Guide | Status |
 | --- | --- | --- |
 | R4.1 | `R4.1-excel-adapter-interfaces.md` | **Landed** (`IShapeWritePort`, `IPanelGridMeasurementPort`, `ShapeOwnershipTag`; D2 corrected by ADR-0019; live `AlternativeText` probe outstanding) |
-| R4.2 | `R4.2-application-state-scope.md` | Upgraded to Tier A (2026-09-26); **Step-0 PIA probe discharged** (2026-09-27) |
+| R4.2 | `R4.2-application-state-scope.md` | **Landed, five of six properties live-proven** (`ExcelApplicationStateScope`; Office gate PASS 38/38; `Application.Calculation` unusable — L17, decision pending) |
 | R4.3 | `R4.3-shape-render-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.5 | `R4.5-polygons-z-order.md` | Upgraded to Tier A (2026-09-26) |
