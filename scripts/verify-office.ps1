@@ -30,7 +30,29 @@ param(
     # commit that retires a leaked proxy chain lowers it; the end state is 0.
     # The number counts real test teardowns only -- a test that forces a kill
     # deliberately sets OfficeFixture.SuppressLeakSignal and is excluded.
-    [int]$MaxForcedKills = 24
+    #
+    # RAISED 24 -> 26 on 2026-09-27 (product owner decision), and the direction
+    # of this ratchet is therefore NOT yet restored -- treat 26 as a temporary
+    # ceiling, not a new baseline. Two facts, recorded so the next person does
+    # not have to re-derive them:
+    #   1. R4.1's live AlternativeText probe
+    #      (ShapeOwnershipTagIntegrationTests) creates a real shape through the
+    #      real ExcelShapeWriter, because the probe's whole purpose is to write a
+    #      real tag and read it back off a live shape. A workbook holding a live
+    #      shape keeps the process alive, so that test legitimately needs a kill.
+    #   2. The measured count is NOT deterministic: repeated runs of the
+    #      identical tree produced 24, 25 and 26. The signal is load-dependent,
+    #      so 24 was already marginal against a 39-test suite and the excess was
+    #      never the deterministic off-by-one it first appeared to be.
+    # A production-side "fix" was considered and rejected: ExcelShapeWriter
+    # documents that it force-releases nothing, because its proxies are
+    # Excel-owned shared roots (AGENTS.md COM ownership). Releasing them to
+    # satisfy a counter would violate that rule rather than fix a leak. The
+    # alternative already built into this harness is OfficeFixture
+    # .SuppressLeakSignal, which excludes a test that intentionally forces a
+    # kill; adopting that is tracked as the next step, after which this ceiling
+    # can come back down. Do not raise it again without that evidence.
+    [int]$MaxForcedKills = 26
 )
 
 $ErrorActionPreference = 'Stop'
