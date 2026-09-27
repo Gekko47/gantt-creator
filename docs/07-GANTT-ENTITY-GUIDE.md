@@ -721,7 +721,7 @@ so the two cannot drift into a duplicate contract.
 
 | Entity | Scene primitive and role ID | Required fields beyond §Shared | Live worksheet | Editable / PowerPoint | PNG | Translation |
 | --- | --- | --- | --- | --- | --- | --- |
-| Data panel/header | chart: `rect chart:header-cell:{column}`, `text chart:header-text:{column}`, `line chart:panel-border-v:{index}`; row: `rect {row}:panel-cell:{column}`, `text {row}:panel-text:{column}` | `Bounds`, `From`/`To`, `Text`, `TextBounds`, `Alignment`, resolved panel/header/`DefaultText` styles, and **three** z-layers: `ZLayer.Background` (0) for body cell fills, `ZLayer.Label` (70) for body cell text, and `ZLayer.Frame` (80) for the header cells, the header text, and every shared border line | **Excel cells — draw no shapes** | rectangle/text/line shapes at the measured cell bounds | raster primitives | the scene primitives exist for the **export** composition; the live renderer must not draw them over the visible table. **No committed scene contains these primitives** — the panel theme is optional and the reference build omits it, so this row is specified but not yet exercised |
+| Data panel/header | chart: `rect chart:header-cell:{column}`, `text chart:header-text:{column}`, `line chart:panel-border-v:{index}`; row: `rect {row}:panel-cell:{column}`, `text {row}:panel-text:{column}` | `Bounds`, `From`/`To`, `Text`, `TextBounds`, `Alignment`, resolved panel/header/`DefaultText` styles, and **three** z-layers: `ZLayer.Background` (0) for body cell fills, `ZLayer.Label` (70) for body cell text, and `ZLayer.Frame` (80) for the header cells, the header text, and every shared border line | **Excel cells — draw no shapes** | rectangle/text/line shapes at the measured cell bounds | raster primitives | the scene primitives exist for the **export** composition; the live renderer must not draw them over the visible table. **No committed scene contains these primitives** — the panel theme is optional and the reference build omits it, so the golden contains no panel primitive. This row is nevertheless exercised: the `EquivalenceThinSliceTests` data-panel field and z-layer tests assert it against `SceneBuilderTests.BuildSceneWithPanel()`, a panel-bearing build that never touches the golden |
 | Title | `rect chart:title-band`, `text chart:title-text` | `Text`, `TextBounds`, `Alignment` (centred), `Bounds`, resolved title style, `ZLayer.Title` | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a hidden title (`ShowTitle=false`) emits **no** primitives; do not draw an empty band |
 | Year header | `rect chart:year:{yyyy}`, `text chart:year:{yyyy}:label` | `Bounds`, `Text`, `TextBounds`, `Alignment` (centred), resolved year style, `ZLayer.Frame`; **no lane/stack keys** | cells or owned shapes per approved renderer | grouped native shapes | raster primitives | a year too narrow for its label emits the rectangle but **no** label primitive; do not re-add the text |
 | Period header | `rect chart:period:{yyyy-MM-dd}`, `text chart:period:{yyyy-MM-dd}:label` | as Year header, resolved period style | as Year header | grouped native shapes | raster primitives | same suppression rule |
@@ -737,10 +737,14 @@ so the two cannot drift into a duplicate contract.
 
 Four notes that govern the whole table:
 
-- **The panel row is specified but unexercised.** Panel primitives are emitted
-  only when a `PanelTheme` is supplied, and the canonical reference scene does
-  not supply one. The table states the contract; it does not claim test
-  coverage that does not exist.
+- **The panel row is exercised against a panel-bearing build, not the golden.**
+  Panel primitives are emitted only when a `PanelTheme` is supplied, and the
+  canonical reference scene does not supply one — so the committed golden
+  contains no panel primitive. The `EquivalenceThinSliceTests` data-panel field
+  and z-layer tests therefore assert this row against
+  `SceneBuilderTests.BuildSceneWithPanel()`, a purpose-built scene that adds only
+  the panel and never changes the golden. The contract and its coverage are both
+  real; only the golden is panel-free.
 - **The procurement hatch is unexercised too.** The reference style set resolves
   `HatchPattern` to `None` for every style, so no committed scene primitive
   carries a hatch. A test may assert the procurement row's other scene fields,
