@@ -32,6 +32,45 @@ public sealed class FrameBandsBuilderTests
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Frame);
         Assert.Contains(outcome.Result.Primitives, primitive => primitive.ZLayer == ZLayer.Title);
     }
+    [Fact]
+    public void The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides()
+    {
+        // Entity guide §1: ChartBounds is the union of the title, data panel, time
+        // headers, and plot "plus ChartOuterPaddingPt". The product decision recorded
+        // there is that the padding is INSIDE the bounds, not a renderer-side margin -
+        // which matters because §1 also says empty whitespace outside the bounds is
+        // not exported, so a renderer that treated the padding as outside would export
+        // a chart missing exactly ChartOuterPaddingPt of margin.
+        //
+        // Checked against the content and title rectangles the builder reports, not
+        // against a restatement of its own arithmetic, so this is a real cross-check
+        // of the derived bounds rather than a tautology.
+        const double padding = 6;
+        ChartFrameGeometry geometry = Build(CreateRequest() with { ChartOuterPaddingPt = padding }).Result!.Geometry;
+
+        RectD content = Assert.IsType<RectD>(geometry.ContentBounds);
+        RectD title = Assert.IsType<RectD>(geometry.TitleBounds);
+
+        // The union is content plus the title, because the title band sits above the
+        // content and is part of the chart.
+        double unionLeft = Math.Min(content.Left, title.Left);
+        double unionTop = Math.Min(content.Top, title.Top);
+        double unionRight = Math.Max(content.Right, title.Right);
+        double unionBottom = Math.Max(content.Bottom, title.Bottom);
+
+        Assert.Equal(unionLeft - padding, geometry.ChartBounds.Left, precision: 9);
+        Assert.Equal(unionTop - padding, geometry.ChartBounds.Top, precision: 9);
+        Assert.Equal(unionRight + padding, geometry.ChartBounds.Right, precision: 9);
+        Assert.Equal(unionBottom + padding, geometry.ChartBounds.Bottom, precision: 9);
+
+        // The negative origin is a real, reachable outcome of that rule, not a
+        // hypothetical: Excel cannot express a negative shape offset, which is why the
+        // renderer translation rule exists.
+        Assert.True(
+            geometry.ChartBounds.Left < 0,
+            $"Expected the derived origin to be negative with content at the origin, got {geometry.ChartBounds}.");
+    }
+
 
     [Fact]
     public void Emits_clipped_year_and_period_headers_with_alternating_bands()

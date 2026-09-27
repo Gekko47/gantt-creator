@@ -214,6 +214,130 @@ public sealed class SceneBuilderTests
         SceneValidationReport report = SceneValidator.Validate(outcome.Result!.Scene);
         Assert.True(report.IsClean, "Findings: " + string.Join("; ", report.Findings));
     }
+    [Fact]
+    public void The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship()
+    {
+        // The product decision recorded in entity guide §1: the outer padding is part
+        // of the chart bounds, and a renderer places the chart by translating the
+        // bounds to a zero origin and carrying one delta. Excel cannot express a
+        // negative shape offset, so a negative chart origin is a real placement case,
+        // not a hypothetical one - the content union starts at the panel origin here,
+        // so the derived bounds start at minus exactly one padding.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with { ChartOuterPaddingPt = 6 });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The negative origin is reachable, and negative by exactly one padding.
+        Assert.True(scene.ChartBounds.Left < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
+        Assert.True(scene.ChartBounds.Top < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
+        Assert.Equal(-6, scene.ChartBounds.Left, precision: 9);
+
+        // The padding's presence on all four sides is pinned in FrameBandsBuilderTests,
+        // where the builder reports the content and title rectangles it derived the
+        // bounds from. Here the contract under test is only that the translation is
+        // lossless.
+
+        // Now translate the whole scene to a zero origin - the operation a renderer
+        // performs - and prove it is lossless. The check is against the ORIGINAL scene,
+        // not against arithmetic restated in the test, so a translation that moved
+        // only some primitive kinds, or moved a kind's two geometry members by
+        // different amounts, would fail here.
+        GanttScene placed = Translate(scene, -scene.ChartBounds.Left, -scene.ChartBounds.Top);
+
+        Assert.Equal(0, placed.ChartBounds.Left, precision: 9);
+        Assert.Equal(0, placed.ChartBounds.Top, precision: 9);
+        Assert.Equal(scene.ChartBounds.Width, placed.ChartBounds.Width, precision: 9);
+        Assert.Equal(scene.ChartBounds.Height, placed.ChartBounds.Height, precision: 9);
+        Assert.Equal(scene.Primitives.Count, placed.Primitives.Count);
+
+        foreach ((ScenePrimitive before, ScenePrimitive after) in scene.Primitives.Zip(placed.Primitives))
+        {
+            Assert.Equal(before.PrimitiveId, after.PrimitiveId);
+            string which = $"{before.GetType().Name} {before.PrimitiveId}";
+            Assert.True(
+                GeometryMath.ApproximatelyEqual(LeftOf(before) - scene.ChartBounds.Left, LeftOf(after)),
+                $"{which}: left {LeftOf(before)} did not shift by the delta; placed at {LeftOf(after)}.");
+            Assert.True(
+                GeometryMath.ApproximatelyEqual(TopOf(before) - scene.ChartBounds.Top, TopOf(after)),
+                $"{which}: top {TopOf(before)} did not shift by the delta; placed at {TopOf(after)}.");
+        }
+
+        // Every kind must actually have been present, or the sweep above would have
+        // proved nothing about three of the four geometry shapes.
+        Assert.Contains(scene.Primitives, primitive => primitive is SceneRect);
+        Assert.Contains(scene.Primitives, primitive => primitive is SceneLine);
+        Assert.Contains(scene.Primitives, primitive => primitive is ScenePolygon);
+        Assert.Contains(scene.Primitives, primitive => primitive is SceneText);
+
+        // And the decisive one: translating must not change the scene's validity, so a
+        // zero origin cannot be what makes a label fit or a plot containment pass.
+        Assert.Equal(
+            SceneValidator.Validate(scene).IsClean,
+            SceneValidator.Validate(placed).IsClean);
+    }
+
+    /// <summary>
+    /// Gets a primitive's left edge, whichever member holds its geometry.
+    /// </summary>
+    private static double LeftOf(ScenePrimitive primitive) =>
+        primitive switch
+        {
+            SceneRect rect => rect.Bounds.Left,
+            SceneLine line => line.From.X,
+            ScenePolygon polygon => polygon.Points.Min(point => point.X),
+            SceneText text => text.TextBounds.Left,
+            _ => 0,
+        };
+
+    /// <summary>Gets a primitive's top edge, whichever member holds its geometry.</summary>
+    private static double TopOf(ScenePrimitive primitive) =>
+        primitive switch
+        {
+            SceneRect rect => rect.Bounds.Top,
+            SceneLine line => line.From.Y,
+            ScenePolygon polygon => polygon.Points.Min(point => point.Y),
+            SceneText text => text.TextBounds.Top,
+            _ => 0,
+        };
+
+    private static ScenePrimitive Shift(ScenePrimitive primitive, double dx, double dy) =>
+        primitive switch
+        {
+            SceneRect rect => new SceneRect(
+                rect.PrimitiveId, rect.OwnerId, rect.ZLayer, Shift(rect.Bounds, dx, dy), rect.Style,
+                rect.EntityType, rect.LaneOrder, rect.StackIndex, rect.SortOrder),
+            SceneLine line => new SceneLine(
+                line.PrimitiveId, line.OwnerId, line.ZLayer,
+                new PointD(line.From.X + dx, line.From.Y + dy),
+                new PointD(line.To.X + dx, line.To.Y + dy),
+                line.Style, line.EntityType, line.LaneOrder, line.StackIndex, line.SortOrder),
+            ScenePolygon polygon => new ScenePolygon(
+                polygon.PrimitiveId, polygon.OwnerId, polygon.ZLayer,
+                [.. polygon.Points.Select(point => new PointD(point.X + dx, point.Y + dy))],
+                polygon.Style, polygon.EntityType, polygon.LaneOrder, polygon.StackIndex, polygon.SortOrder),
+            SceneText text => new SceneText(
+                text.PrimitiveId, text.OwnerId, text.ZLayer, text.Text, Shift(text.TextBounds, dx, dy), text.Style, text.Alignment,
+                text.EntityType, text.LaneOrder, text.StackIndex, text.SortOrder),
+            _ => primitive,
+        };
+
+    private static RectD Shift(RectD bounds, double dx, double dy) =>
+        new(bounds.X + dx, bounds.Y + dy, bounds.Width, bounds.Height);
+
+    private static GanttScene Translate(GanttScene scene, double dx, double dy)
+    {
+        List<ScenePrimitive> primitives = [.. scene.Primitives.Select(primitive => Shift(primitive, dx, dy))];
+        SceneCreationOutcome outcome = GanttScene.TryCreate(
+            Shift(scene.ChartBounds, dx, dy),
+            Shift(scene.PlotBounds, dx, dy),
+            primitives,
+            scene.Warnings);
+        Assert.True(outcome.Succeeded, "The translated scene was refused: " + outcome.Refusal);
+        return outcome.Scene!;
+    }
+
 
     [Fact]
     public void A_degenerate_plot_range_is_refused()
