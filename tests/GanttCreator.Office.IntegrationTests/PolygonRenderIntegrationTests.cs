@@ -19,10 +19,16 @@ namespace GanttCreator.Office.IntegrationTests;
 /// </para>
 /// <para>
 /// The freeform assertions deliberately include the <strong>tip-to-tip
-/// extent</strong>, not just the position. The R4.5 Step-0 probe found that the
-/// wrong <c>AddNodes</c> call shape produces a <em>degenerate but
-/// correctly-positioned</em> shape: a test asserting only "something sits at
-/// 92,102" would have passed against a zero-size diamond.
+/// extent</strong>, not just the position. A milestone that collapsed to a
+/// degenerate shape would sit exactly where a real one would, so a
+/// position-only test would pass against a zero-size diamond.
+/// </para>
+/// <para>
+/// Every geometry assertion uses the single documented
+/// <see cref="GeometryMath.Epsilon"/>. There is no second tolerance: the host
+/// places a diamond auto-shape exactly (0.000 EMU across exact spans of 10, 20,
+/// 37.5, 100 and 253 pt), so the milestone family needs no exception to the
+/// project's one rounding boundary.
 /// </para>
 /// </remarks>
 public class PolygonRenderIntegrationTests(ITestOutputHelper output)
@@ -31,41 +37,13 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
     private const double CentreY = 100d;
     private const double Radius = 10d;
 
-    /// <summary>
-    /// The freeform path's measured geometry tolerance, in points.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The R4.5 Step-0 probe and this gate both measure the host reporting a
-    /// freeform's bounding box as <strong>20.000078</strong> for a diamond whose
-    /// scene points span exactly 20pt - a discrepancy of about 7.8e-5pt, roughly
-    /// 4e-6 relative.
-    /// </para>
-    /// <para>
-    /// This is a property of the host's <c>BuildFreeform</c>/<c>AddNodes</c>
-    /// path, not of the renderer: the same four points that
-    /// <c>AddShape</c>/<c>AddLine</c> place exactly are placed by the freeform
-    /// builder with this small accumulated error. It is therefore a SEPARATE
-    /// documented boundary, not a loosened version of
-    /// <see cref="GeometryMath.Epsilon"/>, which still governs rectangles, lines
-    /// and text - those are asserted at 1e-6 and do pass there.
-    /// </para>
-    /// <para>
-    /// The value is 1e-3pt, about 12x the observed 7.8e-5, so it is a bound that
-    /// the measurement supports rather than a number fitted to one run. A
-    /// regression that collapses a diamond (the probe's actual failure mode,
-    /// ~0pt) is four orders of magnitude outside this bound and cannot pass.
-    /// </para>
-    /// </remarks>
-    private const double FreeformTolerancePt = 1e-3;
-
     private readonly ITestOutputHelper _output = output;
 
     private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
 
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task A_milestone_diamond_renders_as_a_freeform_and_the_scene_order_is_applied()
+    public async Task A_milestone_diamond_renders_as_a_diamond_auto_shape_and_the_scene_order_is_applied()
     {
         var fixture = new OfficeFixture();
 
@@ -179,32 +157,14 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
 
         // The bounding box of a diamond centred at centreX spans centreX-Radius to
         // centreX+Radius, translated by the 12pt padding.
-        AssertFreeformPoint(primitiveId + " Left", centreX - Radius + Padding, shape.Left);
-        AssertFreeformPoint(primitiveId + " Top", CentreY - Radius + Padding, shape.Top);
+        AssertPoint(primitiveId + " Left", centreX - Radius + Padding, shape.Left);
+        AssertPoint(primitiveId + " Top", CentreY - Radius + Padding, shape.Top);
 
         // A 20pt tip-to-tip diamond, so the bounding box is 20x20. Asserting the
-        // extent is what catches the degenerate-shape failure mode: a collapsed
-        // freeform reports a plausible position with ~zero width, which is four
-        // orders of magnitude outside the freeform tolerance.
-        AssertFreeformPoint(primitiveId + " Width (tip-to-tip)", Radius * 2, shape.Width);
-        AssertFreeformPoint(primitiveId + " Height (tip-to-tip)", Radius * 2, shape.Height);
-    }
-
-    private static void AssertFreeformPoint(string what, double expected, double actual)
-    {
-        Assert.True(
-            Math.Abs(expected - actual) <= FreeformTolerancePt,
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"{what}: expected {expected:R} but the live host reported {actual:R}; "
-                    + $"difference {Math.Abs(expected - actual):R} exceeds the documented "
-                    + $"freeform tolerance {FreeformTolerancePt:R}."));
-
-        // The freeform bound is strictly looser than the shared epsilon, so a
-        // regression that drifts by more than either is caught here; the stricter
-        // epsilon still governs every other shape family.
-        Assert.True(GeometryMath.ApproximatelyEqual(expected, actual)
-            || Math.Abs(expected - actual) <= FreeformTolerancePt);
+        // extent is what catches a collapsed shape, which would report a
+        // plausible position with ~zero width.
+        AssertPoint(primitiveId + " Width (tip-to-tip)", Radius * 2, shape.Width);
+        AssertPoint(primitiveId + " Height (tip-to-tip)", Radius * 2, shape.Height);
     }
 
     /// <summary>

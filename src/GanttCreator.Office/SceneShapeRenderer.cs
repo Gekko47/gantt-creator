@@ -1,3 +1,4 @@
+using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Office;
@@ -26,23 +27,53 @@ public enum ScenePrimitiveKind
 /// <param name="Kind">The primitive family.</param>
 public sealed record DeferredPrimitive(string PrimitiveId, ScenePrimitiveKind Kind);
 
+/// <summary>Why the renderer refused a primitive it was asked to translate.</summary>
+public enum SceneTranslationRefusalReason
+{
+    /// <summary>
+    /// The polygon is not a symmetric axis-aligned diamond, so the host's
+    /// diamond auto-shape cannot represent the points the scene resolved.
+    /// </summary>
+    /// <remarks>
+    /// Refused rather than approximated. A rotated, skewed, or rectangular
+    /// quadrilateral is not a diamond, and drawing it as one would silently
+    /// change the entity the scene resolved - the exact substitution the entity
+    /// guide's "renderers consume, never recalculate" rule forbids.
+    /// </remarks>
+    NotADiamond = 0,
+}
+
+/// <summary>One primitive the renderer refused, with the reason.</summary>
+/// <param name="PrimitiveId">The stable role-derived primitive identifier.</param>
+/// <param name="Reason">Why the primitive was refused.</param>
+public sealed record SceneTranslationRefusal(string PrimitiveId, SceneTranslationRefusalReason Reason);
+
 /// <summary>The typed result of translating a scene into shape requests.</summary>
 /// <param name="Requests">The translated requests, in the scene's back-to-front order.</param>
 /// <param name="Deferred">The primitives this renderer did not translate.</param>
+/// <param name="Refusals">The primitives this renderer refused, with the reason.</param>
 /// <remarks>
+/// <para>
 /// A deferred primitive is <em>not</em> an error. Phase 4 introduces the
-/// families one row at a time - R4.3 rectangles and lines, R4.4 text, R4.5
-/// polygons - so a scene legitimately contains families a not-yet-written
-/// renderer cannot draw. They are reported by name rather than dropped silently,
-/// because a silently missing shape is indistinguishable from a correct render
-/// until a user looks at the chart.
+/// families one row at a time, so a scene legitimately contains families a
+/// not-yet-written renderer cannot draw. They are reported by name rather than
+/// dropped silently, because a silently missing shape is indistinguishable from
+/// a correct render until a user looks at the chart.
+/// </para>
+/// <para>
+/// A <em>refusal</em> is different: the primitive is a family this renderer does
+/// handle, but its content is not something the host object can represent. That
+/// is a data fault, not a capability gap, and it is reported separately so a
+/// caller can tell "not built yet" from "cannot be drawn".
+/// </para>
 /// </remarks>
 public sealed record SceneTranslationOutcome(
     IReadOnlyList<OfficeShapeRequest> Requests,
-    IReadOnlyList<DeferredPrimitive> Deferred)
+    IReadOnlyList<DeferredPrimitive> Deferred,
+    IReadOnlyList<SceneTranslationRefusal> Refusals)
 {
     /// <summary>Gets whether every primitive in the scene was translated.</summary>
-    public bool Complete => Deferred.Count == 0;
+    public bool Complete => Deferred.Count == 0 && Refusals.Count == 0;
 }
 
 /// <summary>
@@ -86,20 +117,34 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
 
         List<OfficeShapeRequest> requests = [];
         List<DeferredPrimitive> deferred = [];
+        List<SceneTranslationRefusal> refusals = [];
         foreach (ScenePrimitive primitive in scene.Primitives)
         {
-            OfficeShapeRequest? request = TranslatePrimitive(primitive);
-            if (request is not null)
+            switch (primitive)
             {
-                requests.Add(request);
-            }
-            else
-            {
-                deferred.Add(new DeferredPrimitive(primitive.PrimitiveId, KindOf(primitive)));
+                case ScenePolygon polygon
+                    when !TryGetDiamondBounds(polygon.Points, out RectD _):
+                    refusals.Add(new SceneTranslationRefusal(
+                        primitive.PrimitiveId,
+                        SceneTranslationRefusalReason.NotADiamond));
+                    break;
+
+                default:
+                    OfficeShapeRequest? request = TranslatePrimitive(primitive);
+                    if (request is not null)
+                    {
+                        requests.Add(request);
+                    }
+                    else
+                    {
+                        deferred.Add(new DeferredPrimitive(primitive.PrimitiveId, KindOf(primitive)));
+                    }
+
+                    break;
             }
         }
 
-        return new SceneTranslationOutcome(requests, deferred);
+        return new SceneTranslationOutcome(requests, deferred, refusals);
     }
 
     /// <summary>Translates one primitive.</summary>
@@ -124,7 +169,14 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
         {
             SceneRect rect => BuildRect(rect),
             SceneLine line => BuildLine(line),
-            ScenePolygon polygon => BuildPolygon(polygon),
+
+            // A polygon reaches here only when the caller's guard already
+            // confirmed it is a diamond; the bounding box is recomputed rather
+            // than threaded through, so the two cannot disagree.
+            ScenePolygon polygon
+                when TryGetDiamondBounds(polygon.Points, out RectD diamondBounds) =>
+                BuildDiamond(polygon, diamondBounds),
+
             SceneText text => BuildText(text),
             _ => null,
         };
@@ -181,22 +233,125 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
                 To: originDelta.Apply(line.To)),
             line.ZLayer);
 
-    /// <summary>Builds a freeform request from the polygon's ordered points.</summary>
+    /// <summary>
+    /// Determines whether four points form a symmetric axis-aligned diamond and,
+    /// if so, returns the bounding box the host diamond auto-shape is placed at.
+    /// </summary>
+    /// <param name="points">The scene polygon's points.</param>
+    /// <param name="bounds">The bounding box when the points are a diamond.</param>
+    /// <returns><see langword="true"/> when the points form a diamond.</returns>
     /// <remarks>
-    /// R4.5 D1. The points are translated by the same uniform delta as every other
-    /// family and their draw order is preserved exactly: a milestone is a
-    /// four-point polygon whose tip-to-tip extent the entity guide fixes, and
-    /// reordering or normalising the vertices here would change the rendered
-    /// shape rather than translate it. Vertices are absolute sheet points, which is
-    /// what the R4.5 Step-0 probe established for the host's freeform builder.
+    /// <para>
+    /// The host draws a milestone as a diamond auto-shape, which is defined by
+    /// its bounding box rather than by four stored vertices. This method is the
+    /// one place that decides whether the scene's four points can be represented
+    /// that way, so a polygon that cannot be is <strong>refused</strong> rather
+    /// than approximated into a diamond that was never asked for.
+    /// </para>
+    /// <para>
+    /// The test is deliberately strict: exactly four points, exactly one vertex
+    /// on each edge midpoint of the box, the two diagonals equal and spanning
+    /// the full width and height, and all comparisons within
+    /// <see cref="GeometryMath.Epsilon"/>. A rotated square, a rectangle, or a
+    /// four-point polygon with an off-centre vertex all fail.
+    /// </para>
+    /// </remarks>
+    private static bool TryGetDiamondBounds(IReadOnlyList<PointD> points, out RectD bounds)
+    {
+        bounds = default;
+
+        if (points.Count != 4)
+        {
+            return false;
+        }
+
+        var left = points.Min(point => point.X);
+        var right = points.Max(point => point.X);
+        var top = points.Min(point => point.Y);
+        var bottom = points.Max(point => point.Y);
+        var centreX = (left + right) / 2d;
+        var centreY = (top + bottom) / 2d;
+
+        // One vertex per side midpoint, and nothing else. This single rule
+        // rejects a rotated square, a rectangle, and any off-centre vertex,
+        // because none of those puts all four points on those four spots.
+        var onLeft = 0;
+        var onRight = 0;
+        var onTop = 0;
+        var onBottom = 0;
+        foreach (PointD point in points)
+        {
+            var atLeft = Near(point.X, left) && Near(point.Y, centreY);
+            var atRight = Near(point.X, right) && Near(point.Y, centreY);
+            var atTop = Near(point.Y, top) && Near(point.X, centreX);
+            var atBottom = Near(point.Y, bottom) && Near(point.X, centreX);
+
+            if (atLeft)
+            {
+                onLeft++;
+            }
+
+            if (atRight)
+            {
+                onRight++;
+            }
+
+            if (atTop)
+            {
+                onTop++;
+            }
+
+            if (atBottom)
+            {
+                onBottom++;
+            }
+        }
+
+        if (onLeft != 1 || onRight != 1 || onTop != 1 || onBottom != 1)
+        {
+            return false;
+        }
+
+        // A zero-extent box is a point, not a diamond.
+        if (!GeometryMath.ApproximatelyEqual(right - left, bottom - top))
+        {
+            return false;
+        }
+
+        if (right - left <= GeometryMath.Epsilon)
+        {
+            return false;
+        }
+
+        bounds = new RectD(left, top, right - left, bottom - top);
+        return true;
+
+        static bool Near(double left, double right)
+        {
+            return GeometryMath.ApproximatelyEqual(left, right);
+        }
+    }
+
+    /// <summary>
+    /// Builds a milestone request as a diamond auto-shape at the polygon's
+    /// bounding box.
+    /// </summary>
+    /// <remarks>
+    /// R4.5 D1. The four points are the scene's <em>source</em>; the host object
+    /// is a diamond auto-shape placed at their bounding box, which measurement
+    /// showed is exact (0.000 EMU) where a freeform is quantised to +1 EMU. The
+    /// points are still carried on the request so the translation is auditable,
+    /// but the adapter places the shape from <c>Bounds</c>.
     /// </remarks>
     /// <param name="polygon">The scene polygon.</param>
+    /// <param name="bounds">The diamond's bounding box.</param>
     /// <returns>The translated shape request.</returns>
-    private OfficeShapeRequest BuildPolygon(ScenePolygon polygon) =>
+    private OfficeShapeRequest BuildDiamond(ScenePolygon polygon, RectD bounds) =>
         new(
             polygon.PrimitiveId,
-            OfficeShapeKind.Polygon,
+            OfficeShapeKind.Diamond,
             new OfficeShapeGeometry(
+                Bounds: originDelta.Apply(bounds),
                 Points: [.. polygon.Points.Select(originDelta.Apply)]),
             polygon.ZLayer);
 

@@ -384,7 +384,14 @@ public class ExcelShapeWriter(
         {
             OfficeShapeKind.Rectangle or OfficeShapeKind.TextBox => IsUsableBounds(geometry.Bounds),
             OfficeShapeKind.Line => IsUsablePoint(geometry.From) && IsUsablePoint(geometry.To),
-            OfficeShapeKind.Polygon => geometry.Points is { Count: >= 3 } points && points.All(point => IsUsablePoint(point)),
+
+            // A diamond needs BOTH: the box places the auto-shape, and the
+            // points stay on the request so the translation remains auditable.
+            OfficeShapeKind.Diamond =>
+                IsUsableBounds(geometry.Bounds)
+                && geometry.Points is { Count: >= 3 } points
+                && points.All(point => IsUsablePoint(point)),
+
             _ => false,
         };
     }
@@ -472,13 +479,22 @@ public class ExcelShapeWriter(
                 shape.Height = GeometryMath.SnapToDisplayPrecision(Math.Abs(to.Y - from.Y));
                 return true;
 
-            case OfficeShapeKind.Polygon:
+            case OfficeShapeKind.Diamond:
+                // A diamond auto-shape is positioned exactly like any other
+                // auto-shape, so an in-place update only has to move and resize
+                // it. The vertices are derived from the box by the host, so
+                // there is no vertex collection to rewrite.
+                RectD diamond = geometry.Bounds!.Value;
+                shape.Left = GeometryMath.SnapToDisplayPrecision(diamond.X);
+                shape.Top = GeometryMath.SnapToDisplayPrecision(diamond.Y);
+                shape.Width = GeometryMath.SnapToDisplayPrecision(diamond.Width);
+                shape.Height = GeometryMath.SnapToDisplayPrecision(diamond.Height);
+                return true;
+
             default:
-                // A freeform's vertices are a read-only collection and the only way
-                // to change them is to rebuild through BuildFreeform, so an
-                // in-place polygon update is not expressible. R4.7 owns the
-                // delete-and-recreate fallback; returning false here makes the
-                // limitation explicit rather than silently ignoring the geometry.
+                // An undefined kind is not expressible. Returning false here
+                // makes the limitation explicit rather than silently ignoring
+                // the requested geometry.
                 return false;
         }
     }
@@ -659,8 +675,8 @@ public class ExcelShapeWriter(
 
                 return textBox;
 
-            case OfficeShapeKind.Polygon:
-                return AddFreeform(shapes, request);
+            case OfficeShapeKind.Diamond:
+                return AddDiamond(shapes, request);
 
             default:
                 // An undefined kind is refused rather than placed. Returning null
@@ -671,35 +687,37 @@ public class ExcelShapeWriter(
     }
 
     /// <summary>
-    /// Creates a freeform shape from the request's ordered points.
+    /// Creates the milestone diamond at the bounding box of the request's points.
     /// </summary>
     /// <param name="shapes">The shapes collection.</param>
-    /// <param name="request">The request whose points are drawn.</param>
-    /// <returns>The created freeform, or <see langword="null"/> when the host refused.</returns>
+    /// <param name="request">The request whose points bound the diamond.</param>
+    /// <returns>The created diamond, or <see langword="null"/> when the host refused.</returns>
     /// <remarks>
     /// <para>
-    /// R4.5 D1, written against the row's own Step-0 probe rather than the API
-    /// signature. The probe found that passing several vertices in ONE
-    /// <c>AddNodes</c> call silently produces a <strong>degenerate</strong> shape -
-    /// no exception, just a zero-width, zero-height shape at the start point.
-    /// The working pattern is <c>BuildFreeform</c> at the first vertex followed by
-    /// one <c>AddNodes</c> call per subsequent vertex, supplying only
-    /// <c>X1</c>/<c>Y1</c> and passing <see cref="Type.Missing"/> for the optional
-    /// trailing points.
+    /// R4.5 D1, decided by measurement rather than preference. The row was first
+    /// implemented as a host freeform, and the Step-0 probe then established
+    /// that <c>BuildFreeform</c> stores each vertex on a whole-EMU grid: the
+    /// resulting span is <strong>+1 EMU</strong> (1 EMU = 1/12700 pt) off the
+    /// scene value, measured at +1.005, +0.993, +1.017, +0.969 and +0.969 EMU
+    /// across exact spans of 10, 20, 37.5, 100 and 253 pt. That is a fixed
+    /// one-unit quantisation, not drift: it is constant across a 25x size range.
     /// </para>
     /// <para>
-    /// Coordinates are <strong>absolute</strong> sheet points, the same convention
-    /// <c>AddLine</c> uses, so no offset from the builder origin is applied.
+    /// A diamond auto-shape is <em>derived</em> from its
+    /// <c>Left</c>/<c>Top</c>/<c>Width</c>/<c>Height</c> box rather than storing
+    /// absolute vertices, and measured <strong>0.000 EMU at every span</strong>.
+    /// Using it therefore removes the only reason this project had ever needed a
+    /// second geometry tolerance, so <see cref="GeometryMath.Epsilon"/> governs
+    /// every shape family again.
     /// </para>
     /// <para>
-    /// <c>msoEditingCorner</c> is chosen over <c>msoEditingAuto</c> deliberately:
-    /// it guarantees straight segments, so auto-smoothing can never round a
-    /// milestone's tips. The probe measured identical geometry for both on a
-    /// straight-edged polygon, which is the point - the corner form makes that
-    /// equality structural rather than incidental.
+    /// The scene still models a milestone as four points, and this adapter is
+    /// the single rounding boundary for them. The renderer has already refused
+    /// any polygon that is not a symmetric axis-aligned diamond, so the bounding
+    /// box below is exact rather than an approximation of the source vertices.
     /// </para>
     /// </remarks>
-    private static Excel.Shape? AddFreeform(Excel.Shapes shapes, OfficeShapeRequest request)
+    private static Excel.Shape? AddDiamond(Excel.Shapes shapes, OfficeShapeRequest request)
     {
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentNullException.ThrowIfNull(request);
@@ -710,32 +728,17 @@ public class ExcelShapeWriter(
             return null;
         }
 
-        PointD first = points[0];
-        Excel.FreeformBuilder? builder = shapes.BuildFreeform(
-            MsoEditingType.msoEditingCorner,
-            GeometryMath.SnapToDisplayPrecision(first.X),
-            GeometryMath.SnapToDisplayPrecision(first.Y));
+        var left = points.Min(point => point.X);
+        var top = points.Min(point => point.Y);
+        var right = points.Max(point => point.X);
+        var bottom = points.Max(point => point.Y);
 
-        if (builder is null)
-        {
-            return null;
-        }
-
-        for (var index = 1; index < points.Count; index++)
-        {
-            PointD point = points[index];
-            builder.AddNodes(
-                MsoSegmentType.msoSegmentLine,
-                MsoEditingType.msoEditingCorner,
-                GeometryMath.SnapToDisplayPrecision(point.X),
-                GeometryMath.SnapToDisplayPrecision(point.Y),
-                Type.Missing,
-                Type.Missing,
-                Type.Missing,
-                Type.Missing);
-        }
-
-        return builder.ConvertToShape();
+        return shapes.AddShape(
+            MsoAutoShapeType.msoShapeDiamond,
+            GeometryMath.SnapToDisplayPrecision(left),
+            GeometryMath.SnapToDisplayPrecision(top),
+            GeometryMath.SnapToDisplayPrecision(right - left),
+            GeometryMath.SnapToDisplayPrecision(bottom - top));
     }
 
     /// <summary>

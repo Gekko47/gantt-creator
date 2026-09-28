@@ -169,26 +169,28 @@ public class ExcelShapeWriterTests
         Assert.Empty(writer.Created);
     }
     /// <summary>
-    /// R4.5 D1: a four-point milestone polygon becomes a freeform request whose
-    /// points survive in draw order, so the adapter draws the diamond the scene
-    /// resolved rather than one it re-derived.
+    /// <summary>
+    /// R4.5 D1: a milestone is placed as a diamond auto-shape at the bounding
+    /// box of its points. The points stay on the request so the translation is
+    /// auditable, and the box is what the adapter places the shape from.
     /// </summary>
     [Fact]
-    public void A_four_point_polygon_becomes_a_freeform_request_preserving_its_points()
+    public void A_milestone_becomes_a_diamond_request_carrying_its_points_and_their_box()
     {
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
         PointD[] diamond = [new(50, 40), new(60, 50), new(50, 60), new(40, 50)];
         var request = new OfficeShapeRequest(
             "row-1:marker",
-            OfficeShapeKind.Polygon,
-            new OfficeShapeGeometry(Points: diamond),
+            OfficeShapeKind.Diamond,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 40, 20, 20), Points: diamond),
             ZLayer.Milestone);
 
         ShapeWriteOutcome outcome = writer.Create(request);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         OfficeShapeRequest created = Assert.Single(writer.Requests);
-        Assert.Equal(OfficeShapeKind.Polygon, created.Kind);
+        Assert.Equal(OfficeShapeKind.Diamond, created.Kind);
+        Assert.Equal(new RectD(40, 40, 20, 20), created.Geometry.Bounds);
         Assert.Equal(diamond, created.Geometry.Points);
 
         // The shape is owned and named, so a diamond is reconcilable exactly
@@ -199,18 +201,41 @@ public class ExcelShapeWriterTests
     }
 
     /// <summary>
-    /// A polygon with fewer than three points cannot enclose an area, so it is
-    /// refused before the host is touched rather than placed as a degenerate
-    /// shape. This is the validator's positive test.
+    /// A diamond needs its box, so a request carrying points but no box is
+    /// refused rather than placed at the origin. This is the validator's
+    /// positive test.
     /// </summary>
     [Fact]
-    public void A_polygon_with_fewer_than_three_points_is_refused()
+    public void A_diamond_without_bounds_is_refused_rather_than_placed_at_the_origin()
     {
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
         var request = new OfficeShapeRequest(
             "row-1:marker",
-            OfficeShapeKind.Polygon,
-            new OfficeShapeGeometry(Points: [new PointD(50, 40), new PointD(60, 50)]),
+            OfficeShapeKind.Diamond,
+            new OfficeShapeGeometry(Points: [new PointD(50, 40), new PointD(60, 50), new PointD(50, 60)]),
+            ZLayer.Milestone);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    /// <summary>
+    /// A milestone with fewer than three points cannot enclose an area, so it is
+    /// refused before the host is touched rather than placed as a degenerate
+    /// shape. This is the validator's positive test.
+    /// </summary>
+    [Fact]
+    public void A_diamond_with_fewer_than_three_points_is_refused()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var request = new OfficeShapeRequest(
+            "row-1:marker",
+            OfficeShapeKind.Diamond,
+            new OfficeShapeGeometry(
+                Bounds: new RectD(40, 40, 20, 20),
+                Points: [new PointD(50, 40), new PointD(60, 50)]),
             ZLayer.Milestone);
 
         ShapeWriteOutcome outcome = writer.Create(request);

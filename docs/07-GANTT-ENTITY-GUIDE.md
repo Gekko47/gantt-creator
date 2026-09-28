@@ -707,7 +707,7 @@ Placement priority is: explicit manual positions first; then critical milestones
 | Activity/delay | rectangle shapes | rectangle shapes | raster rectangles |
 | Procurement | pattern or editable hatch group after compatibility proof | editable hatch group | clipped raster hatch |
 | Critical interval | line shape | line shape | raster line |
-| Milestone | four-point freeform polygon | freeform polygon | raster polygon |
+| Milestone | diamond auto-shape at the polygon's bounding box | diamond auto-shape | raster polygon |
 | Labels | text box shapes | text box shapes | raster text at scene bounds |
 | Delineator | line plus text box | line plus text box | raster line/text |
 | Validation indicator | live cells/dialog only | excluded | excluded |
@@ -732,13 +732,13 @@ so the two cannot drift into a duplicate contract.
 | Activity/delay | `rect {row}:bar` | `Bounds` (already plot-clipped), `Style` fill + stroke + width, no hatch, `ZLayer.ActivityBody`, lane/stack order keys | rectangle shapes | rectangle shapes | raster rectangles | draw the clipped rectangle; do not recompute the span from dates |
 | Procurement | `rect {row}:bar` with `HatchPattern` | as Activity/delay, plus `HatchPattern` and its pitch/line tokens | **unresolved** — native pattern or editable hatch group | editable hatch group | clipped raster hatch | host representation is `unknown` until the R4.6/R8.3 compatibility proof; do not choose one here. **The hatch field is also unexercised**: the reference style set resolves `HatchPattern` to `None` for every style, so no committed scene primitive carries a hatch. Assert the scene fields, not a hatch value |
 | Critical interval | **`rect {row}:critical`**, height `CriticalLinePt` | `Bounds` (top edge = parent's post-clip top, height = `CriticalLinePt`), `Style` stroke + width, `ZLayer.CriticalOverlay` | **line** | **line** | raster line | **the scene rect is not the host object**: draw a line along the rect's top edge at its resolved thickness. Filling the rect is a defect |
-| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | four-point freeform polygon | freeform polygon | raster polygon | emit the four points in order; do not substitute a rotated square or an ellipse |
+| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | diamond auto-shape at the points' bounding box | diamond auto-shape | raster polygon | the four points are the *source*; the host object is a diamond auto-shape placed at their bounding box. The renderer must **refuse** a polygon that is not a symmetric axis-aligned diamond rather than approximating it — see "Milestone host object" below |
 | Description/date labels | `text {row}:label`, `{row}:date-start`, `{row}:date-finish` | `Text`, `TextBounds` (already measured), `Alignment`, `Style` (`DefaultText`/`DelayText`), `ZLayer.Label`, lane and stack order keys **present** | text box shapes | text box shapes | raster text at scene bounds | the label **side is already resolved into `TextBounds`**; do not re-measure, re-truncate, or reselect a side |
 | Delineator | `line {row}:delineator` + `text {row}:delineator-label` | line: `From`/`To` spanning `PlotBounds` top to bottom, `Style` stroke + width, `ZLayer.Delineator`. label: `Text`, `TextBounds`, `Alignment`, `Style`, `ZLayer.DelineatorLabel`, **no lane/stack keys** | line plus text box | line plus text box | raster line/text | a same-date pair emits **one shared line** but **one label per row**; the line's owner may be a `Rows` set, so a membership change is remove-then-recreate, never in-place |
 | Validation indicator | **none** | none | cells/dialog only | **excluded** | **excluded** | the model carries no primitive; a renderer must not invent one |
 | Legend (§25, optional) | **none today** | none | not built | not built | not built | an optional, product-owner-gated feature with no scene primitive yet |
 
-Four notes that govern the whole table:
+Five notes that govern the whole table:
 
 - **The panel row is exercised against a panel-bearing build, not the golden.**
   Panel primitives are emitted only when a `PanelTheme` is supplied, and the
@@ -766,6 +766,22 @@ Four notes that govern the whole table:
 - **Grouping is out of scope here.** `SceneGroup` membership and child order
   belong to the editable-export work. Their absence from this table means "not
   yet specified", not "not required".
+- **Milestone host object — why a diamond auto-shape, not a freeform.** The
+  scene models a milestone as a four-point `ScenePolygon`, but the live Excel
+  object is a **diamond auto-shape placed at that polygon's bounding box**. This
+  was changed from a freeform after measurement, not preference (R4.5, Office
+  `16.0.20326.20158` x64). `BuildFreeform` stores each vertex on a whole-EMU
+  grid, so a freeform's span lands **+1 EMU** (1 EMU = 1/12700 pt) off the scene
+  value — measured at +1.005, +0.993, +1.017, +0.969 and +0.969 EMU across exact
+  spans of 10, 20, 37.5, 100 and 253 pt, i.e. a **fixed one-unit quantisation,
+  not drift** (constant across a 25× size range). A diamond auto-shape is
+  *derived* from its `Left`/`Top`/`Width`/`Height` box rather than storing
+  absolute vertices, and measured **0.000 EMU at every span**, so it is exact
+  and the milestone row needs no tolerance of its own: `GeometryMath.Epsilon`
+  governs every family. A polygon that is **not** a symmetric axis-aligned
+  diamond is **refused** with a typed refusal, not approximated — a rotated or
+  skewed quadrilateral is not a diamond, and silently drawing it as one would
+  break the "renderers consume resolved primitives" rule.
 
 ## Minimum visual reference fixture
 

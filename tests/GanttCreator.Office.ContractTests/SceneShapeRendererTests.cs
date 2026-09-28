@@ -171,13 +171,13 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A milestone diamond is a four-point polygon and becomes a freeform
-    /// request, with its points translated by the same uniform delta as every
-    /// other family and its draw order preserved. Reordering or normalising the
-    /// vertices would change the rendered shape rather than translate it.
+    /// A milestone diamond is a four-point polygon that becomes a diamond
+    /// auto-shape request at the points' bounding box, with the points still
+    /// carried so the translation is auditable. The box is what the host object
+    /// is placed from, and it takes the same uniform delta as every other family.
     /// </summary>
     [Fact]
-    public void A_four_point_diamond_becomes_a_freeform_request_with_translated_points()
+    public void A_four_point_diamond_becomes_a_diamond_request_at_its_translated_box()
     {
         var renderer = new SceneShapeRenderer(new ChartOriginDelta(12, 12));
         PointD[] diamond = [new(50, 40), new(60, 50), new(50, 60), new(40, 50)];
@@ -188,11 +188,101 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         Assert.True(outcome.Complete);
 
         OfficeShapeRequest marker = Assert.Single(outcome.Requests);
-        Assert.Equal(OfficeShapeKind.Polygon, marker.Kind);
+        Assert.Equal(OfficeShapeKind.Diamond, marker.Kind);
         Assert.Equal(ZLayer.Milestone, marker.ZLayer);
+
+        // The scene box (40,40,20,20) translated by the delta.
+        Assert.Equal(new RectD(52, 52, 20, 20), marker.Geometry.Bounds);
         Assert.Equal(
             [new PointD(62, 52), new PointD(72, 62), new PointD(62, 72), new PointD(52, 62)],
             marker.Geometry.Points);
+    }
+
+    /// <summary>
+    /// A polygon the host's diamond auto-shape cannot represent is REFUSED with a
+    /// typed reason, never approximated. A rotated square, a rectangle, and an
+    /// off-centre vertex are all not-diamonds, and silently drawing any of them
+    /// as a diamond would change the entity the scene resolved.
+    /// </summary>
+    /// <param name="shape">Which non-diamond case to build.</param>
+    [Theory]
+    [InlineData("rectangle")]
+    [InlineData("rotated-square")]
+    [InlineData("oblique-square")]
+    [InlineData("off-centre-vertex")]
+    [InlineData("triangle")]
+    [InlineData("degenerate-point")]
+    public void A_polygon_that_is_not_a_symmetric_diamond_is_refused(string shape)
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            new ScenePolygon(
+                "row-1:marker",
+                RowOwner,
+                ZLayer.Milestone,
+                NotADiamond(shape),
+                Style));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        Assert.False(outcome.Complete);
+        Assert.Empty(outcome.Requests);
+        Assert.Empty(outcome.Deferred);
+        Assert.Equal(
+            [("row-1:marker", SceneTranslationRefusalReason.NotADiamond)],
+            outcome.Refusals.Select(r => (r.PrimitiveId, r.Reason)));
+    }
+
+    /// <summary>
+    /// Builds a valid quadrilateral that is nonetheless not a diamond. The cases
+    /// are named rather than passed as data so each one appears as its own row
+    /// in the test output, which is what makes a newly-refused shape visible.
+    /// </summary>
+    /// <param name="shape">The case name.</param>
+    /// <returns>The polygon points.</returns>
+    private static PointD[] NotADiamond(string shape) =>
+        shape switch
+        {
+            // Four points, but not one per edge midpoint of the box.
+            "rectangle" => [new(40, 40), new(80, 40), new(80, 60), new(40, 60)],
+
+            // A square rotated 45 degrees: its vertices are on the box's
+            // corners, not its edge midpoints, so it is not a diamond.
+            "rotated-square" => [new(40, 40), new(60, 40), new(60, 60), new(40, 60)],
+
+            // A square rotated 30 degrees, which lands no vertex on any edge
+            // midpoint.
+            "oblique-square" => [new(50, 30), new(68, 45), new(50, 60), new(32, 45)],
+
+            // Three vertices are correct; the fourth is off the opposite
+            // edge's midpoint.
+            "off-centre-vertex" => [new(50, 40), new(60, 50), new(50, 60), new(45, 50)],
+
+            // A triangle cannot be a diamond.
+            "triangle" => [new(40, 40), new(60, 40), new(50, 60)],
+
+            // Every vertex coincides, so the box has no extent.
+            _ => [new(50, 50), new(50, 50), new(50, 50), new(50, 50)],
+        };
+
+    /// <summary>
+    /// A diamond in a different draw order is still a diamond: the host object
+    /// is defined by the box, so vertex order must not decide whether the
+    /// primitive renders.
+    /// </summary>
+    [Fact]
+    public void A_diamond_is_recognised_whatever_its_vertex_draw_order()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        PointD[] rotated = [new(60, 50), new(50, 60), new(40, 50), new(50, 40)];
+        var scene = SceneOf(
+            new ScenePolygon("row-1:marker", RowOwner, ZLayer.Milestone, rotated, Style));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        Assert.True(outcome.Complete);
+        Assert.Empty(outcome.Refusals);
+        Assert.Equal(new RectD(40, 40, 20, 20), Assert.Single(outcome.Requests).Geometry.Bounds);
     }
 
     /// <summary>
@@ -218,14 +308,10 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         var scene = SceneOf(
             new ScenePolygon("row-1:marker", RowOwner, ZLayer.Milestone, diamond, Style));
 
-        IReadOnlyList<PointD> points = Assert.Single(
-            renderer.Translate(scene).Requests).Geometry.Points!;
+        RectD bounds = Assert.Single(renderer.Translate(scene).Requests).Geometry.Bounds!.Value;
 
-        double width = points.Max(p => p.X) - points.Min(p => p.X);
-        double height = points.Max(p => p.Y) - points.Min(p => p.Y);
-
-        Assert.Equal(Size * 2, width, 10);
-        Assert.Equal(Size * 2, height, 10);
+        Assert.Equal(Size * 2, bounds.Width, 10);
+        Assert.Equal(Size * 2, bounds.Height, 10);
     }
 
     /// <summary>
@@ -286,7 +372,7 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         // One shape per primitive, each of the right family.
         Assert.Equal(4, outcome.Requests.Count);
         Assert.Equal(
-            [OfficeShapeKind.Line, OfficeShapeKind.Rectangle, OfficeShapeKind.Polygon, OfficeShapeKind.TextBox],
+            [OfficeShapeKind.Line, OfficeShapeKind.Rectangle, OfficeShapeKind.Diamond, OfficeShapeKind.TextBox],
             outcome.Requests.Select(request => request.Kind));
         _output.WriteLine("complete scene rendered " + outcome.Requests.Count + " shapes");
     }

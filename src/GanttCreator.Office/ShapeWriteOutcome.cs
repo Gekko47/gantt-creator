@@ -5,10 +5,11 @@ namespace GanttCreator.Office;
 /// <summary>The Office shape family the live renderer creates.</summary>
 /// <remarks>
 /// The members are the shape kinds the Phase-4 renderer needs and the probed
-/// PIA can express exactly. <see cref="Polygon"/> is present because R4.5
-/// renders milestone diamonds as four-point freeforms, but the freeform point
-/// semantics are that row's own unprobed obligation, so this port carries the
-/// kind and the points and leaves the host call to the adapter.
+/// PIA can express exactly. <see cref="Diamond"/> was originally a freeform
+/// <c>Polygon</c>, on R4.5's unprobed assumption that a milestone had to be a
+/// four-point freeform; measurement later showed a host freeform quantises each
+/// vertex to a whole EMU while a diamond auto-shape is derived from its bounding
+/// box and is exact, so the member is now a diamond and the port carries its box.
 /// </remarks>
 public enum OfficeShapeKind
 {
@@ -21,8 +22,27 @@ public enum OfficeShapeKind
     /// <summary>A text box: every label and text primitive.</summary>
     TextBox = 2,
 
-    /// <summary>A freeform polygon: the milestone diamond.</summary>
-    Polygon = 3,
+    /// <summary>
+    /// A diamond auto-shape: the milestone marker, placed at the scene
+    /// polygon's bounding box.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This member was originally a freeform polygon. Measurement changed it: a
+    /// host freeform stores each vertex on a whole-EMU grid, so its span lands
+    /// +1 EMU (1/12700 pt) off the scene value, whereas a diamond auto-shape is
+    /// derived from its bounding box and measured exactly (0.000 EMU across
+    /// exact spans of 10, 20, 37.5, 100 and 253 pt). The diamond form therefore
+    /// needs no tolerance of its own, so <c>GeometryMath.Epsilon</c> governs
+    /// every family.
+    /// </para>
+    /// <para>
+    /// The scene still models a milestone as a four-point <c>ScenePolygon</c>;
+    /// the renderer verifies the four points form a symmetric axis-aligned
+    /// diamond and refuses them otherwise rather than approximating.
+    /// </para>
+    /// </remarks>
+    Diamond = 3,
 }
 
 /// <summary>Point geometry for one shape, in points.</summary>
@@ -39,8 +59,9 @@ public enum OfficeShapeKind
 /// kinds.
 /// </param>
 /// <param name="Points">
-/// The ordered draw-order points for <see cref="OfficeShapeKind.Polygon"/>;
-/// unused by the other kinds.
+/// The ordered draw-order points for a <see cref="OfficeShapeKind.Diamond"/>,
+/// which the adapter uses only to place the auto-shape; unused by the other
+/// kinds.
 /// </param>
 /// <remarks>
 /// Values are scene points and are converted to the host's <c>Single</c>
