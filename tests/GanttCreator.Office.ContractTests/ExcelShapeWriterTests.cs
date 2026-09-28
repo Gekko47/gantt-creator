@@ -447,6 +447,165 @@ public class ExcelShapeWriterTests
         ShapeWriteOutcome outcome = writer.ApplyZOrder(["chart:background", "row-1:missing"]);
 
         Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+
+        // The preflight resolves everything before issuing the first command, so
+        // the one shape that *does* exist was not moved. Asserting the absence of
+        // commands is what distinguishes an atomic refusal from a partial one.
+        Assert.Empty(writer.ZOrderCommands);
+    }
+
+    /// <summary>
+    /// A user-drawn shape that happens to carry a requested scene name is NOT
+    /// reordered, because <c>ApplyZOrder</c> now authorises on the ownership tag
+    /// exactly as <c>Update</c>, <c>Delete</c>, and <c>ListOwned</c> already do.
+    /// </summary>
+    /// <remarks>
+    /// The unowned shape is deliberately <em>first</em> in the list, so a check
+    /// placed inside the mutation loop would already have started issuing commands
+    /// before reaching it. The refusal is only correct because the whole list is
+    /// preflighted. The command log is attached to the seeded shapes rather than
+    /// taken from <c>writer.ZOrderCommands</c>, because that recorder is wired only
+    /// into shapes <c>AddShape</c> creates - asserting against it here would pass
+    /// whether or not any command was issued. This test was mutation-checked:
+    /// moving the ownership test into the mutation loop makes it fail.
+    /// </remarks>
+    [Fact]
+    public void The_z_order_pass_refuses_an_unowned_same_name_shape_and_moves_nothing()
+    {
+        // A user shape: the name matches the scene, the alternative text does not
+        // carry a GanttCreator ownership tag.
+        List<string> moved = [];
+        var userShape = NewShape("row-1:bar", "a rectangle the user drew themselves", onZOrder: (n, _) => moved.Add(n));
+        var owned = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"), onZOrder: (n, _) => moved.Add(n));
+        var writer = new TestableWriter(
+            ActiveApplication().Object,
+            ClearGuard().Object,
+            userShape,
+            owned);
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["row-1:bar", "row-1:label"]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        // Zero, not one: the unowned shape is first, so a per-shape check inside
+        // the loop would already have moved the legitimately-owned shape.
+        Assert.Empty(moved);
+    }
+
+    /// <summary>
+    /// The atomicity case the existence preflight already provided, now also
+    /// required of the ownership check: an unowned shape refused <em>later</em> in
+    /// the list leaves the earlier, legitimately-owned shapes untouched.
+    /// </summary>
+    /// <summary>
+    /// The atomicity case. An unowned shape in the **middle** of the list must
+    /// leave the shapes on either side of it untouched.
+    /// </summary>
+    /// <remarks>
+    /// Middle, not last, and that is deliberate. The approved pass walks the list in
+    /// reverse, so a per-shape check inside the mutation loop processes the *last*
+    /// entry first: an unowned shape placed last would refuse before issuing
+    /// anything, and the test would pass whether or not the check was preflighted.
+    /// With the unowned shape in the middle, a per-shape check has already moved
+    /// the third shape by the time it refuses, so this test fails unless the whole
+    /// list is preflighted. Mutation-checked in both directions.
+    /// </remarks>
+    [Fact]
+    public void An_unowned_shape_in_the_middle_leaves_the_surrounding_owned_shapes_untouched()
+    {
+        List<string> moved = [];
+        var first = NewShape("chart:background", ShapeOwnershipTag.ForPrimitiveId("chart:background"), onZOrder: (n, _) => moved.Add(n));
+        var userShape = NewShape("row-1:bar", "a rectangle the user drew themselves", onZOrder: (n, _) => moved.Add(n));
+        var last = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"), onZOrder: (n, _) => moved.Add(n));
+        var writer = new TestableWriter(
+            ActiveApplication().Object,
+            ClearGuard().Object,
+            first,
+            userShape,
+            last);
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["chart:background", "row-1:bar", "row-1:label"]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        // Nothing at all, including the two legitimately-owned shapes: a partial
+        // order would leave the chart in a state neither the scene nor the user
+        // asked for.
+        Assert.Empty(moved);
+    }
+
+    /// <summary>
+    /// A shape carrying <em>another</em> primitive's valid tag is equally unowned
+    /// for this request. <c>IsOwnedTag</c> would accept it; only
+    /// <c>CarriesOwnershipTagFor</c> refuses it, which is the same distinction
+    /// <c>Update</c> and <c>Delete</c> make.
+    /// </summary>
+    [Fact]
+    public void A_shape_carrying_another_primitives_valid_tag_is_still_refused_by_the_z_order_pass()
+    {
+        List<string> moved = [];
+        var impostor = NewShape(
+            "row-1:bar",
+            ShapeOwnershipTag.ForPrimitiveId("row-9:something-else"),
+            onZOrder: (n, _) => moved.Add(n));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, impostor);
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["row-1:bar"]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        Assert.Empty(moved);
+    }
+
+    /// <summary>
+    /// The all-owned path still succeeds, and the approved single reverse-order
+    /// <c>msoSendToBack</c> pass is untouched: the ownership preflight changes
+    /// <em>who</em> may be reordered, never <em>how</em>.
+    /// </summary>
+    [Fact]
+    public void The_z_order_pass_still_applies_the_approved_sequence_when_every_shape_is_owned()
+    {
+        List<(string Name, MsoZOrderCmd Command)> log = [];
+        var background = NewShape(
+            "chart:background",
+            ShapeOwnershipTag.ForPrimitiveId("chart:background"),
+            onZOrder: (name, command) => log.Add((name, command)));
+        var bar = NewShape(
+            "row-1:bar",
+            ShapeOwnershipTag.ForPrimitiveId("row-1:bar"),
+            onZOrder: (name, command) => log.Add((name, command)));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, background, bar);
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["chart:background", "row-1:bar"]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        // Still one send-to-back per shape, in reverse: the ownership preflight
+        // changes *who* may be reordered, never *how*.
+        Assert.Equal(2, log.Count);
+        Assert.All(log, entry => Assert.Equal(nameof(MsoZOrderCmd.msoSendToBack), entry.Command.ToString()));
+        Assert.Equal(["row-1:bar", "chart:background"], [.. log.Select(entry => entry.Name)]);
+    }
+
+    /// <summary>
+    /// A user shape the scene never names is untouched, which is the R4.8
+    /// preservation guarantee the ownership filter exists to protect. Re-asserted
+    /// here because <c>ApplyZOrder</c> is now a mutating path that could reach it.
+    /// </summary>
+    [Fact]
+    public void A_user_shape_the_scene_never_names_is_untouched_by_the_z_order_pass()
+    {
+        List<string> moved = [];
+        var owned = NewShape(
+            "row-1:bar",
+            ShapeOwnershipTag.ForPrimitiveId("row-1:bar"),
+            onZOrder: (name, _) => moved.Add(name));
+        var unrelated = NewShape("User drawing", string.Empty, onZOrder: (name, _) => moved.Add(name));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, owned, unrelated);
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["row-1:bar"]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(["row-1:bar"], moved);
     }
 
     /// <summary>
@@ -723,7 +882,11 @@ public class ExcelShapeWriterTests
         Assert.Equal(["a-first", "z-last"], writer.ListOwned());
     }
 
-    private static Excel.Shape NewShape(string name, string? alternativeText, Action? onDelete = null)
+    private static Excel.Shape NewShape(
+        string name,
+        string? alternativeText,
+        Action? onDelete = null,
+        Action<string, MsoZOrderCmd>? onZOrder = null)
     {
         // Backing fields, not fixed Returns(name): a test that simulates a
         // user editing the alternative text has to be able to write it, or the
@@ -749,6 +912,13 @@ public class ExcelShapeWriterTests
         _ = shape.SetupGet(s => s.Top).Returns(() => currentTop);
         _ = shape.SetupSet(s => s.Top = It.IsAny<float>()).Callback<float>(value => currentTop = value);
         _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
+        // A seeded shape needs its own z-order recorder: the writer's built-in
+        // `ZOrderShapes` is wired only into the shapes `AddShape` creates, so a
+        // z-order test built from seeded shapes would otherwise observe zero
+        // commands and pass vacuously. The shape name is recorded alongside the
+        // command so the reverse-order sequence is assertable from here too.
+        _ = shape.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
+            .Callback<MsoZOrderCmd>(command => onZOrder?.Invoke(currentName, command));
         return shape.Object;
     }
 }

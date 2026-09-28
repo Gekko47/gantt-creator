@@ -298,16 +298,34 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Ok();
         }
 
-        // Resolve every named shape BEFORE mutating any. Resolving inside the
-        // mutation loop would let a name that does not exist leave the earlier
-        // shapes already moved, which is the partial order this method refuses to
-        // produce; two passes keep the refusal atomic.
+        // Resolve AND prove ownership of every named shape BEFORE mutating any.
+        // Resolving inside the mutation loop would let a name that does not exist
+        // leave the earlier shapes already moved, which is the partial order this
+        // method refuses to produce; two passes keep the refusal atomic.
+        //
+        // The ownership check is load-bearing and belongs in this same preflight,
+        // not in the mutation loop. `Update`, `Delete`, and `ListOwned` all
+        // authorise on `CarriesOwnershipTagFor` rather than on the name, so a
+        // refresh preserves a user-drawn shape that happens to share a requested
+        // primitive ID. Without the check here, `ApplyZOrder` was the one mutation
+        // path that would still reorder exactly that shape - a preservation
+        // guarantee that holds everywhere else and silently does not hold here.
+        // Putting it in the preflight also means an unowned shape refused *later*
+        // in the list leaves the whole scene untouched, which is the atomicity the
+        // existence check above already provides.
         List<Excel.Shape> resolved = new(backToFront.Count);
         for (var index = 0; index < backToFront.Count; index++)
         {
-            Excel.Shape? shape = FindShapeByName(shapes, backToFront[index]);
-            if (shape is null)
+            var primitiveId = backToFront[index];
+            Excel.Shape? shape = FindShapeByName(shapes, primitiveId);
+            if (shape is null || !CarriesOwnershipTagFor(shape, primitiveId))
             {
+                // NotFound rather than a new refusal: from the caller's point of view
+                // "no owned shape with this identifier" is one condition, and it is the
+                // reason `Update` and `Delete` already report. An unowned shape is
+                // indistinguishable from an absent one by design - re-stamping its
+                // tag here would "repair" it, which is R9.4's job to report, not this
+                // row's.
                 return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
             }
 
