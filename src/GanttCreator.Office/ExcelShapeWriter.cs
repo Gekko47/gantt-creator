@@ -133,12 +133,27 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.InvalidGeometry);
         }
 
-        // The name and the tag are deliberately not rewritten on update: the name
-        // is the reconciliation key R4.7 matched on, and ADR-0019 makes the pair
-        // the ownership proof. Re-stamping the tag here would silently "repair" a
-        // shape a user edited, which is R9.4's job to report, not R4.7's to hide.
+        // R4.4: a text box's CONTENT is owned generated data, exactly as its
+        // geometry is, so an update re-applies it. Without this, a refresh that
+        // changed a label's string, font, or alignment would move the box and
+        // leave the stale text on the sheet - the shape would sit in the right
+        // place saying the wrong thing, which is the silent-staleness class this
+        // project treats as a defect. R4.7 reaches this path on every reconcile
+        // that finds an existing shape.
+        //
+        // This is deliberately NOT the same treatment as the name and tag below.
+        // A user never authors a label's text; the scene does, so overwriting it
+        // is correct. The name is the reconciliation KEY and the tag is the
+        // ownership PROOF, and re-stamping those would silently "repair" a shape
+        // a user edited, which is R9.4's job to report, not R4.7's to hide.
+        if (request.Kind == OfficeShapeKind.TextBox)
+        {
+            ApplyText(existing, request);
+        }
+
         return ShapeWriteOutcome.Ok();
     }
+
     /// <inheritdoc />
     public ShapeWriteOutcome Delete(string primitiveId)
     {
@@ -768,12 +783,19 @@ public class ExcelShapeWriter(
     /// assembly; the real values are <see cref="MsoParagraphAlignment"/> members.
     /// </para>
     /// <para>
+    /// <c>internal virtual</c> is a test seam, per the
+    /// <c>ExcelWorkbookInitialiser</c> pattern: the content write reaches COM
+    /// through a chained <c>Shape.TextFrame2</c> walk that a contract test
+    /// cannot observe, so the seam lets a test record that the update path
+    /// applied the content rather than inferring it from the geometry.
+    /// </para>
+    /// <para>
     /// Word wrap is switched off deliberately. A text box that auto-fits would
     /// resize itself away from the bounds the scene resolved, which is the same
     /// class of silent re-layout the no-remeasure rule forbids.
     /// </para>
     /// </remarks>
-    private static void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+    internal virtual void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
     {
         ArgumentNullException.ThrowIfNull(shape);
         ArgumentNullException.ThrowIfNull(request);

@@ -86,6 +86,29 @@ public interface IShapeWritePort
     /// the name is the reconciliation key.
     /// </param>
     /// <returns>The typed result; on a refusal nothing was mutated.</returns>
+    /// <remarks>
+    /// <para>
+    /// An update re-applies the <strong>geometry of every kind</strong> and, for
+    /// a text box, its <strong>content</strong> — the string, the resolved font
+    /// tokens, and the resolved alignment. Those are owned generated data, so a
+    /// shape that must match a new scene has to be able to say the new thing, not
+    /// merely move to the new place.
+    /// </para>
+    /// <para>
+    /// Two members are deliberately NOT rewritten. <see cref="OfficeShapeRequest.PrimitiveId"/>
+    /// is the reconciliation key this method's caller matched on, and the
+    /// alternative-text ownership tag (ADR-0019) is the ownership proof;
+    /// re-stamping either would silently "repair" a shape a user edited, which
+    /// is R9.4's job to report.
+    /// </para>
+    /// <para>
+    /// <strong>Not yet applied by an update:</strong> the fill, stroke, and
+    /// pattern members, which R4.6 owns. Until that row lands, a refresh that
+    /// changes only a colour would move the shape and leave the old colour — the
+    /// same staleness class the text path avoids. R4.6 must close this, and this
+    /// note is what tells it to.
+    /// </para>
+    /// </remarks>
     ShapeWriteOutcome Update(OfficeShapeRequest request);
 
     /// <summary>Deletes one owned shape by its scene identifier.</summary>

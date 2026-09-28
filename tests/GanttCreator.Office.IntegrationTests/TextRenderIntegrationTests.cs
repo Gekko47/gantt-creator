@@ -85,6 +85,7 @@ public class TextRenderIntegrationTests(ITestOutputHelper output)
             AssertGeometry(normal, clipped);
             AssertContent(normal, clipped, Normal, Clipped);
             AssertTypography(scope, normal, clipped);
+            AssertUpdateReappliesContent(writer, scope, sheet);
 
             // Delete the shapes but leave the workbook open for the fixture to
             // close, as the R4.3 gate does.
@@ -95,6 +96,55 @@ public class TextRenderIntegrationTests(ITestOutputHelper output)
         {
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
+    }
+
+    /// <summary>
+    /// Proves on the live host that an update re-writes a label's content, not
+    /// just its position. R4.7 reaches this path on every reconcile that finds
+    /// an existing shape, so a create-only content path would leave a stale
+    /// string sitting in the right place - a silent defect with no error.
+    /// </summary>
+    /// <param name="writer">The shape writer under test.</param>
+    /// <param name="scope">The COM scope.</param>
+    /// <param name="sheet">The worksheet holding the shape.</param>
+    private static void AssertUpdateReappliesContent(
+        ExcelShapeWriter writer,
+        OfficeFixture.ComScope scope,
+        Excel.Worksheet sheet)
+    {
+        const string Revised = "Revised after refresh";
+        const double RevisedSize = 12d;
+
+        ShapeWriteOutcome outcome = writer.Update(
+            new OfficeShapeRequest(
+                "row-1:label",
+                OfficeShapeKind.TextBox,
+                new OfficeShapeGeometry(Bounds: new RectD(40d, 30d, 90d, 16d)),
+                ZLayer.Label,
+                FontFamily: TokenFont,
+                FontSizePt: RevisedSize,
+                Text: Revised,
+                Alignment: GanttTextAlignment.Centre));
+
+        Assert.True(outcome.Succeeded, $"Update refused: {outcome.Refusal}");
+
+        // Re-read from the host. A separate fetch proves the write landed on the
+        // live shape rather than on a cached proxy value.
+        Excel.Shape reread = scope.Track(sheet.Shapes.Item("row-1:label"));
+        string text = TextOf(reread);
+
+        Assert.Equal(Revised, text);
+        AssertPoint("updated label Width", 90d, reread.Width);
+        Assert.Equal(
+            Microsoft.Office.Core.MsoParagraphAlignment.msoAlignCenter,
+            ((OfficeCore.TextRange2)reread.TextFrame2.TextRange).ParagraphFormat.Alignment);
+        AssertPoint("updated font size", RevisedSize, ((OfficeCore.TextRange2)reread.TextFrame2.TextRange).Font.Size);
+
+        // The name and the ownership tag survive an update untouched: they are
+        // the reconciliation key and the ownership proof, and re-stamping them
+        // would silently "repair" a user-edited shape.
+        Assert.Equal("row-1:label", reread.Name);
+        Assert.Equal(ShapeOwnershipTag.ForPrimitiveId("row-1:label"), reread.AlternativeText);
     }
 
     private static void AssertGeometry(Excel.Shape normal, Excel.Shape clipped)

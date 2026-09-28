@@ -59,6 +59,16 @@ public class ExcelShapeWriterTests
         internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) =>
             _shapes.FirstOrDefault(shape => string.Equals(shape.Name, name, StringComparison.Ordinal));
 
+        /// <summary>
+        /// Records the content write instead of walking the live
+        /// <c>TextFrame2</c> COM chain, so an update's content application is
+        /// observable without a host.
+        /// </summary>
+        /// <param name="shape">The shape whose content would be written.</param>
+        /// <param name="request">The content that would be written.</param>
+        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request) =>
+            Requests.Add(request);
+
         internal override Excel.Shape? AddShape(Excel.Shapes shapes, OfficeShapeRequest request)
         {
             Requests.Add(request);
@@ -222,26 +232,114 @@ public class ExcelShapeWriterTests
     }
 
     /// <summary>
-    /// A milestone with fewer than three points cannot enclose an area, so it is
-    /// refused before the host is touched rather than placed as a degenerate
-    /// shape. This is the validator's positive test.
+    /// R4.4: an update re-applies a text box's content, not just its geometry.
+    /// A refresh that changed a label's string, font, or alignment would
+    /// otherwise move the box and leave the stale text on the sheet.
     /// </summary>
     [Fact]
-    public void A_diamond_with_fewer_than_three_points_is_refused()
+    public void An_update_re_applies_a_labels_text_font_and_alignment()
     {
-        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
-        var request = new OfficeShapeRequest(
-            "row-1:marker",
-            OfficeShapeKind.Diamond,
-            new OfficeShapeGeometry(
-                Bounds: new RectD(40, 40, 20, 20),
-                Points: [new PointD(50, 40), new PointD(60, 50)]),
-            ZLayer.Milestone);
+        var existing = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
 
-        ShapeWriteOutcome outcome = writer.Create(request);
+        var request = new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 14)),
+            ZLayer.Label,
+            FontFamily: "Aptos",
+            FontSizePt: 11d,
+            Bold: true,
+            Text: "Revised label text",
+            Alignment: GanttTextAlignment.Centre);
+
+        ShapeWriteOutcome outcome = writer.Update(request);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // The request reached the host as a whole: the update path must not
+        // silently drop the members the create path writes.
+        OfficeShapeRequest applied = Assert.Single(writer.Requests);
+        Assert.Equal("Revised label text", applied.Text);
+        Assert.Equal("Aptos", applied.FontFamily);
+        Assert.Equal(11d, applied.FontSizePt);
+        Assert.True(applied.Bold);
+        Assert.Equal(GanttTextAlignment.Centre, applied.Alignment);
+    }
+
+    /// <summary>
+    /// The R4.1 guarantee still holds on the path just changed: an update
+    /// rewrites content but never the name or the ownership tag, because those
+    /// are the reconciliation key and the ownership proof.
+    /// </summary>
+    [Fact]
+    public void An_update_never_rewrites_the_name_or_the_ownership_tag()
+    {
+        var existing = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        // A user-edited shape: the alternative text no longer matches the name.
+        const string UserEditedTag = "my own note about this shape";
+        existing.AlternativeText = UserEditedTag;
+
+        ShapeWriteOutcome outcome = writer.Update(
+            new OfficeShapeRequest(
+                "row-1:label",
+                OfficeShapeKind.TextBox,
+                new OfficeShapeGeometry(Bounds: new RectD(10, 10, 40, 12)),
+                ZLayer.Label,
+                Text: "New text"));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal("row-1:label", existing.Name);
+        Assert.Equal(UserEditedTag, existing.AlternativeText);
+    }
+
+    /// <summary>
+    /// A text box with no bounds is refused by the geometry validator before the
+    /// content path runs, so the re-application can never dereference a missing
+    /// box. This is the positive test for that ordering.
+    /// </summary>
+    [Fact]
+    public void A_text_box_with_no_bounds_is_refused_before_its_content_is_applied()
+    {
+        var existing = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(
+            new OfficeShapeRequest(
+                "row-1:label",
+                OfficeShapeKind.TextBox,
+                new OfficeShapeGeometry(),
+                ZLayer.Label,
+                Text: "New text"));
 
         Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
-        Assert.Empty(writer.Created);
+
+        // Nothing was requested of the host, so the content path did not run.
+        Assert.Empty(writer.Requests);
+    }
+
+    /// <summary>
+    /// A non-text update is unaffected: only a text box has content, so a
+    /// rectangle update must not reach the text path at all.
+    /// </summary>
+    [Fact]
+    public void A_rectangle_update_does_not_reach_the_text_path()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(
+            new OfficeShapeRequest(
+                "row-1:bar",
+                OfficeShapeKind.Rectangle,
+                new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 30)),
+                ZLayer.ActivityBody,
+                Text: "text a rectangle must never receive"));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Empty(writer.Requests);
     }
 
     /// <summary>
@@ -449,9 +547,19 @@ public class ExcelShapeWriterTests
 
     private static Excel.Shape NewShape(string name, string? alternativeText, Action? onDelete = null)
     {
+        // Backing fields, not fixed Returns(name): a test that simulates a
+        // user editing the alternative text has to be able to write it, or the
+        // "update never re-stamps the tag" assertion would pass vacuously
+        // against a shape whose tag could never change in the first place.
+        string currentName = name;
+        string currentAlternativeText = alternativeText ?? string.Empty;
+
         var shape = new Mock<Excel.Shape>();
-        _ = shape.SetupGet(s => s.Name).Returns(name);
-        _ = shape.SetupGet(s => s.AlternativeText).Returns(alternativeText ?? string.Empty);
+        _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
+        _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
+        _ = shape.SetupGet(s => s.AlternativeText).Returns(() => currentAlternativeText);
+        _ = shape.SetupSet(s => s.AlternativeText = It.IsAny<string>())
+            .Callback<string>(value => currentAlternativeText = value);
         _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
         return shape.Object;
     }
