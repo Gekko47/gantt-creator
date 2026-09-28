@@ -32,17 +32,40 @@ public class ExcelPanelGridMeasurementTests
         object? application,
         IWorksheetProtectionGuard guard,
         Excel.ListObject table,
-        Excel.ListColumn column)
+        Excel.ListColumn column,
+        IReadOnlyList<object?> bodyRowHeights)
         : ExcelPanelGridMeasurement(application, guard)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
 
         internal override Excel.ListColumn? FindColumn(Excel.ListObject candidate, string name) =>
             string.Equals(name, ColumnName, StringComparison.Ordinal) ? column : null;
+
+        // The row seams are substituted because Range.Rows.Item is a COM
+        // parameterised property, which cannot appear in an expression tree
+        // (CS0855). The row VALUES are still the code under test: HasUniformRowHeight
+        // runs for real against whatever each fake row reports.
+        internal override int GetBodyRowCount(Excel.Range body) => bodyRowHeights.Count;
+
+        internal override Excel.Range? GetBodyRowAt(Excel.Range body, int index)
+        {
+            if (index < 1 || index > bodyRowHeights.Count)
+            {
+                return null;
+            }
+
+            object? reported = bodyRowHeights[index - 1];
+            var row = new Mock<Excel.Range>();
+            _ = row.SetupGet(r => r.RowHeight).Returns(reported!);
+            return row.Object;
+        }
     }
 
-    /// <summary>The table and the single column the fake exposes.</summary>
-    private sealed record FakeTable(Excel.ListObject Table, Excel.ListColumn Column);
+    /// <summary>The table, its single column, and what each body row reports.</summary>
+    private sealed record FakeTable(
+        Excel.ListObject Table,
+        Excel.ListColumn Column,
+        IReadOnlyList<object?> BodyRowHeights);
 
     /// <summary>
     /// Builds a table whose column range and body range report the supplied values,
@@ -50,8 +73,16 @@ public class ExcelPanelGridMeasurementTests
     /// </summary>
     /// <param name="width">What the column's range reports as <c>Width</c>.</param>
     /// <param name="rowHeight">What the body's range reports as <c>RowHeight</c>.</param>
+    /// <param name="bodyRowHeights">
+    /// What each body row reports, defaulting to a single row matching
+    /// <paramref name="rowHeight"/> so the existing cases keep describing a uniform
+    /// body.
+    /// </param>
     /// <returns>The mocked table and its single column.</returns>
-    private static FakeTable TableReporting(object? width, object? rowHeight)
+    private static FakeTable TableReporting(
+        object? width,
+        object? rowHeight,
+        IReadOnlyList<object?>? bodyRowHeights = null)
     {
         var columnRange = new Mock<Excel.Range>();
         // The PIA types Width/RowHeight as non-nullable object even though the host
@@ -68,7 +99,7 @@ public class ExcelPanelGridMeasurementTests
 
         var table = new Mock<Excel.ListObject>();
         _ = table.SetupGet(t => t.DataBodyRange).Returns(body.Object);
-        return new FakeTable(table.Object, column.Object);
+        return new FakeTable(table.Object, column.Object, bodyRowHeights ?? [rowHeight]);
     }
 
     private static Mock<IWorksheetProtectionGuard> ClearGuard()
@@ -97,7 +128,8 @@ public class ExcelPanelGridMeasurementTests
             ActiveApplication().Object,
             guard,
             table.Table,
-            table.Column);
+            table.Column,
+            table.BodyRowHeights);
 
         return measurement.Measure([ColumnName]);
     }
@@ -131,6 +163,54 @@ public class ExcelPanelGridMeasurementTests
         PanelGridOutcome outcome = MeasureTable(TableReporting(64d, DBNull.Value));
 
         Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// A body with several rows, every one of which reports the aggregate height,
+    /// is still a successful measurement. The per-row confirmation is not a
+    /// blanket refusal, and this is what separates it from a guard that simply
+    /// broke multi-row bodies.
+    /// </summary>
+    [Fact]
+    public void Measure_succeeds_for_a_multi_row_body_whose_rows_all_report_the_same_height()
+    {
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, [15d, 15d, 15d]));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(15d, outcome.Grid?.RowHeightPt);
+    }
+
+    /// <summary>
+    /// The third mixed-height encoding, and the one the two absence checks cannot
+    /// catch. The host is documented to report "the height of the first row" as
+    /// readily as Null, so a body whose rows are 15pt and 45pt can report a plain
+    /// number: 15. That number is not wrong arithmetic, it is simply not the
+    /// body's single height, and returning it would lay out a grid from a row
+    /// height most of the table does not have. Every body row is therefore
+    /// compared before a value is returned.
+    /// </summary>
+    [Fact]
+    public void Measure_returns_a_typed_refusal_when_the_aggregate_reports_the_first_row_of_a_mixed_body()
+    {
+        // The aggregate deliberately reports 15d - the FIRST row's height, which is
+        // a number and so passes both absence checks - while row 2 is 45d.
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, [15d, 45d]));
+
+        Assert.False(outcome.Succeeded, "A mixed body has no single height, whatever the aggregate reported.");
+        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// A body the host cannot enumerate has no established single height either, so
+    /// it is refused rather than measured from an aggregate that could not be
+    /// confirmed.
+    /// </summary>
+    [Fact]
+    public void Measure_returns_a_typed_refusal_when_no_body_row_can_be_read()
+    {
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, []));
+
         Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
     }
 
@@ -171,7 +251,8 @@ public class ExcelPanelGridMeasurementTests
             ActiveApplication().Object,
             ClearGuard().Object,
             table.Table,
-            table.Column);
+            table.Column,
+            table.BodyRowHeights);
 
         PanelGridOutcome outcome = measurement.Measure([]);
 

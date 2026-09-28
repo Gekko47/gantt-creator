@@ -353,6 +353,61 @@ public class ExcelApplicationStateScopeTests
         Assert.Contains(records, record => record.Contains("selection", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// The concrete seam, which is what the non-<c>Range</c> case actually runs.
+    /// The <c>TestableScope</c> above replaces <c>RestoreSelection</c> wholesale, so
+    /// it can never observe the production type test.
+    /// </summary>
+    /// <param name="selection">What <c>Application.Selection</c> reports.</param>
+    /// <param name="technicalRecord">Receives the technical record.</param>
+    private sealed class RecordingScope(object selection, Action<string> technicalRecord)
+        : ExcelApplicationStateScope(ApplicationReporting(selection), technicalRecord)
+    {
+        private static object ApplicationReporting(object selection)
+        {
+            var application = new Mock<Excel.Application>();
+            _ = application.SetupGet(a => a.Selection).Returns(selection);
+            return application.Object;
+        }
+    }
+
+    [Fact]
+    public void A_captured_selection_that_is_not_an_excel_range_is_recorded_rather_than_silently_skipped()
+    {
+        // D3: Application.Selection is typed Object, so the host can hand back
+        // something that is not a Range - a chart, a shape, a foreign object. The
+        // old `is Excel.Range` test fell through and returned normally, so the scope
+        // reported a successful restore while the user's cursor stayed wherever the
+        // command left it, and nothing recorded that. Only the concrete seam runs
+        // the production type test, which is why this is not TestableScope.
+        var records = new List<string>();
+        using var scope = new RecordingScope(new object(), records.Add);
+        scope.CaptureSelection();
+
+        Assert.Null(Record.Exception(scope.Dispose));
+
+        Assert.NotEmpty(records);
+        Assert.Contains(records, record => record.Contains("not a Range", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_captured_excel_range_is_restored_through_Range_Select()
+    {
+        // The positive half of the same rule: a real Range still restores, so the
+        // new throw refuses an unusable selection rather than refusing selections.
+        var range = new Mock<Excel.Range>();
+        _ = range.Setup(r => r.Select());
+
+        var records = new List<string>();
+        using var scope = new RecordingScope(range.Object, records.Add);
+        scope.CaptureSelection();
+
+        scope.Dispose();
+
+        range.Verify(r => r.Select(), Times.Once);
+        Assert.Empty(records);
+    }
+
     [Fact]
     public void A_failing_technical_record_sink_never_escapes_the_dispose()
     {

@@ -262,24 +262,103 @@ public class ExcelPanelGridMeasurement(
     /// <returns>The row height in points, or <see langword="null"/> when the host returned no numeric value.</returns>
     /// <remarks>
     /// <para>
-    /// The single-row case is the expected one: a table whose body rows share a
-    /// height reports a number. A body with <em>mixed</em> row heights reports
-    /// <see cref="DBNull.Value"/> instead, because there is no single height to
-    /// report.
+    /// A body with <em>uniform</em> row heights is the expected case: the aggregate
+    /// then reports that height. A body with <em>mixed</em> row heights has no
+    /// single height, and the host is documented to report it inconsistently - the
+    /// <c>Range.RowHeight</c> reference states that a range of differing row heights
+    /// "might return the height of the first row or might return Null", and
+    /// <c>DBNull.Value</c> is what the PIA surfaces for the Null case.
     /// </para>
     /// <para>
-    /// That is an absent measurement, not a number, so it must become the same
-    /// typed <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal a
-    /// <see langword="null"/> produces. Converting it would throw
-    /// <see cref="InvalidCastException"/> out of a read-only adapter and escape
-    /// into the render command.
+    /// Both encodings are therefore an absent measurement and become the typed
+    /// <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal; converting
+    /// one would throw <see cref="InvalidCastException"/> out of a read-only adapter
+    /// and escape into the render command.
+    /// </para>
+    /// <para>
+    /// Neither encoding covers the host returning the FIRST row's height, which is
+    /// a number and would sail through both checks while describing a body whose
+    /// rows are not all that tall. So the aggregate is confirmed against every body
+    /// row; a body that cannot be enumerated is refused rather than measured, since
+    /// a single height is exactly what could not be established.
     /// </para>
     /// </remarks>
     internal virtual double? ReadRowHeight(Excel.ListObject table)
     {
         ArgumentNullException.ThrowIfNull(table);
 
-        return table.DataBodyRange is { } body ? ToPoints(body.RowHeight) : null;
+        return table.DataBodyRange is { } body ? ConfirmUniformRowHeight(body) : null;
+    }
+
+    /// <summary>
+    /// Converts the body range's aggregate height, but only once every body row has
+    /// confirmed it.
+    /// </summary>
+    /// <param name="body">The table's body range.</param>
+    /// <returns>The height in points, or <see langword="null"/> when it is absent or not uniform.</returns>
+    private double? ConfirmUniformRowHeight(Excel.Range body) =>
+        ToPoints(body.RowHeight) is { } aggregate
+            ? HasUniformRowHeight(body, aggregate) ? aggregate : null
+            : null;
+
+    /// <summary>
+    /// Determines whether every body row reports the same height as the aggregate.
+    /// </summary>
+    /// <param name="body">The table's body range.</param>
+    /// <param name="aggregate">The height the body range reported.</param>
+    /// <returns><see langword="true"/> when every body row agrees with the aggregate.</returns>
+    /// <remarks>
+    /// The heights are compared for exact equality rather than within a tolerance.
+    /// Rows that are genuinely the same height report the identical host value, and
+    /// a tolerance here would quietly accept a body whose rows differ by a
+    /// fraction of a point - the mixed-height case this method exists to catch. A
+    /// body that reports <see cref="DBNull"/> for any single row also fails, since
+    /// that row's height is not established either.
+    /// </remarks>
+    private bool HasUniformRowHeight(Excel.Range body, double aggregate)
+    {
+        var count = GetBodyRowCount(body);
+        if (count <= 0)
+        {
+            return false;
+        }
+
+        for (var index = 1; index <= count; index++)
+        {
+            if (GetBodyRowAt(body, index) is not { } row || ToPoints(row.RowHeight) is not { } height)
+            {
+                return false;
+            }
+
+            if (!double.Equals(height, aggregate))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Reads the number of rows in a range. Test seam over <c>Range.Rows.Count</c>.</summary>
+    /// <param name="body">The body range.</param>
+    /// <returns>The row count, or zero when the host does not report one.</returns>
+    internal virtual int GetBodyRowCount(Excel.Range body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        Excel.Range? rows = body.Rows;
+        return rows?.Count ?? 0;
+    }
+
+    /// <summary>Reads one body row by its 1-based index. Test seam over <c>Range.Rows.Item</c>.</summary>
+    /// <param name="body">The body range.</param>
+    /// <param name="index">The 1-based row index.</param>
+    /// <returns>The row range, or <see langword="null"/> when the host does not resolve it.</returns>
+    internal virtual Excel.Range? GetBodyRowAt(Excel.Range body, int index)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        return body.Rows is { } rows ? rows[index] : null;
     }
 
     /// <summary>

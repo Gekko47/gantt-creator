@@ -36,6 +36,8 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
     private const double Padding = 12d;
     private const double CentreY = 100d;
     private const double Radius = 10d;
+    private const string TokenFont = "Aptos";
+    private const double FontSizePt = 9d;
 
     private readonly ITestOutputHelper _output = output;
 
@@ -69,12 +71,15 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
                 ChartOriginDelta.ForChartBounds(new RectD(-Padding, -Padding, 400d, 300d)));
             SceneTranslationOutcome translated = renderer.Translate(scene);
             Assert.True(translated.Complete, translated.Deferred.Count + " primitives were deferred.");
-            Assert.Equal(3, translated.Requests.Count);
 
-            // The bar is on ActivityBody (40) and the markers on Milestone (60),
-            // so the scene's own back-to-front order is bar, marker-a, marker-b.
+            // The bar is on ActivityBody (40), the markers on Milestone (60), and the
+            // label on Label (70), so the scene's own back-to-front order is bar,
+            // marker-a, marker-b, label. Four primitives across three layers is
+            // what makes the ordering assertion meaningful: a pass that reversed
+            // the order, or applied it within a layer only, would still satisfy a
+            // two-shape test.
             Assert.Equal(
-                ["row-1:bar", "row-1:marker-a", "row-1:marker-b"],
+                ["row-1:bar", "row-1:marker-a", "row-1:marker-b", "row-1:label"],
                 translated.Requests.Select(request => request.PrimitiveId));
 
             var writer = new ExcelShapeWriter(fixture.Excel);
@@ -113,9 +118,17 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
     private static GanttScene BuildScene()
     {
         var style = new SceneStyle("Default");
+        var labelStyle = new SceneStyle(
+            "Label",
+            fontFamily: TokenFont,
+            fontSizePt: FontSizePt,
+            bold: false);
 
         // Two same-date milestones 20pt apart plus a bar beneath them: the
-        // overlap case the entity guide requires be ordered, not moved.
+        // overlap case the entity guide requires be ordered, not moved. A label on
+        // the next layer up adds a fourth shape in FRONT of everything, so the
+        // ordering assertion covers a shape that must end up above the others
+        // rather than only shapes at or below the bar.
         return GanttScene.TryCreate(
                 new RectD(-Padding, -Padding, 400d, 300d),
                 new RectD(0d, 0d, 380d, 280d),
@@ -123,6 +136,14 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
                     new SceneRect("row-1:bar", SceneOwnerId.Chart, ZLayer.ActivityBody, new RectD(60d, 96d, 40d, 8d), style),
                     new ScenePolygon("row-1:marker-a", SceneOwnerId.Chart, ZLayer.Milestone, Diamond(80d), style),
                     new ScenePolygon("row-1:marker-b", SceneOwnerId.Chart, ZLayer.Milestone, Diamond(100d), style),
+                    new SceneText(
+                        "row-1:label",
+                        SceneOwnerId.Chart,
+                        ZLayer.Label,
+                        "Site survey",
+                        new RectD(60d, 70d, 60d, 12d),
+                        labelStyle,
+                        GanttTextAlignment.Left),
                 ],
                 [])
             .Scene ?? throw new InvalidOperationException("The fixture scene failed to validate.");
@@ -177,15 +198,24 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
     /// <param name="bar">The bar shape, already tracked.</param>
     private void AssertZOrder(OfficeFixture.ComScope scope, Excel.Worksheet sheet, Excel.Shape bar)
     {
+        // Read every shape's own position rather than restating what the adapter
+        // asked for. ZOrderPosition is read-only and higher means nearer the front,
+        // so a strictly increasing sequence across all four is the host's answer.
         int barPosition = bar.ZOrderPosition;
         int markerAPosition = scope.Track(sheet.Shapes.Item("row-1:marker-a")).ZOrderPosition;
         int markerBPosition = scope.Track(sheet.Shapes.Item("row-1:marker-b")).ZOrderPosition;
+        int labelPosition = scope.Track(sheet.Shapes.Item("row-1:label")).ZOrderPosition;
 
         _output.WriteLine("z-order positions: bar=" + barPosition
-            + " marker-a=" + markerAPosition + " marker-b=" + markerBPosition);
+            + " marker-a=" + markerAPosition + " marker-b=" + markerBPosition
+            + " label=" + labelPosition);
 
+        // The full chain, not just the adjacent pairs the gate used to assert. A
+        // pass that reversed the whole list, or that put the label behind the bar,
+        // would slip past a pairwise check of the first three alone.
         Assert.True(barPosition < markerAPosition, "The bar must sit behind the first milestone.");
         Assert.True(markerAPosition < markerBPosition, "The second milestone must sit in front of the first.");
+        Assert.True(markerBPosition < labelPosition, "The label must sit in front of both milestones.");
     }
 
     /// <summary>Asserts every rendered shape is owned, then deletes it.</summary>
@@ -193,7 +223,10 @@ public class PolygonRenderIntegrationTests(ITestOutputHelper output)
     /// <param name="sheet">The worksheet holding the shapes.</param>
     private static void AssertOwnershipAndCleanup(OfficeFixture.ComScope scope, Excel.Worksheet sheet)
     {
-        foreach (string id in new[] { "row-1:bar", "row-1:marker-a", "row-1:marker-b" })
+        foreach (string id in new[]
+        {
+            "row-1:bar", "row-1:marker-a", "row-1:marker-b", "row-1:label",
+        })
         {
             Excel.Shape shape = scope.Track(sheet.Shapes.Item(id));
             Assert.Equal(id, shape.Name);

@@ -143,6 +143,36 @@ public class ExcelInsertedRowSelectorTests
     }
 
     [Fact]
+    public void A_host_failure_activating_the_worksheet_degrades_to_no_selection()
+    {
+        // The row has already been inserted by the time SelectBodyRow runs, so a
+        // refused activation must not escape: doing so would surface the insert as
+        // a failure to the user even though the row is there.
+        var graph = new Graph();
+        _ = graph.Worksheet.Setup(w => w.Activate()).Throws<COMException>();
+        TestableSelector selector = graph.Build();
+
+        Assert.Null(Record.Exception(() => selector.SelectBodyRow(2)));
+
+        graph.RowRanges[1].Verify(r => r.Select(), Times.Never);
+    }
+
+    [Fact]
+    public void A_host_failure_selecting_the_row_degrades_to_no_selection()
+    {
+        // Same guarantee for the select itself, which is the second COM call at
+        // this boundary and the one most likely to be refused (a protected or
+        // non-active sheet).
+        var graph = new Graph();
+        _ = graph.RowRanges[1].Setup(r => r.Select()).Throws<COMException>();
+        TestableSelector selector = graph.Build();
+
+        Assert.Null(Record.Exception(() => selector.SelectBodyRow(2)));
+
+        Assert.Equal(2, Assert.Single(selector.RequestedBodyIndexes));
+    }
+
+    [Fact]
     public void Does_nothing_without_an_active_workbook()
     {
         var graph = new Graph();

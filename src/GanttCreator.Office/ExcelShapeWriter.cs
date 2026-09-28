@@ -122,13 +122,12 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
-        // Send the new shape to the back immediately. The host's z-order is a
-        // total order over the sheet, so a shape created in the middle of a
-        // refresh would otherwise land on top of every earlier primitive and
-        // break the entity guide's back-to-front layer table. The authoritative
-        // ordering is still applied once for the whole scene by ApplyZOrder; this
-        // per-shape call only keeps a partially-built chart sane.
-        created.ZOrder(MsoZOrderCmd.msoSendToBack);
+        // No per-shape z-order call here. The caller creates the scene's
+        // primitives in Translate's back-to-front order and a new shape is
+        // inserted in front of the existing ones, so the default insertion order
+        // already IS the scene's order. ApplyZOrder is the single authoritative
+        // pass, and it establishes the final order independently of whatever
+        // order the host happened to be in.
         return ApplyOwnershipOrDiscard(created, request.PrimitiveId);
     }
 
@@ -174,7 +173,7 @@ public class ExcelShapeWriter(
         // "no owned shape with this identifier" is one condition, and R4.7
         // reconciles from ListOwned(), which already excludes such a shape, so it
         // will not reach this path with an unowned identifier in normal operation.
-        if (!ShapeOwnershipTag.IsOwnedTag(existing.AlternativeText))
+        if (!CarriesOwnershipTagFor(existing, request.PrimitiveId))
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
         }
@@ -233,7 +232,7 @@ public class ExcelShapeWriter(
 
         // The ownership filter, not the name, authorises the delete. A user
         // shape that happens to share a name is never deleted (R4.8 D1).
-        if (!ShapeOwnershipTag.IsOwnedTag(existing.AlternativeText))
+        if (!CarriesOwnershipTagFor(existing, primitiveId))
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
         }
@@ -261,9 +260,10 @@ public class ExcelShapeWriter(
                 continue;
             }
 
-            if (ShapeOwnershipTag.IsOwnedTag(shape.AlternativeText) && !string.IsNullOrWhiteSpace(shape.Name))
+            var name = shape.Name;
+            if (!string.IsNullOrWhiteSpace(name) && CarriesOwnershipTagFor(shape, name))
             {
-                owned.Add(shape.Name);
+                owned.Add(name);
             }
         }
 
@@ -298,20 +298,12 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Ok();
         }
 
-        // Anchor the first shape at the very back, then bring each subsequent
-        // shape forward exactly once. The host's ZOrder command is relative
-        // (msoSendToBack / msoBringForward) and ZOrderPosition is read-only, so
-        // an absolute index cannot be assigned; this sequence is the way to make
-        // the host's order match the scene's declared order.
-        Excel.Shape? back = FindShapeByName(shapes, backToFront[0]);
-        if (back is null)
-        {
-            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
-        }
-
-        back.ZOrder(MsoZOrderCmd.msoSendToBack);
-
-        for (var index = 1; index < backToFront.Count; index++)
+        // Resolve every named shape BEFORE mutating any. Resolving inside the
+        // mutation loop would let a name that does not exist leave the earlier
+        // shapes already moved, which is the partial order this method refuses to
+        // produce; two passes keep the refusal atomic.
+        List<Excel.Shape> resolved = new(backToFront.Count);
+        for (var index = 0; index < backToFront.Count; index++)
         {
             Excel.Shape? shape = FindShapeByName(shapes, backToFront[index]);
             if (shape is null)
@@ -319,7 +311,19 @@ public class ExcelShapeWriter(
                 return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
             }
 
-            shape.ZOrder(MsoZOrderCmd.msoBringForward);
+            resolved.Add(shape);
+        }
+
+        // Send each shape to the back in REVERSE order. msoSendToBack is absolute
+        // ("make this the backmost shape"), so walking the scene's back-to-front
+        // list from the front end and pushing every shape behind everything else
+        // leaves the final order equal to backToFront whatever the host's prior
+        // order was. Forward order would produce its exact reverse. This is still
+        // the single deterministic pass R4.5 D2 requires: no BringToFront, and no
+        // per-shape call outside this method.
+        for (var index = resolved.Count - 1; index >= 0; index--)
+        {
+            resolved[index].ZOrder(MsoZOrderCmd.msoSendToBack);
         }
 
         return ShapeWriteOutcome.Ok();
@@ -473,6 +477,36 @@ public class ExcelShapeWriter(
 
     private static bool IsUsablePoint(PointD? point) =>
         point is { } value && double.IsFinite(value.X) && double.IsFinite(value.Y);
+
+    /// <summary>
+    /// Determines whether a shape's alternative text is the ownership tag for
+    /// <em>this</em> identifier, not merely a well-formed tag for some identifier.
+    /// </summary>
+    /// <param name="shape">The shape whose alternative text is read.</param>
+    /// <param name="primitiveId">The identifier the caller is acting on.</param>
+    /// <returns>
+    /// <see langword="true"/> when the shape's alternative text is exactly
+    /// <see cref="ShapeOwnershipTag.ForPrimitiveId"/> of <paramref name="primitiveId"/>.
+    /// </returns>
+    /// <remarks>
+    /// A format check alone is not the ownership proof. <c>IsOwnedTag</c> answers
+    /// "did the add-in write a tag here", while this answers "did the add-in write
+    /// <em>this primitive's</em> tag here". The second is what R4.8 needs: a shape
+    /// that carries a valid tag for a different identifier is not the shape the
+    /// caller named, so a refresh must neither rewrite nor delete it. The
+    /// comparison is ordinal because the tag is machine-generated by
+    /// <see cref="ShapeOwnershipTag.ForPrimitiveId"/>.
+    /// </remarks>
+    private static bool CarriesOwnershipTagFor(Excel.Shape shape, string primitiveId)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
+
+        return string.Equals(
+            shape.AlternativeText,
+            ShapeOwnershipTag.ForPrimitiveId(primitiveId),
+            StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Writes the two ADR-0019 ownership members onto a newly created shape.
@@ -836,10 +870,10 @@ public class ExcelShapeWriter(
     }
 
     /// <summary>
-    /// Creates the milestone diamond at the bounding box of the request's points.
+    /// Creates the milestone diamond from the request's bounding box.
     /// </summary>
     /// <param name="shapes">The shapes collection.</param>
-    /// <param name="request">The request whose points bound the diamond.</param>
+    /// <param name="request">The request whose bounds place the diamond.</param>
     /// <returns>The created diamond, or <see langword="null"/> when the host refused.</returns>
     /// <remarks>
     /// <para>
@@ -860,10 +894,15 @@ public class ExcelShapeWriter(
     /// every shape family again.
     /// </para>
     /// <para>
-    /// The scene still models a milestone as four points, and this adapter is
-    /// the single rounding boundary for them. The renderer has already refused
-    /// any polygon that is not a symmetric axis-aligned diamond, so the bounding
-    /// box below is exact rather than an approximation of the source vertices.
+    /// The shape is placed from <see cref="OfficeShapeGeometry.Bounds"/> - the
+    /// same member <see cref="ApplyGeometry"/> uses on the update path - rather
+    /// than recomputed here from the points. The scene still models a milestone
+    /// as four points and they stay on the request so the translation remains
+    /// auditable, but <see cref="SceneShapeRenderer"/> has already refused any
+    /// polygon that is not a symmetric axis-aligned diamond, so the two boxes are
+    /// equal by construction. Recomputing them here created a second place where
+    /// the box could be derived, which is exactly the dual-source risk R4.1's
+    /// single rounding boundary exists to prevent.
     /// </para>
     /// </remarks>
     private static Excel.Shape? AddDiamond(Excel.Shapes shapes, OfficeShapeRequest request)
@@ -871,23 +910,20 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentNullException.ThrowIfNull(request);
 
-        IReadOnlyList<PointD> points = request.Geometry.Points!;
-        if (points.Count < 3)
+        if (request.Geometry.Bounds is not { } bounds)
         {
+            // Validate has already refused a bounds-less diamond before any host
+            // call, so this arm is unreachable through Create. It is the guard
+            // that keeps this method total for any future caller.
             return null;
         }
 
-        var left = points.Min(point => point.X);
-        var top = points.Min(point => point.Y);
-        var right = points.Max(point => point.X);
-        var bottom = points.Max(point => point.Y);
-
         return shapes.AddShape(
             MsoAutoShapeType.msoShapeDiamond,
-            GeometryMath.SnapToDisplayPrecision(left),
-            GeometryMath.SnapToDisplayPrecision(top),
-            GeometryMath.SnapToDisplayPrecision(right - left),
-            GeometryMath.SnapToDisplayPrecision(bottom - top));
+            GeometryMath.SnapToDisplayPrecision(bounds.X),
+            GeometryMath.SnapToDisplayPrecision(bounds.Y),
+            GeometryMath.SnapToDisplayPrecision(bounds.Width),
+            GeometryMath.SnapToDisplayPrecision(bounds.Height));
     }
 
     /// <summary>
@@ -949,24 +985,34 @@ public class ExcelShapeWriter(
         // Verbatim: the scene already applied the overflow policy.
         textRange.Text = request.Text ?? string.Empty;
 
-        if (request.Alignment is { } alignment)
+        if (request.Alignment is { } alignment && textRange.ParagraphFormat is { } paragraphFormat)
         {
-            textRange.ParagraphFormat.Alignment = MapAlignment(alignment);
+            // ParagraphFormat2 is held in a local rather than written through
+            // textRange.ParagraphFormat: a chained COM property call creates a
+            // second proxy the adapter never names, and the ownership rule is that
+            // every proxy is held in a local. The proxy is Excel-owned and shared,
+            // so it is not force-released - see the class remarks.
+            paragraphFormat.Alignment = MapAlignment(alignment);
         }
 
-        if (request.FontFamily is { } family)
+        if (textRange.Font is { } font)
         {
-            textRange.Font.Name = family;
-        }
+            // Same rule for Font2, which is read once and written through for
+            // family, size, and weight alike.
+            if (request.FontFamily is { } family)
+            {
+                font.Name = family;
+            }
 
-        if (request.FontSizePt is { } size)
-        {
-            textRange.Font.Size = (float)size;
-        }
+            if (request.FontSizePt is { } size)
+            {
+                font.Size = (float)size;
+            }
 
-        if (request.Bold is { } bold)
-        {
-            textRange.Font.Bold = bold ? MsoTriState.msoTrue : MsoTriState.msoFalse;
+            if (request.Bold is { } bold)
+            {
+                font.Bold = bold ? MsoTriState.msoTrue : MsoTriState.msoFalse;
+            }
         }
     }
 

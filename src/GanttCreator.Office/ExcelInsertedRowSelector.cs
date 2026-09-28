@@ -110,10 +110,26 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
 
                 // Range.Select only works on the active sheet, so the Gantt
                 // worksheet is activated first. A refused activation or selection
-                // degrades to no selection change.
-                worksheet.Activate();
-                Excel.Range target = GetRowRange(targetRow);
-                target.Select();
+                // degrades to no selection change: the row has already been added
+                // by the time this runs, so letting a host failure escape would
+                // report the insert as failed when it in fact succeeded.
+                //
+                // CA1031: both calls are best-effort selection changes whose only
+                // failure mode is "the cursor stays put". That must not propagate
+                // into Excel and undo the command the user asked for.
+#pragma warning disable CA1031
+                try
+                {
+                    worksheet.Activate();
+                    Excel.Range target = GetRowRange(targetRow);
+                    target.Select();
+                }
+                catch
+                {
+                    // Intentionally empty: the row is added either way; only the
+                    // cursor stays put.
+                }
+#pragma warning restore CA1031
                 return;
             }
         }

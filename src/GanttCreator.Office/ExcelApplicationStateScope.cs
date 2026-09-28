@@ -401,16 +401,37 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// </summary>
     /// <param name="selection">The previously captured selection.</param>
     /// <remarks>
+    /// <para>
     /// <c>Application.Selection</c> has no setter (probed 2026-09-27:
     /// <c>canWrite = false</c>), and neither <c>Application.Select</c> nor
     /// <c>Worksheet.Select</c> exists on the PIA interfaces, so the only restore
     /// path is <c>Range.Select()</c> on the captured range.
+    /// </para>
+    /// <para>
+    /// A captured selection that is not an <see cref="Excel.Range"/> is a failure,
+    /// not a silent no-op. <c>Application.Selection</c> is typed <c>Object</c>, so
+    /// a host can hand back a chart, a shape, or something that is not an Excel
+    /// object at all; an <c>is Excel.Range</c> test that simply fell through would
+    /// report a successful restore while the user's cursor stayed wherever the
+    /// command left it. Throwing lets the caller's existing D3 guard record the
+    /// failure. It still degrades rather than propagating: the throw is caught by
+    /// <see cref="Dispose(bool)"/>, which never lets a restore failure escape.
+    /// </para>
     /// </remarks>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when <paramref name="selection"/> is not an <see cref="Excel.Range"/>,
+    /// so there is no <c>Select()</c> to call.
+    /// </exception>
     internal virtual void RestoreSelection(object selection)
     {
-        if (selection is Excel.Range range)
+        if (selection is not Excel.Range range)
         {
-            range.Select();
+            throw new NotSupportedException(
+                "The captured Excel selection is not a Range (it is "
+                    + selection.GetType().Name
+                    + "), so it cannot be restored. Range.Select() is the only restore path.");
         }
+
+        range.Select();
     }
 }

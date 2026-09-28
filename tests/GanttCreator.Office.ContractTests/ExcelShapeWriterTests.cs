@@ -38,6 +38,15 @@ public class ExcelShapeWriterTests
         public List<string> ZOrderCommands { get; } = [];
 
         /// <summary>
+        /// The shape names the z-order commands were issued against, in call order.
+        /// A command sequence alone proves <em>how many</em> operations ran, not
+        /// <em>which</em> shape each one moved; the reverse pass is only correct if
+        /// the front-most shape is the first one sent back, so the shape identity
+        /// is recorded too.
+        /// </summary>
+        public List<string> ZOrderShapes { get; } = [];
+
+        /// <summary>
         /// The requests the adapter was asked to create, in order. R4.4 asserts
         /// the text, font, and alignment members the host was handed, so the
         /// observable operation is recorded rather than the shape's post-write
@@ -108,10 +117,15 @@ public class ExcelShapeWriterTests
             _ = mock.Setup(s => s.Delete()).Callback(() => CreatedShapeDeleted = true);
 
             // ZOrder is a real COM call on the shape; the fake records the
-            // command instead, so D2's "no opportunistic BringToFront" pin
-            // asserts the actual operation sequence rather than a proxy.
+            // command and the shape it moved instead, so D2's "no opportunistic
+            // BringToFront" pin and the reverse-order pin both assert the actual
+            // operation sequence rather than a proxy.
             _ = mock.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
-                .Callback<MsoZOrderCmd>(command => owner.ZOrderCommands.Add(command.ToString()));
+                .Callback<MsoZOrderCmd>(command =>
+                {
+                    owner.ZOrderCommands.Add(command.ToString());
+                    owner.ZOrderShapes.Add(name);
+                });
 
             var created = mock.Object;
             Created.Add(created);
@@ -198,7 +212,6 @@ public class ExcelShapeWriterTests
         Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
         Assert.Empty(writer.Created);
     }
-    /// <summary>
     /// <summary>
     /// R4.5 D1: a milestone is placed as a diamond auto-shape at the bounding
     /// box of its points. The points stay on the request so the translation is
@@ -370,12 +383,16 @@ public class ExcelShapeWriterTests
     }
 
     /// <summary>
-    /// R4.5 D2: the z-order pass moves the first named shape to the back and then
-    /// brings each subsequent one forward exactly once. No per-shape
-    /// <c>BringToFront</c> outside this single pass, and no host-default order.
+    /// R4.5 D2: the z-order pass sends each named shape to the back in REVERSE
+    /// order, which is what makes the host's final order equal the scene's
+    /// back-to-front list whatever order the host started in. <c>msoSendToBack</c>
+    /// is absolute, so walking front-to-back and pushing every shape behind
+    /// everything else leaves the list in order; walking it the other way would
+    /// produce its exact reverse. No per-shape <c>BringToFront</c> outside this
+    /// single pass, and no host-default order.
     /// </summary>
     [Fact]
-    public void The_z_order_pass_sends_the_first_shape_to_the_back_then_brings_each_forward_once()
+    public void The_z_order_pass_sends_each_shape_to_the_back_in_reverse_so_the_final_order_matches_the_scene()
     {
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
         string[] ids = ["chart:background", "chart:grid:0", "row-1:bar", "row-1:label"];
@@ -388,18 +405,28 @@ public class ExcelShapeWriterTests
                 ZLayer.Background));
         }
 
-        writer.ZOrderCommands.Clear();
+        // Create issues no z-order command of its own: insertion order already is
+        // the scene's order, and ApplyZOrder is the single authoritative pass.
+        Assert.Empty(writer.ZOrderCommands);
 
         ShapeWriteOutcome outcome = writer.ApplyZOrder(ids);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
 
-        // Exactly one send-to-back and one bring-forward per shape after the
-        // first - no opportunistic repetition, no BringToFront at all.
+        // One send-to-back per shape, issued front-to-back (i.e. the reverse of the
+        // backToFront list). Anything else - a bring-forward pass, a BringToFront,
+        // or fewer calls than shapes - would leave the host's order wrong. The
+        // literal is the enum member's own name, as the recorder writes it.
+        Assert.Equal(ids.Length, writer.ZOrderCommands.Count);
+        Assert.All(
+            writer.ZOrderCommands,
+            command => Assert.Equal(nameof(MsoZOrderCmd.msoSendToBack), command));
+
+        // The shapes are recorded in the order they were sent to the back, so the
+        // sequence itself is the assertion: the front-most scene shape goes first.
         Assert.Equal(
-            1 + (ids.Length - 1),
-            writer.ZOrderCommands.Count(command => command != "BringToFront"));
-        Assert.DoesNotContain("BringToFront", writer.ZOrderCommands);
+            [.. Enumerable.Reverse(ids)],
+            writer.ZOrderShapes);
     }
 
     /// <summary>
@@ -650,6 +677,36 @@ public class ExcelShapeWriterTests
 
         Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
         Assert.False(deleted, "An unowned shape must never be deleted.");
+    }
+
+    /// <summary>
+    /// A shape carrying ANOTHER identifier's valid tag is not this primitive's
+    /// shape. <c>IsOwnedTag</c> alone accepts it - the prefix and hash are both
+    /// well formed - so a format check would let a refresh move and rewrite a shape
+    /// the caller never named. The ownership proof is the tag for <em>this</em>
+    /// identifier, so all three entry points refuse the mismatch.
+    /// </summary>
+    [Fact]
+    public void A_shape_carrying_another_identifier_s_valid_tag_is_never_treated_as_owned()
+    {
+        // The sentinel deliberately carries the REQUESTED name and a tag that is
+        // perfectly valid - just for a different primitive.
+        const string OtherId = "row-9:bar";
+        var impostor = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId(OtherId));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, impostor);
+
+        // Update must not move it.
+        Assert.Equal(ShapeWriteRefusal.NotFound, writer.Update(RectangleRequest()).Refusal);
+        Assert.Equal(0f, impostor.Left);
+
+        // Delete must not remove it. The alternative text is unchanged, so a
+        // delete that ran would have taken the shape with it.
+        Assert.Equal(ShapeWriteRefusal.NotFound, writer.Delete("row-1:bar").Refusal);
+        Assert.Equal(ShapeOwnershipTag.ForPrimitiveId(OtherId), impostor.AlternativeText);
+        Assert.Equal("row-1:bar", impostor.Name);
+
+        // And ListOwned must not report it as this add-in's shape.
+        Assert.Empty(writer.ListOwned());
     }
 
     [Fact]
