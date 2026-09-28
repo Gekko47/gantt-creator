@@ -434,11 +434,11 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Source:** `Type=Splitter`, `Description`, ordering, optional parent relationship.
 
-**Geometry:** occupies a complete lane across the included data panel and plot. It has no date geometry. Height is `SplitterHeightPt`.
+**Geometry:** occupies a complete lane across the included data panel and plot. It has no date geometry. Height is `SplitterHeightPt`. The band spans from the data panel's left edge to the plot's right edge and the full `SplitterHeightPt` of the lane, at `ZLayer.Section` (30). Its top and bottom borders are `MajorBoundaryPt` lines at `ZLayer.Frame` (80), so they frame the band rather than sitting beneath it. A `Splitter` occupies its own lane: a shared `LaneId` does not merge it into a neighbouring activity's lane.
 
-**Style:** `SplitterFill` with major top/bottom border; no activity fill.
+**Style:** `SplitterFill` with major top/bottom border; no activity fill. The style is the code-owned `Splitter` preset, so a change to the `SplitterFill` token changes the rendered band.
 
-**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs.
+**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs (`splitter-label` and `splitter-label-plot`). A blank `Description` renders the band and no label.
 
 **Validation/tests:** no required dates, deterministic group placement, export span, expand/collapse interaction where supported.
 

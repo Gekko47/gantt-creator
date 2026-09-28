@@ -387,14 +387,165 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void A_splitter_and_spacer_alone_are_refused_because_neither_has_an_entity_primitive()
+    public void A_delineator_only_scene_is_not_empty_because_a_delineator_renders()
     {
-        Assert.Equal(
-            SceneBuilderRefusal.EmptyEvents,
-            SceneBuilder.TryBuild(Request(
-                Event(1, GanttEntityType.Splitter, styleKey: null),
-                Event(2, GanttEntityType.Spacer, styleKey: null))).Refusal);
+        // §24 makes a Delineator a full-height plot line that consumes no lane. It is
+        // therefore absent from the lane participants, and treating "no lane-bound
+        // event" as "empty scene" refused a chart that has a line to draw.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(_plotBounds.Top, line.From.Y);
+        Assert.Equal(_plotBounds.Bottom, line.To.Y);
     }
+
+
+    [Fact]
+    public void A_delineator_style_the_registry_supplies_is_preferred_over_the_catalogue_fallback()
+    {
+        // P1-4: the delineator fallback used to restate the stroke colour as a literal,
+        // making the token table and SceneBuilder two sources of truth. Both paths now
+        // read the catalogue, so a registry that supplies its own style wins and the
+        // fallback agrees with it rather than overriding it.
+        GanttStyleDefinition registryDelineator = new(
+            "DefaultDelineator",
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto, GanttLabelPosition.None },
+            EntityColourCapability.Stroke,
+            GanttLabelPosition.Auto,
+            null,
+            "#FF00FF",
+            "#000000",
+            GanttHatchPattern.None,
+            0,
+            0,
+            0.5,
+            0,
+            8);
+        GanttStyleRegistry registryWithDelineator = new(SharedStyles.Append(registryDelineator));
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null))
+                with { Registry = registryWithDelineator });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(ColourHex.Parse("#FF00FF"), line.Style.StrokeColour);
+    }
+
+    [Fact]
+    public void An_unresolvable_delineator_takes_the_catalogue_preset_not_a_restated_literal()
+    {
+        // The fallback path is proven reachable and proven to read the catalogue: the
+        // expected colour is the DelineatorStroke token, never a value written into
+        // this test, so a change to the token moves this assertion with it.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(
+            ColourHex.Parse(GanttCatalogues.GetPreset("DefaultDelineator").StrokeColour),
+            line.Style.StrokeColour);
+    }
+
+    [Fact]
+    public void Several_delineators_only_scene_builds_one_line_per_resolved_style()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null),
+                Event(2, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 20), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // Two different dates are two groups, so two lines; neither consumed a lane.
+        Assert.Equal(2, outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Count(candidate => candidate.ZLayer == ZLayer.Delineator));
+    }
+
+    [Fact]
+    public void A_splitter_and_spacer_only_scene_builds_the_splitter_band_and_no_spacer_primitive()
+    {
+        // This test previously asserted EmptyEvents, which encoded the defect as
+        // contractual: both rows were dropped before lane layout, so §10/§11 lane
+        // geometry was unreachable and a Splitter never rendered. The result is now
+        // defined explicitly — a Splitter emits a band, a Spacer emits nothing.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.Splitter, styleKey: null),
+                Event(2, GanttEntityType.Spacer, styleKey: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // §10: the band, plus its two major borders.
+        Assert.Equal(
+            3,
+            outcome.Result!.Scene.Primitives.Count(
+                candidate => candidate.PrimitiveId.Contains(SplitterBuilder.BandRole, StringComparison.Ordinal)));
+        // §11: "no foreground fill, border, or label" — a Spacer owns no primitive.
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Primitives,
+            candidate => candidate.PrimitiveId.Contains(":spacer", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_splitter_between_two_activities_displaces_the_second_by_exactly_the_splitter_height()
+    {
+        GanttEvent first = Event(1, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+        GanttEvent splitter = Event(2, GanttEntityType.Splitter, styleKey: null);
+        GanttEvent second = Event(3, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(first, splitter, second));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        double firstTop = BarTop(outcome, first);
+        double secondTop = BarTop(outcome, second);
+
+        // The lone activity lane is LaneHeightPt tall and the splitter is
+        // SplitterHeightPt, so the second bar sits exactly one splitter height lower.
+        Assert.Equal(_laneMetrics.LaneHeightPt + _laneMetrics.SplitterHeightPt, secondTop - firstTop);
+    }
+
+    [Fact]
+    public void A_splitter_and_a_spacer_between_two_activities_each_contribute_exactly_once()
+    {
+        GanttEvent first = Event(1, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+        GanttEvent splitter = Event(2, GanttEntityType.Splitter, styleKey: null);
+        GanttEvent spacer = Event(3, GanttEntityType.Spacer, styleKey: null);
+        GanttEvent second = Event(4, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(first, splitter, spacer, second));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(
+            _laneMetrics.LaneHeightPt + _laneMetrics.SplitterHeightPt + _laneMetrics.SpacerHeightPt,
+            BarTop(outcome, second) - BarTop(outcome, first));
+    }
+
+    [Fact]
+    public void A_spacer_only_scene_is_not_empty_because_the_spacer_still_occupies_a_lane()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Spacer, styleKey: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // A Spacer renders no primitive, so the frame alone is the correct output.
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Primitives,
+            candidate => candidate.PrimitiveId.Contains(":spacer", StringComparison.Ordinal));
+    }
+
+    /// <summary>Reads one event's bar top from a built scene.</summary>
+    private static double BarTop(SceneBuildOutcome outcome, GanttEvent @event) =>
+        Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            candidate => candidate.PrimitiveId == ScenePrimitive.CreateId(SceneOwnerId.ForRow(@event.Id), "bar")).Bounds.Y;
 
     [Fact]
     public void A_milestone_emits_its_diamond_and_reads_only_the_start_date()

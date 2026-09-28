@@ -26,6 +26,8 @@
 | ADR-0018 | Text alignment is its own type, not a label position | Accepted | 2026-09-26 | [`adr/0018-text-alignment-is-not-a-label-position.md`](adr/0018-text-alignment-is-not-a-label-position.md) |
 | ADR-0019 | Shape ownership carrier is `AlternativeText`, with a bounded versioned tag | Accepted | 2026-09-27 | [`adr/0019-shape-ownership-carrier.md`](adr/0019-shape-ownership-carrier.md) |
 | ADR-0020 | The application-state scope covers five settings, not six | Accepted | 2026-09-27 | [`adr/0020-application-state-scope-five-settings.md`](adr/0020-application-state-scope-five-settings.md) |
+| ADR-0021 | Structural rows reach lane layout; "empty" means no visible entity | Accepted | 2026-09-28 | [`adr/0021-structural-rows-and-empty-scene.md`](adr/0021-structural-rows-and-empty-scene.md) |
+| ADR-0022 | The §10 splitter band is a new scene builder on the existing style pipeline | Accepted | 2026-09-28 | [`adr/0022-splitter-band-builder.md`](adr/0022-splitter-band-builder.md) |
 
 ## ADR template
 

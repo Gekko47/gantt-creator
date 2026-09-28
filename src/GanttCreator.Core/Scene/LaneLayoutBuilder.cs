@@ -6,26 +6,23 @@ public enum LaneLayoutRefusal
     /// <summary>The event collection was null.</summary>
     NullInput = 0,
 
-    /// <summary>The event collection was empty.</summary>
-    EmptyInput = 1,
-
     /// <summary>The metrics input was null.</summary>
-    NullMetrics = 2,
+    NullMetrics = 1,
 
     /// <summary>One or more metrics were non-finite or negative.</summary>
-    InvalidMetrics = 3,
+    InvalidMetrics = 2,
 
     /// <summary>An input item or its event was null.</summary>
-    NullEvent = 4,
+    NullEvent = 3,
 
     /// <summary>A resolved event height was non-finite or invalid for its type.</summary>
-    InvalidEventHeight = 5,
+    InvalidEventHeight = 4,
 
     /// <summary>An effective compatibility stack value was negative.</summary>
-    InvalidEffectiveStack = 6,
+    InvalidEffectiveStack = 5,
 
     /// <summary>Two input events carried the same stable row ID.</summary>
-    DuplicateEventId = 7,
+    DuplicateEventId = 6,
 }
 
 /// <summary>The typed result of attempting to build lane geometry.</summary>
@@ -43,7 +40,10 @@ public static class LaneLayoutBuilder
     private const string _ambiguousStackOverlapCode = "AmbiguousStackOverlap";
 
     /// <summary>Attempts to build deterministic lane geometry.</summary>
-    /// <param name="events">The validated event layout inputs.</param>
+    /// <param name="events">
+    /// The validated event layout inputs. An empty collection is valid and produces an
+    /// empty layout: §24 makes a Delineator a plot-global entity that consumes no lane.
+    /// </param>
     /// <param name="metrics">The resolved lane metrics.</param>
     /// <returns>A typed layout outcome.</returns>
     public static LaneLayoutCreationOutcome TryBuild(IReadOnlyList<LaneEventInput>? events, LaneLayoutMetrics? metrics)
@@ -51,11 +51,6 @@ public static class LaneLayoutBuilder
         if (events is null)
         {
             return Refused(LaneLayoutRefusal.NullInput);
-        }
-
-        if (events.Count == 0)
-        {
-            return Refused(LaneLayoutRefusal.EmptyInput);
         }
 
         if (metrics is null)
@@ -66,6 +61,18 @@ public static class LaneLayoutBuilder
         if (!ValidMetrics(metrics))
         {
             return Refused(LaneLayoutRefusal.InvalidMetrics);
+        }
+
+        // An empty input is a successful empty layout, not a refusal. Entity guide
+        // §24 makes a Delineator a full-height plot line that consumes no lane, so a
+        // scene of only delineators legitimately has no lanes at all. Refusing here
+        // forced `SceneBuilder` to call that scene "empty" and refuse it as
+        // `EmptyEvents`, which wrongly reported a renderable scene as having nothing
+        // to render. Whether the scene has any content at all is the orchestrator's
+        // question, not this builder's.
+        if (events.Count == 0)
+        {
+            return new LaneLayoutCreationOutcome(new LaneLayoutResult([], []), null);
         }
 
         HashSet<GanttRowId> ids = [];

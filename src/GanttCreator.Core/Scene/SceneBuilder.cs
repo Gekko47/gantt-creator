@@ -252,19 +252,36 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
-        // A hidden row validates but must not render, and a splitter or spacer is
-        // lane geometry with no entity primitive. A delineator is excluded too: §24
-        // makes it a full-height plot line, not a lane-bound entity, so giving it a
-        // lane would reserve vertical space for a row it must not occupy. It is
-        // built separately by the delineator pass.
-        List<GanttEvent> renderable =
+        // A hidden row validates but must not render. The visible rows are then split
+        // into the four categories the guide treats differently, because collapsing
+        // them into one "renderable" list is what made Splitter and Spacer geometry
+        // unreachable: a row that occupies vertical space, emits a foreground
+        // primitive, and is not lane-bound are three different questions.
+        List<GanttEvent> visible =
         [
-            .. request.Events.Where(@event =>
-                @event.Visible && @event.Type is not (GanttEntityType.Splitter
-                    or GanttEntityType.Spacer
-                    or GanttEntityType.Delineator)),
+            .. request.Events.Where(@event => @event.Visible),
         ];
-        if (renderable.Count == 0)
+
+        // Lane participants: every visible row that occupies a lane. §9 lanes, §10
+        // Splitter and §11 Spacer all take their position in the lane sequence here.
+        List<GanttEvent> laneParticipants =
+        [
+            .. visible.Where(@event => @event.Type != GanttEntityType.Delineator),
+        ];
+
+        // Plot-global entities: §24 makes a Delineator a full-height plot line, not a
+        // lane-bound entity, so giving it a lane would reserve vertical space for a row
+        // it must not occupy. It is built separately by the delineator pass.
+        List<GanttEvent> plotGlobalEntities =
+        [
+            .. visible.Where(@event => @event.Type == GanttEntityType.Delineator),
+        ];
+
+        // "Empty" means no visible scene-producing entity, not "no lane-bound ordinary
+        // event". A Delineator renders a line and consumes no lane, so a scene of only
+        // delineators is a real scene; refusing it reported a renderable chart as
+        // having nothing to draw.
+        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
@@ -272,50 +289,80 @@ public static class SceneBuilder
         List<LaneEventInput> laneInputs = [];
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
 
-        // A delineator takes no lane, so its resolved line style is collected
-        // separately and the grouping pass reads this map.
-        List<GanttEvent> delineators =
-        [
-            .. request.Events.Where(@event =>
-                @event.Visible && @event.Type == GanttEntityType.Delineator),
-        ];
         Dictionary<GanttRowId, SceneStyle> delineatorStyles = [];
-        foreach (GanttEvent @event in delineators)
+        foreach (GanttEvent @event in plotGlobalEntities)
         {
             // §24 draws the line from the resolved line style, but a Delineator has
-            // no named-style default and no built-in preset, so an unresolvable one
-            // is NOT a broken workbook: it falls back to the chart's own delineator
-            // token style rather than refusing the whole scene. Only Types that
-            // *have* a default are refused when it cannot resolve.
+            // no named-style default in the registry, so an unresolvable one is NOT a
+            // broken workbook: it falls back to the code-owned DefaultDelineator
+            // preset rather than refusing the whole scene. Only Types that *have* a
+            // default are refused when it cannot resolve.
             delineatorStyles[@event.Id] = TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null
                 ? resolved.Style
-                : new SceneStyle("DefaultDelineator", strokeColour: ColourHex.Parse("#404040"));
+                : CataloguePresetStyle("DefaultDelineator");
         }
 
-        foreach (GanttEvent @event in renderable)
+        foreach (GanttEvent @event in laneParticipants)
         {
-            // A Splitter, Spacer, or Delineator has no named-style default, so
-            // requiring a resolvable style for one would refuse a valid workbook.
-            // A Type that does have a default is still refused when it cannot
-            // resolve, which is the R2.7c Custom Activity rule.
-            ResolvedEventStyle? resolved = null;
-            var requiresStyle = @event.Type is not (GanttEntityType.Splitter
-                or GanttEntityType.Spacer
-                or GanttEntityType.Delineator);
-            if (requiresStyle)
+            // A Splitter and a Spacer have no named style in the registry, and
+            // GanttStyleResolver deliberately refuses a blank key rather than
+            // guessing, so requiring resolution would refuse a valid workbook. They
+            // take the code-owned preset instead — the same authority the delineator
+            // fallback uses, and the same one a registry that *does* carry the style
+            // resolves to, so both paths agree. Every other Type is refused when it
+            // cannot resolve, which is the R2.7c Custom Activity rule.
+            SceneStyle style;
+            if (TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null)
             {
-                if (!TryResolveStyle(request.Registry, @event, out resolved) || resolved is null)
-                {
-                    return Refused(SceneBuilderRefusal.UnresolvableStyle);
-                }
+                style = resolved.Style;
+            }
+            else if (LaneOrdering.OwnsItsOwnLane(@event))
+            {
+                style = CataloguePresetStyle(
+                    EntityTypeCatalog.GetDefinition(@event.Type)!.DefaultStyleKey);
+            }
+            else
+            {
+                return Refused(SceneBuilderRefusal.UnresolvableStyle);
             }
 
-            // A style-less Type still occupies a lane, so it carries an explicit
-            // zero-height marker style rather than being dropped from the map that
-            // the milestone and overlay passes read.
-            ResolvedEventStyle style = resolved ?? new ResolvedEventStyle(new SceneStyle("None"), 0);
-            styles[@event.Id] = style;
-            laneInputs.Add(new LaneEventInput(@event, style.HeightPt));
+            // A fixed-height lane takes its height from the resolved metrics rather
+            // than from the style's activity height, which a Splitter or Spacer preset
+            // does not carry. Passing the height the lane will actually occupy keeps
+            // the input honest instead of relying on the fixed-lane branch ignoring it.
+            // Every type is listed explicitly, per the repo's exhaustive-switch
+            // convention, so a type added later cannot silently take the 0 default.
+            ResolvedEventStyle? heightSource = resolved;
+            var heightPt = @event.Type switch
+            {
+                GanttEntityType.Splitter => laneMetrics.SplitterHeightPt,
+                GanttEntityType.Spacer => laneMetrics.SpacerHeightPt,
+                GanttEntityType.AsBuiltActivity
+                    or GanttEntityType.AsPlannedActivity
+                    or GanttEntityType.BaselineActivity
+                    or GanttEntityType.CriticalInterval
+                    or GanttEntityType.DelayEvent
+                    or GanttEntityType.AsBuiltProcurement
+                    or GanttEntityType.AsPlannedProcurement
+                    or GanttEntityType.BaselineProcurement
+                    or GanttEntityType.CustomActivity
+                    or GanttEntityType.AsBuiltMilestone
+                    or GanttEntityType.AsPlannedMilestone
+                    or GanttEntityType.BaselineMilestone
+                    or GanttEntityType.CriticalMilestone => heightSource?.HeightPt ?? 0,
+
+                // A Delineator never reaches this loop — §24 makes it a plot-global
+                // entity — so it is listed rather than defaulted, per the repo's
+                // exhaustive-switch convention. The discard arm remains because an
+                // unnamed enum value would otherwise be a compile error rather than
+                // a visible decision; it resolves to the same zero a style-less row
+                // has always contributed.
+                GanttEntityType.Delineator => 0,
+                _ => 0,
+            };
+
+            styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
+            laneInputs.Add(new LaneEventInput(@event, heightPt));
         }
 
         if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
@@ -340,7 +387,8 @@ public static class SceneBuilder
         // the offset cannot be applied twice.
         BuildSpans(placements, styles, timeScale, plotBounds, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, delineators, delineatorStyles, parentVisibleBounds, primitives, warnings);
+        BuildSplitters(request, laneLayout, styles, panelBounds, plotBounds, laneParticipants, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, plotGlobalEntities, delineatorStyles, parentVisibleBounds, primitives, warnings);
     }
 
 
@@ -532,7 +580,7 @@ public static class SceneBuilder
         RectD panelBounds,
         RectD plotBounds,
         LaneEventLayoutResult placements,
-        List<GanttEvent> delineators,
+        List<GanttEvent> plotGlobalEntities,
         Dictionary<GanttRowId, SceneStyle> delineatorStyles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
@@ -585,7 +633,7 @@ public static class SceneBuilder
             timeScale,
             plotBounds,
             frameResult.Geometry.ChartBounds,
-            delineators,
+            plotGlobalEntities,
             delineatorStyles,
             primitives,
             warnings);
@@ -1059,6 +1107,109 @@ public static class SceneBuilder
                 hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None),
             heightPt);
         return true;
+    }
+
+    /// <summary>
+    /// The one catalogue fallback style for a row type with no named style.
+    /// </summary>
+    /// <param name="styleKey">The type's code-owned default style key.</param>
+    /// <returns>The preset's resolved fill and stroke, as a scene style.</returns>
+    /// <remarks>
+    /// A <c>Delineator</c>, <c>Splitter</c>, and <c>Spacer</c> have no named style in
+    /// the workbook registry, and <see cref="GanttStyleResolver"/> deliberately refuses
+    /// a blank key rather than guessing, so these rows can only be styled from the
+    /// code-owned preset. Restating a colour here would make the token table and this
+    /// method two sources of truth, and a change to the token would silently not reach
+    /// the scene. Reading the preset keeps the token table authoritative and is what
+    /// makes a registry that supplies its own style and this fallback agree.
+    /// </remarks>
+    private static SceneStyle CataloguePresetStyle(string styleKey)
+    {
+        GanttStylePreset preset = GanttCatalogues.GetPreset(styleKey);
+        return new SceneStyle(
+            preset.StyleKey,
+            string.IsNullOrEmpty(preset.FillColour) ? null : ColourHex.Parse(preset.FillColour),
+            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour));
+    }
+
+    /// <summary>
+    /// Builds the §10 splitter band, borders, and labels for every splitter lane.
+    /// </summary>
+    /// <param name="request">The build request, supplying the border width and label style.</param>
+    /// <param name="laneLayout">The lane layout, whose fixed lanes are the input.</param>
+    /// <param name="styles">The resolved style per row, read for the splitter rows.</param>
+    /// <param name="panelBounds">The data panel bounds; the band starts at its left edge.</param>
+    /// <param name="plotBounds">The plot rectangle; the band ends at its right edge.</param>
+    /// <param name="laneParticipants">The lane participants, read for the Splitter rows.</param>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="warnings">The scene warnings to append to.</param>
+    /// <remarks>
+    /// A Spacer contributes no primitive at all (§11: "no foreground fill, border, or
+    /// label"), so only <c>IsSplitter</c> lanes reach the builder. A refusal is warned
+    /// rather than returned, matching the span, overlay, milestone, and delineator
+    /// passes: one unbuildable row must not silently remove the whole chart.
+    /// </remarks>
+    private static void BuildSplitters(
+        SceneBuildRequest request,
+        LaneLayoutResult laneLayout,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
+        RectD panelBounds,
+        RectD plotBounds,
+        IReadOnlyList<GanttEvent> laneParticipants,
+        List<ScenePrimitive> primitives,
+        List<SceneWarning> warnings)
+    {
+        var byId = laneParticipants.ToDictionary(@event => @event.Id);
+
+        foreach (LaneGeometry lane in laneLayout.Lanes)
+        {
+            if (!lane.IsSplitter)
+            {
+                continue;
+            }
+
+            foreach (GanttRowId id in lane.EventIds)
+            {
+                if (!byId.TryGetValue(id, out GanttEvent? @event) || !styles.TryGetValue(id, out ResolvedEventStyle? style))
+                {
+                    continue;
+                }
+
+                // §10's border is a *major* boundary, so its width is the
+                // MajorBoundaryPt token rather than the row's own outline width: the
+                // splitter preset carries no outline, and borrowing one would make the
+                // border width a function of a style the guide never defined it from.
+                GanttLabelPosition position = @event.LabelPosition ?? GanttLabelPosition.DataPanelLeft;
+                // The lane layout is lane-relative — it starts at y=0 for the first
+                // lane — so the plot top is added here, exactly once, the same way
+                // BuildSpans offsets a slot centre. Without it the band would sit in
+                // the header bands and its label would fall outside the chart.
+                LaneGeometry chartLane = lane with { Top = lane.Top + plotBounds.Top };
+                SplitterCreationOutcome built = SplitterBuilder.TryBuild(
+                    new SplitterRequest(
+                        @event,
+                        style.Style,
+                        chartLane,
+                        panelBounds.X,
+                        plotBounds,
+                        request.MajorBoundaryPt,
+                        request.LabelStyle,
+                        request.Metrics!,
+                        position));
+
+                if (built.Result is not { } result)
+                {
+                    warnings.Add(
+                        new SceneWarning(
+                            SceneOwnerId.ForRow(id),
+                            "SplitterRefused",
+                            $"The §10 splitter band could not be built ({built.Refusal})."));
+                    continue;
+                }
+
+                primitives.AddRange(result.Primitives);
+            }
+        }
     }
 
     private static SceneBuildOutcome Refused(SceneBuilderRefusal refusal) => new(null, refusal);
