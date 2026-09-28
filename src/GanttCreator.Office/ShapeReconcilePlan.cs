@@ -49,10 +49,7 @@ public enum ShapeReconcileAction
 /// The shape request, or <see langword="null"/> for a
 /// <see cref="ShapeReconcileAction.Delete"/>.
 /// </param>
-public sealed record ShapeReconcileOperation(
-    ShapeReconcileAction Action,
-    string PrimitiveId,
-    OfficeShapeRequest? Request);
+public sealed record ShapeReconcileOperation(ShapeReconcileAction Action, string PrimitiveId, OfficeShapeRequest? Request);
 
 /// <summary>The complete set of operations one reconciliation decided on.</summary>
 /// <param name="Operations">
@@ -68,9 +65,7 @@ public sealed record ShapeReconcileOperation(
 /// separation is what makes reconciliation testable without Excel and what lets
 /// the idempotence pin be a pure assertion.
 /// </remarks>
-public sealed record ShapeReconcilePlan(
-    IReadOnlyList<ShapeReconcileOperation> Operations,
-    IReadOnlyList<string> BackToFront)
+public sealed record ShapeReconcilePlan(IReadOnlyList<ShapeReconcileOperation> Operations, IReadOnlyList<string> BackToFront)
 {
     /// <summary>Gets the operations of one kind, in execution order.</summary>
     /// <param name="action">The kind to filter by.</param>
@@ -103,7 +98,8 @@ public sealed record ShapeReconcilePlan(
 public sealed record ShapeReconcileRequest(
     IReadOnlyList<OfficeShapeRequest> Desired,
     IReadOnlyList<string>? Owned = null,
-    bool HasBlockingErrors = false);
+    bool HasBlockingErrors = false
+);
 
 /// <summary>Why a reconciliation stopped without completing.</summary>
 public enum ShapeReconcileRefusal
@@ -151,7 +147,8 @@ public sealed record ShapeReconcileOutcome(
     ShapeReconcileRefusal? Refusal,
     ShapeReconcilePlan Plan,
     ShapeReconcileFailure? Failure,
-    int CompletedCount)
+    int CompletedCount
+)
 {
     /// <summary>Gets whether every planned step completed.</summary>
     public bool Succeeded => Refusal is null;
@@ -163,4 +160,3 @@ public sealed record ShapeReconcileOutcome(
     /// </remarks>
     public bool MutatedAnyShape => CompletedCount > 0;
 }
-

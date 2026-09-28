@@ -86,9 +86,7 @@ public static partial class ShapeReconciler
     /// order.
     /// </para>
     /// </remarks>
-    public static ShapeReconcilePlan Plan(
-        IReadOnlyList<OfficeShapeRequest> desired,
-        IReadOnlyList<string> owned)
+    public static ShapeReconcilePlan Plan(IReadOnlyList<OfficeShapeRequest> desired, IReadOnlyList<string> owned)
     {
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(owned);
@@ -109,7 +107,8 @@ public static partial class ShapeReconciler
                     "The scene declared the primitive identifier '"
                         + request.PrimitiveId
                         + "' more than once, so the reconciliation plan would be ambiguous.",
-                    nameof(desired));
+                    nameof(desired)
+                );
             }
 
             if (ownedIds.Contains(request.PrimitiveId))
@@ -125,24 +124,16 @@ public static partial class ShapeReconciler
         List<ShapeReconcileOperation> operations = new(updates.Count + creates.Count + owned.Count);
         foreach (OfficeShapeRequest request in updates)
         {
-            operations.Add(
-                new ShapeReconcileOperation(
-                    ShapeReconcileAction.Update,
-                    request.PrimitiveId,
-                    request));
+            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Update, request.PrimitiveId, request));
         }
 
         foreach (OfficeShapeRequest request in creates)
         {
-            operations.Add(
-                new ShapeReconcileOperation(
-                    ShapeReconcileAction.Create,
-                    request.PrimitiveId,
-                    request));
+            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Create, request.PrimitiveId, request));
         }
 
         List<string> deletes = [];
-        foreach (string identifier in owned)
+        foreach (var identifier in owned)
         {
             if (!declared.Contains(identifier))
             {
@@ -155,7 +146,7 @@ public static partial class ShapeReconciler
         // the caller's order is what lets the fixed-point pin hold even if a
         // future caller passes a differently-ordered owned list.
         deletes.Sort(StringComparer.Ordinal);
-        foreach (string identifier in deletes)
+        foreach (var identifier in deletes)
         {
             operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Delete, identifier, null));
         }
@@ -200,9 +191,7 @@ public static partial class ShapeReconciler
     /// read → validate → build → scope → <c>Reconcile</c> → surface.
     /// </para>
     /// </remarks>
-    public static ShapeReconcileOutcome Reconcile(
-        IShapeWritePort writer,
-        ShapeReconcileRequest request)
+    public static ShapeReconcileOutcome Reconcile(IShapeWritePort writer, ShapeReconcileRequest request)
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(request);
@@ -213,11 +202,7 @@ public static partial class ShapeReconciler
         // asking.
         if (request.HasBlockingErrors)
         {
-            return new ShapeReconcileOutcome(
-                ShapeReconcileRefusal.BlockingErrors,
-                _emptyPlan,
-                null,
-                0);
+            return new ShapeReconcileOutcome(ShapeReconcileRefusal.BlockingErrors, _emptyPlan, null, 0);
         }
 
         IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
@@ -226,17 +211,17 @@ public static partial class ShapeReconciler
         var completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
         {
-            ShapeWriteOutcome outcome =
-                operation.Action switch
-                {
-                    ShapeReconcileAction.Update => writer.Update(operation.Request!),
-                    ShapeReconcileAction.Create => writer.Create(operation.Request!),
-                    ShapeReconcileAction.Delete => writer.Delete(operation.PrimitiveId),
-                    _ => throw new InvalidOperationException(
-                        "The reconciliation plan carried the unimplemented action '"
-                            + operation.Action
-                            + "'. This is a defect in ShapeReconciler.Plan, not a host condition."),
-                };
+            ShapeWriteOutcome outcome = operation.Action switch
+            {
+                ShapeReconcileAction.Update => writer.Update(operation.Request!),
+                ShapeReconcileAction.Create => writer.Create(operation.Request!),
+                ShapeReconcileAction.Delete => writer.Delete(operation.PrimitiveId),
+                _ => throw new InvalidOperationException(
+                    "The reconciliation plan carried the unimplemented action '"
+                        + operation.Action
+                        + "'. This is a defect in ShapeReconciler.Plan, not a host condition."
+                ),
+            };
 
             if (!outcome.Succeeded)
             {
@@ -244,7 +229,8 @@ public static partial class ShapeReconciler
                     ShapeReconcileRefusal.OperationRefused,
                     plan,
                     new ShapeReconcileFailure(operation.PrimitiveId, outcome.Refusal!.Value),
-                    completed);
+                    completed
+                );
             }
 
             completed++;
