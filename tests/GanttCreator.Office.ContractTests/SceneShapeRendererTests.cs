@@ -35,6 +35,141 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         ZLayer layer = ZLayer.Grid) =>
         new(id, RowOwner, layer, from, to, Style);
 
+    /// <summary>
+    /// R4.6: a rectangle's resolved style must reach the request. Before this row
+    /// the renderer dropped the style for every family except text, so a planned
+    /// bar, a critical overlay, and a procurement hatch all reached the writer
+    /// with no colour at all.
+    /// </summary>
+    [Fact]
+    public void A_rectangle_carries_its_resolved_fill_stroke_and_hatch_to_the_request()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var style = new SceneStyle(
+            "AsPlannedProcurement",
+            ColourHex.Parse("#92D050"),
+            ColourHex.Parse("#548235"),
+            0.75,
+            GanttHatchPattern.ForwardDiagonal);
+
+        bool translated = renderer.TryTranslate(
+            new SceneRect("row-1:bar", RowOwner, ZLayer.ActivityBody, new RectD(10, 20, 100, 30), style),
+            out OfficeShapeRequest? request);
+
+        Assert.True(translated);
+        Assert.NotNull(request);
+        Assert.Equal(ColourHex.Parse("#92D050"), request.FillColour);
+        Assert.Equal(ColourHex.Parse("#548235"), request.StrokeColour);
+        Assert.Equal(0.75, request.LineWidthPt);
+        Assert.Equal(GanttHatchPattern.ForwardDiagonal, request.HatchPattern);
+    }
+
+    [Fact]
+    public void A_line_carries_its_resolved_stroke_to_the_request()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var style = new SceneStyle(
+            "CriticalInterval",
+            strokeColour: ColourHex.Parse("#FF0000"),
+            outlineWidthPt: 2.25);
+
+        bool translated = renderer.TryTranslate(
+            new SceneLine(
+                "chart:critical:0",
+                RowOwner,
+                ZLayer.CriticalOverlay,
+                new PointD(50, 10),
+                new PointD(50, 90),
+                style),
+            out OfficeShapeRequest? request);
+
+        Assert.True(translated);
+        Assert.NotNull(request);
+        Assert.Equal(ColourHex.Parse("#FF0000"), request.StrokeColour);
+        Assert.Equal(2.25, request.LineWidthPt);
+    }
+
+    [Fact]
+    public void A_line_does_not_claim_a_fill_even_when_its_scene_style_carries_one()
+    {
+        // A line has no interior. Forwarding a fill would assert an appearance the
+        // entity does not have, and the mapper would have to invent a reason to
+        // drop it later.
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var style = new SceneStyle(
+            "DefaultDelineator",
+            ColourHex.Parse("#404040"),
+            ColourHex.Parse("#404040"),
+            0.75);
+
+        bool translated = renderer.TryTranslate(
+            new SceneLine(
+                "row-1:delineator",
+                RowOwner,
+                ZLayer.Delineator,
+                new PointD(50, 10),
+                new PointD(50, 90),
+                style),
+            out OfficeShapeRequest? request);
+
+        Assert.True(translated);
+        Assert.NotNull(request);
+        Assert.Null(request.FillColour);
+    }
+
+    [Fact]
+    public void A_diamond_carries_its_own_subtype_fill_and_outline_to_the_request()
+    {
+        // Section 21 gives the four milestone subtypes distinct colour pairs. A
+        // diamond drawn in the host's default accent colour erases that.
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var style = new SceneStyle(
+            "CriticalMilestone",
+            ColourHex.Parse("#FF0000"),
+            ColourHex.Parse("#C00000"),
+            0.75);
+        var centre = new PointD(100, 50);
+        var half = 4d;
+        var polygon = new ScenePolygon(
+            "row-1:milestone",
+            RowOwner,
+            ZLayer.Milestone,
+            [
+                new PointD(centre.X, centre.Y - half),
+                new PointD(centre.X + half, centre.Y),
+                new PointD(centre.X, centre.Y + half),
+                new PointD(centre.X - half, centre.Y),
+            ],
+            style);
+
+        bool translated = renderer.TryTranslate(polygon, out OfficeShapeRequest? request);
+
+        Assert.True(translated);
+        Assert.NotNull(request);
+        Assert.Equal(OfficeShapeKind.Diamond, request.Kind);
+        Assert.Equal(ColourHex.Parse("#FF0000"), request.FillColour);
+        Assert.Equal(ColourHex.Parse("#C00000"), request.StrokeColour);
+    }
+
+    [Fact]
+    public void An_absent_style_member_stays_absent_on_the_request()
+    {
+        // "Fill and outline are explicit; no renderer defaults" (section 12). A
+        // renderer that substituted a colour would make a missing token and a
+        // deliberately white one indistinguishable.
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+
+        _ = renderer.TryTranslate(
+            Rect("row-1:bar", new RectD(10, 20, 100, 30)),
+            out OfficeShapeRequest? request);
+
+        Assert.NotNull(request);
+        Assert.Null(request.FillColour);
+        Assert.Null(request.StrokeColour);
+        Assert.Null(request.LineWidthPt);
+        Assert.Equal(GanttHatchPattern.None, request.HatchPattern);
+    }
+
     [Fact]
     public void A_rectangle_becomes_a_rectangle_request_named_for_its_primitive_id()
     {

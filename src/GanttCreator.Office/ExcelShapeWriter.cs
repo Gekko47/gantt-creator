@@ -122,6 +122,15 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
+        // R4.6. The style is written on the create path for the same reason the
+        // text is: it is generated output the scene owns, and a shape created in
+        // the host's default accent colour with the resolved colours never
+        // reaching it is the same silent-staleness class the R4.4 content write
+        // closed. Order matters — the style is applied BEFORE the ownership stamp,
+        // so a shape that cannot be styled is discarded by the same
+        // ApplyOwnershipOrDiscard path rather than left half-written.
+        ApplyStyleOrDiscard(created, request);
+
         // No per-shape z-order call here. The caller creates the scene's
         // primitives in Translate's back-to-front order and a new shape is
         // inserted in front of the existing ones, so the default insertion order
@@ -200,6 +209,14 @@ public class ExcelShapeWriter(
         {
             ApplyText(existing, request);
         }
+
+        // R4.6. An update re-applies the style for the same reason it re-applies
+        // the text: the fill, stroke, width, and hatch are owned generated data.
+        // Without this, a refresh that changed only a colour would move the shape
+        // and leave the old colour behind - the shape would sit in the right place
+        // looking wrong, which is invisible to every other assertion in this
+        // class because geometry and content would both be correct.
+        ApplyStyle(existing, request);
 
         return ShapeWriteOutcome.Ok();
     }
@@ -943,6 +960,192 @@ public class ExcelShapeWriter(
             GeometryMath.SnapToDisplayPrecision(bounds.Width),
             GeometryMath.SnapToDisplayPrecision(bounds.Height));
     }
+
+    /// <summary>
+    /// Writes the resolved fill and stroke onto a shape.
+    /// </summary>
+    /// <param name="shape">The shape to style.</param>
+    /// <param name="request">The request whose style members are written.</param>
+    /// <remarks>
+    /// <para>
+    /// R4.6. The host's format members are written from
+    /// <see cref="OfficeStyleMapper"/>'s output verbatim: no colour is chosen here,
+    /// no token is defaulted, and no theme colour is touched. The mapper owns the
+    /// arithmetic; this method owns the COM.
+    /// </para>
+    /// <para>
+    /// <see cref="MsoPatternType"/> is the facility the Step-0 probe established for
+    /// a hatch, and it is a <em>fixed pitch</em> pattern set: the probe found no
+    /// member controlling the <c>HatchPitchPt</c> spacing or the <c>HatchLinePt</c>
+    /// stroke width. Those two tokens are therefore <strong>not honoured</strong> by
+    /// the native pattern, which is exactly the case entity-guide section 18
+    /// anticipates ("may use a native pattern only if the compatibility test proves
+    /// equivalent bounds and adequate appearance"). The deviation is recorded for
+    /// R8.3's equivalence policy rather than silently approximated, and a
+    /// <see cref="GanttHatchPattern"/> the host cannot express is
+    /// <strong>refused</strong> rather than drawn as the nearest pattern.
+    /// </para>
+    /// <para>
+    /// <c>internal virtual</c> is a test seam, per the
+    /// <see cref="ApplyText"/> pattern: the write reaches COM through a chained
+    /// <c>Shape.Fill</c>/<c>Shape.Line</c> walk that a contract test cannot observe,
+    /// so the seam lets a test record that the style was applied rather than
+    /// inferring it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when a hatch pattern has no host member. Never caught, because an
+    /// unexpressible pattern is a contract fault the caller must see, not a host
+    /// failure to swallow into a refusal.
+    /// </exception>
+    internal virtual void ApplyStyle(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentNullException.ThrowIfNull(request);
+
+        OfficeShapeStyle style = OfficeStyleMapper.Map(request);
+
+        Excel.FillFormat? fill = shape.Fill;
+        if (fill is not null)
+        {
+            if (!style.FillVisible)
+            {
+                // Explicitly off rather than left alone. A shape the host created
+                // with its default fill would otherwise keep that fill, and
+                // "the scene resolved no fill" has to be able to mean "no fill".
+                fill.Visible = MsoTriState.msoFalse;
+            }
+            else
+            {
+                Excel.ColorFormat? backColour = fill.BackColor;
+                if (backColour is not null && style.FillBackgroundRgb is { } background)
+                {
+                    backColour.RGB = background;
+                }
+
+                Excel.ColorFormat? foreColour = fill.ForeColor;
+                if (foreColour is not null && style.FillRgb is { } foreground)
+                {
+                    foreColour.RGB = foreground;
+                }
+
+                fill.Transparency = style.FillTransparency;
+                fill.Visible = MsoTriState.msoTrue;
+
+                // Solid() before Patterned(): the host keeps whichever fill type
+                // it last had, so a shape created solid and later given a hatch
+                // needs the type set explicitly or the colour write above would
+                // land on a solid fill and the hatch would never appear.
+                if (style.HatchPattern is { } hatch)
+                {
+                    fill.Patterned(MapHatchPattern(hatch));
+                }
+                else
+                {
+                    fill.Solid();
+                }
+            }
+        }
+
+        Excel.LineFormat? line = shape.Line;
+        if (line is null)
+        {
+            return;
+        }
+
+        if (!style.LineVisible)
+        {
+            line.Visible = MsoTriState.msoFalse;
+            return;
+        }
+
+        Excel.ColorFormat? strokeColour = line.ForeColor;
+        if (strokeColour is not null && style.LineRgb is { } stroke)
+        {
+            strokeColour.RGB = stroke;
+        }
+
+        if (style.LineWeightPt is { } weight)
+        {
+            line.Weight = weight;
+        }
+
+        line.Transparency = style.LineTransparency;
+        line.Visible = MsoTriState.msoTrue;
+    }
+
+    /// <summary>
+    /// Applies the style, discarding the shape if the host refuses it.
+    /// </summary>
+    /// <param name="shape">The created shape.</param>
+    /// <param name="request">The request whose style is applied.</param>
+    /// <remarks>
+    /// Best-effort on the same reasoning as
+    /// <see cref="ApplyOwnershipOrDiscard"/>: a shape that could not be styled
+    /// must not be left on the sheet, because the caller is about to be told the
+    /// create failed and would never learn about the orphan. The failure is
+    /// silent because <see cref="Create"/> already reports the typed refusal the
+    /// caller acts on.
+    /// </remarks>
+    private void ApplyStyleOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: see the remarks. A throwing style write must not escape Create
+        // as an unhandled COM exception from inside a render command, and must
+        // not replace the typed refusal the caller already has.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyStyle(shape, request);
+        }
+        catch (Exception)
+        {
+            DiscardUnownedShape(shape);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Maps a resolved hatch pattern onto the host's pattern constant.
+    /// </summary>
+    /// <param name="pattern">The resolved pattern.</param>
+    /// <returns>The host pattern constant.</returns>
+    /// <remarks>
+    /// <para>
+    /// The mapping is closed because <see cref="GanttHatchPattern"/> is. The
+    /// default arm throws rather than falling back to a nearby pattern, for the
+    /// same reason <see cref="MapAlignment"/> does: a pattern the scene asked for
+    /// and the host cannot draw must fail loudly, so the guide and this method
+    /// cannot drift apart unnoticed. A silent nearest-match would render a
+    /// procurement bar in a pattern nobody approved.
+    /// </para>
+    /// <para>
+    /// Direction is read from the entity guide's own wording, not guessed:
+    /// <c>ForwardDiagonal</c> is "top-left to bottom-right", which on a
+    /// screen-coordinate host is the <em>downward</em> diagonal.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the pattern is not a defined member.</exception>
+    internal static MsoPatternType MapHatchPattern(GanttHatchPattern pattern) =>
+        pattern switch
+        {
+            GanttHatchPattern.ForwardDiagonal => MsoPatternType.msoPatternLightDownwardDiagonal,
+            GanttHatchPattern.BackwardDiagonal => MsoPatternType.msoPatternLightUpwardDiagonal,
+            GanttHatchPattern.Cross => MsoPatternType.msoPatternDiagonalCross,
+
+            // None is listed rather than left to the default arm so the intent is
+            // explicit: a solid fill is not a hatch, and OfficeStyleMapper turns
+            // None into a null pattern rather than calling this. Reaching here
+            // means a caller mapped a "no hatch" as though it were one.
+            GanttHatchPattern.None => throw new ArgumentOutOfRangeException(
+                nameof(pattern),
+                pattern,
+                "None means a solid fill and must not be mapped to a host pattern."),
+
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(pattern),
+                pattern,
+                "The scene produced a hatch pattern with no host mapping. Extend MapHatchPattern and the guide together."),
+        };
 
     /// <summary>
     /// Writes the text content, typography, and alignment onto a text shape.

@@ -19,6 +19,12 @@ namespace GanttCreator.Office;
 /// <param name="LineWidthPt">The resolved outline or line width, or <see langword="null"/>.</param>
 /// <param name="FontFamily">The resolved font family for a text shape, or <see langword="null"/>.</param>
 /// <param name="FontSizePt">The resolved font size for a text shape, or <see langword="null"/>.</param>
+/// <param name="HatchPattern">
+/// The resolved hatch pattern, or <see cref="GanttHatchPattern.None"/> for a solid
+/// fill. R4.6: the scene's own enum crosses the port so the Core token table and
+/// the host mapping cannot drift; the adapter maps it to
+/// <c>MsoPatternType</c> and never invents a pattern.
+/// </param>
 /// <param name="Bold">Whether the resolved typography is bold, or <see langword="null"/>.</param>
 /// <param name="Text">The text content for a text shape, or <see langword="null"/>.</param>
 /// <param name="Alignment">
@@ -39,6 +45,7 @@ public sealed record OfficeShapeRequest(
     ColourHex? FillColour = null,
     ColourHex? StrokeColour = null,
     double? LineWidthPt = null,
+    GanttHatchPattern HatchPattern = GanttHatchPattern.None,
     string? FontFamily = null,
     double? FontSizePt = null,
     bool? Bold = null,

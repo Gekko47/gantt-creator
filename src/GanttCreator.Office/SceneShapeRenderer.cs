@@ -205,15 +205,33 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
         };
     }
 
+    /// <summary>
+    /// Builds a rectangle request carrying the scene's resolved style.
+    /// </summary>
+    /// <remarks>
+    /// R4.6: the style is mapped, not re-derived. Every fill, stroke, width, and
+    /// hatch value here came from the style resolver by way of the scene; the
+    /// renderer copies it and would be wrong to choose one.
+    /// </remarks>
+    /// <param name="rect">The scene rectangle.</param>
+    /// <returns>The translated shape request.</returns>
     private OfficeShapeRequest BuildRect(SceneRect rect) =>
         new(
             rect.PrimitiveId,
             OfficeShapeKind.Rectangle,
             new OfficeShapeGeometry(Bounds: originDelta.Apply(rect.Bounds)),
-            rect.ZLayer);
+            rect.ZLayer,
+            FillColour: rect.Style.FillColour,
+            StrokeColour: rect.Style.StrokeColour,
+            LineWidthPt: rect.Style.OutlineWidthPt,
+            HatchPattern: rect.Style.HatchPattern);
 
-    /// <summary>Builds a plain-line request, preserving the scene's endpoint order.</summary>
+    /// <summary>
+    /// Builds a plain-line request, preserving the scene's endpoint order and
+    /// carrying the scene's resolved stroke.
+    /// </summary>
     /// <remarks>
+    /// <para>
     /// A right-to-left or bottom-up line keeps its direction here: the host's
     /// <c>AddLine</c> takes absolute endpoints, so the scene's own
     /// <c>From</c>/<c>To</c> is expressible exactly. Normalising to a
@@ -221,6 +239,14 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// where <c>Shape</c> exposes only <c>Left</c>/<c>Top</c>/<c>Width</c>/
     /// <c>Height</c> and direction is unrecoverable. Doing it here would silently
     /// discard a resolved endpoint.
+    /// </para>
+    /// <para>
+    /// A line's <see cref="SceneStyle.FillColour"/> is deliberately not carried. A
+    /// line has no interior, and section 16's critical overlay and section 24's
+    /// delineator are stroke-only entities; forwarding a fill for them would
+    /// assert an appearance the entity does not have. The stroke is the whole
+    /// style of a line and is carried in full.
+    /// </para>
     /// </remarks>
     /// <param name="line">The scene line.</param>
     /// <returns>The translated shape request.</returns>
@@ -231,7 +257,10 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             new OfficeShapeGeometry(
                 From: originDelta.Apply(line.From),
                 To: originDelta.Apply(line.To)),
-            line.ZLayer);
+            line.ZLayer,
+            StrokeColour: line.Style.StrokeColour,
+            LineWidthPt: line.Style.OutlineWidthPt,
+            HatchPattern: line.Style.HatchPattern);
 
     /// <summary>
     /// Determines whether four points form a symmetric axis-aligned diamond and,
@@ -346,6 +375,12 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// <param name="polygon">The scene polygon.</param>
     /// <param name="bounds">The diamond's bounding box.</param>
     /// <returns>The translated shape request.</returns>
+    /// <remarks>
+    /// R4.6: the milestone's fill and outline are mapped, not chosen. Section 21's
+    /// subtype table gives planned, actual, baseline, and critical milestones
+    /// distinct fill/outline pairs, and a diamond drawn in the host's default
+    /// accent colour would erase that distinction entirely.
+    /// </remarks>
     private OfficeShapeRequest BuildDiamond(ScenePolygon polygon, RectD bounds) =>
         new(
             polygon.PrimitiveId,
@@ -353,7 +388,11 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             new OfficeShapeGeometry(
                 Bounds: originDelta.Apply(bounds),
                 Points: [.. polygon.Points.Select(originDelta.Apply)]),
-            polygon.ZLayer);
+            polygon.ZLayer,
+            FillColour: polygon.Style.FillColour,
+            StrokeColour: polygon.Style.StrokeColour,
+            LineWidthPt: polygon.Style.OutlineWidthPt,
+            HatchPattern: polygon.Style.HatchPattern);
 
     /// <summary>Builds a text request, consuming the scene's resolved text verbatim.</summary>
     /// <remarks>
@@ -375,7 +414,15 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// <para>
     /// Typography is copied from the resolved <see cref="SceneStyle"/> tokens.
     /// Nothing is invented between token and property, and an absent token stays
-    /// absent rather than being defaulted - R4.6 owns the full style matrix.
+    /// absent rather than being defaulted; R4.6 owns the full style matrix.
+    /// </para>
+    /// <para>
+    /// A label's text <em>colour</em> is a separate fact from its shape fill and
+    /// is deliberately not set here. <see cref="SceneStyle"/> carries no text-colour
+    /// member, so a label inside a delay event cannot express the
+    /// <c>DelayText</c> token through this path; that is a recorded gap for the
+    /// scene model, not something the renderer may approximate by leaving the
+    /// host's automatic colour in place.
     /// </para>
     /// </remarks>
     /// <param name="text">The scene text.</param>
@@ -389,6 +436,7 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FillColour: text.Style.FillColour,
             StrokeColour: text.Style.StrokeColour,
             LineWidthPt: text.Style.OutlineWidthPt,
+            HatchPattern: text.Style.HatchPattern,
             FontFamily: text.Style.FontFamily,
             FontSizePt: text.Style.FontSizePt,
             Bold: text.Style.Bold,

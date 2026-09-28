@@ -130,6 +130,12 @@ public sealed class ProtectionGuardFirstTests
         // consultation would be unreachable code rather than a missing guard.
         "src/GanttCreator.Office/ChartOriginDelta.cs",
         "src/GanttCreator.Office/SceneShapeRenderer.cs",
+        // R4.6: the style-token-to-property mapper. Like the renderer it is a
+        // pure function over already-resolved Core values - it reads no COM
+        // proxy, names no interop type, and mutates nothing - so a protection
+        // consultation would be unreachable code rather than a missing guard.
+        // The interop surface is confined to ExcelShapeWriter.ApplyStyle.
+        "src/GanttCreator.Office/OfficeStyleMapper.cs",
     ];
 
     /// <summary>

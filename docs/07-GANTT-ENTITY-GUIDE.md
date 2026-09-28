@@ -544,6 +544,8 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Renderer rule:** the scene defines hatch angle, pitch, line width, clip rectangle, and colour. Excel/export may use a native pattern only if the compatibility test proves equivalent bounds and adequate appearance; otherwise emit editable clipped hatch lines as group children. PNG uses the same scene parameters.
 
+**R4.6 Step-0 probe (2026-09-28), host-confirmed.** The native pattern facility is `FillFormat.Patterned(MsoPatternType)`, and `msoPatternLightDownwardDiagonal` / `msoPatternLightUpwardDiagonal` / `msoPatternDiagonalCross` are distinct members, so forward, backward, and cross are each expressible. **`MsoPatternType` has no member controlling pitch or line width, so `HatchPitchPt` and `HatchLinePt` are not honoured by the native pattern.** This is the "compatibility test" the rule above refers to, run: it does not prove equivalence, so the deviation is recorded for R8.3's equivalence policy rather than approximated, and §18's group-children alternative remains the fallback if R8.3 rejects it. An unmapped `GanttHatchPattern` member is **refused** (thrown), never drawn as the nearest pattern.
+
 **Labels:** subtype style may place description Inside when contrast is sufficient; otherwise general `Auto`.
 
 **Tests:** each colour family, hatch clipping/spacing, narrow spans, group editability, Excel/PowerPoint/PNG visual comparison.
