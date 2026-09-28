@@ -48,7 +48,8 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
             // A workbook must exist before Application.Selection is non-null: with
             // no open workbook the host reports no selection at all. The fixture's
             // teardown closes it, so the test does not own its disposal.
-            Excel.Workbook workbook = fixture.CreateWorkbook();
+            using var scope = new OfficeFixture.ComScope();
+            Excel.Workbook trackedWorkbook = scope.Track(fixture.CreateWorkbook());
             Excel.Application application = fixture.Excel;
             _output.WriteLine("Windows build: " + Environment.OSVersion.Version.Build);
             _output.WriteLine("Excel version: " + application.Version);
@@ -64,20 +65,29 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
 
             _output.WriteLine("before: " + Describe(application));
             Assert.NotNull(application.Selection);
-            Assert.NotNull(workbook);
+            Assert.NotNull(trackedWorkbook);
+
+            // The selection restore is the one D3 makes best-effort, and it was
+            // therefore never actually exercised: nothing inside the scope ever
+            // moved the cursor, so "it came back" was true whether or not the
+            // scope did anything. Record where the cursor is, move it to a
+            // different cell inside the scope, and assert afterwards that the
+            // original address is the one in place.
+            var originalSelection = scope.Track((Excel.Range)application.Selection);
+            string originalAddress = originalSelection.Address;
 
             var records = new List<string>();
             var thrown = new InvalidOperationException("injected mid-render failure");
 
             try
             {
-                using var scope = new ExcelApplicationStateScope(application, records.Add);
-                scope.SuppressScreenUpdating();
-                scope.SuppressEvents();
-                scope.SuppressAlerts();
-                scope.SuppressStatusBar();
-                scope.SetStatusBarText("Rendering...");
-                scope.CaptureSelection();
+                using var state = new ExcelApplicationStateScope(application, records.Add);
+                state.SuppressScreenUpdating();
+                state.SuppressEvents();
+                state.SuppressAlerts();
+                state.SuppressStatusBar();
+                state.SetStatusBarText("Rendering...");
+                state.CaptureSelection();
 
                 // The settings really did change inside the scope: prove it before
                 // the throw, or the restore assertions below would be vacuous.
@@ -85,6 +95,13 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
                 Assert.False(application.EnableEvents);
                 Assert.False(application.DisplayAlerts);
                 Assert.False(application.DisplayStatusBar);
+
+                // Move the cursor the way a render command would, so the restore
+                // has something real to undo.
+                Excel.Range moved = scope.Track(application.ActiveSheet.Range["C7"]);
+                moved.Select();
+                var insideScope = (Excel.Range)application.Selection;
+                Assert.Equal("C7", insideScope.Address);
 
                 throw thrown;
             }
@@ -112,10 +129,18 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
                 Convert.ToString(application.StatusBar, CultureInfo.InvariantCulture),
                 ignoreCase: true);
 
-            // The selection restore is best-effort by contract, so a record here
-            // is reported rather than failed. An empty list is the expected result
-            // on the reference host and is itself worth recording.
+            // D3's selection restore, now a real assertion: the cursor was moved
+            // to C7 inside the scope and must be back on the original address
+            // after disposal.
+            var restored = (Excel.Range)application.Selection;
+            _output.WriteLine("selection restored to: " + restored.Address);
+            Assert.Equal(originalAddress, restored.Address);
+
+            // A restore that degraded is reported rather than failed, but on the
+            // reference host nothing should degrade: an empty record list is the
+            // stronger statement and is what this now requires.
             _output.WriteLine("restore records: " + string.Join(" | ", records));
+            Assert.Empty(records);
         }
         finally
         {
