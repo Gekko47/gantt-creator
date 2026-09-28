@@ -139,11 +139,32 @@ public interface IShapeWritePort
     /// <summary>Applies z-order by moving shapes within the worksheet's z-order.</summary>
     /// <param name="backToFront">
     /// The scene identifiers in the exact back-to-front order the scene declares,
-    /// lowest <see cref="ZLayer"/> first. The adapter applies the order by
-    /// repeatedly moving the next shape forward, because the host exposes
-    /// <c>ZOrder(MsoZOrderCmd)</c> as a relative command and
-    /// <c>ZOrderPosition</c> as a read-only observation.
+    /// lowest <see cref="ZLayer"/> first.
     /// </param>
     /// <returns>The typed result; on a refusal nothing was mutated.</returns>
+    /// <remarks>
+    /// <para>
+    /// The host exposes <c>ZOrder(MsoZOrderCmd)</c> as a relative command and
+    /// <c>ZOrderPosition</c> as a read-only observation, so the order is applied in one
+    /// deterministic pass that sends each shape to the back <strong>in reverse list
+    /// order</strong>. <c>msoSendToBack</c> is absolute, so walking the scene's
+    /// back-to-front list from the front end leaves the final order equal to the scene's
+    /// whatever the host's prior order was; forward order would produce its exact
+    /// reverse. This is the single pass R4.5 D2 requires: no per-shape
+    /// <c>BringToFront</c>, and no z-order call outside this method.
+    /// </para>
+    /// <para>
+    /// <strong>Preflight, then commit.</strong> Every identifier is resolved and proved
+    /// owned <em>before</em> the first command is issued. A shape that is absent, or that
+    /// is present but does not carry the ownership tag for its identifier, refuses the
+    /// <strong>entire list</strong> as <see cref="ShapeWriteRefusal.NotFound"/> with zero
+    /// <c>ZOrder</c> calls — the same reason <see cref="Update"/> and
+    /// <see cref="Delete"/> report, and deliberately indistinguishable from an absent
+    /// shape, because re-stamping an unowned shape's tag would silently "repair" a
+    /// user-drawn shape that is R9.4's job to report. Ownership is checked in the same
+    /// preflight as existence so that an unowned shape late in the list cannot leave the
+    /// earlier shapes already moved.
+    /// </para>
+    /// </remarks>
     ShapeWriteOutcome ApplyZOrder(IReadOnlyList<string> backToFront);
 }

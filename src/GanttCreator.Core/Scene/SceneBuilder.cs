@@ -714,6 +714,7 @@ public static class SceneBuilder
             framePanelBounds,
             plotBounds,
             laneParticipants,
+            frameTheme.MajorGrid,
             primitives,
             warnings);
 
@@ -1128,6 +1129,11 @@ public static class SceneBuilder
     /// <param name="panelBounds">The data panel bounds; the band starts at its left edge.</param>
     /// <param name="plotBounds">The plot rectangle; the band ends at its right edge.</param>
     /// <param name="laneParticipants">The lane participants, read for the Splitter rows.</param>
+    /// <param name="borderStyle">
+    /// The chart's major-boundary style, supplying the §10 borders' stroke token. It is the
+    /// frame theme's <c>MajorGrid</c> style, so a splitter border is stroked by the same
+    /// authority as the chart frame lines rather than by a second, literal colour.
+    /// </param>
     /// <param name="primitives">The primitive list to append to.</param>
     /// <param name="warnings">The scene warnings to append to.</param>
     /// <remarks>
@@ -1143,6 +1149,7 @@ public static class SceneBuilder
         RectD panelBounds,
         RectD plotBounds,
         IReadOnlyList<GanttEvent> laneParticipants,
+        SceneStyle borderStyle,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
@@ -1165,7 +1172,9 @@ public static class SceneBuilder
                 // §10's border is a *major* boundary, so its width is the
                 // MajorBoundaryPt token rather than the row's own outline width: the
                 // splitter preset carries no outline, and borrowing one would make the
-                // border width a function of a style the guide never defined it from.
+                // border width a function of a style the guide never defined it from. The
+                // stroke colour comes from the major-boundary style, because a line is a
+                // stroke and the band preset has no stroke token to contribute.
                 GanttLabelPosition position = @event.LabelPosition ?? GanttLabelPosition.DataPanelLeft;
                 // The lane layout is lane-relative — it starts at y=0 for the first
                 // lane — so the plot top is added here, exactly once, the same way
@@ -1176,6 +1185,7 @@ public static class SceneBuilder
                     new SplitterRequest(
                         @event,
                         style.Style,
+                        borderStyle,
                         chartLane,
                         panelBounds.X,
                         plotBounds,

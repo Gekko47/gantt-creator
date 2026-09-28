@@ -3,16 +3,25 @@ namespace GanttCreator.Core.Scene;
 /// <summary>One splitter request.</summary>
 /// <param name="Event">The validated Splitter event. No date geometry is read.</param>
 /// <param name="Style">The resolved named style, supplying <c>SplitterFill</c> (§10).</param>
+/// <param name="BorderStyle">
+/// The resolved major-boundary style supplying the borders' stroke token. Its own width is
+/// deliberately not read; see <see cref="BorderWidthPt"/>.
+/// </param>
 /// <param name="Lane">The fixed-height lane the splitter occupies.</param>
 /// <param name="PanelLeftPt">The data panel's left edge, so the band spans panel and plot.</param>
 /// <param name="PlotBounds">The plot rectangle; the band's right edge is its right edge.</param>
-/// <param name="BorderWidthPt">The major top/bottom border width, from <c>MajorBoundaryPt</c>.</param>
+/// <param name="BorderWidthPt">
+/// The major top/bottom border width, from <c>MajorBoundaryPt</c>. §10's border is a
+/// <em>major</em> boundary, so this is a structural token rather than a style-derived width
+/// (ADR-0022 D4), and it is the value written to the borders' <c>OutlineWidthPt</c>.
+/// </param>
 /// <param name="LabelStyle">The resolved label style, or <see langword="null"/> for no label.</param>
 /// <param name="LabelMetrics">The injected deterministic text-measuring seam.</param>
 /// <param name="LabelPosition">The resolved label position, or <c>None</c> for no label.</param>
 public sealed record SplitterRequest(
     GanttEvent Event,
     SceneStyle Style,
+    SceneStyle BorderStyle,
     LaneGeometry Lane,
     double PanelLeftPt,
     RectD PlotBounds,
@@ -79,6 +88,15 @@ public sealed record SplitterCreationOutcome(SplitterResult? Result, SplitterRef
 /// <see cref="ZLayer.Frame"/> so they frame the band rather than being covered by it.
 /// </para>
 /// <para>
+/// The band and the borders take their styles from different sources, because §10
+/// specifies them differently. The band is a <em>fill</em> and takes the resolved
+/// <c>SplitterFill</c> preset; each border is a <em>stroke</em> whose width is the
+/// structural <c>MajorBoundaryPt</c> token (ADR-0022 D4), so the border takes its colour
+/// from the supplied <c>BorderStyle</c> and its width from <c>BorderWidthPt</c>. Carrying
+/// one style across both would have forced the border to be either unfillable or wrongly
+/// filled, and would have left the structural width unused.
+/// </para>
+/// <para>
 /// The label positions belong to this builder rather than to <see cref="LabelPlanner"/>:
 /// the planner's §22 cascade places a label beside an entity's own bounds, which is a
 /// different problem from "left edge of the data panel" or "centre of the plot". This
@@ -108,7 +126,11 @@ public static class SplitterBuilder
             return Refused(SplitterRefusal.NullRequest);
         }
 
-        if (request.Event is null || request.Style is null || request.Lane is null || request.LabelMetrics is null)
+        if (request.Event is null
+            || request.Style is null
+            || request.BorderStyle is null
+            || request.Lane is null
+            || request.LabelMetrics is null)
         {
             return Refused(SplitterRefusal.NullDependency);
         }
@@ -144,6 +166,20 @@ public static class SplitterBuilder
             request.PlotBounds.Right - request.PanelLeftPt,
             lane.Height);
 
+        // The border is a *stroke*, not the band's fill. Reusing `request.Style` gave both
+        // border lines the Splitter preset's fill with `StrokeColour` and `OutlineWidthPt`
+        // both null, so the scene described a §10 major boundary that no renderer could draw
+        // and silently discarded the `BorderWidthPt` the caller had already supplied and this
+        // method had already validated. The style now supplies the stroke token and the
+        // structural `BorderWidthPt` supplies the width, which is exactly the split ADR-0022
+        // D4 draws: the colour is a style decision, the width is a structural measurement.
+        // Only the stroke members are carried across; a line has no fill, and copying the
+        // band's fill onto it would re-introduce the same dual meaning.
+        SceneStyle borderStyle = new(
+            request.BorderStyle.StyleKey,
+            strokeColour: request.BorderStyle.StrokeColour,
+            outlineWidthPt: request.BorderWidthPt);
+
         List<ScenePrimitive> primitives =
         [
             new SceneRect(
@@ -158,7 +194,7 @@ public static class SplitterBuilder
                 ZLayer.Frame,
                 new PointD(bounds.X, bounds.Y),
                 new PointD(bounds.Right, bounds.Y),
-                request.Style,
+                borderStyle,
                 request.Event.Type,
                 lane.LaneOrder),
             new SceneLine(
@@ -167,7 +203,7 @@ public static class SplitterBuilder
                 ZLayer.Frame,
                 new PointD(bounds.X, bounds.Bottom),
                 new PointD(bounds.Right, bounds.Bottom),
-                request.Style,
+                borderStyle,
                 request.Event.Type,
                 lane.LaneOrder),
         ];
