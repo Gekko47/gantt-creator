@@ -43,11 +43,49 @@ public static class ShapeOwnershipTag
     public const string Prefix = "GanttCreator.Owned.v1:";
 
     /// <summary>
-    /// The number of hex characters of the digest included in the tag. Sixteen
-    /// characters is 64 bits: wide enough that a 1,000-shape chart has a
-    /// collision probability near 2.7 x 10^-14, and short enough that the whole
-    /// tag stays well inside Excel's alternative-text capacity.
+    /// The number of hex characters of the digest included in the tag.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sixteen characters is 64 bits, and the value is deliberate rather than
+    /// incidental — but <strong>not for the reason a collision calculation
+    /// would give.</strong> An earlier version of this comment justified the
+    /// width with a birthday bound: "a 1,000-shape chart has a collision
+    /// probability near 2.7 x 10^-14". That reasoning is wrong, and it was worth
+    /// removing rather than restating, because it invites the reader to shorten
+    /// the hash by a factor of four on a chart-size estimate.
+    /// </para>
+    /// <para>
+    /// <strong>Collisions are inert here.</strong> The tag is never used as a
+    /// lookup key. A shape is found by its <c>Name</c>, and ownership is then
+    /// proved by <em>recomputing</em> the expected tag for that name and
+    /// comparing — <c>CarriesOwnershipTagFor(shape, name)</c> in
+    /// <see cref="ExcelShapeWriter"/>, and the same per-shape check in
+    /// <c>ListOwned</c>. So if two owned shapes happened to hash alike, each is
+    /// still verified against its own identifier and both remain correctly
+    /// classified. No shape count makes the width insufficient, and no shape
+    /// count would make a shorter width unsafe.
+    /// </para>
+    /// <para>
+    /// <strong>What the width is actually for.</strong> The tag separates
+    /// add-in-generated content from a user's own, so that a refresh never
+    /// reorders, rewrites, or deletes a shape the user drew (R4.8). The
+    /// <see cref="Prefix"/> does that filtering; the hash pins the tag to one
+    /// specific identifier, so a shape carrying some <em>other</em> entity's
+    /// valid tag is correctly treated as unowned. The width is sized generously
+    /// because the whole tag is 38 characters and round-trips unaltered on the
+    /// live host (verified by the R4.1 probe, which also confirmed Excel's name
+    /// cap is unrelated — that limit is on <c>Name</c>, see KNOWN-LIMITATIONS
+    /// L18). Generosity here is free, so there is no reason to economise.
+    /// </para>
+    /// <para>
+    /// The <c>v1</c> segment, not this width, is the lever if the scheme ever
+    /// changes: a future revision can widen or re-key the tag and R9.4 can then
+    /// tell this build's tags from any other. Narrowing the hash is therefore a
+    /// versioned change, not a tuning one, and should not be done by editing
+    /// this constant alone.
+    /// </para>
+    /// </remarks>
     internal const int HashLength = 16;
 
     private const int _hashBytesToKeep = HashLength / 2;
