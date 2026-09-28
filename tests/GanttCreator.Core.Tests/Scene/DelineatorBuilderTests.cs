@@ -44,16 +44,44 @@ public sealed class DelineatorBuilderTests
         GanttEvent e,
         ITextMetrics? metrics = null,
         GanttLabelPosition position = GanttLabelPosition.Auto,
-        double? width = null) =>
+        double? width = null,
+        ColourHex? textColour = null) =>
         new(
             e,
-            new SceneStyle("DefaultDelineator", strokeColour: ColourHex.Parse("#404040")),
+            new SceneStyle(
+                "DefaultDelineator",
+                strokeColour: ColourHex.Parse("#404040"),
+                textColour: textColour),
             width ?? 0.75,
             Plot,
             Chart,
             2.0,
             metrics ?? Metrics,
             position);
+
+    /// <summary>
+    /// R4.11: replacing the delineator's line width must not discard the named
+    /// style's text colour.
+    /// </summary>
+    /// <remarks>
+    /// §24 fixes the line width at the <c>DelineatorLinePt</c> token, so
+    /// <c>WithWidth</c> rebuilds the style rather than copying it. That rebuild
+    /// takes <see cref="SceneStyle"/>'s members positionally, and
+    /// <c>TextColour</c> is its tenth optional parameter — so an earlier version
+    /// dropped it silently. The golden snapshot could not catch it: the reference
+    /// fixture's delineator style declares no text colour, so there was nothing to
+    /// lose. This test supplies one.
+    /// </remarks>
+    [Fact]
+    public void Applying_the_delineator_line_width_preserves_the_named_styles_text_colour()
+    {
+        ColourHex white = ColourHex.Parse("#FFFFFF");
+
+        DelineatorResult result = Build(Req(Event(), textColour: white));
+
+        Assert.NotNull(result.Primitive);
+        Assert.Equal(white, result.Primitive!.Style.TextColour);
+    }
 
     private static DelineatorResult Build(
         DelineatorRequest request,

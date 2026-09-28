@@ -309,10 +309,20 @@ public static class DelineatorBuilder
     /// Returns the style with the delineator's own line width applied.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="SceneStyle"/> exposes read-only properties, so it is rebuilt
     /// rather than copied with a <c>with</c> expression. §24 fixes the width at
     /// the <c>DelineatorLinePt</c> token, so the width is never taken from the
     /// named style.
+    /// </para>
+    /// <para>
+    /// Every member is forwarded, including the optional
+    /// <c>textColour</c> (R4.11). Passing positionally made this call silently
+    /// drop it, because it is the tenth optional parameter: a delineator whose
+    /// named style declared a text colour rendered with the host's default. The
+    /// golden snapshot could not catch that, since the reference fixture's
+    /// delineator style declares no text colour and so had nothing to lose.
+    /// </para>
     /// </remarks>
     private static SceneStyle WithWidth(SceneStyle style, double widthPt) =>
         new(
@@ -324,7 +334,8 @@ public static class DelineatorBuilder
             style.FontFamily,
             style.FontSizePt,
             style.Bold,
-            style.Alignment);
+            style.Alignment,
+            style.TextColour);
 
     /// <summary>Builds one corner's box, offsetting the stack away from the plot edge.</summary>
     private static RectD CornerBox(
