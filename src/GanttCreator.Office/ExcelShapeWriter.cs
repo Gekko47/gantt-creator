@@ -660,16 +660,82 @@ public class ExcelShapeWriter(
                 return textBox;
 
             case OfficeShapeKind.Polygon:
+                return AddFreeform(shapes, request);
+
             default:
-                // R4.5 owns the freeform point semantics. This row's Step-0 probe
-                // established only that the API path is
-                // BuildFreeform -> AddNodes -> ConvertToShape, not how the points
-                // are interpreted, so the kind is recognised and refused rather
-                // than implemented on an unprobed assumption. Returning null makes
-                // Create report HostRejected, which is a visible refusal and not a
-                // silently misplaced shape.
+                // An undefined kind is refused rather than placed. Returning null
+                // makes Create report HostRejected, which is a visible refusal and
+                // not a silently misplaced shape.
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Creates a freeform shape from the request's ordered points.
+    /// </summary>
+    /// <param name="shapes">The shapes collection.</param>
+    /// <param name="request">The request whose points are drawn.</param>
+    /// <returns>The created freeform, or <see langword="null"/> when the host refused.</returns>
+    /// <remarks>
+    /// <para>
+    /// R4.5 D1, written against the row's own Step-0 probe rather than the API
+    /// signature. The probe found that passing several vertices in ONE
+    /// <c>AddNodes</c> call silently produces a <strong>degenerate</strong> shape -
+    /// no exception, just a zero-width, zero-height shape at the start point.
+    /// The working pattern is <c>BuildFreeform</c> at the first vertex followed by
+    /// one <c>AddNodes</c> call per subsequent vertex, supplying only
+    /// <c>X1</c>/<c>Y1</c> and passing <see cref="Type.Missing"/> for the optional
+    /// trailing points.
+    /// </para>
+    /// <para>
+    /// Coordinates are <strong>absolute</strong> sheet points, the same convention
+    /// <c>AddLine</c> uses, so no offset from the builder origin is applied.
+    /// </para>
+    /// <para>
+    /// <c>msoEditingCorner</c> is chosen over <c>msoEditingAuto</c> deliberately:
+    /// it guarantees straight segments, so auto-smoothing can never round a
+    /// milestone's tips. The probe measured identical geometry for both on a
+    /// straight-edged polygon, which is the point - the corner form makes that
+    /// equality structural rather than incidental.
+    /// </para>
+    /// </remarks>
+    private static Excel.Shape? AddFreeform(Excel.Shapes shapes, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(shapes);
+        ArgumentNullException.ThrowIfNull(request);
+
+        IReadOnlyList<PointD> points = request.Geometry.Points!;
+        if (points.Count < 3)
+        {
+            return null;
+        }
+
+        PointD first = points[0];
+        Excel.FreeformBuilder? builder = shapes.BuildFreeform(
+            MsoEditingType.msoEditingCorner,
+            GeometryMath.SnapToDisplayPrecision(first.X),
+            GeometryMath.SnapToDisplayPrecision(first.Y));
+
+        if (builder is null)
+        {
+            return null;
+        }
+
+        for (var index = 1; index < points.Count; index++)
+        {
+            PointD point = points[index];
+            builder.AddNodes(
+                MsoSegmentType.msoSegmentLine,
+                MsoEditingType.msoEditingCorner,
+                GeometryMath.SnapToDisplayPrecision(point.X),
+                GeometryMath.SnapToDisplayPrecision(point.Y),
+                Type.Missing,
+                Type.Missing,
+                Type.Missing,
+                Type.Missing);
+        }
+
+        return builder.ConvertToShape();
     }
 
     /// <summary>

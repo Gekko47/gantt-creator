@@ -124,6 +124,7 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
         {
             SceneRect rect => BuildRect(rect),
             SceneLine line => BuildLine(line),
+            ScenePolygon polygon => BuildPolygon(polygon),
             SceneText text => BuildText(text),
             _ => null,
         };
@@ -179,6 +180,25 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
                 From: originDelta.Apply(line.From),
                 To: originDelta.Apply(line.To)),
             line.ZLayer);
+
+    /// <summary>Builds a freeform request from the polygon's ordered points.</summary>
+    /// <remarks>
+    /// R4.5 D1. The points are translated by the same uniform delta as every other
+    /// family and their draw order is preserved exactly: a milestone is a
+    /// four-point polygon whose tip-to-tip extent the entity guide fixes, and
+    /// reordering or normalising the vertices here would change the rendered
+    /// shape rather than translate it. Vertices are absolute sheet points, which is
+    /// what the R4.5 Step-0 probe established for the host's freeform builder.
+    /// </remarks>
+    /// <param name="polygon">The scene polygon.</param>
+    /// <returns>The translated shape request.</returns>
+    private OfficeShapeRequest BuildPolygon(ScenePolygon polygon) =>
+        new(
+            polygon.PrimitiveId,
+            OfficeShapeKind.Polygon,
+            new OfficeShapeGeometry(
+                Points: [.. polygon.Points.Select(originDelta.Apply)]),
+            polygon.ZLayer);
 
     /// <summary>Builds a text request, consuming the scene's resolved text verbatim.</summary>
     /// <remarks>

@@ -171,40 +171,104 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A primitive whose family a later Phase-4 row owns is reported by name
-    /// rather than dropped. Silently omitting a shape is indistinguishable from a
-    /// correct render until a user looks at the chart, so the deferral is part of
-    /// the contract.
+    /// A milestone diamond is a four-point polygon and becomes a freeform
+    /// request, with its points translated by the same uniform delta as every
+    /// other family and its draw order preserved. Reordering or normalising the
+    /// vertices would change the rendered shape rather than translate it.
     /// </summary>
     [Fact]
-    public void A_primitive_family_this_renderer_cannot_draw_is_reported_rather_than_silently_dropped()
+    public void A_four_point_diamond_becomes_a_freeform_request_with_translated_points()
+    {
+        var renderer = new SceneShapeRenderer(new ChartOriginDelta(12, 12));
+        PointD[] diamond = [new(50, 40), new(60, 50), new(50, 60), new(40, 50)];
+        var scene = SceneOf(
+            new ScenePolygon("row-1:marker", RowOwner, ZLayer.Milestone, diamond, Style));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+        Assert.True(outcome.Complete);
+
+        OfficeShapeRequest marker = Assert.Single(outcome.Requests);
+        Assert.Equal(OfficeShapeKind.Polygon, marker.Kind);
+        Assert.Equal(ZLayer.Milestone, marker.ZLayer);
+        Assert.Equal(
+            [new PointD(62, 52), new PointD(72, 62), new PointD(62, 72), new PointD(52, 62)],
+            marker.Geometry.Points);
+    }
+
+    /// <summary>
+    /// The tip-to-tip extent the scene resolved is preserved exactly, so a
+    /// milestone diamond is never drawn at a size the scene did not ask for.
+    /// </summary>
+    [Fact]
+    public void A_diamonds_tip_to_tip_extent_survives_translation()
+    {
+        const double Size = 20d;
+        const double Centre = 100d;
+        var renderer = new SceneShapeRenderer(new ChartOriginDelta(30, 30));
+
+        // A diamond whose horizontal AND vertical tip-to-tip extent is Size*2,
+        // matching the entity guide's MilestoneSizePt contract.
+        PointD[] diamond =
+        [
+            new(Centre, Centre - Size),
+            new(Centre + Size, Centre),
+            new(Centre, Centre + Size),
+            new(Centre - Size, Centre),
+        ];
+        var scene = SceneOf(
+            new ScenePolygon("row-1:marker", RowOwner, ZLayer.Milestone, diamond, Style));
+
+        IReadOnlyList<PointD> points = Assert.Single(
+            renderer.Translate(scene).Requests).Geometry.Points!;
+
+        double width = points.Max(p => p.X) - points.Min(p => p.X);
+        double height = points.Max(p => p.Y) - points.Min(p => p.Y);
+
+        Assert.Equal(Size * 2, width, 10);
+        Assert.Equal(Size * 2, height, 10);
+    }
+
+    /// <summary>
+    /// A group primitive owns no geometry of its own, so it is reported as
+    /// deferred rather than translated into an empty shape. Grouping itself is
+    /// Phase 6's export concern.
+    /// </summary>
+    [Fact]
+    public void A_group_primitive_is_reported_as_deferred_rather_than_drawn()
     {
         var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
         var scene = SceneOf(
             Rect("row-1:bar", new RectD(10, 20, 100, 30)),
-            new ScenePolygon(
-                "row-2:marker",
-                RowOwner,
-                ZLayer.Milestone,
-                [new PointD(50, 50), new PointD(60, 60), new PointD(40, 60), new PointD(50, 70)],
-                Style));
+            new SceneGroup("row-1:group", RowOwner, ZLayer.ActivityBody, ["row-1:bar"]));
 
         SceneTranslationOutcome outcome = renderer.Translate(scene);
 
         Assert.False(outcome.Complete);
         Assert.Single(outcome.Requests);
         Assert.Equal(
-            [("row-2:marker", ScenePrimitiveKind.Polygon)],
+            [("row-1:group", ScenePrimitiveKind.Group)],
             outcome.Deferred.Select(deferred => (deferred.PrimitiveId, deferred.Kind)));
     }
 
+    /// <summary>
+    /// Every primitive family is now renderable, so a mixed scene translates
+    /// completely. This is the row's completion pin: a scene holding a bar, a
+    /// grid line, a milestone diamond, and a label yields four requests and no
+    /// deferrals.
+    /// </summary>
     [Fact]
-    public void A_scene_of_rectangles_lines_and_text_is_complete()
+    public void A_mixed_scene_of_every_family_translates_completely()
     {
         var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
         var scene = SceneOf(
             Rect("row-1:bar", new RectD(10, 20, 100, 30)),
             Line("chart:grid:0", new PointD(10, 60), new PointD(90, 60)),
+            new ScenePolygon(
+                "row-2:marker",
+                RowOwner,
+                ZLayer.Milestone,
+                [new PointD(50, 50), new PointD(60, 60), new PointD(40, 60), new PointD(50, 70)],
+                Style),
             new SceneText(
                 "row-1:label",
                 RowOwner,
@@ -218,7 +282,12 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
 
         Assert.True(outcome.Complete);
         Assert.Empty(outcome.Deferred);
-        Assert.Equal(3, outcome.Requests.Count);
+
+        // One shape per primitive, each of the right family.
+        Assert.Equal(4, outcome.Requests.Count);
+        Assert.Equal(
+            [OfficeShapeKind.Line, OfficeShapeKind.Rectangle, OfficeShapeKind.Polygon, OfficeShapeKind.TextBox],
+            outcome.Requests.Select(request => request.Kind));
         _output.WriteLine("complete scene rendered " + outcome.Requests.Count + " shapes");
     }
 

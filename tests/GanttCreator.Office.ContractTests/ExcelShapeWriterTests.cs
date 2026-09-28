@@ -1,5 +1,6 @@
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
+using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 using Moq;
 
@@ -62,24 +63,25 @@ public class ExcelShapeWriterTests
         {
             Requests.Add(request);
 
-            // The real adapter refuses the unprobed polygon kind; the fake mirrors
-            // that so a test cannot pass by the fake being more permissive.
-            if (request.Kind == OfficeShapeKind.Polygon)
-            {
-                return null;
-            }
-
-            // Backing fields, not a loose mock: the adapter *writes* Name and
-            // AlternativeText, and a loose mock discards writes, which would make
-            // the ADR-0019 ownership assertions pass or fail for the wrong reason.
+            // The real adapter now implements the polygon kind through
+            // BuildFreeform, which is exercised by the tagged live-Office
+            // integration test. The fake records the request and returns a
+            // shape so count/type/order pins can be asserted without a host.
+            var mock = new Mock<Excel.Shape>();
+            TestableWriter owner = this;
             string name = string.Empty;
             string alternativeText = string.Empty;
-            var mock = new Mock<Excel.Shape>();
             _ = mock.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => name = value);
             _ = mock.SetupGet(s => s.Name).Returns(() => name);
             _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
                 .Callback<string>(value => alternativeText = value);
             _ = mock.SetupGet(s => s.AlternativeText).Returns(() => alternativeText);
+
+            // ZOrder is a real COM call on the shape; the fake records the
+            // command instead, so D2's "no opportunistic BringToFront" pin
+            // asserts the actual operation sequence rather than a proxy.
+            _ = mock.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
+                .Callback<MsoZOrderCmd>(command => owner.ZOrderCommands.Add(command.ToString()));
 
             var created = mock.Object;
             Created.Add(created);
@@ -166,22 +168,108 @@ public class ExcelShapeWriterTests
         Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
         Assert.Empty(writer.Created);
     }
+    /// <summary>
+    /// R4.5 D1: a four-point milestone polygon becomes a freeform request whose
+    /// points survive in draw order, so the adapter draws the diamond the scene
+    /// resolved rather than one it re-derived.
+    /// </summary>
     [Fact]
-    public void Create_refuses_the_unprobed_polygon_kind_rather_than_placing_it_on_an_assumption()
+    public void A_four_point_polygon_becomes_a_freeform_request_preserving_its_points()
     {
-        // R4.5 owns the freeform point semantics. A silent success here would be a
-        // shape placed from an unprobed reading of the API.
         var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        PointD[] diamond = [new(50, 40), new(60, 50), new(50, 60), new(40, 50)];
         var request = new OfficeShapeRequest(
             "row-1:marker",
             OfficeShapeKind.Polygon,
-            new OfficeShapeGeometry(Points: [new PointD(0, 0), new PointD(10, 0), new PointD(5, 10)]),
+            new OfficeShapeGeometry(Points: diamond),
             ZLayer.Milestone);
 
         ShapeWriteOutcome outcome = writer.Create(request);
 
-        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        OfficeShapeRequest created = Assert.Single(writer.Requests);
+        Assert.Equal(OfficeShapeKind.Polygon, created.Kind);
+        Assert.Equal(diamond, created.Geometry.Points);
+
+        // The shape is owned and named, so a diamond is reconcilable exactly
+        // like a bar or a label.
+        Excel.Shape shape = Assert.Single(writer.Created);
+        Assert.Equal("row-1:marker", shape.Name);
+        Assert.Equal(ShapeOwnershipTag.ForPrimitiveId("row-1:marker"), shape.AlternativeText);
+    }
+
+    /// <summary>
+    /// A polygon with fewer than three points cannot enclose an area, so it is
+    /// refused before the host is touched rather than placed as a degenerate
+    /// shape. This is the validator's positive test.
+    /// </summary>
+    [Fact]
+    public void A_polygon_with_fewer_than_three_points_is_refused()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var request = new OfficeShapeRequest(
+            "row-1:marker",
+            OfficeShapeKind.Polygon,
+            new OfficeShapeGeometry(Points: [new PointD(50, 40), new PointD(60, 50)]),
+            ZLayer.Milestone);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.Equal(ShapeWriteRefusal.InvalidGeometry, outcome.Refusal);
         Assert.Empty(writer.Created);
+    }
+
+    /// <summary>
+    /// R4.5 D2: the z-order pass moves the first named shape to the back and then
+    /// brings each subsequent one forward exactly once. No per-shape
+    /// <c>BringToFront</c> outside this single pass, and no host-default order.
+    /// </summary>
+    [Fact]
+    public void The_z_order_pass_sends_the_first_shape_to_the_back_then_brings_each_forward_once()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        string[] ids = ["chart:background", "chart:grid:0", "row-1:bar", "row-1:label"];
+        foreach (string id in ids)
+        {
+            _ = writer.Create(new OfficeShapeRequest(
+                id,
+                OfficeShapeKind.Rectangle,
+                new OfficeShapeGeometry(Bounds: new RectD(0, 0, 10, 10)),
+                ZLayer.Background));
+        }
+
+        writer.ZOrderCommands.Clear();
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(ids);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // Exactly one send-to-back and one bring-forward per shape after the
+        // first - no opportunistic repetition, no BringToFront at all.
+        Assert.Equal(
+            1 + (ids.Length - 1),
+            writer.ZOrderCommands.Count(command => command != "BringToFront"));
+        Assert.DoesNotContain("BringToFront", writer.ZOrderCommands);
+    }
+
+    /// <summary>
+    /// The z-order pass refuses when a named shape does not exist, rather than
+    /// applying a partial order that would leave the chart in a state neither the
+    /// scene nor the user asked for.
+    /// </summary>
+    [Fact]
+    public void The_z_order_pass_refuses_rather_than_applying_a_partial_order()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        _ = writer.Create(new OfficeShapeRequest(
+            "chart:background",
+            OfficeShapeKind.Rectangle,
+            new OfficeShapeGeometry(Bounds: new RectD(0, 0, 10, 10)),
+            ZLayer.Background));
+
+        ShapeWriteOutcome outcome = writer.ApplyZOrder(["chart:background", "row-1:missing"]);
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
     }
 
     /// <summary>
