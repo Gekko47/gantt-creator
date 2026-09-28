@@ -7,6 +7,22 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
+- **The live Office gate runs green, and it found a defect no contract test could (this change)** — `pwsh ./scripts/verify-office.ps1` → **`verify-office: PASS`**, 43/43, against Office `16.0.20326.20158` (x64, `O365HomePremRetail`, `en-us`). The COM-proxy leak signal is **25 against a ceiling of 26**, i.e. below the previous baseline rather than raised. The first attempt at this gate **failed 2/44**, and what it found is the entry's substance.
+
+  **The defect: a freshly initialised `tblGanttData` has a header row and no data rows, so `DataBodyRange` is null and the measurement is correctly refused — but both live tests were measuring exactly that empty table and treating the resulting `InvalidMeasurement` as the property under test.** The pre-existing mixed-height live test was written before commit `2b84689`, and an earlier STATUS entry recorded it as "written and compiles but unexecuted", so the mistake had never met the host. The mocked contract tests could not have caught it: they supply their own row list, so the precondition that matters most was never modelled.
+
+  Diagnosis was by a **temporary live probe** that read each dependency directly through the interop API — `ShowHeaders=True`, `HeaderRowRange.RowHeight = 15`, `ListRows.Count = 0`, `DataBodyRange` null, `body.Rows.Count`, each `rows.Item[i].RowHeight`, `column.Range.Width = 48` — rather than by inference. The probe was **deleted**; it is not part of the suite.
+
+  **Host evidence now recorded, all of it previously assumed or unknown:**
+  - `DataBodyRange.RowHeight` on a genuinely mixed body returns **`DBNull`** on this build. The `DBNull` concern behind the old conversion guard was real, and the per-row walk handles it without consulting the aggregate.
+  - A four-row body set to 15/45/24 measured back as **`15/25/35/45`** — the per-row read is exact, and the values are asserted, not just the success flag.
+  - **Measurement succeeds on a protected worksheet.** This was the single unknown commit `2b84689` was shipped without, and it is now host-confirmed rather than documented assumption.
+  - An empty table refuses as `InvalidMeasurement`, now asserted in the same session as its own precondition rather than as an accident.
+
+  **The COM-proxy ratchet was respected, not worked around.** The protected-sheet check is a genuine second claim, but giving it its own Excel instance pushed the signal to 30 and then 27 against a ceiling of 26. Rather than raise the ceiling — which the ratchet documentation explicitly forbids without evidence — the three claims were **merged into one live session**, which is why the suite is 43 tests rather than 45 and the signal is 25. The protected block unprotects in a `finally` so a locked sheet is not left for teardown.
+
+  Non-Office: Core 997/997, Office contract 374/374, Architecture 84/84. `verify-quick.ps1` and `verify.ps1` **Not run** (tree not clean when this entry was written). Checklist: A, B, C, E, G, I, J, K.
+
 - **The golden scene snapshot is regenerated after approval, and a degenerate primitive it exposed is fixed (this change)** — Closes the gate left open by `11df4e1`. The delta was presented and approved: the reference scene is deliberately **panel-free** and previously supplied an arbitrary `PanelBounds` purely to give the chart a wide content union, so with that input removed the chart is correctly the plot plus its header bands. `chart:background` moves from `0,6 1120x394` to `520,60 600x340`, the four `chart:frame:*` lines and the title band follow, and the §10 splitter band narrows from 1120pt to 600pt. No entity geometry moved.
 
   **Inspecting the regenerated baseline found a real defect, which is why this is not a one-line regeneration.** The new scene contained a `splitter-label` with `TextBounds.Width: 0`. With no data panel, §10's `DataPanelLeft` position has nowhere to sit — the band starts at the plot's own left edge, so the available width is exactly zero — and the builder emitted an invisible text primitive that a renderer must still place and reconciliation must track forever. A blank or degenerate primitive is the same class of defect this repository treats as a bug, so `SplitterBuilder` now **suppresses** a label with no room rather than emitting it at zero width, and a test pins it. The golden therefore loses that primitive: **59 → 58 primitives, one removed** (`…a1:splitter-label`), which is the only removal across the whole remediation.
