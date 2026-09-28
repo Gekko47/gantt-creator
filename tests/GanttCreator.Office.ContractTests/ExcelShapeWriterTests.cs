@@ -36,6 +36,14 @@ public class ExcelShapeWriterTests
         /// <summary>The z-order commands the adapter issued.</summary>
         public List<string> ZOrderCommands { get; } = [];
 
+        /// <summary>
+        /// The requests the adapter was asked to create, in order. R4.4 asserts
+        /// the text, font, and alignment members the host was handed, so the
+        /// observable operation is recorded rather than the shape's post-write
+        /// state, which a fake would have to model to be worth anything.
+        /// </summary>
+        public List<OfficeShapeRequest> Requests { get; } = [];
+
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             new Mock<Excel._Worksheet>().Object;
 
@@ -52,6 +60,8 @@ public class ExcelShapeWriterTests
 
         internal override Excel.Shape? AddShape(Excel.Shapes shapes, OfficeShapeRequest request)
         {
+            Requests.Add(request);
+
             // The real adapter refuses the unprobed polygon kind; the fake mirrors
             // that so a test cannot pass by the fake being more permissive.
             if (request.Kind == OfficeShapeKind.Polygon)
@@ -172,6 +182,76 @@ public class ExcelShapeWriterTests
 
         Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
         Assert.Empty(writer.Created);
+    }
+
+    /// <summary>
+    /// R4.4 D3: the alignment mapping is a closed three-member table, and an
+    /// alignment outside the enum is REFUSED rather than defaulted. A silent
+    /// fallback would render a label with an alignment nobody chose, which is
+    /// the same class of unrequested visual change the entity guide forbids.
+    /// </summary>
+    [Fact]
+    public void An_alignment_outside_the_scene_enum_is_refused_rather_than_defaulted()
+    {
+        var method = typeof(ExcelShapeWriter).GetMethod(
+            "MapAlignment",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var undefined = (GanttTextAlignment)99;
+        var thrown = Assert.Throws<System.Reflection.TargetInvocationException>(
+            () => method!.Invoke(null, [undefined]));
+
+        Assert.IsType<ArgumentOutOfRangeException>(thrown.InnerException);
+    }
+
+    /// <summary>
+    /// The three defined alignments each map to a distinct host constant, and
+    /// none of them collapses onto another's value.
+    /// </summary>
+    [Fact]
+    public void Each_defined_alignment_maps_to_a_distinct_host_constant()
+    {
+        var method = typeof(ExcelShapeWriter).GetMethod(
+            "MapAlignment",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var mapped = Enum.GetValues<GanttTextAlignment>()
+            .Select(alignment => method!.Invoke(null, [alignment]))
+            .ToArray();
+
+        Assert.Equal(Enum.GetValues<GanttTextAlignment>().Length, mapped.Length);
+        Assert.Equal(mapped.Length, mapped.Distinct().Count());
+        Assert.DoesNotContain(null, mapped);
+    }
+
+    /// <summary>
+    /// R4.4 D4: an over-long label the scene already truncated is written to the
+    /// shape verbatim, ellipsis included. The adapter applies no truncation of
+    /// its own, so what the host receives is exactly what the scene resolved.
+    /// </summary>
+    [Fact]
+    public void A_clipped_label_reaches_the_host_verbatim_with_no_second_truncation()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        const string Clipped = "Site survey and ground investigation phase one…";
+        var request = new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(10, 20, 40, 12)),
+            ZLayer.Label,
+            Text: Clipped,
+            Alignment: GanttTextAlignment.Right);
+
+        ShapeWriteOutcome outcome = writer.Create(request);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        OfficeShapeRequest created = Assert.Single(writer.Requests);
+        Assert.Equal(Clipped, created.Text);
+        Assert.Equal(GanttTextAlignment.Right, created.Alignment);
     }
 
     [Fact]

@@ -645,12 +645,19 @@ public class ExcelShapeWriter(
 
             case OfficeShapeKind.TextBox:
                 RectD text = geometry.Bounds!.Value;
-                return shapes.AddTextbox(
+                Excel.Shape? textBox = shapes.AddTextbox(
                     MsoTextOrientation.msoTextOrientationHorizontal,
                     GeometryMath.SnapToDisplayPrecision(text.X),
                     GeometryMath.SnapToDisplayPrecision(text.Y),
                     GeometryMath.SnapToDisplayPrecision(text.Width),
                     GeometryMath.SnapToDisplayPrecision(text.Height));
+
+                if (textBox is not null)
+                {
+                    ApplyText(textBox, request);
+                }
+
+                return textBox;
 
             case OfficeShapeKind.Polygon:
             default:
@@ -664,4 +671,102 @@ public class ExcelShapeWriter(
                 return null;
         }
     }
+
+    /// <summary>
+    /// Writes the text content, typography, and alignment onto a text shape.
+    /// </summary>
+    /// <param name="shape">The created text box.</param>
+    /// <param name="request">The request whose text members are written.</param>
+    /// <remarks>
+    /// <para>
+    /// R4.4: the renderer <strong>consumes</strong> the scene's resolved text.
+    /// The string is written verbatim, including any ellipsis R3.6's overflow
+    /// policy already applied, and the resolved <c>TextBounds</c> positions the
+    /// shape. Nothing here measures, truncates, re-wraps, or re-selects a label
+    /// side; the scene owns all of that.
+    /// </para>
+    /// <para>
+    /// The <c>TextFrame2</c> path is used rather than the legacy
+    /// <c>TextFrame.Characters</c> path because the latter's font members are
+    /// typed <c>Object</c>, and this repository treats an untyped interop member
+    /// as a live hazard - R4.1's <c>Shape.Tag</c> and R4.2's
+    /// <c>Application.Calculation</c> were both assumptions about interop member
+    /// shapes that did not survive contact. R4.4 D3's original
+    /// <c>xlAlignLeft</c>-style constants do not exist in the installed
+    /// assembly; the real values are <see cref="MsoParagraphAlignment"/> members.
+    /// </para>
+    /// <para>
+    /// Word wrap is switched off deliberately. A text box that auto-fits would
+    /// resize itself away from the bounds the scene resolved, which is the same
+    /// class of silent re-layout the no-remeasure rule forbids.
+    /// </para>
+    /// </remarks>
+    private static void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+        ArgumentNullException.ThrowIfNull(request);
+
+        Excel.TextFrame2? frame = shape.TextFrame2;
+        if (frame is null)
+        {
+            return;
+        }
+
+        frame.WordWrap = MsoTriState.msoFalse;
+        frame.AutoSize = MsoAutoSize.msoAutoSizeNone;
+
+        TextRange2? textRange = frame.TextRange;
+        if (textRange is null)
+        {
+            return;
+        }
+
+        // Verbatim: the scene already applied the overflow policy.
+        textRange.Text = request.Text ?? string.Empty;
+
+        if (request.Alignment is { } alignment)
+        {
+            textRange.ParagraphFormat.Alignment = MapAlignment(alignment);
+        }
+
+        if (request.FontFamily is { } family)
+        {
+            textRange.Font.Name = family;
+        }
+
+        if (request.FontSizePt is { } size)
+        {
+            textRange.Font.Size = (float)size;
+        }
+
+        if (request.Bold is { } bold)
+        {
+            textRange.Font.Bold = bold ? MsoTriState.msoTrue : MsoTriState.msoFalse;
+        }
+    }
+
+    /// <summary>
+    /// Maps a resolved scene alignment onto the host's paragraph-alignment
+    /// constant.
+    /// </summary>
+    /// <param name="alignment">The alignment the scene resolved.</param>
+    /// <returns>The host alignment constant.</returns>
+    /// <remarks>
+    /// The mapping is closed because <see cref="GanttTextAlignment"/> is. The
+    /// default arm is a throw rather than a silent fallback: an alignment added
+    /// to the scene enum must fail loudly here, so the guide and this method
+    /// cannot drift apart unnoticed.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the alignment is not a defined member.</exception>
+    private static MsoParagraphAlignment MapAlignment(GanttTextAlignment alignment) =>
+        alignment switch
+        {
+            GanttTextAlignment.Left => MsoParagraphAlignment.msoAlignLeft,
+            GanttTextAlignment.Centre => MsoParagraphAlignment.msoAlignCenter,
+            GanttTextAlignment.Right => MsoParagraphAlignment.msoAlignRight,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(alignment),
+                alignment,
+                "The scene produced an alignment with no host mapping. Extend MapAlignment and the guide together."),
+        };
 }

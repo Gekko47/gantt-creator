@@ -124,6 +124,7 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
         {
             SceneRect rect => BuildRect(rect),
             SceneLine line => BuildLine(line),
+            SceneText text => BuildText(text),
             _ => null,
         };
     }
@@ -178,4 +179,44 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
                 From: originDelta.Apply(line.From),
                 To: originDelta.Apply(line.To)),
             line.ZLayer);
+
+    /// <summary>Builds a text request, consuming the scene's resolved text verbatim.</summary>
+    /// <remarks>
+    /// <para>
+    /// R4.4 D1: this consumes and never re-measures. <see cref="SceneText.Text"/>
+    /// is written exactly as the scene produced it - including the single-
+    /// character ellipsis R3.6's overflow policy already applied at
+    /// <c>MaximumExternalLabelWidthPt</c> - and the shape is positioned at the
+    /// resolved <see cref="SceneText.TextBounds"/>. No measuring API is called, no
+    /// truncation is applied here, and the label side the scene chose is not
+    /// revisited, even when the opposite side would look emptier.
+    /// </para>
+    /// <para>
+    /// The alignment is <see cref="SceneText.Alignment"/>, which ADR-0018 D4's
+    /// rule already resolved in the scene through
+    /// <c>LabelPlanner.TextAlignmentFor</c>. This method copies it; it does not
+    /// reimplement the rule.
+    /// </para>
+    /// <para>
+    /// Typography is copied from the resolved <see cref="SceneStyle"/> tokens.
+    /// Nothing is invented between token and property, and an absent token stays
+    /// absent rather than being defaulted - R4.6 owns the full style matrix.
+    /// </para>
+    /// </remarks>
+    /// <param name="text">The scene text.</param>
+    /// <returns>The translated shape request.</returns>
+    private OfficeShapeRequest BuildText(SceneText text) =>
+        new(
+            text.PrimitiveId,
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: originDelta.Apply(text.TextBounds)),
+            text.ZLayer,
+            FillColour: text.Style.FillColour,
+            StrokeColour: text.Style.StrokeColour,
+            LineWidthPt: text.Style.OutlineWidthPt,
+            FontFamily: text.Style.FontFamily,
+            FontSizePt: text.Style.FontSizePt,
+            Bold: text.Style.Bold,
+            Text: text.Text,
+            Alignment: text.Alignment);
 }

@@ -187,7 +187,24 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
                 RowOwner,
                 ZLayer.Milestone,
                 [new PointD(50, 50), new PointD(60, 60), new PointD(40, 60), new PointD(50, 70)],
-                Style),
+                Style));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        Assert.False(outcome.Complete);
+        Assert.Single(outcome.Requests);
+        Assert.Equal(
+            [("row-2:marker", ScenePrimitiveKind.Polygon)],
+            outcome.Deferred.Select(deferred => (deferred.PrimitiveId, deferred.Kind)));
+    }
+
+    [Fact]
+    public void A_scene_of_rectangles_lines_and_text_is_complete()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            Rect("row-1:bar", new RectD(10, 20, 100, 30)),
+            Line("chart:grid:0", new PointD(10, 60), new PointD(90, 60)),
             new SceneText(
                 "row-1:label",
                 RowOwner,
@@ -195,29 +212,13 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
                 "Site survey",
                 new RectD(120, 20, 60, 12),
                 Style,
-                GanttTextAlignment.Left));
-
-        SceneTranslationOutcome outcome = renderer.Translate(scene);
-
-        Assert.False(outcome.Complete);
-        Assert.Single(outcome.Requests);
-        Assert.Equal(
-            [("row-2:marker", ScenePrimitiveKind.Polygon), ("row-1:label", ScenePrimitiveKind.Text)],
-            outcome.Deferred.Select(deferred => (deferred.PrimitiveId, deferred.Kind)));
-    }
-
-    [Fact]
-    public void A_scene_of_only_rectangles_and_lines_is_complete()
-    {
-        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
-        var scene = SceneOf(
-            Rect("row-1:bar", new RectD(10, 20, 100, 30)),
-            Line("chart:grid:0", new PointD(10, 60), new PointD(90, 60)));
+                GanttTextAlignment.Right));
 
         SceneTranslationOutcome outcome = renderer.Translate(scene);
 
         Assert.True(outcome.Complete);
         Assert.Empty(outcome.Deferred);
+        Assert.Equal(3, outcome.Requests.Count);
         _output.WriteLine("complete scene rendered " + outcome.Requests.Count + " shapes");
     }
 
@@ -242,6 +243,185 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
         Assert.Equal(
             ["chart:grid:0", "row-1:bar"],
             outcome.Requests.Select(request => request.PrimitiveId));
+    }
+
+    /// <summary>
+    /// D1 positive test: a scene label the planner placed on the Left stays on
+    /// the Left, even though the Right would look emptier. The renderer copies
+    /// the resolved bounds verbatim and never re-selects a side.
+    /// </summary>
+    [Fact]
+    public void A_label_the_scene_placed_on_the_left_is_not_moved_to_the_right()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var bounds = new RectD(10, 20, 60, 12);
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                "Site survey",
+                bounds,
+                Style,
+                GanttTextAlignment.Left));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        OfficeShapeRequest label = Assert.Single(outcome.Requests);
+        Assert.Equal(bounds, label.Geometry.Bounds);
+        Assert.Equal(GanttTextAlignment.Left, label.Alignment);
+    }
+
+    /// <summary>
+    /// D3: the alignment mapping is a closed three-member table. Each scene
+    /// alignment reaches the request unchanged, and an alignment outside the
+    /// enum is refused rather than defaulted.
+    /// </summary>
+    [Theory]
+    [InlineData(GanttTextAlignment.Left)]
+    [InlineData(GanttTextAlignment.Centre)]
+    [InlineData(GanttTextAlignment.Right)]
+    public void Every_scene_alignment_reaches_the_request_unchanged(GanttTextAlignment alignment)
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                "Site survey",
+                new RectD(10, 20, 60, 12),
+                Style,
+                alignment));
+
+        OfficeShapeRequest label = Assert.Single(renderer.Translate(scene).Requests);
+
+        Assert.Equal(alignment, label.Alignment);
+    }
+
+    /// <summary>
+    /// D4 positive test: an over-long label that the scene already truncated
+    /// reaches the request byte-for-byte, ellipsis included. The renderer
+    /// applies no truncation of its own, so the string it was given is the
+    /// string it emits.
+    /// </summary>
+    [Fact]
+    public void An_over_long_label_is_passed_through_verbatim_with_its_ellipsis_intact()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        const string Clipped = "Site survey and ground investigation phase one…";
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                Clipped,
+                new RectD(10, 20, 40, 12),
+                Style,
+                GanttTextAlignment.Left));
+
+        OfficeShapeRequest label = Assert.Single(renderer.Translate(scene).Requests);
+
+        Assert.Equal(Clipped, label.Text);
+        Assert.EndsWith("…", label.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// D2: typography is copied from the resolved style tokens and nothing is
+    /// invented between token and property. A token the scene did not resolve
+    /// stays absent rather than being defaulted, because a defaulted font would
+    /// read as a resolved one.
+    /// </summary>
+    [Fact]
+    public void Typography_is_copied_from_the_style_tokens_and_an_absent_token_stays_absent()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var styled = new SceneStyle("Label", fontFamily: "Aptos", fontSizePt: 9d, bold: true);
+        var unstyled = new SceneStyle("Default");
+
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:styled",
+                RowOwner,
+                ZLayer.Label,
+                "Styled",
+                new RectD(10, 20, 60, 12),
+                styled,
+                GanttTextAlignment.Left),
+            new SceneText(
+                "row-2:unstyled",
+                RowOwner,
+                ZLayer.Label,
+                "Unstyled",
+                new RectD(10, 40, 60, 12),
+                unstyled,
+                GanttTextAlignment.Left));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+
+        OfficeShapeRequest withTokens = outcome.Requests.Single(r => r.PrimitiveId == "row-1:styled");
+        Assert.Equal("Aptos", withTokens.FontFamily);
+        Assert.Equal(9d, withTokens.FontSizePt);
+        Assert.True(withTokens.Bold);
+
+        OfficeShapeRequest withoutTokens = outcome.Requests.Single(r => r.PrimitiveId == "row-2:unstyled");
+        Assert.Null(withoutTokens.FontFamily);
+        Assert.Null(withoutTokens.FontSizePt);
+        Assert.Null(withoutTokens.Bold);
+    }
+
+    /// <summary>
+    /// A text primitive's bounds take the same origin delta as every other
+    /// family. A label translated differently from the bar it belongs to would
+    /// detach the two.
+    /// </summary>
+    [Fact]
+    public void A_text_primitive_takes_the_same_origin_delta_as_every_other_family()
+    {
+        var renderer = new SceneShapeRenderer(new ChartOriginDelta(12, 12));
+        var scene = SceneOf(
+            Rect("row-1:bar", new RectD(40, 30, 180, 24)),
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                "Site survey",
+                new RectD(230, 30, 60, 12),
+                Style,
+                GanttTextAlignment.Left));
+
+        SceneTranslationOutcome outcome = renderer.Translate(scene);
+        Assert.True(outcome.Complete);
+
+        RectD bar = outcome.Requests.Single(r => r.PrimitiveId == "row-1:bar").Geometry.Bounds!.Value;
+        RectD label = outcome.Requests.Single(r => r.PrimitiveId == "row-1:label").Geometry.Bounds!.Value;
+
+        Assert.Equal(new RectD(52, 42, 180, 24), bar);
+        Assert.Equal(new RectD(242, 42, 60, 12), label);
+
+        // The label is still 10pt right of the bar's right edge, as in the scene.
+        Assert.Equal(10d, label.Left - bar.Right, 10);
+    }
+
+    /// <summary>
+    /// D1/D2: the renderer declares no measurement seam and holds no field, so a
+    /// measure dependency cannot be added without failing this assertion. The
+    /// scene already measured through R3.6's <c>ITextMetrics</c>; a second
+    /// measurement on the rendering path would be a second, disagreeing answer.
+    /// </summary>
+    [Fact]
+    public void The_renderer_declares_no_text_measurement_dependency()
+    {
+        Assert.DoesNotContain(
+            typeof(SceneShapeRenderer).GetProperties(),
+            property => property.PropertyType.Name.Contains("Metrics", StringComparison.Ordinal)
+                || property.PropertyType.Name.Contains("Measure", StringComparison.Ordinal));
+
+        Assert.Empty(typeof(SceneShapeRenderer).GetFields());
+        Assert.Equal(
+            [typeof(ChartOriginDelta)],
+            typeof(SceneShapeRenderer).GetConstructors().Single().GetParameters()
+                .Select(parameter => parameter.ParameterType));
     }
 
     /// <summary>

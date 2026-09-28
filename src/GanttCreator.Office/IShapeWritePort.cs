@@ -21,6 +21,11 @@ namespace GanttCreator.Office;
 /// <param name="FontSizePt">The resolved font size for a text shape, or <see langword="null"/>.</param>
 /// <param name="Bold">Whether the resolved typography is bold, or <see langword="null"/>.</param>
 /// <param name="Text">The text content for a text shape, or <see langword="null"/>.</param>
+/// <param name="Alignment">
+/// The resolved horizontal text alignment, or <see langword="null"/> for a
+/// shape that carries no text. The scene resolves this (ADR-0018 D4); the
+/// adapter only maps it to the host's alignment constant.
+/// </param>
 /// <remarks>
 /// Every value is a primitive or a Core-owned type. No interop type crosses
 /// this request, so the AddIn compilation never names
@@ -37,7 +42,8 @@ public sealed record OfficeShapeRequest(
     string? FontFamily = null,
     double? FontSizePt = null,
     bool? Bold = null,
-    string? Text = null);
+    string? Text = null,
+    GanttTextAlignment? Alignment = null);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and
