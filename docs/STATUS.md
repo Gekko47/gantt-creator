@@ -7,6 +7,18 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
+- **The golden scene snapshot is regenerated after human review, closing the gate left by the splitter-border fix (this change)** — The previous commit changed the scene, so `The_built_fixture_scene_matches_the_committed_golden_snapshot` was left failing **on purpose**: the D4 golden policy requires regeneration to be a separate, human-reviewed commit, and the byte-for-byte assertion was never loosened to make it pass. This is that commit. The human review the policy asks for was given on the measured delta before this file was touched.
+
+  **Verified delta: 2 primitives changed, style-only, 58 primitives before and after.** `G-000000000000000000000000000000a1:splitter-band:top` and `:bottom` move from `StyleKey: Splitter`, `FillColour: #FFE699`, `StrokeColour: null`, `OutlineWidthPt: null` to `StyleKey: MajorGrid`, `FillColour: null`, `StrokeColour: #808080`, `OutlineWidthPt: 1`. These are the only two changed lines in the file.
+
+  **The delta was checked field by field, not eyeballed**, against a copy of the previous baseline: the primitive-ID sets are identical, a normalised comparison of every primitive with its `Style` masked out reported **zero** differences, the `Warnings` array is byte-identical, and `ChartBounds` is unchanged. So no geometry, ordering, text, or z-layer value moved — which is what a style-only fix must produce, and what would *not* have been acceptable to wave through.
+
+  **The stale-build false green from `4c29675` was actively ruled out rather than assumed.** That commit recorded a run that passed 998/998 against a stale copy of the golden in the build output while the committed file was in fact stale. Here the output copy was **deleted** and the suite re-run so MSBuild re-copied the committed file: Core **999/999**. A passing golden test is only evidence when the file under test is known to be the committed one.
+
+  The regeneration harness was **temporary and has been removed** before this commit. The byte-for-byte assertion is unchanged.
+
+  Observed: Core **999/999** (998 before, the golden now passing), Office contract **374/374**, Architecture **84/84**, AddIn **192/192**, Raster **41/41**; Release build 0 warnings/0 errors; `git diff --check` clean. `verify-quick.ps1` and `verify.ps1` **Not run** (tree not clean when this entry was written). **`verify-office.ps1` Not run** — the visible consequence is the live §10 border, and a host inspection is still recommended before R4.6. Checklist: G, I.
+
 - **Review findings pass: one real scene defect fixed, seven documentation corrections, and the golden is left for human review (this change)** — Eight review comments were checked against the current tree; all eight were still valid. Seven were documentation that the tree had already moved past, and **one was a live defect** rather than a stale claim.
 
   **The defect: `SplitterBuilder` discarded the §10 border width it had already validated.** Both border `SceneLine`s reused `request.Style`, which is the **band fill** preset, so each border carried `StrokeColour: null` and `OutlineWidthPt: null`. §10 specifies "Its top and bottom borders are `MajorBoundaryPt` lines", so the scene described a major boundary no renderer could draw, and the `BorderWidthPt` the caller supplied — and that `TryBuild` validated a few lines earlier — was silently dropped. The committed golden had been carrying the same wrong value (`StyleKey: Splitter`, both stroke members null), which is why reading it as authoritative would have hidden this rather than exposed it.
