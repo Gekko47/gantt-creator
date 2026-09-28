@@ -172,7 +172,13 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        Record(GetStatusBarText, SetStatusBarTextCore);
+        // The already-read `current` is registered, not a second read: the
+        // restore value is in hand, and StatusBar is a COM property whose
+        // representation does not round-trip cleanly (see the test seam), so a
+        // second read could capture something the first did not. Recording the
+        // captured value also keeps the "register the restore BEFORE the write"
+        // rule that Record documents.
+        Record(current, SetStatusBarTextCore);
         SetStatusBarTextCore(text);
     }
 
@@ -210,6 +216,21 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     private bool _selectionCaptured;
 
     /// <summary>
+    /// Registers the restore that puts an already-read value back.
+    /// </summary>
+    /// <typeparam name="T">The setting's value type.</typeparam>
+    /// <param name="original">The value the caller already read.</param>
+    /// <param name="write">Writes a value back.</param>
+    /// <remarks>
+    /// The overload a caller uses when it has already read the value it is about
+    /// to change, which is the case for <c>StatusBar</c>: reading it twice would
+    /// be a second COM call whose result could differ from the value the change
+    /// decision was made against.
+    /// </remarks>
+    private void Record<T>(T original, Action<T> write) =>
+        _restores.Add(() => write(original));
+
+    /// <summary>
     /// Reads a setting and registers the restore that puts it back.
     /// </summary>
     /// <typeparam name="T">The setting's value type.</typeparam>
@@ -221,11 +242,8 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// read that throws leaves nothing registered, which is correct: nothing was
     /// changed, so nothing needs putting back.
     /// </remarks>
-    private void Record<T>(Func<T> read, Action<T> write)
-    {
-        T original = read();
-        _restores.Add(() => write(original));
-    }
+    private void Record<T>(Func<T> read, Action<T> write) =>
+        Record(read(), write);
 
     /// <summary>
     /// Restores every captured setting, then the selection last.
