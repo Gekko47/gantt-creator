@@ -7,8 +7,8 @@ namespace GanttCreator.Office;
 
 /// <summary>
 /// Live, read-only <see cref="IPanelGridMeasurementPort"/> that measures the
-/// data panel's exact column widths and body row height from the visible
-/// <c>tblGanttData</c> table.
+/// data panel's exact column widths, per-row body heights, and header row height
+/// from the visible <c>tblGanttData</c> table.
 /// </summary>
 /// <param name="application">
 /// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
@@ -16,8 +16,15 @@ namespace GanttCreator.Office;
 /// host). A foreign object fails the interface cast and degrades to the
 /// no-active-workbook refusal with no mutation.
 /// </param>
-/// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
 /// <remarks>
+/// <para>
+/// <b>This adapter takes no protection guard.</b> It mutates nothing, and worksheet
+/// protection blocks writes rather than reads, so a read-only measurement must not
+/// refuse a readable target. Enforcement belongs at the Refresh/write boundary
+/// (R4.9). The guard parameter was removed rather than left accepted-and-unused,
+/// because a held-but-unconsulted field would read as "this adapter checks
+/// protection" to the next reader. See ADR-0024.
+/// </para>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
 /// <c>ListObject</c>, <c>ListColumn</c>, and <c>Range</c> objects reached here
@@ -32,19 +39,15 @@ namespace GanttCreator.Office;
 /// tagged live-Office integration test.
 /// </para>
 /// <para>
-/// This adapter never mutates: it reads column widths and one row height and
-/// constructs the <see cref="PanelCellGrid"/>. It never writes a cell, changes
-/// a column width, or alters application state, so
+/// This adapter never mutates: it reads column widths, each body row's height, and
+/// the header row's height, and constructs the <see cref="PanelCellGrid"/>. It never
+/// writes a cell, changes a column width, or alters application state, so
 /// <c>ProtectionGuardFirstTests</c> classifies it read-only.
 /// </para>
 /// </remarks>
-public class ExcelPanelGridMeasurement(
-    object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IPanelGridMeasurementPort
+public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurementPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
-    private readonly IWorksheetProtectionGuard _protectionGuard =
-        protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <inheritdoc />
     public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
@@ -62,18 +65,18 @@ public class ExcelPanelGridMeasurement(
             return PanelGridOutcome.Refused(PanelGridRefusalReason.NoActiveWorkbook);
         }
 
-        // The guard is the first read-only check for every adapter that reaches
-        // the workbook (ADR-0008 D4). This one never mutates, but a protected
-        // sheet is not measurable here either, and refusing early keeps one guard
-        // for the whole mutating command path.
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
-        {
-            return PanelGridOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? PanelGridRefusalReason.NoActiveWorkbook
-                    : PanelGridRefusalReason.TargetProtected);
-        }
+        // This adapter writes nothing, and worksheet protection blocks writes rather
+        // than reads: column widths and row heights are readable on a protected sheet.
+        // It therefore does NOT consult the protection guard. The guard's rule
+        // (ADR-0008 D4) is "first check in every *mutating* adapter", and this one is
+        // not one; keeping the consultation made a read-only measurement - the input
+        // to a read-only diagnostic or export - unavailable on any protected target,
+        // which is a capability restriction with no product behind it. Enforcement
+        // belongs at the Refresh/write boundary (R4.9), and that row is not built yet,
+        // so removing it here opens no window in which a protected target is written.
+        //
+        // `NoActiveWorkbook` is unaffected and still typed: the check below reads
+        // `ActiveWorkbook` directly rather than inferring it from the guard.
 
         Excel.Workbook? workbook = application.ActiveWorkbook;
         if (workbook is null)
@@ -111,42 +114,69 @@ public class ExcelPanelGridMeasurement(
             columns.Add(new PanelColumn(name, width.Value));
         }
 
-        var rowHeight = ReadRowHeight(table);
-        if (rowHeight is null)
+        // Every body row is measured individually and the body range's aggregate
+        // RowHeight is never consulted. That is not a preference: the reference
+        // documents that a range of differing row heights "might return the height of
+        // the first row or might return Null", so the aggregate is unreliable in
+        // *both* directions for a non-uniform body. `DBNull` was catchable; the
+        // "first row's height" case is a plain number that passes every check while
+        // describing a body most of which is taller. Reading the rows removes the
+        // ambiguity instead of detecting it.
+        List<double> rowHeights = [];
+        if (table.DataBodyRange is { } body)
+        {
+            for (var rowIndex = 1; rowIndex <= GetBodyRowCount(body); rowIndex++)
+            {
+                if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
+                {
+                    // One absent row must not become one guessed height. The panel's row
+                    // positions are cumulative, so a single wrong height would displace
+                    // every row below it and the result would look plausible.
+                    return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+                }
+
+                rowHeights.Add(height);
+            }
+        }
+
+        if (rowHeights.Count == 0)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
 
-        // Core validates the grid: a non-positive or non-finite width, a blank or
-        // duplicated column name, and a missing required column are all refused
-        // there with their own typed reasons rather than duplicated here.
-        //
-        // The grid now carries one height per body row plus its own header height.
-        // This adapter still measures a single confirmed-uniform body height and
-        // refuses a mixed body, so the row list is built by replicating that one
-        // confirmed value once per body row. That preserves today's behaviour and
-        // geometry exactly; measuring the rows individually - and the header row
-        // separately from the body - is the adapter's own change, tracked as
-        // remediation Commit C and deliberately not smuggled in here.
-        var rowCount = GetBodyRowCountOf(table);
-        if (rowCount <= 0)
+        // Section 4: the header is its own Excel row with its own height, so it is
+        // measured separately rather than reusing a body height.
+        if (ReadHeaderRowHeight(table) is not { } headerHeight)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
 
+        // Core validates the grid: a non-positive or non-finite width or height, a
+        // blank or duplicated column name, and a missing required column are all
+        // refused there with their own typed reasons rather than duplicated here.
         PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
             columns,
-            [.. Enumerable.Repeat(rowHeight.Value, rowCount)],
-            rowHeight.Value,
+            rowHeights,
+            headerHeight,
             includedColumns);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
     }
 
-    /// <summary>Counts the body rows, or returns zero when the body cannot be resolved.</summary>
-    private int GetBodyRowCountOf(Excel.ListObject table) =>
-        table.DataBodyRange is { } body ? GetBodyRowCount(body) : 0;
+    /// <summary>
+    /// Reads the table's header row height in points. Test seam over
+    /// <c>ListObject.HeaderRowRange</c> and its <c>RowHeight</c>.
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The header height, or <see langword="null"/> when the host reported none.</returns>
+    internal virtual double? ReadHeaderRowHeight(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        return table.HeaderRowRange is { } header ? ToPoints(header.RowHeight) : null;
+    }
+
     // ---- Test seams (internal virtual, per the ExcelGanttTableReader pattern) ----
 
     /// <summary>
@@ -276,90 +306,6 @@ public class ExcelPanelGridMeasurement(
         return column.Range is { } range ? ToPoints(range.Width) : null;
     }
 
-    /// <summary>
-    /// Reads the table's body row height in points. Test seam over the COM
-    /// <c>Range.RowHeight</c> property, which is <c>System.Object</c>.
-    /// </summary>
-    /// <param name="table">The Gantt table.</param>
-    /// <returns>The row height in points, or <see langword="null"/> when the host returned no numeric value.</returns>
-    /// <remarks>
-    /// <para>
-    /// A body with <em>uniform</em> row heights is the expected case: the aggregate
-    /// then reports that height. A body with <em>mixed</em> row heights has no
-    /// single height, and the host is documented to report it inconsistently - the
-    /// <c>Range.RowHeight</c> reference states that a range of differing row heights
-    /// "might return the height of the first row or might return Null", and
-    /// <c>DBNull.Value</c> is what the PIA surfaces for the Null case.
-    /// </para>
-    /// <para>
-    /// Both encodings are therefore an absent measurement and become the typed
-    /// <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal; converting
-    /// one would throw <see cref="InvalidCastException"/> out of a read-only adapter
-    /// and escape into the render command.
-    /// </para>
-    /// <para>
-    /// Neither encoding covers the host returning the FIRST row's height, which is
-    /// a number and would sail through both checks while describing a body whose
-    /// rows are not all that tall. So the aggregate is confirmed against every body
-    /// row; a body that cannot be enumerated is refused rather than measured, since
-    /// a single height is exactly what could not be established.
-    /// </para>
-    /// </remarks>
-    internal virtual double? ReadRowHeight(Excel.ListObject table)
-    {
-        ArgumentNullException.ThrowIfNull(table);
-
-        return table.DataBodyRange is { } body ? ConfirmUniformRowHeight(body) : null;
-    }
-
-    /// <summary>
-    /// Converts the body range's aggregate height, but only once every body row has
-    /// confirmed it.
-    /// </summary>
-    /// <param name="body">The table's body range.</param>
-    /// <returns>The height in points, or <see langword="null"/> when it is absent or not uniform.</returns>
-    private double? ConfirmUniformRowHeight(Excel.Range body) =>
-        ToPoints(body.RowHeight) is { } aggregate
-            ? HasUniformRowHeight(body, aggregate) ? aggregate : null
-            : null;
-
-    /// <summary>
-    /// Determines whether every body row reports the same height as the aggregate.
-    /// </summary>
-    /// <param name="body">The table's body range.</param>
-    /// <param name="aggregate">The height the body range reported.</param>
-    /// <returns><see langword="true"/> when every body row agrees with the aggregate.</returns>
-    /// <remarks>
-    /// The heights are compared for exact equality rather than within a tolerance.
-    /// Rows that are genuinely the same height report the identical host value, and
-    /// a tolerance here would quietly accept a body whose rows differ by a
-    /// fraction of a point - the mixed-height case this method exists to catch. A
-    /// body that reports <see cref="DBNull"/> for any single row also fails, since
-    /// that row's height is not established either.
-    /// </remarks>
-    private bool HasUniformRowHeight(Excel.Range body, double aggregate)
-    {
-        var count = GetBodyRowCount(body);
-        if (count <= 0)
-        {
-            return false;
-        }
-
-        for (var index = 1; index <= count; index++)
-        {
-            if (GetBodyRowAt(body, index) is not { } row || ToPoints(row.RowHeight) is not { } height)
-            {
-                return false;
-            }
-
-            if (!double.Equals(height, aggregate))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 
     /// <summary>Reads the number of rows in a range. Test seam over <c>Range.Rows.Count</c>.</summary>
     /// <param name="body">The body range.</param>

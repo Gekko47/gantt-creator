@@ -43,8 +43,8 @@ public sealed record PanelGridOutcome(PanelCellGrid? Grid, PanelGridRefusalReaso
 
 /// <summary>
 /// Narrow, read-only port over the live measurement of the data panel's cell
-/// grid: the exact point widths of the included <c>tblGanttData</c> columns and
-/// the body row height.
+/// grid: the exact point widths of the included <c>tblGanttData</c> columns, the
+/// height of <em>each</em> body row, and the header row's own height.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -52,14 +52,23 @@ public sealed record PanelGridOutcome(PanelCellGrid? Grid, PanelGridRefusalReaso
 /// so the AddIn compilation never names <c>Microsoft.Office.Interop.Excel</c>.
 /// </para>
 /// <para>
+/// Row heights are returned <b>per row, in body order</b>, not as one aggregate.
+/// A worksheet body does not have to be uniform, and entity guide §3 requires the
+/// panel to reproduce the exact measured cell bounds, so a single height could only
+/// refuse a legitimate table or lay it out wrong. The header row is measured
+/// separately because §4 makes it follow the live header-cell bounds.
+/// </para>
+/// <para>
 /// This port <strong>measures only</strong>. R3.11's <c>PanelBuilder</c> and
 /// <c>SceneBuilder</c> consume the result and never re-measure or default a
 /// missing measurement, so this is the single source of live panel geometry.
-/// A caller may not substitute a guessed width.
+/// A caller may not substitute a guessed width or height.
 /// </para>
 /// <para>
 /// The port is read-only: it never writes cells, changes column widths, or
-/// alters application state.
+/// alters application state. It therefore does <b>not</b> refuse a protected
+/// target — worksheet protection blocks writes, not reads — and the caller
+/// enforces protection at the Refresh/write boundary.
 /// </para>
 /// </remarks>
 public interface IPanelGridMeasurementPort

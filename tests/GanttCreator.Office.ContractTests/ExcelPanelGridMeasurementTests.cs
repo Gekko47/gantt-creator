@@ -30,11 +30,11 @@ public class ExcelPanelGridMeasurementTests
     /// </summary>
     private sealed class TestableMeasurement(
         object? application,
-        IWorksheetProtectionGuard guard,
         Excel.ListObject table,
         Excel.ListColumn column,
-        IReadOnlyList<object?> bodyRowHeights)
-        : ExcelPanelGridMeasurement(application, guard)
+        IReadOnlyList<object?> bodyRowHeights,
+        object? headerRowHeight)
+        : ExcelPanelGridMeasurement(application)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
 
@@ -43,8 +43,8 @@ public class ExcelPanelGridMeasurementTests
 
         // The row seams are substituted because Range.Rows.Item is a COM
         // parameterised property, which cannot appear in an expression tree
-        // (CS0855). The row VALUES are still the code under test: HasUniformRowHeight
-        // runs for real against whatever each fake row reports.
+        // (CS0855). The row VALUES are still the code under test: the adapter reads
+        // each row's own height, so a mixed body produces a mixed list.
         internal override int GetBodyRowCount(Excel.Range body) => bodyRowHeights.Count;
 
         internal override Excel.Range? GetBodyRowAt(Excel.Range body, int index)
@@ -59,30 +59,48 @@ public class ExcelPanelGridMeasurementTests
             _ = row.SetupGet(r => r.RowHeight).Returns(reported!);
             return row.Object;
         }
+
+        // The header row is its own range with its own height (section 4), so it is
+        // read from HeaderRowRange rather than from the body.
+        internal override double? ReadHeaderRowHeight(Excel.ListObject candidate)
+        {
+            if (headerRowHeight is null)
+            {
+                return null;
+            }
+
+            var header = new Mock<Excel.Range>();
+            _ = header.SetupGet(r => r.RowHeight).Returns(headerRowHeight);
+            var withHeader = new Mock<Excel.ListObject>();
+            _ = withHeader.SetupGet(t => t.HeaderRowRange).Returns(header.Object);
+            return base.ReadHeaderRowHeight(withHeader.Object);
+        }
     }
 
     /// <summary>The table, its single column, and what each body row reports.</summary>
     private sealed record FakeTable(
         Excel.ListObject Table,
         Excel.ListColumn Column,
-        IReadOnlyList<object?> BodyRowHeights);
+        IReadOnlyList<object?> BodyRowHeights,
+        object? HeaderRowHeight);
 
     /// <summary>
-    /// Builds a table whose column range and body range report the supplied values,
-    /// exactly as the PIA surfaces them boxed as <c>Object</c>.
+    /// Builds a table whose column range, header row, and each body row report the
+    /// supplied values, exactly as the PIA surfaces them boxed as <c>Object</c>.
     /// </summary>
     /// <param name="width">What the column's range reports as <c>Width</c>.</param>
-    /// <param name="rowHeight">What the body's range reports as <c>RowHeight</c>.</param>
-    /// <param name="bodyRowHeights">
-    /// What each body row reports, defaulting to a single row matching
-    /// <paramref name="rowHeight"/> so the existing cases keep describing a uniform
-    /// body.
+    /// <param name="rowHeight">
+    /// The default for both the header row and a single-row body, so the existing
+    /// uniform cases keep describing a uniform table.
     /// </param>
+    /// <param name="bodyRowHeights">What each body row reports, in body order.</param>
+    /// <param name="headerRowHeight">What the header row reports, when it should differ.</param>
     /// <returns>The mocked table and its single column.</returns>
     private static FakeTable TableReporting(
         object? width,
         object? rowHeight,
-        IReadOnlyList<object?>? bodyRowHeights = null)
+        IReadOnlyList<object?>? bodyRowHeights = null,
+        object? headerRowHeight = null)
     {
         var columnRange = new Mock<Excel.Range>();
         // The PIA types Width/RowHeight as non-nullable object even though the host
@@ -95,19 +113,18 @@ public class ExcelPanelGridMeasurementTests
         _ = column.SetupGet(c => c.Range).Returns(columnRange.Object);
 
         var body = new Mock<Excel.Range>();
+        // The body range's own aggregate is deliberately left as the default
+        // (DBNull-free zero) and is never read by the adapter any more; the
+        // per-row walk is the only source. Setting it here would suggest it matters.
         _ = body.SetupGet(r => r.RowHeight).Returns(rowHeight!);
 
         var table = new Mock<Excel.ListObject>();
         _ = table.SetupGet(t => t.DataBodyRange).Returns(body.Object);
-        return new FakeTable(table.Object, column.Object, bodyRowHeights ?? [rowHeight]);
-    }
-
-    private static Mock<IWorksheetProtectionGuard> ClearGuard()
-    {
-        var guard = new Mock<IWorksheetProtectionGuard>();
-        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
-        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object>())).Returns(ProtectionGuardOutcome.NotProtected);
-        return guard;
+        return new FakeTable(
+            table.Object,
+            column.Object,
+            bodyRowHeights ?? [rowHeight],
+            headerRowHeight ?? rowHeight);
     }
 
     private static Mock<Excel.Application> ActiveApplication()
@@ -119,17 +136,14 @@ public class ExcelPanelGridMeasurementTests
         return application;
     }
 
-    private static PanelGridOutcome MeasureTable(FakeTable table) =>
-        MeasureTable(table, ClearGuard().Object);
-
-    private static PanelGridOutcome MeasureTable(FakeTable table, IWorksheetProtectionGuard guard)
+    private static PanelGridOutcome MeasureTable(FakeTable table)
     {
         var measurement = new TestableMeasurement(
             ActiveApplication().Object,
-            guard,
             table.Table,
             table.Column,
-            table.BodyRowHeights);
+            table.BodyRowHeights,
+            table.HeaderRowHeight);
 
         return measurement.Measure([ColumnName]);
     }
@@ -146,68 +160,85 @@ public class ExcelPanelGridMeasurementTests
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.NotNull(outcome.Grid);
-        // The grid now carries one height per body row. This adapter still measures a
-        // single confirmed-uniform height and replicates it, so a one-row body yields
-        // exactly one entry. Commit C replaces this with per-row measurement.
+        // One height per body row, read from that row: a one-row body yields exactly
+        // one entry.
         Assert.Equal([15d], outcome.Grid.RowHeightsPt);
+        Assert.Equal(15d, outcome.Grid.HeaderHeightPt);
         Assert.Equal(64d, Assert.Single(outcome.Grid.Columns).WidthPt);
     }
 
     /// <summary>
-    /// The positive test for the validator. A body with MIXED row heights has no
-    /// single height, so Excel reports <see cref="DBNull.Value"/> rather than a
-    /// number. That is an absent measurement, and it must become the same typed
-    /// refusal a <see langword="null"/> produces — not an
-    /// <see cref="InvalidCastException"/> escaping into the render command.
+    /// A body with MIXED row heights now measures successfully, one height per row,
+    /// in body order. This is the capability Commit B's contract bought and this
+    /// adapter change delivers; it used to be refused outright.
+    /// </summary>
+    /// <remarks>
+    /// The exact ordered values are the assertion. Asserting only that the call
+    /// succeeded would pass against a body whose rows happened to share a height, and
+    /// a tolerance would accept a layout built from one sampled value - which is the
+    /// precise defect this replaces.
+    /// </remarks>
+    [Fact]
+    public void Measure_returns_the_exact_distinct_height_of_each_row_of_a_mixed_body()
+    {
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 12d, [12d, 24d, 15d]));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([12d, 24d, 15d], outcome.Grid?.RowHeightsPt);
+        Assert.Equal(51d, outcome.Grid?.TotalRowHeightPt);
+    }
+
+    /// <summary>
+    /// The aggregate over a mixed range is documented to report either the first
+    /// row's height or Null. Neither is consulted any more, and this pins the case
+    /// that used to slip through: the aggregate reporting the first row's height is a
+    /// plain number that passed every absence check while describing a body most of
+    /// which is taller.
     /// </summary>
     [Fact]
-    public void Measure_returns_a_typed_refusal_when_the_body_reports_DBNull_for_a_mixed_row_height()
+    public void Measure_ignores_an_aggregate_that_reports_the_first_row_of_a_mixed_body()
     {
-        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, DBNull.Value));
+        // The aggregate deliberately reports 12d - row 1's height - while rows 2 and 3
+        // are 24d and 15d. The result must carry the real per-row heights, not 12d
+        // three times.
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 12d, [12d, 24d, 15d]));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([12d, 24d, 15d], outcome.Grid?.RowHeightsPt);
+    }
+
+    /// <summary>
+    /// The header row is its own worksheet row with its own height, so §4 requires it
+    /// to be measured rather than copied from a body row.
+    /// </summary>
+    [Fact]
+    public void Measure_reads_the_header_height_separately_from_the_body()
+    {
+        PanelGridOutcome outcome = MeasureTable(
+            TableReporting(64d, 15d, [15d, 15d], headerRowHeight: 30d));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(30d, outcome.Grid?.HeaderHeightPt);
+        Assert.Equal([15d, 15d], outcome.Grid?.RowHeightsPt);
+    }
+
+    /// <summary>
+    /// One unreadable row refuses the whole measurement. The panel's row positions
+    /// are cumulative, so a single defaulted height would displace every row below it
+    /// and the result would look plausible.
+    /// </summary>
+    [Fact]
+    public void Measure_refuses_when_one_row_of_a_body_cannot_be_read()
+    {
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 12d, [12d, DBNull.Value, 15d]));
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
     }
 
     /// <summary>
-    /// A body with several rows, every one of which reports the aggregate height,
-    /// is still a successful measurement. The per-row confirmation is not a
-    /// blanket refusal, and this is what separates it from a guard that simply
-    /// broke multi-row bodies.
-    /// </summary>
-    [Fact]
-    public void Measure_succeeds_for_a_multi_row_body_whose_rows_all_report_the_same_height()
-    {
-        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, [15d, 15d, 15d]));
-
-        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
-        Assert.Equal([15d, 15d, 15d], outcome.Grid?.RowHeightsPt);
-    }
-
-    /// <summary>
-    /// The third mixed-height encoding, and the one the two absence checks cannot
-    /// catch. The host is documented to report "the height of the first row" as
-    /// readily as Null, so a body whose rows are 15pt and 45pt can report a plain
-    /// number: 15. That number is not wrong arithmetic, it is simply not the
-    /// body's single height, and returning it would lay out a grid from a row
-    /// height most of the table does not have. Every body row is therefore
-    /// compared before a value is returned.
-    /// </summary>
-    [Fact]
-    public void Measure_returns_a_typed_refusal_when_the_aggregate_reports_the_first_row_of_a_mixed_body()
-    {
-        // The aggregate deliberately reports 15d - the FIRST row's height, which is
-        // a number and so passes both absence checks - while row 2 is 45d.
-        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, [15d, 45d]));
-
-        Assert.False(outcome.Succeeded, "A mixed body has no single height, whatever the aggregate reported.");
-        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
-    }
-
-    /// <summary>
-    /// A body the host cannot enumerate has no established single height either, so
-    /// it is refused rather than measured from an aggregate that could not be
-    /// confirmed.
+    /// A body the host cannot enumerate has no established heights, so it is refused
+    /// rather than measured from an aggregate.
     /// </summary>
     [Fact]
     public void Measure_returns_a_typed_refusal_when_no_body_row_can_be_read()
@@ -252,10 +283,10 @@ public class ExcelPanelGridMeasurementTests
         FakeTable table = TableReporting(64d, 15d);
         var measurement = new TestableMeasurement(
             ActiveApplication().Object,
-            ClearGuard().Object,
             table.Table,
             table.Column,
-            table.BodyRowHeights);
+            table.BodyRowHeights,
+            table.HeaderRowHeight);
 
         PanelGridOutcome outcome = measurement.Measure([]);
 
@@ -263,18 +294,50 @@ public class ExcelPanelGridMeasurementTests
     }
 
     /// <summary>
-    /// A protected sheet is refused by the shared guard before any measurement:
-    /// ADR-0008 D4's first read-only check applies even to a read-only adapter.
+    /// Measurement now succeeds on a protected worksheet. This adapter mutates
+    /// nothing, and Excel's protection blocks writes rather than reads, so refusing a
+    /// readable target was a capability restriction with no product behind it: a
+    /// read-only diagnostic or export measurement simply could not run.
+    /// </summary>
+    /// <remarks>
+    /// This is the positive test for the policy change, and it is written as a
+    /// positive because there is no longer a guard to configure. The test that
+    /// previously asserted `TargetProtected` is **deleted, not inverted** - it
+    /// described the behaviour being removed, and leaving it as a refusal would
+    /// contradict this one.
+    /// </remarks>
+    [Fact]
+    public void Measure_succeeds_on_a_protected_worksheet_because_reads_are_not_writes()
+    {
+        PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([15d], outcome.Grid?.RowHeightsPt);
+    }
+
+    /// <summary>
+    /// A missing active workbook is still refused, and still typed. Removing the
+    /// guard did not remove this: the adapter reads `ActiveWorkbook` directly rather
+    /// than inferring it from a protection query.
     /// </summary>
     [Fact]
-    public void Measure_refuses_a_protected_sheet_before_measuring()
+    public void Measure_refuses_when_there_is_no_active_workbook()
     {
-        var guard = new Mock<IWorksheetProtectionGuard>();
-        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
+        var workbook = new Mock<Excel.Workbook>();
+        _ = workbook.Setup(w => w.Sheets).Returns(new Mock<Excel.Sheets>().Object);
+        var application = new Mock<Excel.Application>();
+        _ = application.Setup(a => a.ActiveWorkbook).Returns((Excel.Workbook?)null!);
+
         FakeTable table = TableReporting(64d, 15d);
+        var measurement = new TestableMeasurement(
+            application.Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight);
 
-        PanelGridOutcome outcome = MeasureTable(table, guard.Object);
+        PanelGridOutcome outcome = measurement.Measure([ColumnName]);
 
-        Assert.Equal(PanelGridRefusalReason.TargetProtected, outcome.Refusal);
+        Assert.Equal(PanelGridRefusalReason.NoActiveWorkbook, outcome.Refusal);
     }
 }
