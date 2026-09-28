@@ -2,10 +2,14 @@ namespace GanttCreator.Office;
 
 /// <summary>What reconciliation decided to do with one owned shape.</summary>
 /// <remarks>
-/// The members are ordered by pipeline stage, not alphabetically: a delete
-/// releases a name that a create may reuse, so <see cref="Delete"/> must be
-/// planned before <see cref="Create"/> is issued. See
-/// <see cref="ShapeReconciler"/> for the ordering rule.
+/// The members are ordered by pipeline stage, not alphabetically:
+/// <see cref="Update"/>, then <see cref="Create"/>, then <see cref="Delete"/>.
+/// Updates and creates follow the scene's back-to-front order so a new shape
+/// lands in the right relative position before the single z-order pass, and
+/// deletes go last so a delete can never vacate a name a create in the same
+/// plan still needs. See <see cref="ShapeReconciler.Plan"/> for the ordering
+/// rule and <see cref="ShapeReconcilePlan.Operations"/> for the order the plan
+/// actually emits.
 /// </remarks>
 public enum ShapeReconcileAction
 {

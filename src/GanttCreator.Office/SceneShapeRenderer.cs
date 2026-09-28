@@ -417,12 +417,15 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// absent rather than being defaulted; R4.6 owns the full style matrix.
     /// </para>
     /// <para>
-    /// A label's text <em>colour</em> is a separate fact from its shape fill and
-    /// is deliberately not set here. <see cref="SceneStyle"/> carries no text-colour
-    /// member, so a label inside a delay event cannot express the
-    /// <c>DelayText</c> token through this path; that is a recorded gap for the
-    /// scene model, not something the renderer may approximate by leaving the
-    /// host's automatic colour in place.
+    /// A label's text <em>colour</em> is a separate fact from its shape fill, and
+    /// it is carried as <see cref="SceneStyle.TextColour"/> into the request's own
+    /// <c>TextColour</c> — not written here and not defaulted. R4.11 landed that
+    /// member, so a label inside a delay event now expresses the
+    /// <c>DelayText</c> token through this path (and the §17 inside/outside
+    /// switch resolves it in the scene, by D2/D5). A <see langword="null"/>
+    /// means "unresolved", and it stays null all the way to the host so the
+    /// renderer substitutes no colour and never restyles a label whose style
+    /// simply did not name one.
     /// </para>
     /// </remarks>
     /// <param name="text">The scene text.</param>
