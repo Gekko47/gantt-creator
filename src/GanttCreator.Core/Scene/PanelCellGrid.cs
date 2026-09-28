@@ -28,17 +28,23 @@ public enum PanelCellGridRefusal
     /// <summary>The row height was not finite, or was not positive.</summary>
     NonPositiveRowHeight = 3,
 
+    /// <summary>No body row height was supplied.</summary>
+    NoRows = 4,
+
+    /// <summary>The header row height was not finite, or was not positive.</summary>
+    NonPositiveHeaderHeight = 5,
+
     /// <summary>A column name was blank or whitespace.</summary>
-    BlankColumnName = 4,
+    BlankColumnName = 6,
 
     /// <summary>Two columns carried the same schema display name.</summary>
-    DuplicateColumn = 5,
+    DuplicateColumn = 7,
 
     /// <summary>A column alignment was not a defined value.</summary>
-    UndefinedAlignment = 6,
+    UndefinedAlignment = 8,
 
     /// <summary>A required schema column was absent from the grid.</summary>
-    MissingRequiredColumn = 7,
+    MissingRequiredColumn = 9,
 }
 
 /// <summary>The typed result of validating a measured cell grid.</summary>
@@ -73,25 +79,62 @@ public sealed record PanelCellGrid
 {
     private PanelCellGrid(
         IReadOnlyList<PanelColumn> columns,
-        double rowHeightPt,
+        IReadOnlyList<double> rowHeightsPt,
+        double headerHeightPt,
         IReadOnlyList<string> requiredColumns)
     {
         Columns = columns;
-        RowHeightPt = rowHeightPt;
+        RowHeightsPt = rowHeightsPt;
+        HeaderHeightPt = headerHeightPt;
         RequiredColumns = requiredColumns;
     }
 
     /// <summary>The included columns, in caller order.</summary>
     public IReadOnlyList<PanelColumn> Columns { get; }
 
-    /// <summary>The measured body row height in points.</summary>
-    public double RowHeightPt { get; }
+    /// <summary>
+    /// The measured body row heights in points, in worksheet order, one per body row.
+    /// </summary>
+    /// <remarks>
+    /// A list, not a single value, because a worksheet body does not have to be
+    /// uniform. Entity guide §3 requires the panel to reproduce "the exact measured
+    /// cell bounds in points", and a single sample height cannot express a body whose
+    /// rows differ — it can only either refuse a legitimate table or lay it out wrong.
+    /// The list is positional: entry <c>n</c> is the height of the <c>n</c>th body row,
+    /// which is what <see cref="PanelBuildRequest.Rows"/> must match in order and count.
+    /// </remarks>
+    public IReadOnlyList<double> RowHeightsPt { get; }
+
+    /// <summary>
+    /// The measured header row height in points, separate from the body rows.
+    /// </summary>
+    /// <remarks>
+    /// §4 says the data-panel header "follows live header-cell bounds". The header row
+    /// is its own Excel row with its own height, so reusing a body row's height is an
+    /// assumption about the worksheet rather than a measurement of it.
+    /// </remarks>
+    public double HeaderHeightPt { get; }
 
     /// <summary>
     /// The schema column names that must be present exactly once. §3 requires
     /// required columns to exist once, and §4 requires unique header names.
     /// </summary>
     public IReadOnlyList<string> RequiredColumns { get; }
+
+    /// <summary>The total body height in points, the sum of the row heights.</summary>
+    public double TotalRowHeightPt
+    {
+        get
+        {
+            double total = 0;
+            foreach (var height in RowHeightsPt)
+            {
+                total += height;
+            }
+
+            return total;
+        }
+    }
 
     /// <summary>The total panel width in points, the sum of the column widths.</summary>
     public double TotalWidthPt
@@ -110,12 +153,14 @@ public sealed record PanelCellGrid
 
     /// <summary>Validates and creates a measured cell grid.</summary>
     /// <param name="columns">The included columns in caller order.</param>
-    /// <param name="rowHeightPt">The measured body row height in points.</param>
+    /// <param name="rowHeightsPt">The measured body row heights, in worksheet order.</param>
+    /// <param name="headerHeightPt">The measured header row height.</param>
     /// <param name="requiredColumns">The schema names that must appear exactly once.</param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
-        double rowHeightPt,
+        IReadOnlyList<double>? rowHeightsPt,
+        double headerHeightPt,
         IReadOnlyList<string>? requiredColumns)
     {
         if (columns is null)
@@ -128,9 +173,22 @@ public sealed record PanelCellGrid
             return Refused(PanelCellGridRefusal.NoColumns);
         }
 
-        if (!double.IsFinite(rowHeightPt) || rowHeightPt <= 0)
+        if (rowHeightsPt is null || rowHeightsPt.Count == 0)
         {
-            return Refused(PanelCellGridRefusal.NonPositiveRowHeight);
+            return Refused(PanelCellGridRefusal.NoRows);
+        }
+
+        if (!double.IsFinite(headerHeightPt) || headerHeightPt <= 0)
+        {
+            return Refused(PanelCellGridRefusal.NonPositiveHeaderHeight);
+        }
+
+        foreach (var rowHeight in rowHeightsPt)
+        {
+            if (!double.IsFinite(rowHeight) || rowHeight <= 0)
+            {
+                return Refused(PanelCellGridRefusal.NonPositiveRowHeight);
+            }
         }
 
         foreach (PanelColumn column in columns)
@@ -169,7 +227,7 @@ public sealed record PanelCellGrid
         }
 
         return new PanelCellGridCreationOutcome(
-            new PanelCellGrid([.. columns], rowHeightPt, [.. requiredColumns ?? []]),
+            new PanelCellGrid([.. columns], [.. rowHeightsPt], headerHeightPt, [.. requiredColumns ?? []]),
             null);
     }
 

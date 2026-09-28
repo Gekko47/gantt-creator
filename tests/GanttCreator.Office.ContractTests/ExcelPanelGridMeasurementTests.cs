@@ -146,7 +146,10 @@ public class ExcelPanelGridMeasurementTests
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.NotNull(outcome.Grid);
-        Assert.Equal(15d, outcome.Grid.RowHeightPt);
+        // The grid now carries one height per body row. This adapter still measures a
+        // single confirmed-uniform height and replicates it, so a one-row body yields
+        // exactly one entry. Commit C replaces this with per-row measurement.
+        Assert.Equal([15d], outcome.Grid.RowHeightsPt);
         Assert.Equal(64d, Assert.Single(outcome.Grid.Columns).WidthPt);
     }
 
@@ -178,7 +181,7 @@ public class ExcelPanelGridMeasurementTests
         PanelGridOutcome outcome = MeasureTable(TableReporting(64d, 15d, [15d, 15d, 15d]));
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
-        Assert.Equal(15d, outcome.Grid?.RowHeightPt);
+        Assert.Equal([15d, 15d, 15d], outcome.Grid?.RowHeightsPt);
     }
 
     /// <summary>

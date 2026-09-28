@@ -20,7 +20,6 @@ public sealed class SceneBuilderTests
     // The plot top is 60 because the three header bands total 14 + 16 + 20 = 50pt
     // and are placed above the plot: with a smaller top the period band would be
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
-    private static readonly RectD _panelBounds = new(0, 0, 200, 200);
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
 
     private static GanttStyleDefinition Style(string key, double height) =>
@@ -55,9 +54,19 @@ public sealed class SceneBuilderTests
 
     private static readonly GanttStyleRegistry _registry = new(SharedStyles);
 
-    private static PanelCellGrid Grid() =>
+    /// <summary>
+    /// A uniform measured grid carrying exactly one height per projected panel row.
+    /// </summary>
+    /// <remarks>
+    /// The count is the event count because the panel now reproduces every source
+    /// row, and the measured heights are positional. A fixture that supplied one
+    /// height for many rows would now be refused, which is the intended behaviour
+    /// rather than an obstacle to work around.
+    /// </remarks>
+    private static PanelCellGrid Grid(int rowCount) =>
         PanelCellGrid.TryCreate(
             [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+            [.. Enumerable.Repeat(10.0, rowCount)],
             10,
             ["Id", "Description"]).Grid!;
 
@@ -75,8 +84,7 @@ public sealed class SceneBuilderTests
         {
             Events = events,
             Registry = _registry,
-            Grid = Grid(),
-            PanelBounds = _panelBounds,
+            Grid = Grid(events.Length),
             PlotBounds = _plotBounds,
             Metrics = _metrics,
             LaneMetrics = _laneMetrics,
@@ -174,7 +182,7 @@ public sealed class SceneBuilderTests
     public void Null_bounds_are_refused()
     {
         Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
-        Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PanelBounds = null }).Refusal);
+        Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
     }
 
     [Fact]
@@ -204,7 +212,6 @@ public sealed class SceneBuilderTests
         // follow the content instead of constraining it.
         SceneBuildRequest request = Request(Event(1)) with
         {
-            PanelBounds = new RectD(0, 0, 200, 200),
             PlotBounds = new RectD(200, 20, 300, 140),
         };
 
@@ -222,16 +229,36 @@ public sealed class SceneBuilderTests
         // bounds to a zero origin and carrying one delta. Excel cannot express a
         // negative shape offset, so a negative chart origin is a real placement case,
         // not a hypothetical one - the content union starts at the panel origin here,
-        // so the derived bounds start at minus exactly one padding.
+        // so the derived bounds start at minus exactly one padding. The panel theme
+        // is what supplies that origin: with no panel the union starts at the plot,
+        // whose left edge is 200, and the derived bounds are positive.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with { ChartOuterPaddingPt = 6 });
+            Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with
+            {
+                ChartOuterPaddingPt = 6,
+                Panel = new PanelTheme(
+                    new SceneStyle("BodyFill"),
+                    new SceneStyle("BodyText"),
+                    new SceneStyle("HeaderFill"),
+                    new SceneStyle("HeaderText"),
+                    new SceneStyle("Border")),
+            });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The negative origin is reachable, and negative by exactly one padding.
+        // The negative origin is reachable, and negative by exactly one padding, on
+        // the axis where the content genuinely extends left of zero: the panel's left
+        // edge sits at 0 while the plot's is at 200, so the union starts at 0 and the
+        // derived bounds start at minus one padding.
+        //
+        // The vertical origin is no longer asserted negative. It used to be, but only
+        // because the caller supplied a `PanelBounds` whose top happened to be 0 - an
+        // arbitrary rectangle, not a measurement. Now that the panel's own bounds are
+        // derived, the content's top is the period band and the derived top is
+        // positive. The subject of this test is that the translation is lossless, and
+        // that holds for a negative origin on either axis.
         Assert.True(scene.ChartBounds.Left < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
-        Assert.True(scene.ChartBounds.Top < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
         Assert.Equal(-6, scene.ChartBounds.Left, precision: 9);
 
         // The padding's presence on all four sides is pinned in FrameBandsBuilderTests,
@@ -614,8 +641,11 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         // Core measures nothing: the grid the caller supplied must reach the panel
-        // builder unchanged, with the same columns and row height.
-        Assert.Equal(before.RowHeightPt, request.Grid!.RowHeightPt);
+        // builder unchanged, with the same columns and the same measured row heights.
+        // With per-row heights this is now a list, so it also proves no height was
+        // collapsed into a single sample on the way through.
+        Assert.Equal(before.RowHeightsPt, request.Grid!.RowHeightsPt);
+        Assert.Equal(before.HeaderHeightPt, request.Grid.HeaderHeightPt);
         Assert.Equal(
             before.Columns.Select(column => column.Name),
             request.Grid.Columns.Select(column => column.Name));
@@ -864,6 +894,7 @@ public sealed class SceneBuilderTests
         {
             Grid = PanelCellGrid.TryCreate(
                 [new PanelColumn("Id", 40), new PanelColumn("Start", 80), new PanelColumn("Finish", 80)],
+                [10.0],
                 10,
                 ["Id", "Start", "Finish"]).Grid,
             Panel = new PanelTheme(
@@ -911,6 +942,7 @@ public sealed class SceneBuilderTests
         {
             Grid = PanelCellGrid.TryCreate(
                 [new PanelColumn("Id", 120), new PanelColumn("Type", 120)],
+                [10.0],
                 10,
                 ["Id", "Type"]).Grid,
             Panel = new PanelTheme(
@@ -1398,13 +1430,11 @@ public sealed class SceneBuilderTests
                     new PanelColumn("Start", 70),
                     new PanelColumn("Finish", 70),
                 ],
-                10,
-                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)], 10,                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
             // The data panel and the plot are unioned by FrameBandsBuilder to find
             // the content origin, and the title band is placed above that origin.
             // The panel therefore cannot start at y=0 or the title would sit above
             // the chart; it starts below the band stack instead.
-            PanelBounds = new RectD(0, 20, 520, 200),
             PlotBounds = new RectD(520, 110, 600, 290),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
@@ -1505,9 +1535,7 @@ public sealed class SceneBuilderTests
                     new PanelColumn("Start", 70),
                     new PanelColumn("Finish", 70),
                 ],
-                10,
-                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
-            PanelBounds = new RectD(0, 20, 520, 200),
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)], 10,                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
             PlotBounds = new RectD(520, 110, 600, 290),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),

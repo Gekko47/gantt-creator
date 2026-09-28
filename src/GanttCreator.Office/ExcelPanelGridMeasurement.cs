@@ -120,11 +120,33 @@ public class ExcelPanelGridMeasurement(
         // Core validates the grid: a non-positive or non-finite width, a blank or
         // duplicated column name, and a missing required column are all refused
         // there with their own typed reasons rather than duplicated here.
-        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(columns, rowHeight.Value, includedColumns);
+        //
+        // The grid now carries one height per body row plus its own header height.
+        // This adapter still measures a single confirmed-uniform body height and
+        // refuses a mixed body, so the row list is built by replicating that one
+        // confirmed value once per body row. That preserves today's behaviour and
+        // geometry exactly; measuring the rows individually - and the header row
+        // separately from the body - is the adapter's own change, tracked as
+        // remediation Commit C and deliberately not smuggled in here.
+        var rowCount = GetBodyRowCountOf(table);
+        if (rowCount <= 0)
+        {
+            return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+        }
+
+        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+            columns,
+            [.. Enumerable.Repeat(rowHeight.Value, rowCount)],
+            rowHeight.Value,
+            includedColumns);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
     }
+
+    /// <summary>Counts the body rows, or returns zero when the body cannot be resolved.</summary>
+    private int GetBodyRowCountOf(Excel.ListObject table) =>
+        table.DataBodyRange is { } body ? GetBodyRowCount(body) : 0;
     // ---- Test seams (internal virtual, per the ExcelGanttTableReader pattern) ----
 
     /// <summary>

@@ -320,7 +320,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Source:** `tblGanttData`, visible approved columns, current Excel column widths, and row heights.
 
-**Geometry:** live view uses cells. Export composition reproduces each included cell as a background rectangle plus text and shared borders using the exact measured cell bounds in points. The panel right edge touches the plot left edge without overlap or gap.
+**Geometry:** live view uses cells. Export composition reproduces each included cell as a background rectangle plus text and shared borders using the exact measured cell bounds in points. The panel right edge touches the plot left edge without overlap or gap. Each body row uses its own measured height, in worksheet row order, and the panel's bounds are **derived** from the measured column widths and row heights rather than supplied alongside them. A body whose rows differ in height is reproduced faithfully, not refused.
 
 **Style:** workbook cell styles in the live sheet; export uses `DataPanelFill`, `DefaultText`, and the resolved border/font tokens. User-defined arbitrary cell formatting is not automatically interpreted as Gantt semantics.
 
@@ -336,7 +336,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Source:** schema display names and localisation resources.
 
-**Geometry:** follows live header-cell bounds. Export uses rectangles/text with shared borders. Header height aligns exactly with the period-header bottom.
+**Geometry:** follows live header-cell bounds. Export uses rectangles/text with shared borders. Header height aligns exactly with the period-header bottom. The header row's height is measured **separately** from the body rows — it is its own worksheet row and reusing a body height would be an assumption rather than a measurement. The panel reproduces **every** source row, in worksheet row order, including a `Splitter`, `Spacer`, `Delineator`, `Critical Interval`, or a row with `Visible=false`: `Visible` suppresses the entity and its label, not the data-panel row.
 
 **Style:** `HeaderFill`, `HeaderFontSizePt`, bold, centred unless the schema defines left alignment for Description.
 

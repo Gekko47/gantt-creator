@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace GanttCreator.Core.Scene;
 
 /// <summary>The reason a scene could not be built.</summary>
@@ -49,9 +47,6 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
-
-    /// <summary>Gets the caller-supplied measured panel bounds.</summary>
-    public RectD? PanelBounds { get; init; }
 
     /// <summary>Gets the caller-supplied measured plot bounds.</summary>
     public RectD? PlotBounds { get; init; }
@@ -224,8 +219,10 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.NullPanelGrid);
         }
 
-        if (request.PanelBounds is not { } panelBounds
-            || request.PlotBounds is not { } plotBounds)
+        // The plot bounds are the only caller-supplied rectangle. The panel's bounds
+        // are derived by PanelBuilder (D-B1), so there is no second measurement of the
+        // panel for the frame to disagree with.
+        if (request.PlotBounds is not { } plotBounds)
         {
             return Refused(SceneBuilderRefusal.NullBounds);
         }
@@ -387,8 +384,7 @@ public static class SceneBuilder
         // the offset cannot be applied twice.
         BuildSpans(placements, styles, timeScale, plotBounds, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        BuildSplitters(request, laneLayout, styles, panelBounds, plotBounds, laneParticipants, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, plotGlobalEntities, delineatorStyles, parentVisibleBounds, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, plotBounds, laneLayout, placements, laneParticipants, plotGlobalEntities, delineatorStyles, styles, parentVisibleBounds, primitives, warnings);
     }
 
 
@@ -577,11 +573,13 @@ public static class SceneBuilder
     private static SceneBuildOutcome BuildFramePanelAndScene(
         SceneBuildRequest request,
         TimeScale timeScale,
-        RectD panelBounds,
         RectD plotBounds,
+        LaneLayoutResult laneLayout,
         LaneEventLayoutResult placements,
+        IReadOnlyList<GanttEvent> laneParticipants,
         List<GanttEvent> plotGlobalEntities,
         Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
@@ -595,12 +593,70 @@ public static class SceneBuilder
         // never becomes a visible empty strip.
         var showTitle = !string.IsNullOrWhiteSpace(request.Title);
 
+        // The panel is built FIRST, and its derived bounds are what the frame reads.
+        // This is the single-authority decision (D-B1): there is no caller-supplied
+        // panel rectangle any more, so the chart background cannot be sized from one
+        // rectangle while the panel is drawn in another. It is possible because
+        // PanelBuilder needs only the grid, the projected rows, the plot bounds, and
+        // the period-header bottom - all of which are known before the frame exists.
+        // Its primitives are held back until after the frame so the scene's emission
+        // order stays frame-then-panel.
+        PanelBuildOutcome? panelOutcome = null;
+        if (request.Panel is { } panelTheme)
+        {
+            // Section 4 fixes the header band's bottom edge to the period header's
+            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
+            // panel builder cannot know the plot bounds, so it is supplied here and
+            // SceneBuilderTests asserts the emitted bottom equals this value.
+            //
+            // Rows come from the source-row projection, not from lane placements: a
+            // Splitter, Spacer, Delineator, or hidden row is a row in the table §3
+            // reproduces and has no lane placement, so deriving panel rows from
+            // placements silently dropped exactly those rows.
+            PanelRowProjectionResult projected = PanelRowProjection.TryProject(
+                request.Events,
+                request.Grid,
+                request.DateFormat);
+            if (projected.Refusal is not null)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            PanelBuildOutcome panel = PanelBuilder.TryBuild(
+                new PanelBuildRequest(
+                    request.Grid!,
+                    projected.Rows,
+                    plotBounds,
+                    plotBounds.Y - request.YearBandHeightPt,
+                    panelTheme));
+
+            // A panel refusal must not be dropped: an empty panel would read as a
+            // scene with no data table, which is a silent data loss rather than an
+            // error. It reports the existing InvalidLayoutSettings rather than adding
+            // a member that could never be positively tested -- AGENTS.md treats an
+            // unreachable validator as a defect, exactly as R3.15 D2 removed the dead
+            // PlotOutsideChart guard. RowCountMismatch is now genuinely reachable,
+            // which is the point of the projection: a source row that failed
+            // validation can no longer shift every panel cell below it.
+            if (panel.Result is null)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            panelOutcome = panel;
+        }
+
+        // A scene with no panel has no panel rectangle to contribute, so the frame
+        // unions the plot and header bands alone. An empty rectangle would be
+        // accepted by RectD and would drag the content origin to the origin.
+        RectD framePanelBounds = panelOutcome?.Result?.PanelBounds ?? plotBounds;
+
         FrameBandsCreationOutcome frame = FrameBandsBuilder.TryBuild(
             new FrameBandsRequest(
                 timeScale,
                 request.Scale,
                 request.PeriodLabelFormat,
-                panelBounds,
+                framePanelBounds,
                 plotBounds,
                 request.ChartOuterPaddingPt,
                 request.TitleBandHeightPt,
@@ -648,100 +704,31 @@ public static class SceneBuilder
             primitives,
             warnings);
 
-        if (request.Panel is { } panelTheme)
+        // §10's band spans the data panel and the plot, so it needs the panel's left
+        // edge. That edge is only known once the panel has been built, which is why
+        // this pass moved after the panel rather than with the other lane passes.
+        BuildSplitters(
+            request,
+            laneLayout,
+            styles,
+            framePanelBounds,
+            plotBounds,
+            laneParticipants,
+            primitives,
+            warnings);
+
+        // The panel primitives were built before the frame so their bounds could feed
+        // it; they are emitted here so the scene's primitive order stays
+        // frame-then-panel.
+        if (panelOutcome?.Result is { } built)
         {
-            // Section 4 fixes the header band's bottom edge to the period header's
-            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
-            // panel builder cannot know the plot bounds, so it is supplied here and
-            // SceneBuilderTests asserts the emitted bottom equals this value.
-            //
-            // The header band height is the §4 panel header's own height, not the
-            // year band: YearBandHeightPt belongs to §5, and reusing it here made a
-            // structural equality (the bottoms align) rest on an unrelated pairing.
-            // The height is derived from the panel's own measured row height so the
-            // header and the body rows share one metric.
-            PanelBuildOutcome panel = PanelBuilder.TryBuild(
-                new PanelBuildRequest(
-                    request.Grid!,
-                    [.. placements.Placements.Select(placement => new PanelRow(placement.Event.Id, Cells(placement.Event, request)))],
-                    plotBounds,
-                    plotBounds.Y - request.YearBandHeightPt,
-                    request.Grid!.RowHeightPt,
-                    panelTheme));
-
-            // A panel refusal must not be dropped: an empty panel would read as a
-            // scene with no data table, which is a silent data loss rather than an
-            // error. Every PanelBuildRefusal is precondition-checked upstream (the
-            // frame builder refuses a non-positive plot, and the grid guarantees a
-            // positive row height and a unique row per placement), so this branch is
-            // a defence against a future PanelBuilder refusal. It reports the existing
-            // InvalidLayoutSettings rather than adding a member that could never be
-            // positively tested -- AGENTS.md treats an unreachable validator as a
-            // defect, exactly as R3.15 D2 removed the dead PlotOutsideChart guard.
-            if (panel.Result is not { } panelResult)
-            {
-                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
-            }
-
-            primitives.AddRange(panelResult.Primitives);
+            primitives.AddRange(built.Primitives);
         }
 
         SceneCreationOutcome scene = GanttScene.TryCreate(frameResult.Geometry.ChartBounds, plotBounds, primitives, warnings);
-        return scene.Scene is { } built
-            ? new SceneBuildOutcome(new SceneBuildResult(built, timeScale), null)
+        return scene.Scene is { } sceneBuilt
+            ? new SceneBuildOutcome(new SceneBuildResult(sceneBuilt, timeScale), null)
             : Refused(SceneBuilderRefusal.InvalidLayoutSettings);
-    }
-
-    /// <summary>
-    /// Projects one event's cell texts in grid-column order, as §3 requires the
-    /// emitted bounds to follow the measured column order.
-    /// </summary>
-    /// <param name="event">The validated event supplying the cell values.</param>
-    /// <param name="request">The build request supplying the grid and the date format.</param>
-    /// <returns>
-    /// One entry per grid column. A column with no schema mapping, or a field the
-    /// entity type does not use, is <see langword="null"/>: blank is legal cell
-    /// data (R2.5 U2) and the builder already omits text for it.
-    /// </returns>
-    /// <remarks>
-    /// Dates go through <see cref="GanttDateFormatting"/> with the request's
-    /// approved format, so a panel cell and a §23 date label cannot disagree and
-    /// no host culture can re-derive the pattern.
-    /// </remarks>
-    private static List<string?> Cells(GanttEvent @event, SceneBuildRequest request)
-    {
-        List<string?> cells = new(request.Grid!.Columns.Count);
-        foreach (PanelColumn column in request.Grid.Columns)
-        {
-            cells.Add(column.Name switch
-            {
-                // Every schema column is mapped explicitly rather than relying on a
-                // default: a panel cell must reproduce the worksheet value it stands
-                // for, and a silently null column renders as a blank cell that reads
-                // as an empty worksheet cell.
-                "Id" => @event.Id.Value,
-                "Type" => EntityTypeCatalog.GetDefinition(@event.Type)?.DisplayName,
-                "Description" => @event.Description,
-                "Start" => @event.Start is { } start ? GanttDateFormatting.Format(start, request.DateFormat) : null,
-                "Finish" => @event.Finish is { } finish ? GanttDateFormatting.Format(finish, request.DateFormat) : null,
-                "LaneId" => @event.LaneId?.Value,
-                "StackIndex" => @event.StackIndex?.ToString(CultureInfo.InvariantCulture),
-                "ParentId" => @event.ParentId?.Value,
-                "StyleKey" => @event.StyleKey,
-                // The worksheet holds the enum member name, which is also what
-                // GanttRowValidator parses back, so the cell round-trips.
-                "LabelPosition" => @event.LabelPosition?.ToString(),
-                "FillColour" => @event.FillColour,
-                "StrokeColour" => @event.StrokeColour,
-                // ExcelCellConverter.ToText renders a bool as TRUE/FALSE, so the cell
-                // matches the value the table reader would parse back.
-                "Visible" => @event.Visible ? "TRUE" : "FALSE",
-                "SortOrder" => @event.SortOrder?.ToString(CultureInfo.InvariantCulture),
-                _ => null,
-            });
-        }
-
-        return cells;
     }
 
     /// <summary>
