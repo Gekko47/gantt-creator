@@ -32,6 +32,13 @@ namespace GanttCreator.Office;
 /// shape that carries no text. The scene resolves this (ADR-0018 D4); the
 /// adapter only maps it to the host's alignment constant.
 /// </param>
+/// <param name="TextColour">
+/// The resolved label text colour, or <see langword="null"/> when the scene
+/// resolved none. Entity guide §17's delay inside/outside switch is expressed
+/// by which value the scene put on the label it emitted, not by anything the
+/// adapter decides, so a <see langword="null"/> means "leave the font colour
+/// alone" and is never substituted.
+/// </param>
 /// <remarks>
 /// Every value is a primitive or a Core-owned type. No interop type crosses
 /// this request, so the AddIn compilation never names
@@ -50,7 +57,8 @@ public sealed record OfficeShapeRequest(
     double? FontSizePt = null,
     bool? Bold = null,
     string? Text = null,
-    GanttTextAlignment? Alignment = null);
+    GanttTextAlignment? Alignment = null,
+    ColourHex? TextColour = null);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and

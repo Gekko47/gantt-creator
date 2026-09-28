@@ -646,6 +646,80 @@ public sealed class LabelPlannerTests
         Assert.Equal(expected, result.Primitive!.Alignment);
     }
 
+    [Fact]
+    public void The_delay_label_keeps_its_own_text_colour_inside_the_body()
+    {
+        // Section 17: a delay label inside the red body is DelayText (white). The
+        // planner must carry the inside style through unchanged.
+        LabelPlanResult result = Plan(Request(
+            Shape(100, 20, 200),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            styleDefaultPosition: GanttLabelPosition.Inside,
+            textStyle: new SceneStyle("DelayText", textColour: ColourHex.Parse("#FFFFFF")),
+            outsideStyle: new SceneStyle("DefaultText", textColour: ColourHex.Parse("#000000"))));
+
+        Assert.Equal(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal("#FFFFFF", result.Primitive!.Style.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void The_delay_label_switches_to_the_outside_text_colour_when_it_leaves_the_body()
+    {
+        // The other half of section 17's switch, and the row that was unreachable
+        // while no caller supplied an outside style at all. A 10pt delay bar cannot
+        // hold 20pt of text, so the label escapes the body and must stop being
+        // white - white on the chart background is unreadable.
+        LabelPlanResult result = Plan(Request(
+            Shape(100, 20, 10),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            styleDefaultPosition: GanttLabelPosition.Inside,
+            textStyle: new SceneStyle("DelayText", textColour: ColourHex.Parse("#FFFFFF")),
+            outsideStyle: new SceneStyle("DefaultText", textColour: ColourHex.Parse("#000000"))));
+
+        Assert.NotEqual(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal("#000000", result.Primitive!.Style.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void A_non_delay_label_keeps_its_own_text_colour_outside_the_body()
+    {
+        // The control for the row above. The switch is a property of a delay event,
+        // so a planned label placed outside its body must NOT silently adopt the
+        // outside style: that would recolour every label in the chart.
+        LabelPlanResult result = Plan(Request(
+            Shape(100, 20, 10),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.AsPlannedActivity,
+            textStyle: new SceneStyle("AsPlannedActivity", textColour: ColourHex.Parse("#123456")),
+            outsideStyle: new SceneStyle("DefaultText", textColour: ColourHex.Parse("#000000"))));
+
+        Assert.NotEqual(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal("#123456", result.Primitive!.Style.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void A_delay_label_with_no_outside_style_keeps_its_own_text_colour()
+    {
+        // The documented fallback when OutsideTextStyle is absent. It degrades to the
+        // inside style rather than substituting a colour, which is the same
+        // no-substitution rule the fill and stroke members follow.
+        LabelPlanResult result = Plan(Request(
+            Shape(100, 20, 10),
+            "abcde",
+            GanttLabelPosition.Auto,
+            GanttEntityType.DelayEvent,
+            styleDefaultPosition: GanttLabelPosition.Inside,
+            textStyle: new SceneStyle("DelayText", textColour: ColourHex.Parse("#FFFFFF"))));
+
+        Assert.NotEqual(GanttLabelPosition.Inside, result.Position);
+        Assert.Equal("#FFFFFF", result.Primitive!.Style.TextColour!.ToString());
+    }
+
     private static LabelRequest Request(
         RectD shape,
         string text,

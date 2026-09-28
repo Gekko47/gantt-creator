@@ -22,7 +22,7 @@ public sealed class SceneBuilderTests
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
 
-    private static GanttStyleDefinition Style(string key, double height) =>
+    private static GanttStyleDefinition Style(string key, double height, string textColour = "#000000") =>
         new(
             key,
             new HashSet<GanttLabelPosition>
@@ -36,7 +36,7 @@ public sealed class SceneBuilderTests
             GanttLabelPosition.Inside,
             "#92D050",
             "#404040",
-            "#000000",
+            textColour,
             GanttHatchPattern.None,
             0,
             0,
@@ -78,6 +78,78 @@ public sealed class SceneBuilderTests
         new SceneStyle("YearHeader"),
         new SceneStyle("PeriodHeader"),
         new SceneStyle("Title"));
+
+    [Fact]
+    public void A_delay_label_is_white_inside_its_body_and_black_outside_it()
+    {
+        // The end-to-end scene proof of entity guide section 17. The planner half is
+        // covered in LabelPlannerTests; what this adds is that SceneBuilder actually
+        // SUPPLIES the outside style. Before this change both LabelPlanRequest call
+        // sites omitted OutsideTextStyle, so the section 17 branch was unreachable
+        // and every delay label stayed white wherever it was placed - white on the
+        // chart background, which is unreadable.
+        //
+        // A registry whose DelayEvent carries the real DelayText token, so the
+        // white asserted here is the catalogue's value and not a literal.
+        var delayRegistry = new GanttStyleRegistry(
+        [
+            Style("AsPlannedActivity", 8),
+            Style("DelayEvent", 8, textColour: "#FFFFFF"),
+        ]);
+
+        // Two rows: a wide delay bar that keeps its label inside the red body, and a
+        // narrow one whose label cannot fit and is pushed outside it.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.DelayEvent, new DateOnly(2024, 1, 2), new DateOnly(2024, 1, 20), "DelayEvent"),
+                Event(2, GanttEntityType.DelayEvent, new DateOnly(2024, 1, 2), new DateOnly(2024, 1, 3), "DelayEvent"))
+            with
+            {
+                Registry = delayRegistry,
+                LabelStyle = new SceneStyle("DefaultText"),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        // Both rows contribute a description label, and the two must disagree on
+        // colour: the wide bar's label sits inside the red body, the narrow bar's
+        // does not. Asserting both colours are present is the section 17 proof - if
+        // the outside style were never supplied, both labels would be white.
+        string[] labelColours =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneText>()
+                .Where(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))
+                .Select(text => text.Style.TextColour?.ToString() ?? "(null)"),
+        ];
+
+        Assert.Contains("#FFFFFF", labelColours);
+        Assert.Contains("#000000", labelColours);
+    }
+
+    [Fact]
+    public void A_non_delay_label_is_not_recoloured_by_the_outside_style()
+    {
+        // The control for the row above. A planned activity's label must keep its own
+        // style's text colour whether it is placed inside or outside, so the section
+        // 17 switch cannot be quietly widened to every entity.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneText label = Assert.Single(
+            outcome.Result!.Scene.Primitives
+                .OfType<SceneText>(),
+            text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        // The shared Style helper gives AsPlannedActivity the #000000 DefaultText
+        // value, so the label is black - but it got there through its OWN resolved
+        // style, not through the outside style.
+        Assert.Equal("#000000", label.Style.TextColour?.ToString());
+    }
 
     private static SceneBuildRequest Request(params GanttEvent[] events) =>
         new()

@@ -1235,6 +1235,36 @@ public class ExcelShapeWriter(
                 font.Bold = bold ? MsoTriState.msoTrue : MsoTriState.msoFalse;
             }
         }
+
+        // The text colour goes through the FONT's fill, not the shape's: the shape
+        // fill is already spoken for by ApplyStyle, and the two are independent
+        // properties on the host. A shape can therefore be a red delay body with a
+        // white label, which is exactly what entity guide section 17 requires.
+        //
+        // The chain is TextRange2.Font (Font2) -> Fill (FillFormat) -> ForeColor
+        // (ColorFormat) -> RGB, verified by reflection against the installed
+        // office.dll 16.0.0 rather than assumed: Font2 exposes UnderlineColor
+        // directly but has no Font.Color, so the fill is the only colour surface
+        // on a Font2. Every proxy is read once into a local and written through,
+        // per the ownership rule, and none is force-released because they are
+        // Excel-owned and shared.
+        OfficeShapeStyle style = OfficeStyleMapper.Map(request);
+        if (style.TextRgb is { } textRgb
+            && textRange.Font is { } textFont
+            && textFont.Fill is { } textFill)
+        {
+            // Solid() before the colour write, for the same reason ApplyStyle does
+            // it for a shape fill: the host keeps whichever fill type it last had,
+            // and a text fill inherited from the theme can silently ignore a
+            // ForeColor write. Making it solid first is what makes the colour land.
+            textFill.Solid();
+            if (textFill.ForeColor is { } textForeColor)
+            {
+                textForeColor.RGB = textRgb;
+            }
+
+            textFill.Visible = MsoTriState.msoTrue;
+        }
     }
 
     /// <summary>

@@ -700,6 +700,7 @@ public static class SceneBuilder
             plotBounds,
             frameResult.Geometry.ChartBounds,
             placements,
+            styles,
             parentVisibleBounds,
             primitives,
             warnings);
@@ -836,6 +837,7 @@ public static class SceneBuilder
         RectD plotBounds,
         RectD chartBounds,
         LaneEventLayoutResult placements,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
@@ -844,6 +846,16 @@ public static class SceneBuilder
         {
             return;
         }
+
+        // §17's outside colour is the code-owned DefaultText token, not a second
+        // literal here: the token table stays the single authority, exactly as
+        // CataloguePresetStyle reads its preset rather than restating its colours.
+        ColourHex? defaultText = GanttCatalogues
+            .Colours.FirstOrDefault(token => token.Name == "DefaultText")
+            is { } defaultTextToken
+            && ColourHex.TryParse(defaultTextToken.HexValue, out ColourHex? parsed)
+                ? parsed
+                : null;
 
         LabelMetrics metrics = new(
             plotBounds,
@@ -877,14 +889,33 @@ public static class SceneBuilder
             // measured gap and truncate or suppress a label that has room.
             List<RectD> relevant = VerticalBand(occupants, shapeBounds);
 
+            // The inside label carries the row's own resolved text colour, so a
+            // delay event's label is DelayText over its red body. A row whose style
+            // resolved no text colour keeps the caller's label style untouched
+            // rather than being given a substitute: null means "unresolved", and
+            // the adapter reads that as "leave the font alone".
+            SceneStyle insideLabelStyle = styles.TryGetValue(@event.Id, out ResolvedEventStyle? rowStyle)
+                && rowStyle.Style.TextColour is { } insideTextColour
+                    ? labelStyle.WithTextColour(insideTextColour)
+                    : labelStyle;
+
+            // §17's outside colour. Supplied for every row, not only delays: the
+            // planner applies it only to a delay label placed outside its body, so
+            // a non-delay row's inside and outside styles are the same object and
+            // the switch cannot fire for it.
+            SceneStyle outsideLabelStyle = defaultText is { } outsideTextColour
+                ? labelStyle.WithTextColour(outsideTextColour)
+                : labelStyle;
+
             LabelPlanCreationOutcome description = LabelPlanner.TryPlan(
                 new LabelRequest(
                     @event,
                     @event.Description,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     shapeBounds,
-                    labelStyle,
+                    insideLabelStyle,
                     request.Metrics!,
+                    OutsideTextStyle: outsideLabelStyle,
                     LaneOrder: placement.LaneOrder,
                     StackIndex: placement.EffectiveStackIndex),
                 metrics,
@@ -914,6 +945,11 @@ public static class SceneBuilder
             // description was added would not contain it, and the date label would be
             // planned as if the row had no description at all -- which is exactly the
             // collision §23 requires the occupants list to prevent.
+            //
+            // A §23 date label is anchored Left or Right of the bar and is never
+            // placed inside a body, so it always takes the outside style. Passing
+            // the inside style here would put a delay event's DelayText beside its
+            // bar, where white-on-white is unreadable.
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -922,7 +958,7 @@ public static class SceneBuilder
                     metrics,
                     request.Metrics!,
                     request.DateFormat,
-                    labelStyle,
+                    outsideLabelStyle,
                     Occupants: VerticalBand(occupants, shapeBounds)));
             if (dates.Result is not { } planned)
             {
@@ -1092,7 +1128,8 @@ public static class SceneBuilder
                 style.FillColour,
                 style.StrokeColour,
                 hasDefinition ? definition!.StandardOutlinePt : null,
-                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None),
+                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None,
+                textColour: style.TextColour),
             heightPt);
         return true;
     }

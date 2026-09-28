@@ -90,6 +90,119 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
+    public void Resolver_carries_the_named_style_text_colour()
+    {
+        // Entity guide section 17 is a statement about this value surviving
+        // resolution: without it a delay label has no colour to be white.
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.DelayEvent,
+            "DelayEvent",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out _));
+
+        Assert.Equal("#FFFFFF", resolved!.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void Resolver_leaves_the_text_colour_null_when_the_style_declares_none()
+    {
+        // Null means "the style resolved no text colour", which the adapter reads as
+        // "leave the font alone". Substituting DefaultText here would be exactly the
+        // renderer defaulting the architecture forbids, and would make an
+        // intentionally unstyled label indistinguishable from a styled one.
+        var registry = new GanttStyleRegistry([TextlessStyle()]);
+
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomActivity,
+            registry,
+            "TextlessStyle",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out _));
+
+        Assert.Null(resolved!.TextColour);
+    }
+
+    [Fact]
+    public void A_malformed_text_colour_is_refused_at_construction_not_merely_ignored()
+    {
+        // Where the text colour is actually rejected. Both GanttStyleDefinition and
+        // GanttStylePreset validate their colours when they are built, so a bad
+        // value never reaches GanttStyleResolver to be silently dropped - which
+        // would have reached the host as "no text colour" and read as "leave the
+        // font alone". The resolver's own colour parse is defence-in-depth behind
+        // this check, symmetric with the fill and stroke guards.
+        var definition = new GanttStyleDefinition(
+            "BadTextStyle",
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
+            EntityColourCapability.Fill,
+            GanttLabelPosition.Inside,
+            FillColour: "#112233",
+            StrokeColour: "#445566",
+            TextColour: "not-a-colour",
+            HatchPattern: GanttHatchPattern.None);
+
+        Assert.Throws<ArgumentException>(() => new GanttStyleRegistry([definition]));
+    }
+
+    [Fact]
+    public void A_well_formed_text_colour_is_accepted_so_the_refusal_is_not_vacuous()
+    {
+        // The control for the row above: the identical definition with a valid
+        // colour must construct, so the refusal above cannot be passing for
+        // "custom styles never build".
+        var registry = new GanttStyleRegistry([StyleWithTextColour("#123456")]);
+        Assert.True(registry.TryGet("TextlessStyle", out GanttStyleDefinition? found));
+        Assert.Equal("#123456", found!.TextColour);
+    }
+
+    [Fact]
+    public void A_registry_text_colour_reaches_the_resolved_style_verbatim()
+    {
+        // The reachable end-to-end path: a user-authored style's text colour is
+        // carried into the resolved style rather than dropped. Section 17 depends on
+        // this surviving, and it is the only assertion here that exercises the
+        // resolver's new TextColour member with a value it must preserve.
+        var registry = new GanttStyleRegistry([StyleWithTextColour("#123456")]);
+
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomActivity,
+            registry,
+            "TextlessStyle",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out _));
+
+        Assert.Equal("#123456", resolved!.TextColour!.ToString());
+    }
+
+    /// <summary>
+    /// A custom style declaring no text colour at all, so the "unresolved stays
+    /// null" row is testing an absent value rather than a malformed one.
+    /// </summary>
+    private static GanttStyleDefinition TextlessStyle() => StyleWithTextColour(string.Empty);
+
+    private static GanttStyleDefinition StyleWithTextColour(string textColour) =>
+        new(
+            "TextlessStyle",
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
+            EntityColourCapability.Fill,
+            GanttLabelPosition.Inside,
+            FillColour: "#112233",
+            StrokeColour: "#445566",
+            TextColour: textColour,
+            // A named style with a default label position is a formatting style, and
+            // ValidateFormatting requires every formatting member to be present.
+            HatchPattern: GanttHatchPattern.None);
+
+    [Fact]
     public void ChangeStyleKey_clears_all_per_row_formatting_overrides()
     {
         GanttRowDto row = new(

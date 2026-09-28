@@ -177,6 +177,7 @@ Goal: render and refresh an owned set of Excel shapes beside the source data.
 | R4.8 | Preserve unowned shapes/cells and active worksheet | Sentinel shape/cell and active-sheet adapter tests | Required: refresh with manual content present and prove it is unchanged |
 | R4.9 | Wire Validate and Refresh Ribbon commands with guarded errors | Command, validation, and error-boundary tests | Required: exercise Validate/Refresh on valid and invalid workbooks |
 | R4.10 | Profile 1,000-event refresh and remove only measured bottlenecks | Automated benchmark and no-regression threshold | Required: measure real Excel refresh on the reference machine and record Office build |
+| R4.11 | Propagate label text colour through style resolution, the scene model, and the Office adapter, activating §17's inside/outside switch | Resolver, planner, scene, snapshot, mapper, and renderer tests; a non-delay control proves the switch is not widened | Required: read a label's font colour back off the live host on create and after an update |
 
 > **Phase 4 notes (revision 5):**
 > - **R4.1** is landed early in part through the existing application/workbook/table/config/reporter ports. The row adds only missing narrow shape/render ports and must not duplicate them.

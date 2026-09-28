@@ -213,6 +213,53 @@ public sealed class SceneSnapshotTests
         Assert.Null(scene.Primitives.OfType<SceneRect>().Single().Style.Alignment);
     }
 
+    [Fact]
+    public void A_style_text_colour_round_trips_through_the_snapshot()
+    {
+        // A snapshot that dropped the text colour would silently restyle every
+        // delay label on the next read, which is exactly the staleness the scene
+        // model exists to prevent. The round trip is the assertion.
+        var coloured = CreateScene([
+            new SceneText(
+                "row:label",
+                SceneOwnerId.ForRow(GanttRowId.New()),
+                ZLayer.Label,
+                "Delay",
+                new RectD(0, 0, 20, 10),
+                new SceneStyle("DelayText", textColour: ColourHex.Parse("#FFFFFF")),
+                GanttTextAlignment.Centre),
+        ]);
+
+        GanttScene scene = SceneSnapshot.Deserialize(SceneSnapshot.Serialize(coloured));
+
+        Assert.Equal(
+            "#FFFFFF",
+            scene.Primitives.OfType<SceneText>().Single().Style.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void An_absent_style_text_colour_round_trips_as_null_rather_than_black()
+    {
+        // The null/absent distinction, which the fill and stroke members already
+        // depend on. A snapshot that normalised null to #000000 would claim a
+        // colour the scene never resolved.
+        GanttScene scene = SceneSnapshot.Deserialize(SceneSnapshot.Serialize(CreateScene()));
+
+        Assert.Null(scene.Primitives.OfType<SceneRect>().Single().Style.TextColour);
+    }
+
+    [Fact]
+    public void Deserialize_rejects_a_malformed_style_text_colour_as_invalid_scene_data()
+    {
+        // The positive test for the new ParseColour call. Without it a corrupt or
+        // hand-edited snapshot would deserialize with a null text colour and look
+        // like a valid scene whose styling was simply unresolved.
+        var json = SceneSnapshot.Serialize(CreateScene())
+            .Replace("\"TextColour\":null", "\"TextColour\":\"nope\"", StringComparison.Ordinal);
+
+        _ = Assert.Throws<InvalidDataException>(() => SceneSnapshot.Deserialize(json));
+    }
+
     private static GanttScene CreateScene() =>
         CreateScene([
             new SceneRect(

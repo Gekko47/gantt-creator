@@ -265,6 +265,7 @@ public static class SceneSnapshot
             FontSizePt = style.FontSizePt,
             Bold = style.Bold,
             Alignment = style.Alignment is { } alignment ? (int)alignment : null,
+            TextColour = style.TextColour?.ToString(),
         };
 
     private static SceneStyle FromStyle(StyleDocument document)
@@ -286,7 +287,8 @@ public static class SceneSnapshot
             document.FontFamily,
             document.FontSizePt,
             document.Bold,
-            alignment
+            alignment,
+            ParseColour(document.TextColour, "style.textColour")
         );
     }
 
@@ -395,6 +397,7 @@ public static class SceneSnapshot
         public double? FontSizePt { get; init; }
         public bool? Bold { get; init; }
         public int? Alignment { get; init; }
+        public string? TextColour { get; init; }
     }
 
     private sealed class WarningDocument

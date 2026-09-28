@@ -18,12 +18,14 @@ public sealed record GanttResolvedStyle
     /// <param name="styleKey">The resolved base named style.</param>
     /// <param name="fillColour">The resolved fill colour, or null when none.</param>
     /// <param name="strokeColour">The resolved stroke colour, or null when none.</param>
+    /// <param name="textColour">The resolved label text colour, or null when none.</param>
     /// <param name="labelPosition">The resolved label position.</param>
     /// <param name="usedFallback">Whether the Type default replaced an unavailable style.</param>
     public GanttResolvedStyle(
         string styleKey,
         ColourHex? fillColour,
         ColourHex? strokeColour,
+        ColourHex? textColour,
         GanttLabelPosition labelPosition,
         bool usedFallback)
     {
@@ -31,6 +33,7 @@ public sealed record GanttResolvedStyle
         StyleKey = styleKey;
         FillColour = fillColour;
         StrokeColour = strokeColour;
+        TextColour = textColour;
         LabelPosition = labelPosition;
         UsedFallback = usedFallback;
     }
@@ -43,6 +46,20 @@ public sealed record GanttResolvedStyle
 
     /// <summary>Gets the resolved stroke colour.</summary>
     public ColourHex? StrokeColour { get; }
+
+    /// <summary>
+    /// Gets the resolved label text colour, or <see langword="null"/> when the style
+    /// declares none.
+    /// </summary>
+    /// <remarks>
+    /// Carried, not defaulted: entity guide section 17 requires a delay event's
+    /// label to be <c>DelayText</c> inside the body and <c>DefaultText</c> outside
+    /// it, which is a statement about a colour that only the resolved style can
+    /// carry. A <see langword="null"/> here means the style resolved no text colour,
+    /// which is a different fact from "black" and is preserved as such — the same
+    /// rule the fill and stroke members follow.
+    /// </remarks>
+    public ColourHex? TextColour { get; }
 
     /// <summary>Gets the resolved label position.</summary>
     public GanttLabelPosition LabelPosition { get; }
@@ -132,8 +149,14 @@ public static class GanttStyleResolver
             styleKey,
             StringComparison.Ordinal);
 
+        // The text colour is validated on the same footing as fill and stroke: a
+        // malformed catalogue value is an unavailable style, not a colour to be
+        // silently dropped. Dropping it would reach the host as "no text colour",
+        // which the Office adapter reads as "leave the font alone" — so a typo in
+        // the catalogue would look like it worked while rendering the wrong text.
         if (!TryParseOptionalColour(selected.FillColour, out ColourHex? baseFill)
             || !TryParseOptionalColour(selected.StrokeColour, out ColourHex? baseStroke)
+            || !TryParseOptionalColour(selected.TextColour, out ColourHex? baseText)
             || !TryParseOptionalColour(fillColour, out ColourHex? overrideFill)
             || !TryParseOptionalColour(strokeColour, out ColourHex? overrideStroke))
         {
@@ -145,6 +168,7 @@ public static class GanttStyleResolver
             selected.StyleKey,
             overrideFill ?? baseFill,
             overrideStroke ?? baseStroke,
+            baseText,
             labelPosition ?? selected.DefaultLabelPosition,
             usedFallback);
         refusal = null;
@@ -159,6 +183,7 @@ public static class GanttStyleResolver
         string StyleKey,
         string FillColour,
         string StrokeColour,
+        string TextColour,
         GanttLabelPosition DefaultLabelPosition);
 
     private static bool TrySelect(
@@ -175,6 +200,7 @@ public static class GanttStyleResolver
                 registered.StyleKey,
                 registered.FillColour ?? string.Empty,
                 registered.StrokeColour ?? string.Empty,
+                registered.TextColour ?? string.Empty,
                 registered.DefaultLabelPosition!.Value);
             return true;
         }
@@ -187,6 +213,7 @@ public static class GanttStyleResolver
                 typeDefault.StyleKey,
                 typeDefault.FillColour ?? string.Empty,
                 typeDefault.StrokeColour ?? string.Empty,
+                typeDefault.TextColour ?? string.Empty,
                 typeDefault.DefaultLabelPosition!.Value);
             return true;
         }
@@ -211,6 +238,7 @@ public static class GanttStyleResolver
             preset.StyleKey,
             preset.FillColour,
             preset.StrokeColour,
+            preset.TextColour,
             preset.DefaultLabelPosition);
         return true;
     }

@@ -563,6 +563,55 @@ public class SceneShapeRendererTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// The scene's label text colour crosses the port verbatim. Without this the
+    /// renderer dropped the one member entity guide section 17's switch needs to
+    /// reach the host, and every delay label would have rendered in whatever
+    /// default font colour Excel gave a text box.
+    /// </summary>
+    [Fact]
+    public void The_scene_text_colour_reaches_the_request_unchanged()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                "Delay",
+                new RectD(10, 20, 60, 12),
+                Style.WithTextColour(ColourHex.Parse("#FFFFFF")),
+                GanttTextAlignment.Centre));
+
+        OfficeShapeRequest label = Assert.Single(renderer.Translate(scene).Requests);
+
+        Assert.Equal("#FFFFFF", label.TextColour!.ToString());
+    }
+
+    /// <summary>
+    /// The control for the row above: a style that resolved no text colour must
+    /// produce a null on the request, so the adapter leaves the font alone rather
+    /// than writing a colour the scene never chose.
+    /// </summary>
+    [Fact]
+    public void An_unresolved_text_colour_reaches_the_request_as_null()
+    {
+        var renderer = new SceneShapeRenderer(ChartOriginDelta.Identity);
+        var scene = SceneOf(
+            new SceneText(
+                "row-1:label",
+                RowOwner,
+                ZLayer.Label,
+                "Activity",
+                new RectD(10, 20, 60, 12),
+                Style,
+                GanttTextAlignment.Centre));
+
+        OfficeShapeRequest label = Assert.Single(renderer.Translate(scene).Requests);
+
+        Assert.Null(label.TextColour);
+    }
+
+    /// <summary>
     /// D3: the alignment mapping is a closed three-member table. Each scene
     /// alignment reaches the request unchanged, and an alignment outside the
     /// enum is refused rather than defaulted.

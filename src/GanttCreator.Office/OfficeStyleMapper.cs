@@ -20,6 +20,12 @@ namespace GanttCreator.Office;
 /// <param name="LineRgb">The packed stroke colour, or <see langword="null"/>.</param>
 /// <param name="LineWeightPt">The stroke width in points, or <see langword="null"/>.</param>
 /// <param name="LineTransparency">The stroke transparency, 0 opaque to 1 clear.</param>
+/// <param name="TextRgb">
+/// The packed label text colour, or <see langword="null"/> when the scene resolved
+/// none. Packed with the same <c>blue * 65536 + green * 256 + red</c> order as
+/// <paramref name="FillRgb"/> and <paramref name="LineRgb"/> so the three cannot
+/// disagree about byte order.
+/// </param>
 /// <remarks>
 /// <para>
 /// Every value is a primitive or a Core-owned type, so this record and the mapper
@@ -44,7 +50,8 @@ public sealed record OfficeShapeStyle(
     bool LineVisible,
     int? LineRgb,
     float? LineWeightPt,
-    float LineTransparency);
+    float LineTransparency,
+    int? TextRgb);
 
 /// <summary>
 /// Maps a scene-resolved shape request onto the host's fill and line property
@@ -93,7 +100,14 @@ public static class OfficeStyleMapper
                 : null,
             LineTransparency: request.StrokeColour is { } strokeAlpha
                 ? ToTransparency(strokeAlpha)
-                : 0f);
+                : 0f,
+            // The text colour is packed by the same ToOfficeRgb the fill and stroke
+            // use, so the byte order cannot differ between the three. It is
+            // deliberately not gated on CarriesFill: a line carries no text, but
+            // the text-bearing kinds are exactly the ones a caller is most likely
+            // to ask this of, and a null request colour must stay null rather than
+            // be turned into black here.
+            TextRgb: request.TextColour is { } textColour ? ToOfficeRgb(textColour) : null);
     }
 
     /// <summary>

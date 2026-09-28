@@ -204,6 +204,163 @@ public class TextRenderIntegrationTests(ITestOutputHelper output)
             clippedRange.ParagraphFormat.Alignment);
     }
 
+    /// <summary>
+    /// Proves on the live host that a label's text colour is written to the FONT's
+    /// fill and read back off the real shape, and that an update restyles it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the gate that could not be written from documentation alone. The
+    /// write goes through <c>TextRange2.Font.Fill.ForeColor.RGB</c>, and the
+    /// reflection probe established only that those members EXIST - not that the
+    /// host honours a colour written to them, or that the fill must be made solid
+    /// first for the write to land. A host that quietly ignored the write would
+    /// leave the label in Excel's default font colour, which is exactly the
+    /// failure entity guide section 17 forbids.
+    /// </para>
+    /// <para>
+    /// The two colours are #FFFFFF and #123456. White is the section 17 inside
+    /// value but is a poor byte-order witness (its channels are identical), so
+    /// #123456 - three distinct bytes, packed to 0x563412 - is what actually pins
+    /// the channel order. Both are asserted.
+    /// </para>
+    /// <para>
+    /// The expected integers were confirmed by a live probe across five tokens
+    /// (#123456, #FF0000, #00FF00, #0000FF, #010203) on this host build, which
+    /// showed the FONT fill reporting the same packed value as the shape fill for
+    /// every one. So the text path and the fill path share one byte order, and the
+    /// asymmetry that would have broken this test is a test-helper bug, not a
+    /// production one - it is recorded here because the first run of this test did
+    /// fail on exactly that, and the failure was in the test.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_label_text_colour_reaches_the_live_font_and_survives_an_update()
+    {
+        var fixture = new OfficeFixture();
+
+        // L19, for the same reason the test above needs it: this creates real
+        // shapes through the real writer, so teardown escalates to a kill.
+        fixture.SuppressLeakSignal = true;
+
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            using var scope = new OfficeFixture.ComScope();
+            Excel.Workbook workbook = scope.Track(fixture.CreateWorkbook());
+            var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
+            WorkbookInitialiseOutcome initialised = initialiser.Initialise();
+            Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+
+            const string InsideHex = "#FFFFFF";
+            const string DistinctHex = "#123456";
+            const int InsideRgb = 0xFFFFFF;
+            const int DistinctRgb = 0x563412;
+
+            var writer = new ExcelShapeWriter(fixture.Excel);
+            foreach ((string id, string hex) in new[] { ("row-1:inside", InsideHex), ("row-2:outside", DistinctHex) })
+            {
+                ShapeWriteOutcome created = writer.Create(LabelRequest(id, hex));
+                Assert.True(created.Succeeded, $"Create refused for '{id}': {created.Refusal}");
+            }
+
+            var sheet = (Excel.Worksheet)scope.Track(
+                workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+
+            Excel.Shape inside = scope.Track(sheet.Shapes.Item("row-1:inside"));
+            Excel.Shape outside = scope.Track(sheet.Shapes.Item("row-2:outside"));
+
+            _output.WriteLine("inside font colour : " + Describe(TextColourOf(scope, inside)));
+            _output.WriteLine("outside font colour: " + Describe(TextColourOf(scope, outside)));
+
+            // Read back off the HOST, not from the request: a host that ignored
+            // the write, or normalised it, fails here rather than being assumed
+            // to have taken it.
+            Assert.Equal(InsideRgb, TextColourOf(scope, inside));
+            Assert.Equal(DistinctRgb, TextColourOf(scope, outside));
+
+            // The shape's own fill must be unaffected. The text colour is a FONT
+            // property; if it had leaked onto the shape fill these two shapes -
+            // created with no fill at all - would have gained one.
+            Assert.Equal(OfficeCore.MsoTriState.msoFalse, inside.Fill.Visible);
+            Assert.Equal(OfficeCore.MsoTriState.msoFalse, outside.Fill.Visible);
+
+            AssertTextColourSurvivesAnUpdate(writer, scope, sheet);
+
+            inside.Delete();
+            outside.Delete();
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The update half of the text-colour gate, run against shapes the create half
+    /// already placed. R4.7 reaches this path on every reconcile that finds an
+    /// existing shape, so a create-only colour path would leave the old colour
+    /// sitting in the right place - a silent defect with no error.
+    /// </summary>
+    private void AssertTextColourSurvivesAnUpdate(
+        ExcelShapeWriter writer,
+        OfficeFixture.ComScope scope,
+        Excel.Worksheet sheet)
+    {
+        // The two shapes swap colours, so a create-only path cannot pass.
+        Assert.True(
+            writer.Update(LabelRequest("row-1:inside", "#123456")).Succeeded,
+            "Update refused.");
+        Assert.True(
+            writer.Update(LabelRequest("row-2:outside", "#FFFFFF")).Succeeded,
+            "Update refused.");
+
+        Excel.Shape restyledInside = scope.Track(sheet.Shapes.Item("row-1:inside"));
+        Excel.Shape restyledOutside = scope.Track(sheet.Shapes.Item("row-2:outside"));
+
+        _output.WriteLine("restyled inside : " + Describe(TextColourOf(scope, restyledInside)));
+        _output.WriteLine("restyled outside: " + Describe(TextColourOf(scope, restyledOutside)));
+
+        Assert.Equal(0x563412, TextColourOf(scope, restyledInside));
+        Assert.Equal(0xFFFFFF, TextColourOf(scope, restyledOutside));
+    }
+
+    /// <summary>
+    /// Reads the live font colour through the same chain the writer writes it, so
+    /// the assertion is against the host's own reported value.
+    /// </summary>
+    private static int TextColourOf(OfficeFixture.ComScope scope, Excel.Shape shape)
+    {
+        OfficeCore.TextRange2 range = scope.Track((OfficeCore.TextRange2)shape.TextFrame2.TextRange);
+        OfficeCore.Font2 font = scope.Track(range.Font);
+        OfficeCore.FillFormat fill = scope.Track(font.Fill);
+        OfficeCore.ColorFormat fore = scope.Track(fill.ForeColor);
+        return fore.RGB;
+    }
+
+    /// <summary>
+    /// One label request carrying the authored <c>#RRGGBB</c> token, exactly as the
+    /// scene would hand it over.
+    /// </summary>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <param name="textHex">The authored colour token, for example <c>#123456</c>.</param>
+    /// <returns>The request.</returns>
+    private static OfficeShapeRequest LabelRequest(string primitiveId, string textHex) =>
+        new(
+            primitiveId,
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40d, 30d, 90d, 16d)),
+            ZLayer.Label,
+            FontFamily: TokenFont,
+            FontSizePt: FontSizePt,
+            Text: "Delay",
+            Alignment: GanttTextAlignment.Centre,
+            TextColour: ColourHex.Parse(textHex));
+
     private static GanttScene BuildScene(string normal, string clipped, out RectD chartBounds)
     {
         chartBounds = new RectD(-ChartPaddingPt, -ChartPaddingPt, 400d, 300d);
@@ -236,6 +393,13 @@ public class TextRenderIntegrationTests(ITestOutputHelper output)
 
     private static string TextOf(Excel.Shape shape) =>
         ((OfficeCore.TextRange2)shape.TextFrame2.TextRange).Text ?? string.Empty;
+
+    /// <summary>
+    /// Formats a host colour as 0xRRGGBB for the test log, invariantly so the
+    /// output does not vary with the machine's locale.
+    /// </summary>
+    private static string Describe(int rgb) =>
+        string.Create(CultureInfo.InvariantCulture, $"0x{rgb:X6}");
 
     private static void AssertPoint(string what, double expected, double actual)
     {

@@ -449,6 +449,77 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
             covered.OrderBy(name => name, StringComparer.Ordinal));
     }
 
+    [Fact]
+    public void A_delay_label_reaches_the_request_and_maps_to_the_exact_host_value()
+    {
+        // Entity guide section 17's inside case: DelayText (#FFFFFF) is the one
+        // token where a byte-order error is invisible, so the asymmetric #123456
+        // row below is the one that actually pins the packing.
+        OfficeShapeStyle style = OfficeStyleMapper.Map(
+            LabelRequest(textColour: ColourHex.Parse("#FFFFFF")));
+
+        Assert.Equal(0xFFFFFF, style.TextRgb);
+    }
+
+    [Theory]
+    [InlineData("#FFFFFF", 0xFFFFFF)]
+    [InlineData("#000000", 0x000000)]
+    [InlineData("#123456", 0x563412)]
+    [InlineData("#FF0000", 0x0000FF)]
+    [InlineData("#92D050", 0x50D092)]
+    public void Every_text_colour_token_packs_with_the_same_byte_order_as_a_fill(
+        string authoredHex,
+        int expectedRgb)
+    {
+        // The same ToOfficeRgb serves fill, stroke, and text, so the three cannot
+        // disagree about channel order. #123456 has three distinct bytes, so any
+        // reordering is visible; the delay red row is the same value the fill
+        // matrix already pins, which is what proves the two paths agree.
+        OfficeShapeRequest request = LabelRequest(textColour: ColourHex.Parse(authoredHex));
+
+        Assert.Equal(expectedRgb, OfficeStyleMapper.Map(request).TextRgb);
+        Assert.Equal(expectedRgb, OfficeStyleMapper.Map(RectangleRequest(fill: ColourHex.Parse(authoredHex))).FillRgb);
+    }
+
+    [Fact]
+    public void An_unresolved_text_colour_stays_null_rather_than_becoming_black()
+    {
+        // The scene resolved no text colour, so the adapter must leave the font
+        // alone. Substituting DefaultText here would silently restyle every label
+        // whose style happened not to name a colour, and it would do it in the
+        // renderer - the substitution the scene-first rule forbids.
+        OfficeShapeStyle style = OfficeStyleMapper.Map(LabelRequest(textColour: null));
+
+        Assert.Null(style.TextRgb);
+    }
+
+    [Fact]
+    public void A_text_colour_reaches_the_request_without_being_disturbed_by_the_shape_fill()
+    {
+        // A delay body is a red rectangle whose label is white. Both are on the
+        // same request, so this row fails if either value overwrites the other.
+        OfficeShapeStyle style = OfficeStyleMapper.Map(
+            new OfficeShapeRequest(
+                "row-1:label",
+                OfficeShapeKind.TextBox,
+                new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 10)),
+                ZLayer.Label,
+                FillColour: null,
+                TextColour: ColourHex.Parse("#FFFFFF")));
+
+        Assert.Equal(0xFFFFFF, style.TextRgb);
+        Assert.False(style.FillVisible);
+    }
+
+    private static OfficeShapeRequest LabelRequest(ColourHex? textColour) =>
+        new(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 10)),
+            ZLayer.Label,
+            Text: "Delay",
+            TextColour: textColour);
+
     private static OfficeShapeRequest RectangleRequest(
         string id = "row-1:bar",
         ColourHex? fill = null,

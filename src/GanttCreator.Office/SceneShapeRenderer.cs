@@ -441,5 +441,6 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FontSizePt: text.Style.FontSizePt,
             Bold: text.Style.Bold,
             Text: text.Text,
-            Alignment: text.Alignment);
+            Alignment: text.Alignment,
+            TextColour: text.Style.TextColour);
 }
