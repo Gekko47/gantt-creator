@@ -37,6 +37,18 @@ public class ShapeOwnershipTagIntegrationTests(ITestOutputHelper output)
     public async Task The_ownership_tag_round_trips_through_a_live_shape_unaltered()
     {
         var fixture = new OfficeFixture();
+
+        // KNOWN-LIMITATIONS L19, which names this test explicitly. Its purpose is
+        // to write a real ADR-0019 tag through the real ExcelShapeWriter and read
+        // it back off a live shape; a workbook holding a live shape keeps the
+        // Excel process alive, so teardown legitimately escalates to a kill. The
+        // ratchet counts forced kills, and L19 records that this signal is
+        // non-deterministic and has already been raised from 24 to 26. The harness
+        // provides SuppressLeakSignal for exactly this case. The tag assertions
+        // are unchanged, so nothing is hidden by it. This is NOT a licence to
+        // suppress a test that simply leaked.
+        fixture.SuppressLeakSignal = true;
+
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);

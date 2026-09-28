@@ -281,12 +281,14 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** `ChartBounds` is the union of the title, data panel, time headers, and plot plus `ChartOuterPaddingPt`. The outer frame follows the final bounds. Empty whitespace outside these bounds is not exported.
 
-**Origin and outer padding.** The padding is *inside* `ChartBounds` on all four sides; it is not a renderer-side margin. Because the bounds are derived by expanding the content union, a chart whose content starts at the origin has a **negative** `ChartBounds` origin, and negative coordinates are legal in the scene (`RectD` permits them deliberately). Two rules follow, and both are provisional pending the R4.3 Step-0 probe:
+**Origin and outer padding.** The padding is *inside* `ChartBounds` on all four sides; it is not a renderer-side margin. Because the bounds are derived by expanding the content union, a chart whose content starts at the origin has a **negative** `ChartBounds` origin, and negative coordinates are legal in the scene (`RectD` permits them deliberately). Two rules follow. The first was **provisional pending the R4.3 Step-0 probe and is now settled by it**; the second remains a renderer rule for R6.1.
 
 - A renderer **translates the chart bounds to a zero origin and carries the delta**. Excel cannot express a negative shape offset, so the placement must be computed, not copied. The translation is uniform across every primitive kind — a rect's `Bounds`, a line's `From`/`To`, a polygon's `Points`, and a text's `TextBounds` all shift by the same constant — and it must not change any relationship inside the scene, including whether a label sits outside the chart.
 - **The delta must be carried into the export bounds.** Since empty whitespace outside the bounds is not exported, dropping the delta on the way to an export or PNG crop would silently remove exactly `ChartOuterPaddingPt` of the margin the token exists to create.
 
-`FrameBandsBuilderTests.The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides` and `SceneBuilderTests.The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship` pin both rules in Core. What remains unprobed is how the host behaves, not what the contract is.
+**Host behaviour, probed 2026-09-28 (R4.3).** A negative shape `Left`/`Top` is **silently clamped to zero** — not rejected, not re-anchored — and a zero offset anchors to the sheet origin, cell `$A$1`. Because the clamp raises no error, an untranslated renderer produces a visibly wrong chart with nothing to catch it: the failure mode is content silently stacked at the origin. The translation is therefore structural, carried by `ChartOriginDelta` and applied by `SceneShapeRenderer`, rather than a caller convention. Negative values remain legal in the scene and legal nowhere in the host.
+
+`FrameBandsBuilderTests.The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides` and `SceneBuilderTests.The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship` pin both rules in Core; `ChartOriginDelta`/`SceneShapeRenderer` contract tests and `ShapeRenderIntegrationTests` pin them against the live host.
 
 **Style:** `ChartBackground`, `MajorGridStroke`, and `MajorBoundaryPt`.
 

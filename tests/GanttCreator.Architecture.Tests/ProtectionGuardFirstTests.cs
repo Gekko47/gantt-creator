@@ -124,6 +124,12 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ProtectionGuardOutcome.cs",
         "src/GanttCreator.Office/ValidationReportComposer.cs",
         "src/GanttCreator.Office/WorkbookInitialiseOutcome.cs",
+        // R4.3: the origin translation and the scene-to-request renderer. Both
+        // are pure functions over already-resolved Core values - neither holds a
+        // COM proxy, names an interop type, or mutates anything - so a protection
+        // consultation would be unreachable code rather than a missing guard.
+        "src/GanttCreator.Office/ChartOriginDelta.cs",
+        "src/GanttCreator.Office/SceneShapeRenderer.cs",
     ];
 
     /// <summary>
