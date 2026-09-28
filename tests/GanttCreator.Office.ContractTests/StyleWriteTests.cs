@@ -94,10 +94,30 @@ public class StyleWriteTests
                 .Returns(() => ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
             _ = shape.Setup(s => s.Delete()).Callback(() => Deleted = true);
 
+            // TextFrame2 is the first member ApplyText reads, so a plain mock is
+            // enough for the paths where the content write succeeds.
+            var frame = new Mock<Excel.TextFrame2>();
+            _ = shape.SetupGet(s => s.TextFrame2).Returns(frame.Object);
+
             Shape = shape.Object;
         }
 
         public Excel.Shape Shape { get; }
+
+        /// <summary>
+        /// Makes the text-content write throw, simulating a host that refuses it.
+        /// The text box is the one kind whose content is applied inside the
+        /// creation call, so this is the create-path content failure the adapter
+        /// has to contain. A method rather than a flag because the mock setup has
+        /// to be re-applied after the shape exists, and a later Moq setup
+        /// replaces an earlier one for the same member.
+        /// </summary>
+        public void FailTextWrite()
+        {
+            var mock = (Mock<Excel.Shape>)Mock.Get(Shape);
+            _ = mock.SetupGet(s => s.TextFrame2)
+                .Throws(new InvalidOperationException("The host refused the text."));
+        }
 
         public List<string> FillCalls { get; } = [];
 
@@ -133,6 +153,9 @@ public class StyleWriteTests
     private sealed class StyleWriter(HostShape host, bool shapeAlreadyExists = false)
         : ExcelShapeWriter(ActiveApplication(), new ClearGuard())
     {
+        /// <summary>The ownership members stamped, one entry per stamp.</summary>
+        public List<string> OwnershipStamps { get; } = [];
+
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             new Mock<Excel._Worksheet>().Object;
 
@@ -144,6 +167,55 @@ public class StyleWriteTests
 
         internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) =>
             shapeAlreadyExists ? host.Shape : null;
+
+        internal override void ApplyOwnershipStamp(Excel.Shape shape, string primitiveId)
+        {
+            OwnershipStamps.Add(primitiveId);
+            base.ApplyOwnershipStamp(shape, primitiveId);
+        }
+    }
+
+    /// <summary>
+    /// A writer whose text box is created through the real <c>AddShape</c>, so
+    /// the content write genuinely happens inside the creation call. Overriding
+    /// <c>AddShape</c> to return the host shape directly, as
+    /// <see cref="StyleWriter"/> does for the styling paths, would skip exactly
+    /// the sequence under test.
+    /// </summary>
+    /// <param name="host">The modelled host shape the host hands back.</param>
+    private sealed class TextBoxWriter : ExcelShapeWriter
+    {
+        private readonly Mock<Excel.Shapes> _shapes = new();
+
+        /// <summary>Initialises a writer whose host hands back the modelled shape.</summary>
+        /// <param name="host">The shape <c>AddTextbox</c> returns.</param>
+        internal TextBoxWriter(HostShape host)
+            : base(ActiveApplication(), new ClearGuard())
+        {
+            _ = _shapes.Setup(s => s.AddTextbox(
+                    It.IsAny<MsoTextOrientation>(),
+                    It.IsAny<float>(),
+                    It.IsAny<float>(),
+                    It.IsAny<float>(),
+                    It.IsAny<float>()))
+                .Returns(host.Shape);
+        }
+
+        /// <summary>The ownership members stamped, one entry per stamp.</summary>
+        public List<string> OwnershipStamps { get; } = [];
+
+        internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
+            new Mock<Excel._Worksheet>().Object;
+
+        internal override Excel.Shapes? GetShapes(Excel._Worksheet sheet) => _shapes.Object;
+
+        internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) => null;
+
+        internal override void ApplyOwnershipStamp(Excel.Shape shape, string primitiveId)
+        {
+            OwnershipStamps.Add(primitiveId);
+            base.ApplyOwnershipStamp(shape, primitiveId);
+        }
     }
 
     private sealed class ClearGuard : IWorksheetProtectionGuard
@@ -337,9 +409,55 @@ public class StyleWriteTests
         var host = new HostShape(fill.Object);
         var writer = new StyleWriter(host);
 
-        _ = writer.Create(Request(fill: "#92D050", stroke: "#548235", width: 0.75));
+        ShapeWriteOutcome outcome = writer.Create(Request(fill: "#92D050", stroke: "#548235", width: 0.75));
 
         Assert.True(host.Deleted);
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+    }
+
+    [Fact]
+    public void A_style_that_could_not_be_written_is_never_stamped_with_ownership()
+    {
+        // The discard alone is not enough. If Create carried on to stamp the
+        // ownership members, it would write Name and AlternativeText onto a shape
+        // that is no longer on the sheet - a write that either throws (surfacing
+        // as a second, misleading refusal) or succeeds and reports Ok for a shape
+        // that does not exist. So the failed style write must end the create, and
+        // the stamp must never be attempted.
+        var fill = new Mock<Excel.FillFormat>();
+        _ = fill.SetupGet(f => f.ForeColor)
+            .Throws(new InvalidOperationException("The host refused the fill."));
+        var host = new HostShape(fill.Object);
+        var writer = new StyleWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(Request(fill: "#92D050", stroke: "#548235", width: 0.75));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        // The seam records the stamp; an empty list is what proves it was skipped
+        // rather than merely not observed.
+        Assert.Empty(writer.OwnershipStamps);
+    }
+
+    [Fact]
+    public void A_host_that_refuses_the_text_write_leaves_no_untagged_text_box()
+    {
+        // A text box is the one kind whose content is written inside AddShape,
+        // before Create has any handle on the shape. A throwing ApplyText there
+        // used to escape as an unhandled COM error and leave an untagged text box
+        // on the sheet that nothing could ever update or remove. Create must
+        // discard it and report the same typed refusal it uses for every other
+        // create failure.
+        var host = new HostShape();
+        host.FailTextWrite();
+
+        var writer = new TextBoxWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(TextBoxRequest());
+
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        Assert.True(host.Deleted, "The unowned text box must be discarded.");
+        Assert.Empty(writer.OwnershipStamps);
     }
 
     [Fact]
@@ -370,6 +488,14 @@ public class StyleWriteTests
 
         Assert.Equal("Solid", Assert.Single(second.FillCalls));
     }
+
+    private static OfficeShapeRequest TextBoxRequest() =>
+        new(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 30)),
+            ZLayer.Label,
+            Text: "Site survey");
 
     private static OfficeShapeRequest Request(
         string id = "row-1:bar",

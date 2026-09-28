@@ -129,7 +129,18 @@ public class ExcelShapeWriter(
         // closed. Order matters — the style is applied BEFORE the ownership stamp,
         // so a shape that cannot be styled is discarded by the same
         // ApplyOwnershipOrDiscard path rather than left half-written.
-        ApplyStyleOrDiscard(created, request);
+        //
+        // The failure is reported, not swallowed. ApplyStyleOrDiscard returning
+        // normally after discarding the shape would leave Create to stamp
+        // ownership onto a shape that is no longer on the sheet: a write to a
+        // deleted shape that either throws (surfacing as a second, misleading
+        // refusal) or succeeds and returns Ok for a shape that does not exist.
+        // Neither is acceptable, so a failed style write ends the create here and
+        // the ownership stamp is never attempted.
+        if (!ApplyStyleOrDiscard(created, request))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+        }
 
         // No per-shape z-order call here. The caller creates the scene's
         // primitives in Translate's back-to-front order and a new shape is
@@ -549,6 +560,22 @@ public class ExcelShapeWriter(
     /// <param name="shape">The created shape.</param>
     /// <param name="primitiveId">The stable scene primitive identifier.</param>
     /// <returns>The typed result.</returns>
+    /// <remarks>
+    /// <c>internal virtual</c> is a test seam, per the <see cref="ApplyStyle"/>
+    /// pattern: the stamp writes <c>Name</c> and <c>AlternativeText</c> on a COM
+    /// proxy, and a test needs to assert that the stamp was <em>reached</em> —
+    /// not merely that no error surfaced — to pin the rule that a discarded shape
+    /// is never stamped.
+    /// </remarks>
+    internal virtual void ApplyOwnershipStamp(Excel.Shape shape, string primitiveId) =>
+        _ = ApplyOwnership(shape, primitiveId);
+
+    /// <summary>
+    /// Writes the two ADR-0019 ownership members onto a newly created shape.
+    /// </summary>
+    /// <param name="shape">The created shape.</param>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <returns>The typed result.</returns>
     private static ShapeWriteOutcome ApplyOwnership(Excel.Shape shape, string primitiveId)
     {
         shape.Name = primitiveId;
@@ -590,7 +617,7 @@ public class ExcelShapeWriter(
     /// policy is, it never leaves an unowned shape behind.
     /// </para>
     /// </remarks>
-    private static ShapeWriteOutcome ApplyOwnershipOrDiscard(Excel.Shape shape, string primitiveId)
+    private ShapeWriteOutcome ApplyOwnershipOrDiscard(Excel.Shape shape, string primitiveId)
     {
         // CA1031: a host refusal on either ownership member must be converted to a
         // typed refusal, not allowed to escape Create as an unhandled COM or
@@ -598,7 +625,8 @@ public class ExcelShapeWriter(
 #pragma warning disable CA1031
         try
         {
-            return ApplyOwnership(shape, primitiveId);
+            ApplyOwnershipStamp(shape, primitiveId);
+            return ShapeWriteOutcome.Ok();
         }
         catch (Exception)
         {
@@ -886,9 +914,9 @@ public class ExcelShapeWriter(
                     GeometryMath.SnapToDisplayPrecision(text.Width),
                     GeometryMath.SnapToDisplayPrecision(text.Height));
 
-                if (textBox is not null)
+                if (textBox is not null && !ApplyTextOrDiscard(textBox, request))
                 {
-                    ApplyText(textBox, request);
+                    return null;
                 }
 
                 return textBox;
@@ -1079,15 +1107,26 @@ public class ExcelShapeWriter(
     /// </summary>
     /// <param name="shape">The created shape.</param>
     /// <param name="request">The request whose style is applied.</param>
+    /// <returns>
+    /// <see langword="true"/> when the style landed; <see langword="false"/>
+    /// when the host refused it and the shape has been discarded.
+    /// </returns>
     /// <remarks>
     /// Best-effort on the same reasoning as
     /// <see cref="ApplyOwnershipOrDiscard"/>: a shape that could not be styled
     /// must not be left on the sheet, because the caller is about to be told the
-    /// create failed and would never learn about the orphan. The failure is
-    /// silent because <see cref="Create"/> already reports the typed refusal the
-    /// caller acts on.
+    /// create failed and would never learn about the orphan.
+    /// <para>
+    /// The outcome is returned rather than swallowed, because
+    /// <see cref="Create"/> must not continue past it. Continuing would stamp
+    /// ownership onto a shape this method has just deleted, and that write is
+    /// either an escaping error or a false success for a shape that no longer
+    /// exists. The caller turns <see langword="false"/> into
+    /// <see cref="ShapeWriteRefusal.HostRejected"/> and skips the ownership
+    /// stamp entirely.
+    /// </para>
     /// </remarks>
-    private void ApplyStyleOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
+    private bool ApplyStyleOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
     {
         // CA1031: see the remarks. A throwing style write must not escape Create
         // as an unhandled COM exception from inside a render command, and must
@@ -1100,8 +1139,58 @@ public class ExcelShapeWriter(
         catch (Exception)
         {
             DiscardUnownedShape(shape);
+            return false;
         }
 #pragma warning restore CA1031
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a new text box's content, discarding the shape if the host refuses.
+    /// </summary>
+    /// <param name="shape">The created text box.</param>
+    /// <param name="request">The request whose text members are written.</param>
+    /// <returns>
+    /// <see langword="true"/> when the content landed; <see langword="false"/>
+    /// when the host refused it and the shape has been discarded.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The create-path twin of <see cref="ApplyStyleOrDiscard"/>, and it exists
+    /// because a text box is the one kind whose content is written inside
+    /// <see cref="AddShape"/>, before the shape is stamped and before
+    /// <see cref="Create"/> has any handle on it. A throwing
+    /// <see cref="ApplyText"/> there had two bad outcomes: the exception
+    /// escaped the create as an unhandled COM error from inside a render
+    /// command, and the text box stayed on the sheet with no ownership tag, so
+    /// nothing could ever update or remove it.
+    /// </para>
+    /// <para>
+    /// Returning <see langword="false"/> makes <see cref="AddShape"/> return
+    /// <see langword="null"/>, which <see cref="Create"/> already reports as
+    /// <see cref="ShapeWriteRefusal.HostRejected"/> — the same typed refusal
+    /// every other create failure uses, so the caller needs no new case.
+    /// </para>
+    /// </remarks>
+    private bool ApplyTextOrDiscard(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: see the remarks. A throwing content write must not escape the
+        // create as an unhandled COM exception, and must not leave an untagged
+        // text box behind for a caller that was told the create failed.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyText(shape, request);
+        }
+        catch (Exception)
+        {
+            DiscardUnownedShape(shape);
+            return false;
+        }
+#pragma warning restore CA1031
+
+        return true;
     }
 
     /// <summary>

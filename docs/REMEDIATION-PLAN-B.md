@@ -26,6 +26,8 @@ plan was written.
 4. **Panel membership is derived from lane placement.** `SceneBuilder` builds panel
    rows from `placements.Placements.Select(...)`, so a `Splitter`, `Spacer`,
    `Delineator`, or hidden row cannot appear in the data panel at all. After Commit A
+   the structural rows *do* reach lane layout, so this coupling is now visibly wrong
+   rather than merely latent.
 
 ## Decisions (recorded before implementation)
 
@@ -109,6 +111,3 @@ case.
 No Office adapter change (that is Commit C). No `IShapeWritePort` change. No
 reconciliation (R4.7 proper). The read-only protection policy is untouched — it is
 Commit C and an ADR-0008 decision.
-
-   the structural rows *do* reach lane layout, so this coupling is now visibly wrong
-   rather than merely latent.
