@@ -125,11 +125,22 @@ public interface IShapeWritePort
     /// move or rewrite a user's shape that happens to share an identifier (R4.8).
     /// </para>
     /// <para>
-    /// <strong>Not yet applied by an update:</strong> the fill, stroke, and
-    /// pattern members, which R4.6 owns. Until that row lands, a refresh that
-    /// changes only a colour would move the shape and leave the old colour — the
-    /// same staleness class the text path avoids. R4.6 must close this, and this
-    /// note is what tells it to.
+    /// <strong>What an update re-applies (corrected 2026-09-28).</strong> An
+    /// update re-applies geometry for every kind, a text box's content, and the
+    /// full style — fill, stroke, width, and hatch as of R4.6, and the label text
+    /// colour as of R4.11. An earlier version of this note said the fill, stroke,
+    /// and pattern members were "still create-only because R4.6 owns them" and
+    /// that a refresh changing only a colour would leave the old colour behind.
+    /// That was true when written and is now false; R4.6 landed in
+    /// <c>6520f62</c> and <c>ExcelShapeWriter.Update</c> calls
+    /// <c>ApplyStyle</c>. Reconciliation (R4.7) therefore updates a matched shape
+    /// in place rather than deleting and recreating it.
+    /// </para>
+    /// <para>
+    /// What an update deliberately does <em>not</em> rewrite is <c>Name</c> and
+    /// the ownership tag: the name is the reconciliation key and the tag is the
+    /// ownership proof, and re-stamping either would silently "repair" a shape a
+    /// user edited, which is R9.4's job to report.
     /// </para>
     /// </remarks>
     ShapeWriteOutcome Update(OfficeShapeRequest request);

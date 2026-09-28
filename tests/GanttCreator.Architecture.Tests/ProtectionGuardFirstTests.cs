@@ -136,6 +136,16 @@ public sealed class ProtectionGuardFirstTests
         // consultation would be unreachable code rather than a missing guard.
         // The interop surface is confined to ExcelShapeWriter.ApplyStyle.
         "src/GanttCreator.Office/OfficeStyleMapper.cs",
+        // R4.7: the reconciliation plan and its executor. Like the renderer and
+        // the mapper these are pure logic over already-resolved Core values - the
+        // planner touches nothing but two lists, and the executor holds no COM
+        // proxy and names no interop type. The protection consultation belongs to
+        // the adapter each call reaches (ExcelShapeWriter.Create/Update/Delete),
+        // so a guard read here would be unreachable code rather than a missing
+        // guard. The reconciler is deliberately not a mutating adapter in this
+        // classification for the same reason.
+        "src/GanttCreator.Office/ShapeReconcilePlan.cs",
+        "src/GanttCreator.Office/ShapeReconciler.cs",
     ];
 
     /// <summary>

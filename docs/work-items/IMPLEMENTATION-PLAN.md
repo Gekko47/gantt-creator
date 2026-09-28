@@ -146,7 +146,7 @@ files only; the local audit verifies every file exists.
 | R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.5 | `R4.5-polygons-z-order.md` | Upgraded to Tier A (2026-09-26) |
 | R4.6 | `R4.6-style-token-mapping.md` | Upgraded to Tier A (2026-09-26) |
-| R4.7 | `R4.7-refresh-idempotence.md` | Upgraded to Tier A (2026-09-26) |
+| R4.7 | `R4.7-refresh-idempotence.md` | **Landed** (`ShapeReconciler` + `ShapeReconcilePlan`; D1's create-only premise expired with R4.6 and **D5 was added** replacing the unachievable "zero operations" pin with a fixed-point property, both approved 2026-09-28; **L18 decided** — refuse and surface; Office gate PASS 46/46) |
 | R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
 | R4.9 | `R4.9-refresh-command.md` | Upgraded to Tier A (2026-09-26; first live slice) |
 | R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26) |
