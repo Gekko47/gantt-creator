@@ -123,7 +123,7 @@ public static class OfficeStyleMapper
     {
         ArgumentNullException.ThrowIfNull(colour);
 
-        uint argb = colour.ARGB;
+        var argb = colour.ARGB;
         var red = (int)((argb >> 16) & 0xFF);
         var green = (int)((argb >> 8) & 0xFF);
         var blue = (int)(argb & 0xFF);
