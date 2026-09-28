@@ -74,6 +74,31 @@ public sealed class SplitterBuilderTests
         Assert.Equal(result.BandBounds.Bottom, borders[1].From.Y);
     }
 
+    [Fact]
+    public void A_label_position_with_no_room_is_suppressed_rather_than_emitted_zero_width()
+    {
+        // A scene with no data panel gives `DataPanelLeft` nowhere to sit: the band
+        // starts at the plot's own left edge, so the available width is exactly zero.
+        // A zero-width text box is an invisible primitive a renderer must still place
+        // and reconciliation must track forever, so it is suppressed instead.
+        SplitterCreationOutcome outcome = SplitterBuilder.TryBuild(
+            new SplitterRequest(
+                Splitter(),
+                _style,
+                _lane,
+                200,   // PanelLeftPt == Plot.Left: no panel to its left
+                _plot,
+                1,
+                _labelStyle,
+                _metrics,
+                GanttLabelPosition.DataPanelLeft));
+
+        Assert.True(outcome.Succeeded, "Splitter build refused: " + outcome.Refusal);
+        Assert.Empty(outcome.Result!.Primitives.OfType<SceneText>());
+        // The band and its borders still render; only the label is suppressed.
+        Assert.Equal(3, outcome.Result.Primitives.Count);
+    }
+
     [Theory]
     [InlineData(GanttLabelPosition.DataPanelLeft, 1)]
     [InlineData(GanttLabelPosition.PlotCentre, 1)]

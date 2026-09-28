@@ -217,25 +217,41 @@ public static class SplitterBuilder
         // `Both` deliberately emits two scene text entities with distinct
         // role-derived IDs, so a reconciling renderer can update one without
         // disturbing the other.
+        //
+        // A label with no room is suppressed rather than emitted at zero width. This
+        // is not hypothetical: in a scene with no data panel, `DataPanelLeft` has
+        // nowhere to sit - the band starts at the plot's own left edge, so the space
+        // between them is exactly zero. A zero-width text box is an invisible
+        // primitive that a renderer would still have to place, and it would occupy a
+        // scene slot that reconciliation then tracks forever. A blank/degenerate
+        // primitive is the same class of defect this repository treats as a bug.
         if (request.LabelPosition is GanttLabelPosition.DataPanelLeft or GanttLabelPosition.Both)
         {
             var width = Math.Min(measured.WidthPt, request.PlotBounds.Left - bounds.X);
-            primitives.Add(
-                new SceneText(
-                    ScenePrimitive.CreateId(owner, LabelRole),
-                    owner,
-                    ZLayer.Label,
-                    text,
-                    new RectD(bounds.X, top, width, height),
-                    labelStyle,
-                    GanttTextAlignment.Left,
-                    request.Event.Type,
-                    lane.LaneOrder));
+            if (width > 0)
+            {
+                primitives.Add(
+                    new SceneText(
+                        ScenePrimitive.CreateId(owner, LabelRole),
+                        owner,
+                        ZLayer.Label,
+                        text,
+                        new RectD(bounds.X, top, width, height),
+                        labelStyle,
+                        GanttTextAlignment.Left,
+                        request.Event.Type,
+                        lane.LaneOrder));
+            }
         }
 
         if (request.LabelPosition is GanttLabelPosition.PlotCentre or GanttLabelPosition.Both)
         {
             var width = Math.Min(measured.WidthPt, request.PlotBounds.Width);
+            if (width <= 0)
+            {
+                return primitives.Count > 0 ? request.LabelPosition : GanttLabelPosition.None;
+            }
+
             primitives.Add(
                 new SceneText(
                     ScenePrimitive.CreateId(owner, PlotLabelRole),
