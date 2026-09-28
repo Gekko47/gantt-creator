@@ -2,6 +2,48 @@
 
 Follows `docs/REMEDIATION-PLAN-A.md`, whose Commit A landed as `4537b86`.
 
+## Outcome
+
+| Item | Status | Commit |
+| --- | --- | --- |
+| Phase 7 — golden regeneration | **Done, approved and committed** | `4278a49` |
+| Commit D — `ApplyZOrder` ownership preflight | **Done** | `e5211ac` |
+
+Both plans were written before execution, as required. Two findings during Phase 7 and
+two during Commit D are recorded below because neither was anticipated by the plan
+and both changed what was built.
+
+### Phase 7 findings not anticipated by the plan
+
+- **A second change rode along with the approved delta.** 21 primitives moved from
+  `LaneOrder` *n* to *n*+1, because the `Splitter` now occupies lane 0. This was
+  found by a normalised field-by-field comparison rather than by reading the diff, and
+  it is intended — but it was not in the delta that was approved, so it is stated here
+  and in STATUS rather than absorbed silently.
+- **The plan assumed the harness wrote the source file; it writes the build output
+  copy.** The regenerated file is copied to `tests/golden/scene/reference-scene.json`
+  explicitly, and the harness is removed before the commit either way.
+
+### Commit D findings not anticipated by the plan
+
+- **The first three refusal tests were vacuous.** They asserted against
+  `writer.ZOrderCommands`, which is wired only into shapes `AddShape` creates; a test
+  built from seeded shapes therefore observed zero commands regardless of behaviour.
+  Moving the ownership check into the mutation loop left all three *passing*. The
+  mutation check is what caught this, and `NewShape` gained an optional `onZOrder`
+  callback mirroring the existing `onDelete` convention.
+- **The plan's "unowned same-name *later* shape" test could not work as written.** The
+  approved pass walks the list in **reverse**, so a per-shape check inside the mutation
+  loop processes the *last* entry first and refuses before issuing anything — the test
+  would pass whether or not the check is preflighted. The atomicity test therefore puts
+  the unowned shape in the **middle** of a three-element list, where a per-shape check
+  has already moved a shape by the time it refuses.
+
+With the ownership test moved into the mutation loop, **5 tests fail**; with it
+restored, all 372 pass. Non-vacuity is proven, not asserted.
+
+---
+
 ## Phase 7 — regenerate the golden scene snapshot (approved 2026-09-28)
 
 ### Why
