@@ -28,6 +28,24 @@ public class ExcelInsertedRowSelectorTests
     {
         public List<int> RequestedBodyIndexes { get; } = [];
 
+        /// <summary>
+        /// Whether the list-row lookup seam surfaces the host failure, simulating a
+        /// refused COM indexer. The adapter's best-effort guard has to cover the
+        /// walk, not only the final <c>Activate</c>/<c>Select</c> pair.
+        /// <para>
+        /// The thrown exception is the one Moq raises for a configured
+        /// <c>Throws</c>, so no <c>new COMException</c> is constructed — CA2201
+        /// reserves that type for the runtime.
+        /// </para>
+        /// </summary>
+        public bool FailRowLookup { get; set; }
+
+        /// <summary>
+        /// A row whose range read is configured to throw, used only to raise the
+        /// host failure the guard has to absorb.
+        /// </summary>
+        public Mock<Excel.ListRow> FailingRow { get; } = new();
+
         internal override object GetSheetAt(Excel.Sheets sheets, int index) => worksheet;
 
         internal override Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => table;
@@ -40,6 +58,16 @@ public class ExcelInsertedRowSelectorTests
 
         internal override Excel.ListRow GetListRowAt(Excel.ListRows rows, int bodyIndex)
         {
+            if (FailRowLookup)
+            {
+                // Raise the host failure the same way the other tests inject one:
+                // a configured mock throwing through its own member access. If the
+                // configuration were ever lost this would return normally and the
+                // guard would be proven by nothing, so the test also asserts no
+                // selection was made.
+                _ = FailingRow.Object.Range;
+            }
+
             RequestedBodyIndexes.Add(bodyIndex);
             return rowAt(bodyIndex);
         }
@@ -170,6 +198,40 @@ public class ExcelInsertedRowSelectorTests
         Assert.Null(Record.Exception(() => selector.SelectBodyRow(2)));
 
         Assert.Equal(2, Assert.Single(selector.RequestedBodyIndexes));
+    }
+
+    [Fact]
+    public void A_host_failure_reading_the_list_row_degrades_to_no_selection()
+    {
+        // The guard covers the walk, not just the two selection calls. The list-row
+        // lookup is a COM indexer and can be refused like any other, and a refusal
+        // that escaped would surface the insert as a failure when the row was in
+        // fact added.
+        var graph = new Graph();
+        TestableSelector selector = graph.Build();
+        selector.FailRowLookup = true;
+        _ = selector.FailingRow.SetupGet(r => r.Range).Throws<COMException>();
+
+        Assert.Null(Record.Exception(() => selector.SelectBodyRow(2)));
+
+        graph.RowRanges[1].Verify(r => r.Select(), Times.Never);
+        Assert.Equal(0, graph.Activations);
+    }
+
+    [Fact]
+    public void A_host_failure_reading_the_table_name_degrades_to_no_selection()
+    {
+        // Same for the table-name read, which decides whether the walk keeps
+        // going. A refusal here is a failure to select, not a failure of the row
+        // that has already been inserted.
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Name).Throws<COMException>();
+        TestableSelector selector = graph.Build();
+
+        Assert.Null(Record.Exception(() => selector.SelectBodyRow(2)));
+
+        Assert.Empty(selector.RequestedBodyIndexes);
+        Assert.Equal(0, graph.Activations);
     }
 
     [Fact]

@@ -82,6 +82,43 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
             return;
         }
 
+        // Every COM call this method makes is best-effort. The row has already been
+        // added by the time this runs, so a host failure anywhere in the walk must
+        // degrade to "the cursor stays put" rather than escape: letting one out
+        // would report the insert as failed to the user when it in fact succeeded.
+        // The walk itself is inside the guard for the same reason as the two
+        // selection calls below - a refused sheet, table, or list-row lookup is
+        // still a failure to select, not a failure of the insert.
+        //
+        // CA1031: these are all best-effort selection changes whose only failure
+        // mode is "the cursor stays put". That must not propagate into Excel and
+        // undo the command the user asked for.
+#pragma warning disable CA1031
+        try
+        {
+            SelectBodyRowCore(workbook, bodyIndex);
+        }
+        catch
+        {
+            // Intentionally empty: the row is added either way; only the cursor
+            // stays put.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Walks the workbook to the Gantt table and selects one body row.
+    /// </summary>
+    /// <param name="workbook">The workbook captured before the insert.</param>
+    /// <param name="bodyIndex">The one-based body-row index to select.</param>
+    /// <remarks>
+    /// Split out of <see cref="SelectBodyRow"/> so a single best-effort guard
+    /// covers the sheet, table, and row lookups as well as <c>Activate</c> and
+    /// <c>Select</c>. Every proxy is held in a local and used without chained
+    /// member expressions.
+    /// </remarks>
+    private void SelectBodyRowCore(Excel.Workbook workbook, int bodyIndex)
+    {
         Excel.Sheets sheets = workbook.Sheets;
         var count = sheets.Count;
         for (var sheetIndex = 1; sheetIndex <= count; sheetIndex++)
@@ -106,34 +143,27 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
                 // whatever worksheet row the table starts on. Indexing
                 // table.Range.Rows by an absolute worksheet row only agrees with
                 // the body index when the table happens to start at row 1.
-                Excel.ListRow targetRow = GetListRowAt(GetListRows(table), bodyIndex);
+                //
+                // The ListRows proxy is held in a local rather than passed inline
+                // so the ownership rule holds: every proxy is named once and used
+                // through that name. It is Excel-owned and shared, reached from the
+                // captured workbook, so it is not force-released - see the class
+                // remarks.
+                Excel.ListRows listRows = GetListRows(table);
+                Excel.ListRow targetRow = GetListRowAt(listRows, bodyIndex);
 
                 // Range.Select only works on the active sheet, so the Gantt
                 // worksheet is activated first. A refused activation or selection
-                // degrades to no selection change: the row has already been added
-                // by the time this runs, so letting a host failure escape would
-                // report the insert as failed when it in fact succeeded.
-                //
-                // CA1031: both calls are best-effort selection changes whose only
-                // failure mode is "the cursor stays put". That must not propagate
-                // into Excel and undo the command the user asked for.
-#pragma warning disable CA1031
-                try
-                {
-                    worksheet.Activate();
-                    Excel.Range target = GetRowRange(targetRow);
-                    target.Select();
-                }
-                catch
-                {
-                    // Intentionally empty: the row is added either way; only the
-                    // cursor stays put.
-                }
-#pragma warning restore CA1031
+                // degrades to no selection change for the reason the enclosing
+                // guard records.
+                worksheet.Activate();
+                Excel.Range target = GetRowRange(targetRow);
+                target.Select();
                 return;
             }
         }
     }
+
     /// <summary>Returns the sheet object at the one-based index.</summary>
     /// <param name="sheets">The workbook sheet collection.</param>
     /// <param name="index">The one-based sheet index.</param>
