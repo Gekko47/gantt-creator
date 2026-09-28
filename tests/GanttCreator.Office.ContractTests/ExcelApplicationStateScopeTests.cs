@@ -289,15 +289,10 @@ public class ExcelApplicationStateScopeTests
         var records = new List<string>();
         var scope = new TestableScope(records.Add) { FailOn = failing };
 
-        try
-        {
-            SuppressAll(scope);
-        }
-        catch (InvalidOperationException)
-        {
-            // Expected: the injected failure surfaces to the command, which is the
-            // whole point - the command failed part-way through its setup.
-        }
+        // Assert the injection actually fired. A bare try/catch would pass just as
+        // well if the seam silently stopped throwing, which would make every
+        // assertion below vacuous: nothing would have been captured or changed.
+        _ = Assert.Throws<InvalidOperationException>(() => SuppressAll(scope));
 
         scope.Dispose();
 
@@ -305,6 +300,12 @@ public class ExcelApplicationStateScopeTests
         Assert.True(scope.EnableEventsState || failing == "EnableEvents");
         Assert.True(scope.DisplayAlertsState || failing == "DisplayAlerts");
         Assert.True(scope.DisplayStatusBarState || failing == "DisplayStatusBar");
+
+        // The status-bar text is the last setting the command changes, so it is
+        // untouched when an earlier setting failed and restored when its own write
+        // is the one that failed before changing anything. Either way it must read
+        // "Ready" again here - the value this test started from.
+        Assert.Equal("Ready", scope.StatusBarTextState);
     }
 
     [Fact]
@@ -365,5 +366,4 @@ public class ExcelApplicationStateScopeTests
 
         Assert.Null(Record.Exception(scope.Dispose));
     }
-    // __PART3__
 }

@@ -18,7 +18,7 @@ internal sealed record ApplicationStateCapture<T>(T OriginalValue, Action<T> Res
 /// <summary>
 /// Saves and restores the Excel application settings a rendering command must
 /// not leave changed: <c>ScreenUpdating</c>, <c>EnableEvents</c>,
-/// <c>DisplayAlerts</c>, the calculation mode, the status bar, and the
+/// <c>DisplayAlerts</c>, <c>DisplayStatusBar</c>, <c>StatusBar</c>, and the
 /// selection.
 /// </summary>
 /// <remarks>
@@ -345,6 +345,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             // Intentionally empty: the safe direction is "no record" rather than
             // an exception escaping a finally block into Excel.
         }
+#pragma warning restore CA1031
     }
     // ---- Test seams (internal virtual, so each property read/write is injectable) ----
 

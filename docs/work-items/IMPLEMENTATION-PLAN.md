@@ -140,7 +140,7 @@ files only; the local audit verifies every file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R4.1 | `R4.1-excel-adapter-interfaces.md` | **Landed** (`IShapeWritePort`, `IPanelGridMeasurementPort`, `ShapeOwnershipTag`; D2 corrected by ADR-0019; live `AlternativeText` probe outstanding) |
+| R4.1 | `R4.1-excel-adapter-interfaces.md` | **Landed** (`IShapeWritePort`, `IPanelGridMeasurementPort`, `ShapeOwnershipTag`; D2 corrected by ADR-0019; live `AlternativeText` probe **discharged** 2026-09-27) |
 | R4.2 | `R4.2-application-state-scope.md` | **Landed** (`ExcelApplicationStateScope`, five settings per ADR-0020; Office gate PASS 39/39) |
 | R4.3 | `R4.3-shape-render-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |

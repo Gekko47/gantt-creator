@@ -251,14 +251,7 @@ public class ExcelPanelGridMeasurement(
     {
         ArgumentNullException.ThrowIfNull(column);
 
-        Excel.Range? range = column.Range;
-        if (range is null)
-        {
-            return null;
-        }
-
-        object? raw = range.Width;
-        return raw is null ? null : Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+        return column.Range is { } range ? ToPoints(range.Width) : null;
     }
 
     /// <summary>
@@ -267,17 +260,50 @@ public class ExcelPanelGridMeasurement(
     /// </summary>
     /// <param name="table">The Gantt table.</param>
     /// <returns>The row height in points, or <see langword="null"/> when the host returned no numeric value.</returns>
+    /// <remarks>
+    /// <para>
+    /// The single-row case is the expected one: a table whose body rows share a
+    /// height reports a number. A body with <em>mixed</em> row heights reports
+    /// <see cref="DBNull.Value"/> instead, because there is no single height to
+    /// report.
+    /// </para>
+    /// <para>
+    /// That is an absent measurement, not a number, so it must become the same
+    /// typed <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal a
+    /// <see langword="null"/> produces. Converting it would throw
+    /// <see cref="InvalidCastException"/> out of a read-only adapter and escape
+    /// into the render command.
+    /// </para>
+    /// </remarks>
     internal virtual double? ReadRowHeight(Excel.ListObject table)
     {
         ArgumentNullException.ThrowIfNull(table);
 
-        Excel.Range? body = table.DataBodyRange;
-        if (body is null)
-        {
-            return null;
-        }
-
-        object? raw = body.RowHeight;
-        return raw is null ? null : Convert.ToDouble(raw, CultureInfo.InvariantCulture);
+        return table.DataBodyRange is { } body ? ToPoints(body.RowHeight) : null;
     }
+
+    /// <summary>
+    /// Converts one host-reported measurement to points, treating an absent
+    /// measurement as an absent measurement.
+    /// </summary>
+    /// <param name="raw">The boxed host value, or <see langword="null"/>.</param>
+    /// <returns>The points, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// Both absence encodings are refused, not converted:
+    /// <list type="bullet">
+    /// <item><description><see langword="null"/>, which the PIA surfaces for a
+    /// member the host has no value for.</description></item>
+    /// <item><description><see cref="DBNull.Value"/>, which an
+    /// <c>Object</c>-typed Excel member returns when a multi-cell or multi-row
+    /// range has no single value — a body with mixed row heights reports its
+    /// <c>RowHeight</c> this way. <c>Convert.ToDouble(DBNull.Value)</c> throws
+    /// <see cref="InvalidCastException"/>, so treating only <see langword="null"/>
+    /// as absent would turn a measurable-in-principle table into an unhandled
+    /// exception rather than the typed refusal.</description></item>
+    /// </list>
+    /// The invariant culture is required either way because the value arrives
+    /// boxed as a host number.
+    /// </remarks>
+    private static double? ToPoints(object? raw) =>
+        raw is null or DBNull ? null : Convert.ToDouble(raw, CultureInfo.InvariantCulture);
 }

@@ -16,8 +16,9 @@ namespace GanttCreator.Office.IntegrationTests;
 /// failure and confirm Excel state is restored". This test is the automated half.
 /// The command it needs does not exist until R4.9, so it drives the scope
 /// directly against a real Excel application: it records the live values, changes
-/// all six settings, throws <em>inside</em> the scope exactly as a failing
-/// command would, and asserts every setting is back.
+/// the five settings (ADR-0020; calculation mode is deliberately absent) and the
+/// selection, throws <em>inside</em> the scope exactly as a failing
+/// command would, and asserts every one is back.
 /// </para>
 /// <para>
 /// This is the first Phase-4 Office evidence row, so the host Windows/Office

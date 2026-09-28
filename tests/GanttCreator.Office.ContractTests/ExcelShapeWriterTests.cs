@@ -45,6 +45,16 @@ public class ExcelShapeWriterTests
         /// </summary>
         public List<OfficeShapeRequest> Requests { get; } = [];
 
+        /// <summary>
+        /// Whether writing the alternative-text ownership tag throws, simulating a
+        /// host that refuses the stamp (KNOWN-LIMITATIONS L18's over-long shape name
+        /// is the live instance of this).
+        /// </summary>
+        public bool FailOwnershipTagWrite { get; set; }
+
+        /// <summary>Whether a shape the adapter created was subsequently deleted.</summary>
+        public bool CreatedShapeDeleted { get; private set; }
+
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             new Mock<Excel._Worksheet>().Object;
 
@@ -85,7 +95,17 @@ public class ExcelShapeWriterTests
             _ = mock.SetupGet(s => s.Name).Returns(() => name);
             _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
                 .Callback<string>(value => alternativeText = value);
+            if (FailOwnershipTagWrite)
+            {
+                // The host rejects the stamp (L18's over-long name is the live
+                // case), so the discard path in the adapter must run.
+                _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
+                    .Throws(new ArgumentException("The specified value is out of range."));
+            }
+
             _ = mock.SetupGet(s => s.AlternativeText).Returns(() => alternativeText);
+
+            _ = mock.Setup(s => s.Delete()).Callback(() => CreatedShapeDeleted = true);
 
             // ZOrder is a real COM call on the shape; the fake records the
             // command instead, so D2's "no opportunistic BringToFront" pin
@@ -272,6 +292,13 @@ public class ExcelShapeWriterTests
     /// rewrites content but never the name or the ownership tag, because those
     /// are the reconciliation key and the ownership proof.
     /// </summary>
+    /// <remarks>
+    /// A user-edited tag - a shape that keeps the name but whose alternative text
+    /// the user replaced - is now <em>refused</em> rather than updated. That is
+    /// strictly stronger than the original "do not re-stamp" rule, and it is what
+    /// the entity guide requires: refresh touches only shapes whose alternative
+    /// text carries a valid ownership tag. Both members are still left alone.
+    /// </remarks>
     [Fact]
     public void An_update_never_rewrites_the_name_or_the_ownership_tag()
     {
@@ -290,7 +317,7 @@ public class ExcelShapeWriterTests
                 ZLayer.Label,
                 Text: "New text"));
 
-        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.False(outcome.Succeeded);
         Assert.Equal("row-1:label", existing.Name);
         Assert.Equal(UserEditedTag, existing.AlternativeText);
     }
@@ -516,6 +543,100 @@ public class ExcelShapeWriterTests
         Assert.Empty(writer.ListOwned());
     }
 
+    /// <summary>
+    /// The ownership filter authorises the update, exactly as it authorises the
+    /// delete. A user shape that happens to carry the requested name must not be
+    /// moved or rewritten, because a refresh reaching it is precisely the R4.8
+    /// preservation failure. The sentinel deliberately carries the requested name.
+    /// </summary>
+    [Fact]
+    public void Update_never_rewrites_a_shape_whose_alternative_text_is_not_a_valid_tag()
+    {
+        var foreign = NewShape("row-1:bar", "a note the user typed");
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, foreign);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest());
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        Assert.Empty(writer.Requests);
+    }
+
+    /// <summary>
+    /// The positive half of the same rule: a validly tagged shape is still
+    /// updated, so the ownership filter refuses unowned shapes rather than
+    /// refusing updates in general.
+    /// </summary>
+    [Fact]
+    public void Update_still_rewrites_a_shape_carrying_a_valid_ownership_tag()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest(x: 55, y: 66));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(55f, existing.Left);
+        Assert.Equal(66f, existing.Top);
+    }
+
+    /// <summary>
+    /// L18: Excel refuses a shape name beyond roughly 255 characters, and the
+    /// name carries the full primitive identifier. Create must refuse it BEFORE
+    /// <c>AddShape</c>, or the shape is placed on the sheet and only then fails on
+    /// the name write - leaving debris the caller was told nothing about.
+    /// </summary>
+    [Fact]
+    public void Create_refuses_an_identifier_longer_than_the_host_name_limit_before_creating_anything()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var tooLong = new string('r', ExcelShapeWriter.MaxShapeNameLength + 1);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest(id: tooLong));
+
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        Assert.Empty(writer.Created);
+    }
+
+    /// <summary>
+    /// The positive counterpart: an identifier exactly at the cap is still
+    /// created, so the guard is a bound and not an accidental blanket refusal.
+    /// </summary>
+    [Fact]
+    public void Create_accepts_an_identifier_exactly_at_the_host_name_limit()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+        var atLimit = new string('r', ExcelShapeWriter.MaxShapeNameLength);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest(id: atLimit));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Single(writer.Created);
+    }
+
+    /// <summary>
+    /// A shape the host will not stamp must not be left behind. An untagged shape
+    /// is invisible to <c>ListOwned</c>, so neither R4.7 nor R4.8 can ever find it
+    /// again, and it would sit on the user's sheet permanently - the one outcome
+    /// worse than failing to render.
+    /// </summary>
+    [Fact]
+    public void Create_deletes_the_shape_it_created_when_the_ownership_tag_cannot_be_written()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object)
+        {
+            FailOwnershipTagWrite = true,
+        };
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+        Assert.True(writer.CreatedShapeDeleted, "The unstamped shape must be deleted, not orphaned.");
+    }
+
+    /// <summary>
+    /// R4.8 D1: the ownership filter authorises the delete, not the name. The
+    /// sentinel deliberately carries the requested name.
+    /// </summary>
     [Fact]
     public void Delete_never_deletes_a_shape_whose_alternative_text_is_not_a_valid_tag()
     {
@@ -553,13 +674,23 @@ public class ExcelShapeWriterTests
         // against a shape whose tag could never change in the first place.
         string currentName = name;
         string currentAlternativeText = alternativeText ?? string.Empty;
-
+        float currentLeft = 0f;
+        float currentTop = 0f;
         var shape = new Mock<Excel.Shape>();
         _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
         _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
         _ = shape.SetupGet(s => s.AlternativeText).Returns(() => currentAlternativeText);
         _ = shape.SetupSet(s => s.AlternativeText = It.IsAny<string>())
             .Callback<string>(value => currentAlternativeText = value);
+        // Geometry is recorded through backing fields so a test can assert that an
+        // update actually MOVED the shape, rather than inferring it from a success
+        // flag. A mock with no setup silently returns 0 for every property. The PIA
+        // types Left/Top as Single, which is the host side of the port's own
+        // double -> float rounding boundary.
+        _ = shape.SetupGet(s => s.Left).Returns(() => currentLeft);
+        _ = shape.SetupSet(s => s.Left = It.IsAny<float>()).Callback<float>(value => currentLeft = value);
+        _ = shape.SetupGet(s => s.Top).Returns(() => currentTop);
+        _ = shape.SetupSet(s => s.Top = It.IsAny<float>()).Callback<float>(value => currentTop = value);
         _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
         return shape.Object;
     }

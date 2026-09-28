@@ -51,6 +51,33 @@ public class ExcelShapeWriter(
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
+    /// <summary>
+    /// The longest primitive identifier this adapter will hand to the host as a
+    /// shape name.
+    /// </summary>
+    /// <remarks>
+    /// KNOWN-LIMITATIONS <strong>L18</strong> records the live observation: Excel
+    /// rejects a shape <c>Name</c> beyond roughly 255 characters with
+    /// <c>ArgumentException: The specified value is out of range.</c> The name
+    /// carries the full <see cref="OfficeShapeRequest.PrimitiveId"/>, and ADR-0017
+    /// leaves that identifier unbounded for a shared owner, so the limit is
+    /// reachable in principle.
+    /// <para>
+    /// The observed figure is approximate, so this bound is deliberately the
+    /// conservative side of it: a name at or under the cap is still attempted and
+    /// a host that disagrees is caught by the discard path in
+    /// <see cref="ApplyOwnershipOrDiscard"/>. The alternative error direction -
+    /// attempting a name the host will refuse - is the one that leaves debris.
+    /// </para>
+    /// <para>
+    /// L18 assigns the <em>policy</em> for an over-long identifier (a bounded name
+    /// with the full identifier in the tag, or a contributor-set ceiling) to R4.7.
+    /// This constant is not that policy; it only refuses an identifier this row
+    /// cannot render.
+    /// </para>
+    /// </remarks>
+    internal const int MaxShapeNameLength = 255;
+
     /// <inheritdoc />
     public ShapeWriteOutcome Create(OfficeShapeRequest request)
     {
@@ -59,6 +86,14 @@ public class ExcelShapeWriter(
         if (!Validate(request, out ShapeWriteRefusal? invalid))
         {
             return ShapeWriteOutcome.Refused(invalid!.Value);
+        }
+
+        // Refused before any host call. The name is written during ApplyOwnership,
+        // which is AFTER AddShape, so without this check an over-long identifier
+        // would place a shape on the sheet only to fail on the name write.
+        if (request.PrimitiveId.Length > MaxShapeNameLength)
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
         ProtectionGuardOutcome protection = _protectionGuard.Query();
@@ -94,7 +129,7 @@ public class ExcelShapeWriter(
         // ordering is still applied once for the whole scene by ApplyZOrder; this
         // per-shape call only keeps a partially-built chart sane.
         created.ZOrder(MsoZOrderCmd.msoSendToBack);
-        return ApplyOwnership(created, request.PrimitiveId);
+        return ApplyOwnershipOrDiscard(created, request.PrimitiveId);
     }
 
     /// <inheritdoc />
@@ -124,6 +159,22 @@ public class ExcelShapeWriter(
 
         Excel.Shape? existing = FindShapeByName(shapes, request.PrimitiveId);
         if (existing is null)
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        // The ownership filter, not the name, authorises the write - exactly as it
+        // does for Delete. A name match alone would let a refresh move and rewrite
+        // a shape the user drew that happens to share an identifier, which is
+        // precisely the R4.8 preservation guarantee. A user shape that keeps the
+        // name but edits the alternative text is equally unowned: re-stamping the
+        // tag would "repair" it, which is R9.4's job to report, not this row's.
+        //
+        // NotFound rather than a new refusal: from the caller's point of view
+        // "no owned shape with this identifier" is one condition, and R4.7
+        // reconciles from ListOwned(), which already excludes such a shape, so it
+        // will not reach this path with an unowned identifier in normal operation.
+        if (!ShapeOwnershipTag.IsOwnedTag(existing.AlternativeText))
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
         }
@@ -434,6 +485,86 @@ public class ExcelShapeWriter(
         shape.Name = primitiveId;
         shape.AlternativeText = ShapeOwnershipTag.ForPrimitiveId(primitiveId);
         return ShapeWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Writes the two ADR-0019 ownership members onto a newly created shape,
+    /// discarding the shape if the host will not accept them.
+    /// </summary>
+    /// <param name="shape">The created shape.</param>
+    /// <param name="primitiveId">The stable scene primitive identifier.</param>
+    /// <returns>
+    /// The typed result. A failure to stamp is <see cref="ShapeWriteRefusal.HostRejected"/>
+    /// and leaves no shape behind.
+    /// </returns>
+    /// <remarks>
+    /// A shape with no ownership tag is worse than no shape at all: the port's
+    /// structural guarantee is that a caller can never write an untagged shape
+    /// (the class remarks), and R4.8's preservation filter is a test for that tag.
+    /// An untagged shape is invisible to <see cref="ListOwned"/>, so R4.7 would
+    /// neither update nor delete it, and it would sit on the sheet forever,
+    /// indistinguishable from a user's own shape.
+    /// <para>
+    /// The host does reject this in practice. KNOWN-LIMITATIONS **L18** records
+    /// that Excel refuses a shape name beyond roughly 255 characters with
+    /// <c>ArgumentException: The specified value is out of range.</c>, and the
+    /// name carries the full <see cref="OfficeShapeRequest.PrimitiveId"/>, which
+    /// ADR-0017 leaves unbounded for a shared owner. So a large contributor set
+    /// reaches here and fails <em>after</em> <c>AddShape</c> has already put an
+    /// untagged shape on the sheet.
+    /// </para>
+    /// <para>
+    /// Deleting the shape is therefore the only way to keep the sheet clean, and
+    /// the refusal is reported rather than swallowed so R4.7 can see why the
+    /// identifier was not rendered. L18 assigns the reconciliation policy for an
+    /// over-long identifier to R4.7; this row only guarantees that whatever that
+    /// policy is, it never leaves an unowned shape behind.
+    /// </para>
+    /// </remarks>
+    private static ShapeWriteOutcome ApplyOwnershipOrDiscard(Excel.Shape shape, string primitiveId)
+    {
+        // CA1031: a host refusal on either ownership member must be converted to a
+        // typed refusal, not allowed to escape Create as an unhandled COM or
+        // argument exception from inside a render command.
+#pragma warning disable CA1031
+        try
+        {
+            return ApplyOwnership(shape, primitiveId);
+        }
+        catch (Exception)
+        {
+            DiscardUnownedShape(shape);
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Deletes a shape that could not be stamped, so no unowned shape is left.
+    /// </summary>
+    /// <param name="shape">The unstamped shape.</param>
+    /// <remarks>
+    /// Best-effort by design, and deliberately silent: the caller has already
+    /// decided this shape is not part of the chart, and there is no
+    /// <c>try</c>/<c>finally</c> here whose guarantee a throwing delete could
+    /// break. A delete that itself fails leaves an unowned shape, which is the
+    /// same failure the caller is already being told about.
+    /// </remarks>
+    private static void DiscardUnownedShape(Excel.Shape shape)
+    {
+        // CA1031: see the remarks - the failure is already reported to the caller
+        // as HostRejected, so a throwing delete adds nothing and must not replace
+        // that typed refusal with an unhandled exception.
+#pragma warning disable CA1031
+        try
+        {
+            shape.Delete();
+        }
+        catch (Exception)
+        {
+            // Intentionally empty: the typed refusal is the report.
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>

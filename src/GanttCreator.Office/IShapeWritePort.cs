@@ -102,6 +102,14 @@ public interface IShapeWritePort
     /// is R9.4's job to report.
     /// </para>
     /// <para>
+    /// That same reasoning is why the update is <strong>authorised by the
+    /// ownership tag, not by the name</strong>, exactly as
+    /// <see cref="Delete"/> is: a shape whose alternative text does not carry a
+    /// valid <see cref="ShapeOwnershipTag"/> is refused as
+    /// <see cref="ShapeWriteRefusal.NotFound"/> and never touched, so a refresh cannot
+    /// move or rewrite a user's shape that happens to share an identifier (R4.8).
+    /// </para>
+    /// <para>
     /// <strong>Not yet applied by an update:</strong> the fill, stroke, and
     /// pattern members, which R4.6 owns. Until that row lands, a refresh that
     /// changes only a colour would move the shape and leave the old colour — the
