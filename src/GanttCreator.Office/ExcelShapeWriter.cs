@@ -435,11 +435,14 @@ public class ExcelShapeWriter(
     /// never pre-rounds, and there is no second conversion anywhere on the path.
     /// </para>
     /// <para>
-    /// A polygon is not rewritten here. Excel exposes a freeform's vertices as
-    /// a read-only <c>Vertices</c> collection and the only way to change them is
-    /// to rebuild through <c>BuildFreeform</c>, so an in-place polygon update is
-    /// not expressible. R4.7 owns the delete-and-recreate fallback for that case;
-    /// returning <see langword="false"/> here makes the limitation explicit rather
+    /// Every renderable kind is rewritten in place, milestones included: a
+    /// diamond auto-shape is positioned by <c>Left</c>/<c>Top</c>/<c>Width</c>/
+    /// <c>Height</c> like any other auto-shape, because the host derives its
+    /// vertices from that box. (When milestones were freeforms this was not
+    /// expressible - a freeform exposes its vertices as a read-only
+    /// <c>Vertices</c> collection - which is one of the reasons the diamond
+    /// auto-shape is preferred. An <em>undefined</em> kind is the only case that
+    /// returns <see langword="false"/>, making the limitation explicit rather
     /// than silently ignoring the requested geometry.
     /// </para>
     /// </remarks>
