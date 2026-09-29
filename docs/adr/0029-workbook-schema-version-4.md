@@ -24,16 +24,16 @@ two of them change the visible column set.
 
 ## Decision
 
-- **D1 — `Duration` is added as a required column**, positioned after `Finish` and
-  before `ParentId`. It is **visible and locked**: GanttCreator owns the value and
+- **D1 — `Duration` is added as a required column by R4.7C**, positioned after
+  `Finish` and before `ParentId`. It is **visible and locked**: GanttCreator owns the value and
   recalculates it on Refresh, because the analyst wants to read it but must not
   edit it. REV5 §10 and REV6 §11 both require this, with
   `DurationDays = (Finish.Date - Start.Date).Days + 1` for inclusive spans, and
   an approved non-duration marker (`-`) for milestones and delineators, blank for
   `Splitter`/`Spacer`, and **no misleading value** for invalid or missing dates.
   Dates are date-only; time-of-day is normalised away.
-- **D2 — `SiblingOrder` is added as a required column**, positioned after
-  `ParentId`. It is engine-maintained and hidden. REV6 §3 requires it so that
+- **D2 — `SiblingOrder` is added as a required column by R4.7A**, positioned
+  immediately after `ParentId`. It is engine-maintained and hidden. REV6 §3 requires it so that
   hierarchy order is not defined solely by physical Excel row number, which would
   make a user sort silently redefine the tree.
 - **D3 — `GanttRowHeightPt` is added to the metric-token catalogue** (ADR-0026
@@ -44,10 +44,24 @@ two of them change the visible column set.
 - **D4 — `Above` and `Below` are removed from the permitted label-position sets**
   (ADR-0028 D1). Retained: `None`, `Auto`, `Left`, `Right`, `Inside`, the four
   delineator corners, and the splitter positions.
-- **D5 — The schema version advances 3 → 4.** An unchanged version would make
-  every change above invisible to `ConfigIntegrity` and to the R2.10 repair
-  workflow, which is the mechanism that exists precisely to notice a contract
-  change.
+- **D5 — The schema advances in two steps, one per row that changes it, and
+  never two rows for one version number.** This ADR originally said "3 → 4" for
+  all of D1-D4, which was **wrong**: `R4.7A` adds the `SiblingOrder` column and
+  `R4.7C` adds `Duration`, the metric-token changes and the label set. Two rows
+  claiming one bump would either collide or skip a version, and
+  `ConfigIntegrity` cannot detect that, because the version is the signal it
+  compares against. Corrected on 2026-09-29 to:
+
+  | Step | Row | Change | Version |
+  | --- | --- | --- | --- |
+  | 1 | R4.7A | `SiblingOrder` column | **3 → 4** |
+  | 2 | R4.7C | `Duration` column, `GanttRowHeightPt`, `CriticalLinePt` retired, `CriticalFill`, label set | **4 → 5** |
+
+  Within each row, the bump is the **last** change in that row's commit sequence,
+  so all the other changes land first and the integrity checker is the gate rather
+  than a manual review. An unchanged version would make every change above
+  invisible to `ConfigIntegrity` and to the R2.10 repair workflow, which exists
+  precisely to notice a contract change.
 - **D6 — There is no migration path.** The product owner confirmed there are no
   active users, so `GanttTableSchema.Default` is edited **in place** and no
   legacy-workbook upgrade, conversion, or back-compat test is written. The
