@@ -30,9 +30,13 @@ namespace GanttCreator.Core;
 /// <para>
 /// <b>Nesting depth.</b> Per the R4.7A guide, multi-level nesting beyond two
 /// levels (a top-level parent, then children) is <b>rejected</b> rather than
-/// supported. <see cref="MaxDepth"/> is the authority for that limit, and
-/// <c>CriticalInterval</c> is a child only — it may not itself own children, so
-/// a grandchild is unrepresentable rather than merely discouraged.
+/// supported. <see cref="MaxDepth"/> is the authority for that limit.
+/// <c>CriticalInterval</c> is a child <em>and</em> a parent, but only of another
+/// Critical Interval, so a chain cannot run deeper than the depth limit: a
+/// critical interval's own parent must be a top-level row. The existing
+/// cycle walk in <c>GanttRowValidator</c> terminates at a span parent, and this
+/// classification is what makes that termination correct rather than
+/// incidental.
 /// </para>
 /// </remarks>
 public static class EntityHierarchyCatalog
@@ -59,6 +63,16 @@ public static class EntityHierarchyCatalog
         GanttEntityType.AsPlannedProcurement,
         GanttEntityType.BaselineProcurement,
         GanttEntityType.CustomActivity,
+
+        // A Critical Interval may itself be the parent of another Critical
+        // Interval. This is pre-existing landed behaviour, not a new case: the
+        // child is commonly authored above its parent, and
+        // GanttRowValidator has an order-independence test for it. An initial
+        // version of this matrix made CriticalInterval child-only, which broke
+        // that test and would have disallowed a hierarchy the product already
+        // supports. It cannot own a NON-critical child, so the depth limit below
+        // still bounds every chain.
+        GanttEntityType.CriticalInterval,
     ];
 
     private static readonly HashSet<GanttEntityType> _mayBeChild =

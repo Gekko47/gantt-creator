@@ -256,7 +256,15 @@ public static class GanttRowValidator
         var laneRelevant = !isSplitterOrSpacer && !isDelineator;
         var startRelevant = definition?.DateMode != EntityDateMode.None;
         var finishRelevant = definition?.DateMode == EntityDateMode.StartFinish;
-        var parentRelevant = isCriticalInterval;
+        // R4.7A D9: ParentId is authoritative for general hierarchy, not only for
+        // Critical Interval, so relevance is driven by the child-capability matrix
+        // rather than by a hard-coded `isCriticalInterval`. `definition is not null`
+        // is required first, so an unknown Type cannot make ParentId relevant and
+        // report a second, misleading error on top of the UnknownType one. Types the
+        // matrix does not classify as child-capable -- Splitter, Spacer, Delineator --
+        // still fall through to NotUsedByType below, so nothing becomes silently
+        // permitted.
+        var parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
         var styleRelevant = true;
         var labelRelevant = true;
         var fillRelevant = true;
@@ -449,7 +457,18 @@ public static class GanttRowValidator
             finish = null;
         }
 
-        // ParentId: required only for Critical Interval; warned elsewhere.
+        // ParentId (R4.7A D9). Three cases, split by the child-capability matrix
+        // rather than by `isCriticalInterval`:
+        //   * a Critical Interval REQUIRES a parent;
+        //   * any other child-capable type may carry one -- a top-level row simply
+        //     leaves it blank, which is what makes a promoted child valid again
+        //     after its parent is deleted;
+        //   * a type the matrix excludes still reports NotUsedByType.
+        // The previous `else if (parentText is not null)` branch was reached by any
+        // non-critical row, so a child-capable span carrying a real ParentId emitted
+        // a spurious "not used by this Type" warning *alongside* its legitimate
+        // ParentUnknown error. `parentRelevant` is the same flag ClassifyCellState
+        // used above, so the two decisions cannot disagree.
         GanttRowId? parentId = null;
         var parentText = row.ParentId;
         if (!parentBlocked)
@@ -468,6 +487,26 @@ public static class GanttRowValidator
                 else
                 {
                     parentId = parentParsed;
+                }
+            }
+            else if (parentRelevant)
+            {
+                // Optional for a non-critical child: blank means top-level, which is
+                // valid. A supplied value must parse, and is then resolved against
+                // the batch by the cross-row parent pass.
+                if (parentText is not null
+                    && (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null))
+                {
+                    Add(
+                        "ParentId",
+                        GanttValidationCodes.ParentMissingOrMalformed,
+                        GanttValidationSeverity.Error,
+                        "ParentId must be blank or a well-formed row Id."
+                    );
+                }
+                else if (parentText is not null)
+                {
+                    _ = GanttRowId.TryParse(parentText, out parentId);
                 }
             }
             else if (parentText is not null)
@@ -699,7 +738,9 @@ public static class GanttRowValidator
         for (var i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
-            if (parsed?.Type != GanttEntityType.CriticalInterval || parsed.Event?.ParentId is null)
+            if (parsed is null
+                || !EntityHierarchyCatalog.MayBeChild(parsed.Type ?? GanttEntityType.Spacer)
+                || parsed.Event?.ParentId is null)
             {
                 continue;
             }
@@ -756,8 +797,12 @@ public static class GanttRowValidator
                 continue;
             }
 
-            EntityTypeDefinition? parentDefinition = EntityTypeCatalog.GetDefinition(parent.Type!.Value);
-            if (parentDefinition is null || parentDefinition.Kind != EntityKind.Span)
+            // R4.7A D9: a parent must be able to OWN children per the matrix, not
+            // merely be a Span. A child milestone projecting onto a milestone parent
+            // is a legal case (REV5's MilestoneOnParent), so the old Span-only test
+            // would have rejected a hierarchy the matrix permits. The matrix is the
+            // single authority; this check simply consults it.
+            if (!EntityHierarchyCatalog.MayOwnChildren(parent.Type!.Value))
             {
                 issues.Add(
                     new GanttValidationIssue(
@@ -765,7 +810,7 @@ public static class GanttRowValidator
                         "ParentId",
                         GanttValidationCodes.ParentNotSpan,
                         GanttValidationSeverity.Error,
-                        $"ParentId '{key}' must reference a span event."
+                        $"ParentId '{key}' must reference a type that may own children."
                     )
                 );
                 perRow[i] = parsed with { HasBlockingError = true };

@@ -80,15 +80,18 @@ public sealed class EntityHierarchyCatalogTests
     }
 
     /// <summary>
-    /// A Critical Interval is a child of an activity. This is the one
-    /// parent/child relationship that already existed in the landed model, so it
-    /// is pinned first as the regression anchor.
+    /// A Critical Interval is both a child of an activity and a parent of another
+    /// Critical Interval. The second half is pre-existing landed behaviour, not a
+    /// new case: a critical interval's child is commonly authored above it, and
+    /// <c>GanttRowValidatorTests</c> pins order-independence for exactly that. An
+    /// initial version of this matrix made CriticalInterval child-only and broke
+    /// that test, which is why both directions are asserted here.
     /// </summary>
     [Fact]
-    public void Critical_interval_may_be_a_child_but_may_not_own_children()
+    public void Critical_interval_may_be_both_a_child_and_a_parent()
     {
         Assert.True(EntityHierarchyCatalog.MayBeChild(GanttEntityType.CriticalInterval));
-        Assert.False(EntityHierarchyCatalog.MayOwnChildren(GanttEntityType.CriticalInterval));
+        Assert.True(EntityHierarchyCatalog.MayOwnChildren(GanttEntityType.CriticalInterval));
     }
 
     /// <summary>

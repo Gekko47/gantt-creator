@@ -538,17 +538,126 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Parent_on_non_critical_row_is_a_warning()
+    public void Parent_on_a_child_capable_span_is_resolved_not_ignored()
     {
+        // R4.7A D9 replaced this test's contract. A `ParentId` on an
+        // As-Planned Activity used to be a NotUsedByType warning, because only a
+        // Critical Interval could carry one. ParentId is now authoritative for
+        // general hierarchy, so this row is a real child whose parent does not
+        // exist -- which is a blocking error, not a warning. The superseded
+        // NotUsedByType case is still covered for structural types by
+        // `Parent_on_a_structural_type_is_a_not_used_warning`.
         GanttRowDto row = ValidSpan(parentId: NewId());
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Field == "ParentId" && i.Severity == GanttValidationSeverity.Error);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.NotUsedByType);
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_resolvable_parent_validates_as_a_child()
+    {
+        // The positive case for D9: an As-Planned Activity carrying a ParentId
+        // that resolves to a real parent must be VALID and produce an event whose
+        // ParentId is preserved. Without this, the widening would only be proven
+        // by the absence of a warning, which a later change could reintroduce.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, start: new DateOnly(2026, 1, 1), finish: new DateOnly(2026, 12, 31));
+        GanttRowDto child = ValidSpan(rowNumber: 3, id: NewId(), parentId: parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid, "A resolved child must validate.");
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "ParentId");
+
+        GanttRowId childId = GanttRowId.Parse(child.Id);
+        GanttEvent childEvent = Assert.Single(outcome.Events, e => e.Id == childId);
+        Assert.Equal(parentId, childEvent.ParentId!.Value);
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_blank_parent_is_top_level_and_valid()
+    {
+        // Blank ParentId on a child-capable type is the promoted state: after a
+        // parent is deleted its children become top-level, so this must be valid
+        // rather than reported as a missing required field.
+        GanttRowDto row = ValidSpan(parentId: null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
         Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "ParentId");
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_malformed_parent_is_blocked()
+    {
+        GanttRowDto row = ValidSpan(parentId: "not-an-id");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
         Assert.Contains(
             outcome.Issues,
-            i => i.Field == "ParentId" && i.Code == GanttValidationCodes.NotUsedByType && i.Severity == GanttValidationSeverity.Warning
-        );
+            i => i.Field == "ParentId" && i.Code == GanttValidationCodes.ParentMissingOrMalformed && i.Severity == GanttValidationSeverity.Error);
+    }
+
+    [Fact]
+    public void Child_of_a_type_that_may_not_own_children_is_blocked()
+    {
+        // A milestone is child-capable but may not own children, so a child
+        // naming a milestone parent is refused with ParentNotSpan. This is the
+        // widened replacement for the old Span-only test, and it proves the
+        // matrix -- not a hard-coded Span check -- is the authority.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(
+            rowNumber: 2,
+            id: parentId,
+            typeText: "As-Planned Milestone",
+            stackIndex: null,
+            finish: new DateOnly(2026, 9, 5));
+        GanttRowDto child = ValidSpan(rowNumber: 3, id: NewId(), parentId: parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentNotSpan);
+    }
+
+    [Fact]
+    public void Parent_on_a_structural_type_is_a_not_used_warning()
+    {
+        // The D9 guarantee that nothing becomes silently permitted: a type the
+        // matrix does not classify as child-capable still reports NotUsedByType
+        // rather than being accepted as a child or blocked as an unresolvable one.
+        foreach (string typeText in new[] { "Splitter", "Spacer", "Delineator" })
+        {
+            GanttRowDto row = new(
+                2,
+                NewId(),
+                null,
+                null,
+                typeText,
+                "Section",
+                new DateOnly(2026, 9, 1),
+                new DateOnly(2026, 9, 5),
+                NewId(),
+                null,
+                null,
+                null,
+                null,
+                true,
+                null
+            );
+
+            GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+            Assert.Contains(
+                outcome.Issues,
+                i => i.Field == "ParentId" && i.Code == GanttValidationCodes.NotUsedByType && i.Severity == GanttValidationSeverity.Warning);
+        }
     }
 
     [Fact]
