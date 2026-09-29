@@ -1,5 +1,26 @@
 # Implementation guides manifest and execution plan
 
+> **Roadmap revision 10 (29 September 2026) added nine Tier-A guides ahead of
+> R4.9:** `R4.7A` identity and hierarchy, `R4.7B` projection, `R4.7C` workbook
+> presentation, `R4.7D` row geometry, `R4.7E` critical interval, `R4.7F` duration
+> and date semantics, `R4.7G` label positions, `R4.7H` size presets, and `R4.8A`
+> Refresh orchestration. Tier A goes from **41 to 50**. Three of them reverse
+> landed behaviour and name what they delete: `R4.7D` removes
+> `LaneLayoutBuilder`'s auto-growth and the auto-growth test, `R4.7E` changes the
+> critical overlay from a rect-to-line reinterpretation to a filled rectangle
+> drawn as built, and `R4.7G` removes two label positions. Their decisions are
+> ADR-0026, ADR-0027 and ADR-0028. Read
+> [`../PRE-R4.9-DECISION-REGISTER.md`](../PRE-R4.9-DECISION-REGISTER.md) first:
+> the two input documents these guides implement are not self-consistent with the
+> entity guide, and the register records which of their proposals were rejected.
+>
+> The guides are authored; **none of their product code has been written**. `R4.7A`
+> is next and is unblocked. `R4.7A` → `R4.7B` → `R4.7D` are strictly sequential;
+> `R4.7C`, `R4.7F`, `R4.7G` and `R4.7H` are independent; `R4.7E` needs `R4.7B`
+> and `R4.7C`; `R4.8A` needs all seven. `scripts/check-status.ps1` now requires a
+> letter-suffixed roadmap ID to have a guide here, so a row cannot ship without
+> one.
+
 > Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **94** roadmap-guide records: **41 Tier A and 53 Tier B** — counts re-taken from the table itself on 2026-09-27, superseding the "92 / 39 / 53" of 2026-09-26, which had itself corrected the earlier "90 / 27 / 63" (`R5.6b` and `R2.7d` had never been counted). The two rows still uncounted were `R3.16` and `R3.17`, both Tier A: the Phase-3 exit had already landed them, so the 2026-09-26 recount of 92 predated them. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
