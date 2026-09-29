@@ -94,6 +94,7 @@ public static class GanttRowValidator
         }
 
         CheckCriticalParents(rows, perRow, canonicalById, duplicateIds, issues);
+        CheckChildCapacityAndDepth(rows, perRow, canonicalById, duplicateIds, issues);
 
         var events = new List<GanttEvent>();
         for (var i = 0; i < rows.Count; i++)
@@ -892,6 +893,110 @@ public static class GanttRowValidator
                 _ = decided.Add(i);
                 changed = true;
             }
+        }
+    }
+
+    /// <summary>
+    /// Enforces the two hierarchy limits the product fixes: at most
+    /// <see cref="EntityHierarchyCatalog.MaxChildrenPerParent"/> children per
+    /// parent, and at most <see cref="EntityHierarchyCatalog.MaxDepth"/> levels of
+    /// nesting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This runs after <c>CheckCriticalParents</c> so a row whose parent is
+    /// already known to be ambiguous, unknown or invalid is skipped here rather
+    /// than counted as a child of a parent that does not exist. A child of a
+    /// broken parent is already blocking; adding a second, unrelated error would
+    /// be noise.
+    /// </para>
+    /// <para>
+    /// <b>Determinism.</b> Children are grouped in ascending worksheet row order
+    /// and the issue is reported against the parent's row, so the same table
+    /// always produces the same findings regardless of enumeration order. Which
+    /// children are "the excess" is therefore the ones furthest down the table,
+    /// which is also what a user looking at their sheet would expect to be
+    /// pointed at.
+    /// </para>
+    /// </remarks>
+    private static void CheckChildCapacityAndDepth(
+        IReadOnlyList<GanttRowDto> rows,
+        ValidatedRow?[] perRow,
+        Dictionary<string, int> canonicalById,
+        HashSet<string> duplicateIds,
+        List<GanttValidationIssue> issues
+    )
+    {
+        var childrenByParent = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            ValidatedRow? parsed = perRow[i];
+            if (parsed is null
+                || parsed.HasBlockingError
+                || !EntityHierarchyCatalog.MayBeChild(parsed.Type ?? GanttEntityType.Spacer)
+                || parsed.Event?.ParentId is not { } parentId
+                || duplicateIds.Contains(parentId.Value)
+                || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+            {
+                continue;
+            }
+
+            if (!childrenByParent.TryGetValue(parentId.Value, out List<int>? siblings))
+            {
+                siblings = [];
+                childrenByParent[parentId.Value] = siblings;
+            }
+            siblings.Add(i);
+
+            // Depth: a grandchild is refused -- a child of a child. The one
+            // legal exception is a Critical Interval's child, because a critical
+            // interval may parent another critical interval while remaining a
+            // child of an activity. That shape is pre-existing landed behaviour,
+            // and the check must not break it, so the rule is about the CHILD's
+            // type, not the parent's: a critical interval child of a critical
+            // interval sits at depth 2, while a span child of a critical interval
+            // would be depth 3.
+            ValidatedRow? parent = perRow[parentIndex];
+            if (parent?.Event?.ParentId is not null && parsed.Type != GanttEntityType.CriticalInterval)
+            {
+                issues.Add(
+                    new GanttValidationIssue(
+                        rows[i].RowNumber,
+                        "ParentId",
+                        GanttValidationCodes.HierarchyTooDeep,
+                        GanttValidationSeverity.Error,
+                        $"ParentId '{parentId.Value}' is itself a child, which would nest beyond the supported depth of {EntityHierarchyCatalog.MaxDepth}."
+                    )
+                );
+                parsed = parsed with { HasBlockingError = true };
+                perRow[i] = parsed;
+
+                // The row is not counted as a healthy child, so it cannot push a
+                // parent over the capacity limit with a child that does not exist
+                // in a renderable hierarchy.
+                siblings.RemoveAt(siblings.Count - 1);
+            }
+        }
+
+        foreach ((var parentId, List<int> children) in childrenByParent.OrderBy(static p => p.Key, StringComparer.Ordinal))
+        {
+            if (children.Count <= EntityHierarchyCatalog.MaxChildrenPerParent
+                || !canonicalById.TryGetValue(parentId, out var parentRowIndex))
+            {
+                continue;
+            }
+
+            issues.Add(
+                new GanttValidationIssue(
+                    rows[parentRowIndex].RowNumber,
+                    "ParentId",
+                    GanttValidationCodes.TooManyChildren,
+                    GanttValidationSeverity.Error,
+                    $"This row has {children.Count} children; at most {EntityHierarchyCatalog.MaxChildrenPerParent} are permitted."
+                )
+            );
+            perRow[parentRowIndex] = perRow[parentRowIndex]! with { HasBlockingError = true };
         }
     }
 

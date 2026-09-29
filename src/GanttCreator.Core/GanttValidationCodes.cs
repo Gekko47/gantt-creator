@@ -84,4 +84,10 @@ public static class GanttValidationCodes
 
     /// <summary>A <c>SortOrder</c> value is not an invariant non-negative integer.</summary>
     public const string BadSortOrder = nameof(BadSortOrder);
+
+    /// <summary>A parent already owns the maximum permitted number of children.</summary>
+    public const string TooManyChildren = nameof(TooManyChildren);
+
+    /// <summary>A row's own parent is itself a child, which would nest beyond the supported depth.</summary>
+    public const string HierarchyTooDeep = nameof(HierarchyTooDeep);
 }
