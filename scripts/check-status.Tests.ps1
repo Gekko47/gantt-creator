@@ -313,6 +313,110 @@ References roadmap item ``R9.9`` which is absent.
             $r.Output | Should -Match "STATUS references roadmap item 'R9.9'"
         }
 
+        # The suffix regression. The previous regex was `\bR\d+\.\d+\b`, which
+        # cannot match R4.7A -- "7" and "A" are both word characters, so no
+        # boundary exists between them. Every letter-suffixed row introduced in
+        # roadmap revision 10 would therefore have been invisible to this gate.
+        It 'exits 1 when STATUS references a letter-suffixed roadmap id that is absent' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` which is absent.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "STATUS references roadmap item 'R4\.7A' which is absent"
+        }
+
+        It 'exits 0 when STATUS references a letter-suffixed roadmap id that is present' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            # The guide is required for a suffixed ID, so its presence is part
+            # of "this row is properly defined" rather than a separate concern.
+            $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
+            New-Item -ItemType Directory -Path $guide -Force | Out-Null
+            '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` which is present.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+        }
+
+        # A suffixed row with no guide is a row nobody can implement. This
+        # positive test is what keeps the new branch non-vacuous: deleting the
+        # `if (-not $guide)` block fails it.
+        It 'exits 1 when a referenced letter-suffixed roadmap id has no work-item guide' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` which is present but has no guide.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "references suffixed roadmap item 'R4\.7A', which has no work-item guide"
+        }
+
+        It 'exits 0 when a referenced letter-suffixed roadmap id has a work-item guide' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
+            New-Item -ItemType Directory -Path $guide -Force | Out-Null
+            '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` which is present and has a guide.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+        }
+
+        # Guards the deliberate scoping: the guide rule is enforced only for
+        # suffixed IDs, so pre-existing unsuffixed rows are not retro-required.
+        It 'does not require a work-item guide for an unsuffixed roadmap id' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R1.0`` which is present and has no guide.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+        }
+
         It 'exits 1 when STATUS references a path that resolves outside the repository' {
             # Behavioural replacement for the removed text-level tripwire in
             # CheckStatusScriptTests: the containment check must reject '..'

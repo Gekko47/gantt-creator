@@ -16,9 +16,12 @@
          this gate also runs in CI, where only tracked files exist: a
          git-ignored path referenced here passes locally and fails the
          checkout, which no local filesystem test can reveal.
-      3. Roadmap IDs    -- every backticked R<major>.<minor> token must
+      3. Roadmap IDs    -- every R<major>.<minor>[<suffix>] token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
-         work item the roadmap does not define.
+         work item the roadmap does not define. The letter suffix is part
+         of the ID (R4.7A, R4.8A). A suffixed ID must additionally have a
+         work-item guide in docs/work-items/, so a letter-suffixed row
+         cannot ship with nothing to implement it from.
       4. Work-item evidence commands -- inside fenced code blocks in
          docs/work-items/*.md, every path a *command* line names must exist
          on disk. Both a separated path (`src/Foo/Bar.cs`) and a bare
@@ -219,13 +222,37 @@ foreach ($t in $tokens)
 # --- 3. Roadmap IDs ---
 # Roadmap IDs appear in bold and plain prose as well as backticks, so scan
 # the raw status text rather than the backticked token list.
-$idTokens = [regex]::Matches($status, '\bR\d+\.\d+\b') |
+#
+# The suffix is part of the ID. Phase 4 inserts R4.7A..R4.7H and R4.8A, and
+# the previous `\bR\d+\.\d+\b` could not match them: there is no word boundary
+# between "7" and "A", because both are word characters. That regex would have
+# silently skipped every letter-suffixed row, so STATUS could cite a work item
+# the roadmap never defined and the gate would still pass -- the exact failure
+# this check exists to prevent, on exactly the rows it was about to be needed
+# for. The suffix class must be case-insensitive in effect: the suffixes are
+# UPPER case (A-H), and a lower-case-only `[a-z]?` matches none of them, which
+# a first attempt at this fix demonstrated -- the token was skipped entirely
+# and two tests asserting the violation passed it silently.
+$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Za-z]?\b') |
     ForEach-Object { $_.Value } | Select-Object -Unique
 foreach ($id in $idTokens)
 {
     if ($roadmap -notmatch [regex]::Escape("| $id |"))
     {
         $violations.Add("STATUS references roadmap item '$id' which is absent from $RoadmapPath.")
+    }
+
+    # A roadmap row with a work-item guide is the norm; a letter-suffixed row
+    # that cites no guide is how R4.7A-R4.7H would ship as nine rows nobody can
+    # implement from. Only enforced for suffixed IDs so the pre-existing rows,
+    # several of which are landed or deferred by name, are not retro-required.
+    if ($id -match '\d+[A-Za-z]$')
+    {
+        $guide = Get-ChildItem -LiteralPath $WorkItemsPath -Filter "$id-*.md" -ErrorAction SilentlyContinue
+        if (-not $guide)
+        {
+            $violations.Add("STATUS references suffixed roadmap item '$id', which has no work-item guide in $WorkItemsPath.")
+        }
     }
 }
 
