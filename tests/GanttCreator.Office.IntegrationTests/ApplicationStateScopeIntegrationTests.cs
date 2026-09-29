@@ -46,10 +46,21 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
                 $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             // A workbook must exist before Application.Selection is non-null: with
-            // no open workbook the host reports no selection at all. The fixture's
-            // teardown closes it, so the test does not own its disposal.
+            // no open workbook the host reports no selection at all.
+            //
+            // The workbook is NOT tracked through the ComScope. CreateWorkbook
+            // documents that it hands the proxy to the fixture, which closes AND
+            // releases it during teardown, and tracking it here released the same
+            // RCW twice: the scope's release separated it, and the fixture's
+            // teardown then raised "COM object that has been separated from its
+            // underlying RCW cannot be used" out of wb.Close. That failure was
+            // invisible until this test was actually run against a live host. The
+            // test does not own this proxy's disposal.
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+
+            // The scope owns the proxies THIS test creates. The workbook is the
+            // one exception, above.
             using var scope = new OfficeFixture.ComScope();
-            Excel.Workbook trackedWorkbook = scope.Track(fixture.CreateWorkbook());
             Excel.Application application = fixture.Excel;
             _output.WriteLine("Windows build: " + Environment.OSVersion.Version.Build);
             _output.WriteLine("Excel version: " + application.Version);
@@ -65,7 +76,7 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
 
             _output.WriteLine("before: " + Describe(application));
             Assert.NotNull(application.Selection);
-            Assert.NotNull(trackedWorkbook);
+            Assert.NotNull(workbook);
 
             // The selection restore is the one D3 makes best-effort, and it was
             // therefore never actually exercised: nothing inside the scope ever
@@ -98,10 +109,24 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
 
                 // Move the cursor the way a render command would, so the restore
                 // has something real to undo.
-                Excel.Range moved = scope.Track(application.ActiveSheet.Range["C7"]);
+                //
+                // Every COM proxy is read into a local and tracked before it is
+                // used, per the ownership rule. `application.ActiveSheet.Range["C7"]`
+                // is a chained COM property call: it creates an ActiveSheet proxy
+                // this test never names, so it cannot release it and it leaks for
+                // the rest of the session - the very signal this file's fixture
+                // exists to keep out of the leak ratchet.
+                Excel._Worksheet activeSheet = scope.Track(application.ActiveSheet);
+                Excel.Range moved = scope.Track(activeSheet.Range["C7"]);
                 moved.Select();
-                var insideScope = (Excel.Range)application.Selection;
-                Assert.Equal("C7", insideScope.Address);
+                Excel.Range insideScope = scope.Track((Excel.Range)application.Selection);
+
+                // The absolute form, because that is what Range.Address returns on
+                // the host - "$C$7", not "C7". Asserting the relative form failed on
+                // the live gate even though the cursor had moved correctly, which
+                // is a test defect rather than a product one: the move is what this
+                // line exists to prove, and it had already happened.
+                Assert.Equal("$C$7", insideScope.Address, ignoreCase: true);
 
                 throw thrown;
             }
@@ -131,8 +156,10 @@ public class ApplicationStateScopeIntegrationTests(ITestOutputHelper output)
 
             // D3's selection restore, now a real assertion: the cursor was moved
             // to C7 inside the scope and must be back on the original address
-            // after disposal.
-            var restored = (Excel.Range)application.Selection;
+            // after disposal. The read is tracked for the same reason as every
+            // other proxy above - it is a live Range, and an untracked one is an
+            // unowned COM reference for the rest of the session.
+            Excel.Range restored = scope.Track((Excel.Range)application.Selection);
             _output.WriteLine("selection restored to: " + restored.Address);
             Assert.Equal(originalAddress, restored.Address);
 

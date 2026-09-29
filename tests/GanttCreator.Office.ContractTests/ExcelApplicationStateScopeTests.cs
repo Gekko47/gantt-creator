@@ -414,11 +414,29 @@ public class ExcelApplicationStateScopeTests
         // The record sink is caller-supplied; a sink that throws must degrade to
         // no record rather than turning a restore failure into an escaping
         // exception inside a finally block.
-        using var scope = new ExcelApplicationStateScope(
-            new Mock<Excel.Application>().Object,
-            _ => throw new InvalidOperationException("sink is broken"));
-        scope.SuppressScreenUpdating();
+        //
+        // A failing RESTORE is what reaches the sink, so one has to be injected:
+        // Report is only called when a restore threw, and a scope that suppressed
+        // nothing leaves nothing to restore. The previous version of this test
+        // drove a bare ExcelApplicationStateScope over a Moq application, whose
+        // ScreenUpdating property reads as false - so SuppressScreenUpdating
+        // captured nothing, Dispose restored nothing, and the throwing sink was
+        // never invoked. The test passed without the code path existing.
+        var calls = 0;
+        using var scope = new TestableScope(_ =>
+        {
+            calls++;
+            throw new InvalidOperationException("sink is broken");
+        });
+
+        SuppressAll(scope);
+        scope.FailOn = "ScreenUpdating";
 
         Assert.Null(Record.Exception(scope.Dispose));
+
+        // Assert the sink really was reached, so the assertion above is not
+        // vacuous: an empty count would mean no restore failed and the throw path
+        // was never taken.
+        Assert.Equal(1, calls);
     }
 }

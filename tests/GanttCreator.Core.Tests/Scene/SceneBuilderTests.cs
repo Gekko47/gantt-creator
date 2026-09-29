@@ -254,7 +254,6 @@ public sealed class SceneBuilderTests
     public void Null_bounds_are_refused()
     {
         Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
-        Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
     }
 
     [Fact]
