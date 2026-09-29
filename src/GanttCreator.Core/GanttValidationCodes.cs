@@ -90,4 +90,7 @@ public static class GanttValidationCodes
 
     /// <summary>A row's own parent is itself a child, which would nest beyond the supported depth.</summary>
     public const string HierarchyTooDeep = nameof(HierarchyTooDeep);
+
+    /// <summary>A <c>SiblingOrder</c> value is not a non-negative integer.</summary>
+    public const string BadSiblingOrder = nameof(BadSiblingOrder);
 }

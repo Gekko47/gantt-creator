@@ -22,6 +22,34 @@ namespace GanttCreator.Office.ContractTests;
 public class WorkbookInitialiserTests
 {
     /// <summary>
+    /// The expected plot-anchor <c>refersTo</c>, derived from the schema rather
+    /// than pinned to a letter. The anchor sits one column right of the table's
+    /// last column, so R4.7A's <c>SiblingOrder</c> correctly moved it from
+    /// <c>$O$1</c> to <c>$P$1</c>; a pinned letter would have failed without
+    /// saying why, and would have failed again on the next column.
+    /// </summary>
+    private static string ExpectedPlotAnchorRefersTo()
+    {
+        int anchorColumnIndex = GanttTableSchema.Default.Columns.Count + 1;
+        return $"='{GanttWorkbookContract.GanttSheetLabel}'!${ColumnLetter(anchorColumnIndex)}$1";
+    }
+
+    /// <summary>Converts a one-based Excel column index to its letters.</summary>
+    private static string ColumnLetter(int oneBasedIndex)
+    {
+        var letters = string.Empty;
+        var remaining = oneBasedIndex;
+        while (remaining > 0)
+        {
+            int index = (remaining - 1) % 26;
+            letters = (char)('A' + index) + letters;
+            remaining = (remaining - 1) / 26;
+        }
+
+        return letters;
+    }
+
+    /// <summary>
     /// One mocked worksheet: its name (getter backed by a field the setter
     /// updates, modelling Excel's read-back of a renamed sheet), its header
     /// range (whose <c>Value2</c> writes are captured), its list objects and
@@ -437,7 +465,7 @@ public class WorkbookInitialiserTests
 
         Assert.True(outcome.Succeeded);
         writer.Verify(w => w.Write(), Times.Once());
-        active.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+        active.VerifyAnchorName(ExpectedPlotAnchorRefersTo(), Times.Once());
     }
 
     [Theory]
@@ -533,7 +561,7 @@ public class WorkbookInitialiserTests
 
         // 14 schema columns → the anchor is column 15 = "O"; the name is
         // sheet-scoped and refers to the post-rename label.
-        active.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+        active.VerifyAnchorName(ExpectedPlotAnchorRefersTo(), Times.Once());
     }
 
     [Fact]
@@ -616,7 +644,7 @@ public class WorkbookInitialiserTests
         Assert.Equal(GanttWorkbookContract.GanttSheetLabel, created.Name);
         created.VerifyTableCreated(Times.Once());
         Assert.Equal(new[] { GanttTableSchema.TableName }, created.AssignedTableNames);
-        created.VerifyAnchorName($"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1", Times.Once());
+        created.VerifyAnchorName(ExpectedPlotAnchorRefersTo(), Times.Once());
     }
 
     [Theory]

@@ -88,6 +88,7 @@ public class GanttRowDtoTests
             GanttCells.Value<DateOnly?>(new DateOnly(2026, 9, 1)),
             GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.Value),
             GanttCells.Empty<string>(),
+            GanttCells.Value<int?>(3),
             GanttCells.Empty<string>(),
             GanttCells.Empty<string>(),
             GanttCells.Empty<string>(),
@@ -105,5 +106,13 @@ public class GanttRowDtoTests
         Assert.Equal(GanttCellState.Unsupported, dto.VisibleCell.State);
         Assert.Null(dto.Id);
         Assert.Equal("lane", dto.LaneId);
+
+        // R4.7A D2: SiblingOrder is a distinct cell from StackIndex, so a derived
+        // effective stack value can never be mistaken for the engine's sibling
+        // ordering. Both can carry values on the same row without aliasing.
+        Assert.Equal(GanttCellState.Value, dto.SiblingOrderCell.State);
+        Assert.Equal(3, dto.SiblingOrder);
+        Assert.Equal(GanttCellState.Unsupported, dto.StackIndexCell.State);
+        Assert.Null(dto.StackIndex);
     }
 }

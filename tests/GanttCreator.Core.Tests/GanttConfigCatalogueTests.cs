@@ -502,9 +502,16 @@ public class GanttConfigCatalogueTests
     /// <c>DateDisplayFormat</c> setting and D6 advances the schema version, so
     /// the hash change here is the recorded, expected consequence of that ADR
     /// rather than unapproved catalogue drift.
+    /// <para>
+    /// Advanced again by R4.7A: the hash's first line is
+    /// <c>schema|{CurrentSchemaVersion}</c>, so the 3 -&gt; 4 bump for the
+    /// <c>SiblingOrder</c> column changes it necessarily. This test failing on the
+    /// version bump is the guard working, not a regression -- it is the mechanism
+    /// that makes an unrecorded schema change visible.
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "fb7c3299fcf37475be7ac958ce08a9f9e0fd589846b8d5daaa4af7577400013c";
+        "d881eb659d244e0936dcd3deead2fcb3a44004faab8d4346e982be761c441979";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

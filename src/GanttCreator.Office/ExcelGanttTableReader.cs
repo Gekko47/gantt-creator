@@ -235,6 +235,7 @@ public class ExcelGanttTableReader(
             ToDateCell(byName["Start"], start),
             ToDateCell(byName["Finish"], finish),
             ToTextCell(byName["ParentId"]),
+            ToIntCell(byName["SiblingOrder"], ExcelCellConverter.TryConvertStackIndex(byName["SiblingOrder"], out var siblingOrder) ? siblingOrder : null),
             ToTextCell(byName["StyleKey"]),
             ToTextCell(byName["LabelPosition"]),
             ToTextCell(byName["FillColour"]),

@@ -285,6 +285,24 @@ public static class GanttRowValidator
         _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
         _ = ClassifyCellState("SortOrder", row.SortOrderCell.State, sortOrderRelevant, Add);
 
+        // SiblingOrder (R4.7A D2): engine-maintained, so it is always relevant and
+        // is never required. A blank value means "the engine has not assigned one
+        // yet" and is reported by the caller, not treated as ordering -- silently
+        // reading blank as 0 would make every unassigned row a first child.
+        _ = ClassifyCellState("SiblingOrder", row.SiblingOrderCell.State, true, Add);
+        if (row.SiblingOrder is { } parsedSiblingOrder)
+        {
+            if (parsedSiblingOrder < 0)
+            {
+                Add(
+                    "SiblingOrder",
+                    GanttValidationCodes.BadSiblingOrder,
+                    GanttValidationSeverity.Error,
+                    "SiblingOrder must be blank or a non-negative integer."
+                );
+            }
+        }
+
         GanttRowId? laneId = null;
         if (!laneBlocked)
         {

@@ -18,6 +18,7 @@ public sealed record GanttRowDto
         GanttCell<DateOnly?> startCell,
         GanttCell<DateOnly?> finishCell,
         GanttCell<string> parentIdCell,
+        GanttCell<int?> siblingOrderCell,
         GanttCell<string> styleKeyCell,
         GanttCell<string> labelPositionCell,
         GanttCell<string> fillColourCell,
@@ -34,6 +35,7 @@ public sealed record GanttRowDto
         StartCell = startCell;
         FinishCell = finishCell;
         ParentIdCell = parentIdCell;
+        SiblingOrderCell = siblingOrderCell;
         StyleKeyCell = styleKeyCell;
         LabelPositionCell = labelPositionCell;
         FillColourCell = fillColourCell;
@@ -42,7 +44,11 @@ public sealed record GanttRowDto
         SortOrderCell = sortOrderCell;
     }
 
-    /// <summary>Creates a normalized compatibility row from the pre-R2.4b shape.</summary>
+    /// <summary>
+    /// Creates a normalized compatibility row from the pre-R2.4b shape.
+    /// <c>SiblingOrder</c> is absent, which the validator reads as "the engine has
+    /// not assigned one yet" rather than as ordering.
+    /// </summary>
     public GanttRowDto(
         int rowNumber,
         string? id,
@@ -69,6 +75,7 @@ public sealed record GanttRowDto
             Cell(start),
             Cell(finish),
             Cell(parentId),
+            GanttCells.Empty<int?>(),
             Cell(styleKey),
             Cell(labelPositionText),
             Cell(fillColourText),
@@ -104,6 +111,14 @@ public sealed record GanttRowDto
 
     /// <summary>Raw typed ParentId cell state.</summary>
     public GanttCell<string> ParentIdCell { get; init; }
+
+    /// <summary>
+    /// Raw typed SiblingOrder cell state (R4.7A D2). Engine-maintained: it makes
+    /// hierarchy order independent of physical row number, so a user sort cannot
+    /// silently redefine the tree. Empty means "not yet assigned", which the
+    /// validator reports rather than treating as ordering.
+    /// </summary>
+    public GanttCell<int?> SiblingOrderCell { get; init; }
 
     /// <summary>Raw typed StyleKey cell state.</summary>
     public GanttCell<string> StyleKeyCell { get; init; }
@@ -145,6 +160,9 @@ public sealed record GanttRowDto
 
     /// <summary>Normalized ParentId compatibility view.</summary>
     public string? ParentId => ParentIdCell.Value;
+
+    /// <summary>Normalized SiblingOrder compatibility view.</summary>
+    public int? SiblingOrder => SiblingOrderCell.Value;
 
     /// <summary>Normalized StyleKey compatibility view.</summary>
     public string? StyleKey => StyleKeyCell.Value;

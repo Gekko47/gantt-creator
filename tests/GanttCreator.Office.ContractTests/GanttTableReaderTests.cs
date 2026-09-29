@@ -112,14 +112,33 @@ public class GanttTableReaderTests
         return matrix;
     }
 
+    /// <summary>
+    /// Builds one full-width body row. Built from the schema's own column names
+    /// rather than a positional literal, because a hard-coded array silently
+    /// breaks when a column is added -- R4.7A's <c>SiblingOrder</c> made 20 tests
+    /// fail with an IndexOutOfRange deep inside the matrix helper, which named no
+    /// column. Naming the columns means a future addition fails here, legibly.
+    /// </summary>
     private static object?[] FullRow(
         object? id = null,
         object? stackIndex = null,
         object? type = null,
         object? start = null,
         object? finish = null,
-        object? visible = null
-    ) => [id, null, stackIndex, type, null, start, finish, null, null, null, null, null, visible, null];
+        object? visible = null)
+    {
+        Dictionary<string, object?> values = new(StringComparer.Ordinal)
+        {
+            ["Id"] = id,
+            ["StackIndex"] = stackIndex,
+            ["Type"] = type,
+            ["Start"] = start,
+            ["Finish"] = finish,
+            ["Visible"] = visible,
+        };
+
+        return [.. GanttTableSchema.Default.Columns.Select(c => values.GetValueOrDefault(c.Name))];
+    }
 
     private static Mock<Excel.Sheets> CreateSheetsMock(IReadOnlyList<SheetGraph> sheets)
     {

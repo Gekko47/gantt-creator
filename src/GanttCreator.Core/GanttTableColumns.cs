@@ -107,8 +107,9 @@ public sealed class GanttTableSchema
     }
 
     /// <summary>
-    /// The first-release schema: the 13 required columns in contract order,
-    /// followed by the optional <c>SortOrder</c> column.
+    /// The first-release schema: the required columns in contract order, followed
+    /// by the optional <c>SortOrder</c> column. R4.7A added <c>SiblingOrder</c>
+    /// immediately after <c>ParentId</c> and advanced the schema version 3 → 4.
     /// </summary>
     public static GanttTableSchema Default { get; } = new(
     [
@@ -120,6 +121,7 @@ public sealed class GanttTableSchema
         new GanttTableColumn("Start", isRequired: true),
         new GanttTableColumn("Finish", isRequired: true),
         new GanttTableColumn("ParentId", isRequired: true),
+        new GanttTableColumn("SiblingOrder", isRequired: true),
         new GanttTableColumn("StyleKey", isRequired: true),
         new GanttTableColumn("LabelPosition", isRequired: true),
         new GanttTableColumn("FillColour", isRequired: true),
