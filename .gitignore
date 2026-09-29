@@ -12,6 +12,15 @@
 *.env
 .START-HERE.md
 
+# NOTE: docs/GanttCreator_R3_R4_Architecture_Roadmap_Review_REV5.md and
+# docs/GanttCreator_Revised_Implementation_Plan_REV6.md were previously listed
+# here, following this file's convention for untracked input briefs. The product
+# owner reversed that on 2026-09-29: both are now tracked governance inputs,
+# because they drive the R4.7A-R4.8A roadmap rows and leaving them untracked
+# would let the roadmap cite a requirement no reader can resolve. Each file
+# carries a header naming the decisions that changed its proposals; the
+# resolved contract lives in docs/PRE-R4.9-DECISION-REGISTER.md and the ADRs.
+
 # Source Data
 .gantgen/*
 .gantpp/*
