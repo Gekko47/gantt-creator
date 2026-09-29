@@ -216,9 +216,30 @@ public class ExcelShapeWriter(
         // is correct. The name is the reconciliation KEY and the tag is the
         // ownership PROOF, and re-stamping those would silently "repair" a shape
         // a user edited, which is R9.4's job to report, not R4.7's to hide.
-        if (request.Kind == OfficeShapeKind.TextBox)
+        //
+        // Both writes are contained, on the same reasoning as the create path's
+        // ApplyTextOrDiscard and ApplyStyleOrDiscard: a COM write the host refuses
+        // must not escape an update as an unhandled COMException from inside a
+        // render command. R4.7's reconciler acts on the typed result, so a
+        // HostRejected is what it needs to report - an escaping exception is not.
+        //
+        // A contract fault still propagates: MapHatchPattern and MapAlignment
+        // throw ArgumentOutOfRangeException for a scene value with no host
+        // mapping, which is a drift defect between the guide and the adapter, not
+        // a host failure, and swallowing it into a refusal would hide exactly the
+        // thing the ratchet exists to surface.
+        //
+        // Containment is NOT a rollback. ApplyGeometry has already run, so a
+        // refused text or style write leaves the shape at its new geometry with
+        // its old content or colour. That is the deliberate trade: the shape stays
+        // on the sheet under its ownership tag, so the next reconcile reaches it
+        // again, where deleting and recreating an owned shape to undo a refusal
+        // would throw away the user's work the moment the host was briefly busy.
+        // The refusal is reported rather than hidden, so a chart that never
+        // converges is visible instead of silent.
+        if (request.Kind == OfficeShapeKind.TextBox && !TryApplyContent(existing, request))
         {
-            ApplyText(existing, request);
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
         // R4.6. An update re-applies the style for the same reason it re-applies
@@ -227,9 +248,9 @@ public class ExcelShapeWriter(
         // and leave the old colour behind - the shape would sit in the right place
         // looking wrong, which is invisible to every other assertion in this
         // class because geometry and content would both be correct.
-        ApplyStyle(existing, request);
-
-        return ShapeWriteOutcome.Ok();
+        return TryApplyStyle(existing, request)
+            ? ShapeWriteOutcome.Ok()
+            : ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
     }
 
     /// <inheritdoc />
@@ -1186,6 +1207,96 @@ public class ExcelShapeWriter(
         catch (Exception)
         {
             DiscardUnownedShape(shape);
+            return false;
+        }
+#pragma warning restore CA1031
+
+        return true;
+    }
+
+    /// <summary>
+    /// Applies a text box's content on the update path, containing a host failure.
+    /// </summary>
+    /// <param name="shape">The owned shape whose content is rewritten.</param>
+    /// <param name="request">The request whose text members are written.</param>
+    /// <returns>
+    /// <see langword="true"/> when the content landed; <see langword="false"/>
+    /// when the host refused the write.
+    /// </returns>
+    /// <remarks>
+    /// The update-path twin of <see cref="ApplyTextOrDiscard"/>, and it differs in
+    /// exactly one respect: there is nothing to discard. The shape was found, not
+    /// created, so a failed content write leaves an existing owned shape in place
+    /// and the caller is told the update failed.
+    /// <para>
+    /// <see cref="ArgumentOutOfRangeException"/> is deliberately not caught. It is
+    /// what <see cref="MapAlignment"/> raises for a scene alignment with no host
+    /// mapping - a contract fault the caller must see, and the same rule
+    /// <see cref="ApplyTextOrDiscard"/> follows.
+    /// </para>
+    /// </remarks>
+    private bool TryApplyContent(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: see the remarks. A host refusal must not escape the update as an
+        // unhandled COM exception, and must not replace the typed refusal the
+        // reconciler already knows how to report.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyText(shape, request);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+
+        return true;
+    }
+
+    /// <summary>
+    /// Applies the style on the update path, containing a host failure.
+    /// </summary>
+    /// <param name="shape">The owned shape whose style is rewritten.</param>
+    /// <param name="request">The request whose style members are written.</param>
+    /// <returns>
+    /// <see langword="true"/> when the style landed; <see langword="false"/> when
+    /// the host refused the write.
+    /// </returns>
+    /// <remarks>
+    /// The update-path twin of <see cref="ApplyStyleOrDiscard"/>, and it differs in
+    /// exactly one respect: there is nothing to discard, for the same reason
+    /// <see cref="TryApplyContent"/> does not discard. <see cref="ApplyGeometry"/>
+    /// has already run by this point and is not undone, so a refused style leaves
+    /// the shape moved and un-restyled; that is stated on
+    /// <see cref="IShapeWritePort.Update(OfficeShapeRequest)"/> rather than left for
+    /// a reader to infer.
+    /// <para>
+    /// <see cref="ArgumentOutOfRangeException"/> is deliberately not caught, for
+    /// the reason <see cref="ApplyStyle"/> documents: it is
+    /// <see cref="MapHatchPattern"/>'s contract fault, not a host failure.
+    /// </para>
+    /// </remarks>
+    private bool TryApplyStyle(Excel.Shape shape, OfficeShapeRequest request)
+    {
+        // CA1031: see the remarks. A host refusal must not escape the update as an
+        // unhandled COM exception, and must not replace the typed refusal the
+        // reconciler already knows how to report.
+#pragma warning disable CA1031
+        try
+        {
+            ApplyStyle(shape, request);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
             return false;
         }
 #pragma warning restore CA1031

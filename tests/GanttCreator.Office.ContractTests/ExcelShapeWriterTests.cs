@@ -3,6 +3,7 @@ using GanttCreator.Core.Scene;
 using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 using Moq;
+using System.Runtime.InteropServices;
 
 namespace GanttCreator.Office.ContractTests;
 
@@ -61,8 +62,27 @@ public class ExcelShapeWriterTests
         /// </summary>
         public bool FailOwnershipTagWrite { get; set; }
 
-        /// <summary>Whether a shape the adapter created was subsequently deleted.</summary>
+        /// <summary>
+        /// Whether a shape the adapter created was subsequently deleted.
+        /// </summary>
         public bool CreatedShapeDeleted { get; private set; }
+
+        /// <summary>
+        /// Whether the content write throws, simulating a host that refuses it.
+        /// An <see cref="InvalidOperationException"/> rather than a
+        /// <see cref="COMException"/>, because that is how a failed COM call is
+        /// reported when it crosses the interop boundary into managed code, and
+        /// because CA2201 reserves the runtime's own exception types. The adapter
+        /// catches broadly for the same reason: the host chooses which of the two
+        /// it raises.
+        /// </summary>
+        public bool FailTextWrite { get; set; }
+
+        /// <summary>Whether the style write throws, as a refusing host would.</summary>
+        public bool FailStyleWrite { get; set; }
+
+        /// <summary>The requests the style write was reached with, in order.</summary>
+        public List<OfficeShapeRequest> StyledRequests { get; } = [];
 
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             new Mock<Excel._Worksheet>().Object;
@@ -85,8 +105,33 @@ public class ExcelShapeWriterTests
         /// </summary>
         /// <param name="shape">The shape whose content would be written.</param>
         /// <param name="request">The content that would be written.</param>
-        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request) =>
+        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+        {
+            if (FailTextWrite)
+            {
+                throw new InvalidOperationException("The host refused the text.");
+            }
+
             Requests.Add(request);
+        }
+
+        /// <summary>
+        /// Records the style write, which the real implementation performs against
+        /// a modelled host in <see cref="StyleWriteTests"/>. Here it only needs to
+        /// be observable and injectable.
+        /// </summary>
+        /// <param name="shape">The shape whose style would be written.</param>
+        /// <param name="request">The style that would be written.</param>
+        internal override void ApplyStyle(Excel.Shape shape, OfficeShapeRequest request)
+        {
+            if (FailStyleWrite)
+            {
+                throw new InvalidOperationException("The host refused the style.");
+            }
+
+            StyledRequests.Add(request);
+            base.ApplyStyle(shape, request);
+        }
 
         internal override Excel.Shape? AddShape(Excel.Shapes shapes, OfficeShapeRequest request)
         {
@@ -358,6 +403,123 @@ public class ExcelShapeWriterTests
 
         // Nothing was requested of the host, so the content path did not run.
         Assert.Empty(writer.Requests);
+    }
+
+    /// <summary>
+    /// A host that refuses the content write must produce a typed refusal, not an
+    /// escaping <see cref="COMException"/>. R4.7's reconciler acts on the typed
+    /// result, so an exception thrown out of the middle of a refresh is neither
+    /// reported nor attributable to a primitive.
+    /// </summary>
+    [Fact]
+    public void An_update_whose_text_write_the_host_refuses_reports_a_refusal_rather_than_throwing()
+    {
+        var existing = NewShape("row-1:label", ShapeOwnershipTag.ForPrimitiveId("row-1:label"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing)
+        {
+            FailTextWrite = true,
+        };
+
+        ShapeWriteOutcome outcome = writer.Update(
+            new OfficeShapeRequest(
+                "row-1:label",
+                OfficeShapeKind.TextBox,
+                new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 14)),
+                ZLayer.Label,
+                Text: "Revised label text"));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+
+        // A refused content write must not fall through to the style write, which
+        // would report a second, misleading outcome for the same failure.
+        Assert.Empty(writer.StyledRequests);
+    }
+
+    /// <summary>
+    /// The same rule for the style write, and the shape stays on the sheet: the
+    /// geometry has already been applied and the shape is not discarded, because
+    /// it was found rather than created.
+    /// </summary>
+    [Fact]
+    public void An_update_whose_style_write_the_host_refuses_reports_a_refusal_and_keeps_the_shape()
+    {
+        var deleted = false;
+        var existing = NewShape(
+            "row-1:bar",
+            ShapeOwnershipTag.ForPrimitiveId("row-1:bar"),
+            onDelete: () => deleted = true);
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing)
+        {
+            FailStyleWrite = true,
+        };
+
+        ShapeWriteOutcome outcome = writer.Update(
+            RectangleRequest(x: 55, y: 66));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ShapeWriteRefusal.HostRejected, outcome.Refusal);
+
+        // The create path discards a shape it could not finish; the update path
+        // must not, or a momentary host refusal would delete the user's chart.
+        Assert.False(deleted, "A refused update must not discard the shape it matched.");
+
+        // Containment is not a rollback, and the shape really was moved before the
+        // style write was refused. That is the documented asymmetry with Create,
+        // so it is pinned here rather than left to a reader to infer.
+        Assert.Equal(55f, existing.Left);
+        Assert.Equal(66f, existing.Top);
+    }
+
+    /// <summary>
+    /// The guard is not a blanket catch: a scene value with no host mapping is a
+    /// contract fault between the guide and the adapter, and it must still reach
+    /// the caller. A refusal here would report "the host said no" for a defect
+    /// this repository owns.
+    /// </summary>
+    /// <remarks>
+    /// Driven through the update path because that is the path the containment was
+    /// added to; the create path's <c>ApplyStyleOrDiscard</c> has the same rule.
+    /// </remarks>
+    [Fact]
+    public void An_unmappable_hatch_pattern_still_throws_out_of_an_update_rather_than_becoming_a_refusal()
+    {
+        var fill = new Mock<Excel.FillFormat>();
+        var existing = NewShape(
+            "row-1:bar",
+            ShapeOwnershipTag.ForPrimitiveId("row-1:bar"),
+            fill: fill.Object);
+
+        // The real ApplyStyle runs (the seam is not overridden here), so the throw
+        // comes from MapHatchPattern itself rather than from a test double.
+        var writer = new StyleWriterForContract(existing);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => writer.Update(new OfficeShapeRequest(
+                "row-1:bar",
+                OfficeShapeKind.Rectangle,
+                new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 30)),
+                ZLayer.ActivityBody,
+                FillColour: ColourHex.Parse("#00B0F0"),
+                HatchPattern: (GanttHatchPattern)99)));
+    }
+
+    /// <summary>
+    /// A writer whose seams resolve an existing shape but whose <c>ApplyStyle</c>
+    /// is the real implementation, so the hatch mapping is genuinely exercised.
+    /// </summary>
+    private sealed class StyleWriterForContract(Excel.Shape existing) : ExcelShapeWriter(
+        ActiveApplication().Object,
+        ClearGuard().Object)
+    {
+        internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
+            new Mock<Excel._Worksheet>().Object;
+
+        internal override Excel.Shapes? GetShapes(Excel._Worksheet sheet) =>
+            new Mock<Excel.Shapes>().Object;
+
+        internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) =>
+            string.Equals(existing.Name, name, StringComparison.Ordinal) ? existing : null;
     }
 
     /// <summary>
@@ -886,7 +1048,8 @@ public class ExcelShapeWriterTests
         string name,
         string? alternativeText,
         Action? onDelete = null,
-        Action<string, MsoZOrderCmd>? onZOrder = null)
+        Action<string, MsoZOrderCmd>? onZOrder = null,
+        Excel.FillFormat? fill = null)
     {
         // Backing fields, not fixed Returns(name): a test that simulates a
         // user editing the alternative text has to be able to write it, or the
@@ -919,6 +1082,15 @@ public class ExcelShapeWriterTests
         // command so the reverse-order sequence is assertable from here too.
         _ = shape.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
             .Callback<MsoZOrderCmd>(command => onZOrder?.Invoke(currentName, command));
+        // A modelled fill, so a test can drive the real ApplyStyle against a host
+        // that has one. Left unset, Moq returns null and the fill branch is skipped
+        // entirely - which is right for every other test here and would make a
+        // hatch-mapping test pass without ever reaching the mapping.
+        if (fill is not null)
+        {
+            _ = shape.SetupGet(s => s.Fill).Returns(fill);
+        }
+
         return shape.Object;
     }
 }

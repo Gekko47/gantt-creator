@@ -7,7 +7,15 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
-- **Two silent-success paths in the create path, plus stale contract prose (this change)** — twelve review findings triaged against landed code; nine fixed, three deliberately not actioned.
+- **The shape writer's update path contained host failures it used to let escape (this change)** — a COM write the host refuses in `ApplyText` or `ApplyStyle` escaped `ExcelShapeWriter.Update` as an unhandled exception from inside a render command, where R4.7's reconciler only knows how to act on a typed result. `Create` already contained the same two writes; the update path did not. Both are now contained and report `HostRejected`.
+
+  The guard is **not** a blanket catch. `MapHatchPattern` and `MapAlignment` raise `ArgumentOutOfRangeException` for a scene value with no host mapping — a contract fault between the entity guide and the adapter — and that still propagates, because a refusal would report "the host said no" for a defect this repository owns. Containment is also **not** a rollback: `ApplyGeometry` has already run, so a refused style leaves the shape moved and un-restyled. That asymmetry with `Create`, which *does* discard a shape it could not finish, is deliberate — deleting and recreating an owned shape to undo a momentary host refusal would discard the user's chart — and `IShapeWritePort.Update` said "on a refusal nothing was mutated", which was untrue. It now states the real behaviour and that callers must treat a refusal as "this shape is not yet correct", not "nothing happened".
+
+  Three tests, each mutation-checked: removing the containment fails exactly the two refusal tests; removing the `ArgumentOutOfRangeException` arm fails exactly the contract-fault test. The refused-update test also pins the two things a reader would otherwise have to infer — the matched shape is **not** discarded, and its geometry really was moved.
+
+  Observed: Release `-warnaserror` 0 warnings / 0 errors; Office contract **500 → 503/503**; full non-Office suite **1850/1850**; `dotnet format --verify-no-changes --exclude tests` clean. Checklist: B, G, I, J, K.
+
+- **Two silent-success paths in the create path, plus stale contract prose (previous change)** — twelve review findings triaged against landed code; nine fixed, three deliberately not actioned.
 
   **The two real defects were both "reported success for something that did not happen".** `ApplyStyleOrDiscard` returned normally after discarding the shape, so `Create` carried on to stamp `Name` and `AlternativeText` onto a shape that was no longer on the sheet — a write that either escaped as a misleading second refusal or returned `Ok` for a shape that did not exist. It now returns the outcome, `Create` returns `HostRejected`, and the stamp is never attempted. The same class existed one level down: a text box is the one kind whose content is written *inside* `AddShape`, so a throwing `ApplyText` escaped the create as an unhandled COM error **and** left an untagged text box nothing could ever update or remove. `ApplyTextOrDiscard` now contains it and reports the same typed refusal.
 

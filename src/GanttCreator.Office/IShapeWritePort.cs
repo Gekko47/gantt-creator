@@ -100,7 +100,11 @@ public interface IShapeWritePort
     /// the existing shape; the adapter never renames a shape on update, because
     /// the name is the reconciliation key.
     /// </param>
-    /// <returns>The typed result; on a refusal nothing was mutated.</returns>
+    /// <returns>
+    /// The typed result. A shape that is not found is
+    /// <see cref="ShapeWriteRefusal.NotFound"/> rather than a silent success, so
+    /// R4.7 can distinguish "already absent" from "updated".
+    /// </returns>
     /// <remarks>
     /// <para>
     /// An update re-applies the <strong>geometry of every kind</strong> and, for
@@ -108,6 +112,26 @@ public interface IShapeWritePort
     /// tokens, and the resolved alignment. Those are owned generated data, so a
     /// shape that must match a new scene has to be able to say the new thing, not
     /// merely move to the new place.
+    /// </para>
+    /// <para>
+    /// <strong>A refusal here is not a rollback.</strong> The geometry is applied
+    /// before the content and the style, and a host that then refuses either write
+    /// is reported as <see cref="ShapeWriteRefusal.HostRejected"/> with the shape
+    /// <em>already moved</em> and its old content or colour still in place. The
+    /// contract is deliberately asymmetric with <see cref="Create"/>, which
+    /// discards a shape it could not finish: a shape that was found rather than
+    /// created belongs to a previous render, and deleting and recreating it to
+    /// undo a refusal would discard the user's work the moment the host was briefly
+    /// busy. The shape stays on the sheet under its ownership tag, so the next
+    /// reconcile reaches it again. Callers must therefore treat a refusal as "this
+    /// shape is not yet correct", not as "nothing happened", and must not roll
+    /// forward past one.
+    /// </para>
+    /// <para>
+    /// A scene value with no host mapping is <em>not</em> a refusal and is not
+    /// caught: it raises <see cref="ArgumentOutOfRangeException"/> from the
+    /// adapter, because it is a drift defect between the entity guide and the
+    /// mapping rather than a host failure.
     /// </para>
     /// <para>
     /// Two members are deliberately NOT rewritten. <see cref="OfficeShapeRequest.PrimitiveId"/>
