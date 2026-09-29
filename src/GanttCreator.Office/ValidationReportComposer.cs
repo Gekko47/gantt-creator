@@ -276,22 +276,39 @@ internal static class ValidationReportComposer
     /// The text unchanged when it fits, otherwise the clamped prefix followed by
     /// <see cref="TruncationMarker"/>.
     /// </returns>
-    internal static string Truncate(string text)
+    internal static string Truncate(string text) => Truncate(text, MaxNoteLength);
+
+    /// <summary>
+    /// Clamps text to an arbitrary budget, the same surrogate-safe way
+    /// <see cref="Truncate(string)"/> clamps to <see cref="MaxNoteLength"/>.
+    /// Used where only part of a note is the add-in's to clip, so the caller
+    /// must budget around the part it must preserve.
+    /// </summary>
+    /// <param name="text">The text to clamp.</param>
+    /// <param name="maxLength">
+    /// The maximum length of the result. A budget too small to hold both content
+    /// and <see cref="TruncationMarker"/> keeps the content alone and drops the
+    /// marker, so the result never exceeds <paramref name="maxLength"/>.
+    /// </param>
+    /// <returns>The text unchanged when it fits, otherwise a clamped prefix.</returns>
+    internal static string Truncate(string text, int maxLength)
     {
-        if (text.Length <= MaxNoteLength)
+        if (text.Length <= maxLength)
         {
             return text;
         }
 
-        var budget = MaxNoteLength - TruncationMarker.Length;
+        // Reserve the marker only when the budget can also hold content.
+        var marker = maxLength > TruncationMarker.Length ? TruncationMarker : string.Empty;
+        var budget = maxLength - marker.Length;
         // A cut landing between a high and low surrogate would leave invalid
         // UTF-16; back up one unit so the last kept unit is a complete pair.
-        if (char.IsHighSurrogate(text[budget - 1]))
+        if (budget > 0 && char.IsHighSurrogate(text[budget - 1]))
         {
             budget--;
         }
 
-        return string.Concat(text.AsSpan(0, budget), TruncationMarker);
+        return string.Concat(text.AsSpan(0, Math.Max(budget, 0)), marker);
     }
 
     /// <summary>

@@ -250,6 +250,28 @@ public class ExcelGanttValidationReporter(
         var combined = userText.Length == 0
             ? text
             : userText + Environment.NewLine + text;
+        if (combined.Length > ValidationReportComposer.MaxNoteLength)
+        {
+            // The add-in section (`text`) is already within MaxNoteLength on its
+            // own -- GroupIntoNotes guarantees it. So when the *combined* text
+            // overflows, the pre-existing user text is the only possible source,
+            // and the user's contribution is the only part that may be clipped.
+            // Clipping is done through the same surrogate-safe Truncate the
+            // composer uses for its own section, so a cut can never land inside
+            // a surrogate pair and leave text Excel would reject. The ownership
+            // sentinel lives inside `text`, which is never clipped, so it always
+            // survives and a later run still recognises the section as the
+            // add-in's.
+            var budget = ValidationReportComposer.MaxNoteLength
+                - text.Length
+                - Environment.NewLine.Length;
+            userText = budget > 0
+                ? ValidationReportComposer.Truncate(userText, budget)
+                : string.Empty;
+            combined = userText.Length == 0
+                ? text
+                : userText + Environment.NewLine + text;
+        }
 
         // Start omitted replaces the whole note text, so a repeat run cannot
         // accumulate duplicate sections and no trailing text can survive.

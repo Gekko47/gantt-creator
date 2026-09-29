@@ -299,6 +299,65 @@ public class ValidationReportComposerTests
     }
 
     [Fact]
+    public void Truncate_with_an_arbitrary_budget_stays_within_that_budget()
+    {
+        // The budget overload exists so a caller preserving part of a note can
+        // clip its own contribution to whatever room is left. The result must
+        // respect the supplied budget, not MaxNoteLength.
+        string text = new string('x', 400);
+
+        string clipped = ValidationReportComposer.Truncate(text, 40);
+
+        Assert.Equal(40, clipped.Length);
+        Assert.EndsWith(ValidationReportComposer.TruncationMarker, clipped, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Truncate_with_a_budget_too_small_for_the_marker_drops_the_marker()
+    {
+        // A budget at or below the marker length cannot hold both content and the
+        // marker. The result must still respect the budget, so the marker is
+        // dropped rather than appended past the limit.
+        string text = new string('x', 400);
+
+        string clipped = ValidationReportComposer.Truncate(text, 2);
+
+        Assert.Equal(2, clipped.Length);
+        Assert.DoesNotContain(ValidationReportComposer.TruncationMarker, clipped, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Truncate_with_an_arbitrary_budget_never_splits_a_surrogate_pair()
+    {
+        // The budget overload must carry the same Unicode safety as the
+        // MaxNoteLength overload: a cut landing on a high surrogate would leave
+        // invalid UTF-16 that Excel rejects.
+        var builder = new System.Text.StringBuilder();
+        _ = builder.Append('x');
+        while (builder.Length <= 40)
+        {
+            _ = builder.Append("\U0001F600");
+        }
+
+        string clipped = ValidationReportComposer.Truncate(builder.ToString(), 40);
+
+        Assert.True(clipped.Length <= 40);
+        var markerStart = clipped.Length - ValidationReportComposer.TruncationMarker.Length;
+        Assert.False(char.IsHighSurrogate(clipped[markerStart - 1]));
+        Assert.False(char.IsLowSurrogate(clipped[0]));
+    }
+
+    [Fact]
+    public void Truncate_with_a_non_positive_budget_yields_no_content()
+    {
+        // The degenerate budget: the caller has no room at all. The result must
+        // be empty rather than an out-of-range span.
+        string clipped = ValidationReportComposer.Truncate(new string('x', 400), 0);
+
+        Assert.Empty(clipped);
+    }
+
+    [Fact]
     public void StripOwnedSection_returns_the_user_text_before_the_marker()
     {
         // Excel allows one classic note per cell, so the add-in section is
