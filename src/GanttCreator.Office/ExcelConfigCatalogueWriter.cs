@@ -55,6 +55,39 @@ public class ExcelConfigCatalogueWriter(
         IReadOnlyList<object?[]> UserStyleRows,
         string? WorkbookId);
 
+    /// <summary>
+    /// One catalogue table's state as it was before <see cref="Write"/> ran,
+    /// captured read-only so a mid-sequence host failure can be undone.
+    /// </summary>
+    /// <param name="Anchor">The anchor cell address the table is written at.</param>
+    /// <param name="TableName">The contract table name.</param>
+    /// <param name="Existed">
+    /// Whether the table was present before this call. A table that did not
+    /// exist is removed on rollback; one that did is rewritten from
+    /// <paramref name="Headers"/> and <paramref name="Body"/>.
+    /// </param>
+    /// <param name="Headers">The prior header row, empty when absent.</param>
+    /// <param name="Body">The prior body rows, empty when absent.</param>
+    private sealed record TableSnapshot(
+        string Anchor,
+        string TableName,
+        bool Existed,
+        string[] Headers,
+        List<object?[]> Body);
+
+    /// <summary>
+    /// The five contract table names in write order, used to capture prior
+    /// state before the first mutation.
+    /// </summary>
+    private static readonly string[] _contractTableNames =
+    [
+        GanttCatalogues.TypesTableName,
+        GanttCatalogues.StylesTableName,
+        GanttCatalogues.MetricsTableName,
+        GanttCatalogues.SettingsTableName,
+        GanttCatalogues.ConfigTableName,
+    ];
+
     /// <inheritdoc />
     public ConfigWriteOutcome Write()
     {
@@ -100,42 +133,39 @@ public class ExcelConfigCatalogueWriter(
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
         }
 
+        // Read-only capture of every table's prior state, before the first
+        // mutation, so a host failure partway through the sequence can be
+        // undone. This is the transactional counterpart of the per-step
+        // rollback in ExcelWorkbookInitialiser.
+        List<TableSnapshot> snapshots = CapturePriorState(config);
+
+        // The extent each table was written over, recorded as it is written so
+        // a rollback can clear the cells of a table that did not exist before
+        // (WriteOrReplaceTable writes the cell values before it creates the
+        // list object, so a throw can leave cells behind with no table).
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+
         // Mutation phase: per-table delete-and-recreate under one
         // DisplayAlerts save/restore (table deletion prompts).
         var original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
-            WriteOrReplaceTable(
-                config,
-                GanttCatalogues.TypesAnchor,
-                GanttCatalogues.TypesTableName,
-                GanttCatalogues.TypesHeaders,
-                BuildTypeRows());
-            WriteOrReplaceTable(
-                config,
-                GanttCatalogues.StylesAnchor,
-                GanttCatalogues.StylesTableName,
-                GanttCatalogues.StylesHeaders,
-                BuildStyleRows(preservation.UserStyleRows));
-            WriteOrReplaceTable(
-                config,
-                GanttCatalogues.MetricsAnchor,
-                GanttCatalogues.MetricsTableName,
-                GanttCatalogues.MetricsHeaders,
-                BuildMetricRows());
-            WriteOrReplaceTable(
-                config,
-                GanttCatalogues.SettingsAnchor,
-                GanttCatalogues.SettingsTableName,
-                GanttCatalogues.SettingsHeaders,
-                BuildSettingRows(preservation.Settings));
-            WriteOrReplaceTable(
-                config,
-                GanttCatalogues.ConfigAnchor,
-                GanttCatalogues.ConfigTableName,
-                GanttCatalogues.ConfigHeaders,
-                BuildConfigRows(preservation.WorkbookId));
+            WriteContractTables(config, preservation, written);
+        }
+#pragma warning disable CA1031 // Deliberately broad: see the catch body.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // A host refusal reaching managed code is reported either as a
+            // COMException or, when it crosses the interop boundary, as an
+            // InvalidOperationException, and the host chooses which. The catch
+            // is broad so the rollback runs either way; it is not an
+            // ignore-and-continue, because the rollback is the whole point and
+            // a failure inside the rollback propagates rather than being
+            // swallowed.
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
         }
         finally
         {
@@ -143,6 +173,160 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return ConfigWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Writes the five contract tables in order, stopping at the first
+    /// failure, and records each table's extent as it is written.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <param name="preservation">The captured user content to preserve.</param>
+    /// <param name="written">Receives each written table's extent range.</param>
+    private void WriteContractTables(
+        Worksheet config,
+        CataloguePreservation preservation,
+        Dictionary<string, Excel.Range> written)
+    {
+        _ = WriteOrReplaceTable(
+            config,
+            GanttCatalogues.TypesAnchor,
+            GanttCatalogues.TypesTableName,
+            GanttCatalogues.TypesHeaders,
+            BuildTypeRows(),
+            written);
+        _ = WriteOrReplaceTable(
+            config,
+            GanttCatalogues.StylesAnchor,
+            GanttCatalogues.StylesTableName,
+            GanttCatalogues.StylesHeaders,
+            BuildStyleRows(preservation.UserStyleRows),
+            written);
+        _ = WriteOrReplaceTable(
+            config,
+            GanttCatalogues.MetricsAnchor,
+            GanttCatalogues.MetricsTableName,
+            GanttCatalogues.MetricsHeaders,
+            BuildMetricRows(),
+            written);
+        _ = WriteOrReplaceTable(
+            config,
+            GanttCatalogues.SettingsAnchor,
+            GanttCatalogues.SettingsTableName,
+            GanttCatalogues.SettingsHeaders,
+            BuildSettingRows(preservation.Settings),
+            written);
+        _ = WriteOrReplaceTable(
+            config,
+            GanttCatalogues.ConfigAnchor,
+            GanttCatalogues.ConfigTableName,
+            GanttCatalogues.ConfigHeaders,
+            BuildConfigRows(preservation.WorkbookId),
+            written);
+    }
+
+    /// <summary>
+    /// Captures every contract table's prior state, read-only, before the
+    /// first mutation. A table that is absent is recorded as absent so the
+    /// rollback removes it rather than leaving a newly created one behind.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <returns>One snapshot per contract table, in write order.</returns>
+    private List<TableSnapshot> CapturePriorState(Worksheet config)
+    {
+        var snapshots = new List<TableSnapshot>(_contractTableNames.Length);
+        foreach (var tableName in _contractTableNames)
+        {
+            ListObject? table = FindTable(config, tableName);
+            snapshots.Add(
+                table is null
+                    ? new TableSnapshot(AnchorFor(tableName), tableName, false, [], [])
+                    : new TableSnapshot(
+                        AnchorFor(tableName),
+                        tableName,
+                        true,
+                        [.. ReadHeaders(table)],
+                        ReadBodyRows(table)));
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>
+    /// Undoes a partially applied sequence, most-recently-written first. A
+    /// table that existed before is rewritten from its snapshot; a table that
+    /// did not is deleted and its cell extent cleared.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <param name="snapshots">The pre-write state, in write order.</param>
+    /// <param name="written">The extent each table was written over.</param>
+    /// <remarks>
+    /// A failure during restoration is deliberately not swallowed: the
+    /// no-mutation guarantee could not be honoured, so reporting a typed
+    /// refusal would falsely promise the workbook was untouched. The host
+    /// exception propagates to the command boundary instead.
+    /// </remarks>
+    private void RollBack(
+        Worksheet config,
+        List<TableSnapshot> snapshots,
+        Dictionary<string, Excel.Range> written)
+    {
+        for (var index = snapshots.Count - 1; index >= 0; index--)
+        {
+            TableSnapshot snapshot = snapshots[index];
+            if (snapshot.Existed)
+            {
+                _ = WriteOrReplaceTable(
+                    config,
+                    snapshot.Anchor,
+                    snapshot.TableName,
+                    [.. snapshot.Headers],
+                    snapshot.Body);
+                continue;
+            }
+
+            ListObject? created = FindTable(config, snapshot.TableName);
+            created?.Delete();
+
+            // Delete leaves the cell values behind, so the extent this call
+            // wrote over must be cleared explicitly.
+            if (written.TryGetValue(snapshot.TableName, out Excel.Range? extent))
+            {
+                ClearContents(extent);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The anchor address a contract table is written at.
+    /// </summary>
+    /// <param name="tableName">The contract table name.</param>
+    /// <returns>The anchor cell address.</returns>
+    private static string AnchorFor(string tableName) => tableName switch
+    {
+        GanttCatalogues.TypesTableName => GanttCatalogues.TypesAnchor,
+        GanttCatalogues.StylesTableName => GanttCatalogues.StylesAnchor,
+        GanttCatalogues.MetricsTableName => GanttCatalogues.MetricsAnchor,
+        GanttCatalogues.SettingsTableName => GanttCatalogues.SettingsAnchor,
+        _ => GanttCatalogues.ConfigAnchor,
+    };
+
+    /// <summary>
+    /// Reads a table's header row through the list-column seam.
+    /// </summary>
+    /// <param name="table">The table.</param>
+    /// <returns>The header names, in column order.</returns>
+    private List<string> ReadHeaders(ListObject table)
+    {
+        ListColumns columns = table.ListColumns;
+        var columnCount = columns.Count;
+        var headers = new List<string>(columnCount);
+        for (var index = 1; index <= columnCount; index++)
+        {
+            ListColumn column = GetColumnAt(columns, index);
+            headers.Add(column.Name);
+        }
+
+        return headers;
     }
 
     /// <summary>
@@ -286,12 +470,20 @@ public class ExcelConfigCatalogueWriter(
     /// <param name="tableName">The contract table name.</param>
     /// <param name="headers">The contract header row.</param>
     /// <param name="dataRows">The data rows (already merged with user content).</param>
-    private void WriteOrReplaceTable(
+    /// <param name="written">
+    /// Optional dictionary that records the extent written for each table, so
+    /// the rollback can clear the cells a deleted table left behind. The extent
+    /// is recorded before the table is added, because the add is the call the
+    /// host is most likely to refuse.
+    /// </param>
+    /// <returns>The extent range written.</returns>
+    private Excel.Range WriteOrReplaceTable(
         Worksheet config,
         string anchor,
         string tableName,
         string[] headers,
-        List<object?[]> dataRows)
+        List<object?[]> dataRows,
+        Dictionary<string, Excel.Range>? written = null)
     {
         ListObject? existing = FindTable(config, tableName);
         existing?.Delete();
@@ -324,8 +516,15 @@ public class ExcelConfigCatalogueWriter(
 
         extent.Value2 = matrix;
         ListObjects listObjects = GetListObjects(config);
+
+        // Record the extent before the add: if the add is what the host
+        // refuses, the rollback still needs to know which cells this call
+        // wrote so it can clear them.
+        written?[tableName] = extent;
+
         ListObject table = AddTable(listObjects, extent);
         table.Name = tableName;
+        return extent;
     }
 
     /// <summary>
@@ -545,6 +744,24 @@ public class ExcelConfigCatalogueWriter(
     /// <param name="index">The one-based table index.</param>
     /// <returns>The list object at the index.</returns>
     internal virtual ListObject GetTableAt(ListObjects listObjects, int index) => listObjects[index];
+
+    /// <summary>
+    /// Returns the list column at the one-based index. Test seam over the COM
+    /// parameterised <c>ListColumns.Item</c> property, used by the pre-write
+    /// header capture.
+    /// </summary>
+    /// <param name="columns">The table's list columns.</param>
+    /// <param name="index">The one-based column index.</param>
+    /// <returns>The list column at the index.</returns>
+    internal virtual ListColumn GetColumnAt(ListColumns columns, int index) => columns[index];
+
+    /// <summary>
+    /// Clears a range's contents without touching its formatting. Test seam
+    /// over the COM <c>Range.ClearContents</c> method, used by the rollback to
+    /// remove the cells a deleted table left behind.
+    /// </summary>
+    /// <param name="range">The range to clear.</param>
+    internal virtual void ClearContents(Excel.Range range) => range.ClearContents();
 
     /// <summary>
     /// Adds a table over the source range with header-name behaviour. Test

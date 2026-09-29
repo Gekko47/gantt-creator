@@ -85,6 +85,80 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_rolls_back_every_written_table_when_the_host_fails_mid_sequence()
+    {
+        // The host refuses the third table. The first two were already written,
+        // so both must be restored to exactly their prior state and the third
+        // must not survive. The outcome is a typed refusal, not an exception,
+        // so the command boundary reports it rather than a raw COM error.
+        var fake = new ConfigSheetFake();
+        var writer = ConfigGraph.BuildWriter(fake);
+        _ = writer.Write();
+
+        // Capture the good state written by the successful run, keyed by the
+        // table's current name.
+        var before = fake.Tables.ToDictionary(
+            t => t.CurrentName,
+            t => (Headers: t.Headers.ToArray(), Rows: t.Body.Count));
+
+        // Now fail on the second table of a fresh run over the same sheet.
+        fake.FailAddAt(2);
+        var outcome = writer.Write();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.HostRejected, outcome.Refusal);
+
+        // The sheet is back to its complete pre-call state: all five tables
+        // present, each with the headers and row count it had before. The
+        // tables are found by current name, not position, because restoring one
+        // deletes and re-adds it, moving it to the end of the order.
+        Assert.Equal(5, fake.Tables.Count);
+        foreach (var (name, state) in before)
+        {
+            ConfigSheetFake.TableFake table = Assert.Single(
+                fake.Tables, t => t.CurrentName == name);
+            Assert.Equal(state.Headers, table.Headers);
+            Assert.Equal(state.Rows, table.Body.Count);
+        }
+    }
+
+    [Fact]
+    public void Write_clears_the_cells_of_a_table_it_created_when_the_roll_back_runs()
+    {
+        // When a table did not exist before the call, rollback removes the new
+        // table AND clears the cell values underneath it, because the writer
+        // writes the extent before it creates the list object.
+        var fake = new ConfigSheetFake();
+        var writer = ConfigGraph.BuildWriter(fake);
+        fake.FailAddAt(1);
+
+        var outcome = writer.Write();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.HostRejected, outcome.Refusal);
+        // The failed table was never created, so nothing to delete...
+        Assert.DoesNotContain(fake.Tables, t => t.Name == GanttCatalogues.TypesTableName);
+        // ...but its cells were written and must be cleared.
+        Assert.NotEmpty(fake.ClearedRanges);
+    }
+
+    [Fact]
+    public void Write_rolls_back_to_no_tables_when_the_first_table_write_fails_on_an_empty_sheet()
+    {
+        // A fresh sheet with no tables: failing the first write must leave the
+        // sheet with no tables at all, not a partial set.
+        var fake = new ConfigSheetFake();
+        var writer = ConfigGraph.BuildWriter(fake);
+        fake.FailAddAt(1);
+
+        var outcome = writer.Write();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.HostRejected, outcome.Refusal);
+        Assert.Empty(fake.Tables);
+    }
+
+    [Fact]
     public void Write_keeps_the_workbook_id_stable_across_regeneration()
     {
         var first = new ConfigSheetFake();

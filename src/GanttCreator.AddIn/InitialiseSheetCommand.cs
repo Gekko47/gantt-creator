@@ -98,6 +98,9 @@ internal static class InitialiseSheetCommand
             + "Check both target worksheet protection and workbook structure protection, then try again.",
         InitialiseRefusalReason.CatalogueDrift =>
             "Initialise sheet could not verify the Gantt Creator configuration. Repair the configuration and try again.",
+        InitialiseRefusalReason.CatalogueWriteFailed =>
+            "Excel refused to write the Gantt Creator configuration, so nothing was changed. "
+            + "Close any open dialogs, check that Excel is not busy, then try again.",
         _ => "Initialise sheet could not run. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 #pragma warning restore IDE0060 // Remove unused parameter
