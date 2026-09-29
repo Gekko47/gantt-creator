@@ -64,22 +64,21 @@ public class DestructiveCommandPolicyTests
     [Fact]
     public void BuildConfirmationText_pins_the_caption()
     {
-        string text = DestructiveCommandPolicy.BuildConfirmationText(
+        ConfirmationText text = DestructiveCommandPolicy.BuildConfirmationText(
             CommandClass.ClearTableBody);
 
-        Assert.StartsWith("caption=Gantt Creator", text, StringComparison.Ordinal);
+        Assert.Equal(DestructiveCommandPolicy.ConfirmationCaption, text.Caption);
     }
 
     [Fact]
     public void BuildConfirmationText_pins_the_main_instruction()
     {
-        string text = DestructiveCommandPolicy.BuildConfirmationText(
+        ConfirmationText text = DestructiveCommandPolicy.BuildConfirmationText(
             CommandClass.ClearTableBody);
 
-        Assert.Contains(
-            "mainInstruction=Gantt Creator is about to make a destructive change",
-            text,
-            StringComparison.Ordinal);
+        Assert.Equal(
+            DestructiveCommandPolicy.ConfirmationMainInstruction,
+            text.MainInstruction);
     }
 
     [Fact]
@@ -87,14 +86,12 @@ public class DestructiveCommandPolicyTests
     {
         // ADR-0008 D3/D2: the body must explicitly state the change cannot be
         // undone, using exactly that phrasing.
-        string text = DestructiveCommandPolicy.BuildConfirmationText(
+        ConfirmationText text = DestructiveCommandPolicy.BuildConfirmationText(
             CommandClass.ClearTableBody);
 
-        // The body is the third field; assert the exact line is present as a
-        // complete sentence.
         Assert.Contains(
             "This change cannot be undone.",
-            text,
+            text.Body,
             StringComparison.Ordinal);
     }
 
@@ -106,9 +103,9 @@ public class DestructiveCommandPolicyTests
         // workbook state. Proved by building the text twice and asserting
         // exact equality (deterministic), then asserting it contains no numeric
         // row/row-count/token that could only come from a workbook.
-        string first = DestructiveCommandPolicy.BuildConfirmationText(
+        ConfirmationText first = DestructiveCommandPolicy.BuildConfirmationText(
             CommandClass.ClearTableBody);
-        string second = DestructiveCommandPolicy.BuildConfirmationText(
+        ConfirmationText second = DestructiveCommandPolicy.BuildConfirmationText(
             CommandClass.ClearTableBody);
 
         Assert.Equal(first, second);
@@ -121,18 +118,18 @@ public class DestructiveCommandPolicyTests
         // Concretely: the ClearTableBody body is exactly
         // "Clear table body will delete all rows from the Gantt data table.
         // This change cannot be undone." — no count.
-        string bodyField = ExtractBodyField(first);
+        string body = first.Body;
 
-        Assert.DoesNotContain('0', bodyField);
-        Assert.DoesNotContain('1', bodyField);
-        Assert.DoesNotContain('2', bodyField);
-        Assert.DoesNotContain('3', bodyField);
-        Assert.DoesNotContain('4', bodyField);
-        Assert.DoesNotContain('5', bodyField);
-        Assert.DoesNotContain('6', bodyField);
-        Assert.DoesNotContain('7', bodyField);
-        Assert.DoesNotContain('8', bodyField);
-        Assert.DoesNotContain('9', bodyField);
+        Assert.DoesNotContain('0', body);
+        Assert.DoesNotContain('1', body);
+        Assert.DoesNotContain('2', body);
+        Assert.DoesNotContain('3', body);
+        Assert.DoesNotContain('4', body);
+        Assert.DoesNotContain('5', body);
+        Assert.DoesNotContain('6', body);
+        Assert.DoesNotContain('7', body);
+        Assert.DoesNotContain('8', body);
+        Assert.DoesNotContain('9', body);
     }
 
     [Theory]
@@ -142,25 +139,21 @@ public class DestructiveCommandPolicyTests
     public void BuildConfirmationText_builds_a_complete_confirmation_for_every_command(
         CommandClass commandClass)
     {
-        string text = DestructiveCommandPolicy.BuildConfirmationText(commandClass);
+        ConfirmationText text = DestructiveCommandPolicy.BuildConfirmationText(commandClass);
 
-        // A complete confirmation has three fields: caption, mainInstruction,
-        // body.
-        string[] fields = text.Split('\n', StringSplitOptions.None);
-        Assert.Equal(3, fields.Length);
-
-        Assert.StartsWith("caption=", fields[0], StringComparison.Ordinal);
-        Assert.StartsWith("mainInstruction=", fields[1], StringComparison.Ordinal);
-        Assert.StartsWith("body=", fields[2], StringComparison.Ordinal);
+        // A complete confirmation carries all three dialog fields.
+        Assert.Equal(DestructiveCommandPolicy.ConfirmationCaption, text.Caption);
+        Assert.Equal(DestructiveCommandPolicy.ConfirmationMainInstruction, text.MainInstruction);
+        Assert.NotEmpty(text.Body);
 
         // The body names the command.
         string commandName = DestructiveCommandPolicy.CommandDisplayName(commandClass);
-        Assert.Contains(commandName, ExtractBodyField(text), StringComparison.Ordinal);
+        Assert.Contains(commandName, text.Body, StringComparison.Ordinal);
 
         // The body states the no-undo line.
         Assert.Contains(
             "This change cannot be undone.",
-            ExtractBodyField(text),
+            text.Body,
             StringComparison.Ordinal);
     }
 
@@ -232,35 +225,20 @@ public class DestructiveCommandPolicyTests
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
 
-            string text = DestructiveCommandPolicy.BuildConfirmationText(
+            ConfirmationText text = DestructiveCommandPolicy.BuildConfirmationText(
                 CommandClass.ClearTableBody);
 
             // The pinned English phrasing must still appear exactly; culture-
             // invariant formatting must not localise the body.
             Assert.Contains(
                 "This change cannot be undone.",
-                text,
+                text.Body,
                 StringComparison.Ordinal);
-            Assert.StartsWith("caption=Gantt Creator", text, StringComparison.Ordinal);
+            Assert.Equal(DestructiveCommandPolicy.ConfirmationCaption, text.Caption);
         }
         finally
         {
             CultureInfo.CurrentCulture = original;
         }
     }
-
-    // ---- Helpers ----
-
-    /// <summary>
-    /// Extracts the body field from the three-field confirmation text.
-    /// </summary>
-    private static string ExtractBodyField(string text)
-    {
-        string[] fields = text.Split('\n', StringSplitOptions.None);
-        Assert.Equal(3, fields.Length);
-        // body=...  -> strip the prefix.
-        return fields[2].Substring(StartingLength("body="));
-    }
-
-    private static int StartingLength(string prefix) => prefix.Length;
 }

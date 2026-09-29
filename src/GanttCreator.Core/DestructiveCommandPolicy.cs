@@ -35,6 +35,20 @@ namespace GanttCreator.Core;
 public static class DestructiveCommandPolicy
 {
     /// <summary>
+    /// The dialog caption presented for every destructive-command confirmation.
+    /// Constant across all command classes, so it is declared once here rather
+    /// than repeated per command.
+    /// </summary>
+    public const string ConfirmationCaption = "Gantt Creator";
+
+    /// <summary>
+    /// The dialog main instruction presented for every destructive-command
+    /// confirmation. Constant across all command classes.
+    /// </summary>
+    public const string ConfirmationMainInstruction =
+        "Gantt Creator is about to make a destructive change";
+
+    /// <summary>
     /// The recognised destructive-command classes. Each future mutating command
     /// picks exactly one; the classification drives whether a confirmation is
     /// required and what the "cannot be undone" line must say.
@@ -138,11 +152,11 @@ public static class DestructiveCommandPolicy
     /// The full confirmation body, including the no-undo line. Ready to hand to
     /// the confirmation dialog.
     /// </returns>
-    /// <exception cref="ArgumentNullException">
+    /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="commandClass"/> is unrecognised, per
     /// <see cref="Classify(CommandClass)"/>.
     /// </exception>
-    public static string BuildConfirmationText(CommandClass commandClass)
+    public static ConfirmationText BuildConfirmationText(CommandClass commandClass)
     {
         // Validate the classification first so the text is always built for a
         // recognised command.
@@ -155,9 +169,6 @@ public static class DestructiveCommandPolicy
         // undone, using exactly that phrasing. The exact line is pinned in test
         // so it cannot drift.
         const string noUndoLine = "This change cannot be undone.";
-        const string caption = "Gantt Creator";
-        const string mainInstruction =
-            "Gantt Creator is about to make a destructive change";
 
         // Count-only body: the text names the command and its subject but never
         // enumerates row counts, table sizes, or catalogue row counts from the
@@ -166,9 +177,7 @@ public static class DestructiveCommandPolicy
             CultureInfo.InvariantCulture,
             $"{commandName} {subject}. {noUndoLine}");
 
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"caption={caption}\nmainInstruction={mainInstruction}\nbody={body}");
+        return new ConfirmationText(ConfirmationCaption, ConfirmationMainInstruction, body);
     }
 
     /// <summary>
@@ -222,3 +231,25 @@ public static class DestructiveCommandPolicy
                 "Unrecognised destructive-command class."),
         };
 }
+
+/// <summary>
+/// The three fields a destructive-command confirmation dialog renders, built
+/// by <see cref="DestructiveCommandPolicy.BuildConfirmationText(DestructiveCommandPolicy.CommandClass)"/>.
+/// </summary>
+/// <remarks>
+/// A record rather than a single formatted string: the dialog needs three
+/// separate fields, and encoding them into one newline-delimited string would
+/// make the boundary ambiguous the moment any field could contain a newline.
+/// <see cref="Caption"/> and <see cref="MainInstruction"/> are the same for
+/// every command; only <see cref="Body"/> varies.
+/// </remarks>
+/// <param name="Caption">The dialog caption.</param>
+/// <param name="MainInstruction">The dialog's main instruction line.</param>
+/// <param name="Body">
+/// The dialog body, naming the command and its subject and stating the exact
+/// no-undo line (ADR-0008 D3/D2).
+/// </param>
+public sealed record ConfirmationText(
+    string Caption,
+    string MainInstruction,
+    string Body);
