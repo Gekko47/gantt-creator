@@ -32,11 +32,18 @@ public class DestructiveCommandPolicyTests
     {
         // An unrecognised value (outside the three supported classes) is a
         // programmer error: the policy layer must throw rather than silently
-        // returning no confirmation.
+        // returning no confirmation. The default 0 value is NOT unrecognised —
+        // it is the valid, named class ClearTableBody (pinned by the theory
+        // above) — so only an out-of-set value may reach the throw.
         CommandClass unrecognised = (CommandClass)99;
 
-        Assert.Throws<ArgumentNullException>(
+        ArgumentOutOfRangeException error = Assert.Throws<ArgumentOutOfRangeException>(
             () => DestructiveCommandPolicy.Classify(unrecognised));
+
+        // The parameter and the offending value must travel with the throw, so
+        // a caller can tell which class was rejected.
+        Assert.Equal("commandClass", error.ParamName);
+        Assert.Equal(unrecognised, error.ActualValue);
     }
 
     [Fact]
@@ -48,7 +55,7 @@ public class DestructiveCommandPolicyTests
         const int badValue = 255;
         CommandClass bad = (CommandClass)badValue;
 
-        Assert.Throws<ArgumentNullException>(
+        Assert.Throws<ArgumentOutOfRangeException>(
             () => DestructiveCommandPolicy.Classify(bad));
     }
 
@@ -165,7 +172,7 @@ public class DestructiveCommandPolicyTests
         // returning no confirmation.
         CommandClass unrecognised = (CommandClass)99;
 
-        Assert.Throws<ArgumentNullException>(
+        Assert.Throws<ArgumentOutOfRangeException>(
             () => DestructiveCommandPolicy.BuildConfirmationText(unrecognised));
     }
 
@@ -189,7 +196,7 @@ public class DestructiveCommandPolicyTests
         // returning no confirmation.
         CommandClass unrecognised = (CommandClass)99;
 
-        Assert.Throws<ArgumentNullException>(
+        Assert.Throws<ArgumentOutOfRangeException>(
             () => DestructiveCommandPolicy.CommandDisplayName(unrecognised));
     }
 
@@ -211,7 +218,7 @@ public class DestructiveCommandPolicyTests
         // returning no confirmation.
         CommandClass unrecognised = (CommandClass)99;
 
-        Assert.Throws<ArgumentNullException>(
+        Assert.Throws<ArgumentOutOfRangeException>(
             () => DestructiveCommandPolicy.CommandSubject(unrecognised));
     }
 

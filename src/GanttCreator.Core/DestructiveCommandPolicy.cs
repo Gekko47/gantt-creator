@@ -92,18 +92,24 @@ public static class DestructiveCommandPolicy
     /// The confirmation kind the command must present. For every supported
     /// command today this is <see cref="ConfirmationKind.DestructiveButConfirmed"/>.
     /// </returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="commandClass"/> is the default
-    /// <c>0</c> value and no command class was specified — callers that
-    /// construct an unclassified command have made a programmer error.
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values. The default <c>0</c> value is a valid, named class
+    /// (<see cref="CommandClass.ClearTableBody"/>) and does not trigger this
+    /// exception.
     /// </exception>
     /// <remarks>
     /// <para>
-    /// The <see cref="ArgumentNullException"/> guard is intentional: a
-    /// destructive command that reaches the policy layer without a class is a
-    /// missing-classification defect, not a routine "no confirmation" case. The
-    /// guard makes that defect loud at the call site instead of silently
-    /// skipping the confirmation.
+    /// The guard is intentional: a destructive command that reaches the policy
+    /// layer without a class is a missing-classification defect, not a routine
+    /// "no confirmation" case. The guard makes that defect loud at the call
+    /// site instead of silently skipping the confirmation.
+    /// </para>
+    /// <para>
+    /// It is an <see cref="ArgumentOutOfRangeException"/> rather than an
+    /// <see cref="ArgumentNullException"/> because <paramref name="commandClass"/>
+    /// is a non-nullable value type: a caller cannot pass "no class" at all,
+    /// only a value outside the supported set.
     /// </para>
     /// </remarks>
     public static ConfirmationKind Classify(CommandClass commandClass) =>
@@ -113,8 +119,9 @@ public static class DestructiveCommandPolicy
             CommandClass.RecolumniseTable or
             CommandClass.ResetCatalogues => ConfirmationKind.DestructiveButConfirmed,
 
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class; every destructive command must be classified."),
         };
 
@@ -172,14 +179,19 @@ public static class DestructiveCommandPolicy
     /// <returns>
     /// The display name, e.g. "Clear table body".
     /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values, per <see cref="Classify(CommandClass)"/>.
+    /// </exception>
     public static string CommandDisplayName(CommandClass commandClass) =>
         commandClass switch
         {
             CommandClass.ClearTableBody => "Clear table body",
             CommandClass.RecolumniseTable => "Recolumnise table",
             CommandClass.ResetCatalogues => "Reset configuration catalogues",
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class."),
         };
 
@@ -191,6 +203,10 @@ public static class DestructiveCommandPolicy
     /// <returns>
     /// The subject phrase, e.g. "will delete all rows from the Gantt data table."
     /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values, per <see cref="Classify(CommandClass)"/>.
+    /// </exception>
     public static string CommandSubject(CommandClass commandClass) =>
         commandClass switch
         {
@@ -200,8 +216,9 @@ public static class DestructiveCommandPolicy
                 "will recreate the Gantt data table with the current columns.",
             CommandClass.ResetCatalogues =>
                 "will restore the configuration catalogues to their defaults.",
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class."),
         };
 }
