@@ -7,7 +7,15 @@
 > repo path claimed here does not exist, or when a roadmap ID here is absent
 > from `docs/03-ROADMAP.md`.
 
-- **Three test defects: one that could not fail, one that reported a pass as a fail, and a duplicate (this change)** — all three were found by checking the tests against the code they claim to cover, and two of them only became visible when the live Office gate was actually run.
+- **The COM-proxy ratchet is blocked on determinism, not on the ceiling (this change)** — a review asked for `MaxForcedKills` to be brought down to the measured count once `OfficeFixture.SuppressLeakSignal` had been adopted. The suppressions **are** adopted, on all seven tests that force a kill on purpose. The ceiling was still not lowered, because the measurement does not support it.
+
+  Three full 46-test runs of that tree measured **24, 26 and 26** (2026-09-28, Office `16.0.20326.20158` x64), matching the 24/25/26 spread already on record. A ceiling of 24 was set and the next run measured 26 and **failed the gate on a suite that was 46/46 green** — a gate that fails at random detects nothing. So 26 stands: the highest value observed, and the only defensible upper bound for a load-dependent signal. This is a refusal to make the requested change, made on evidence rather than caution.
+
+  What did change is the reasoning around the number. The script comment still said adopting `SuppressLeakSignal` was "the next step" and that the ratchet's downward direction was not restored — both untrue now that the suppressions have landed. L19 said the same and named a remedy that has since been carried out without moving the measurement. Both now describe the suppressions as **landed**, the ceiling as **blocked on determinism**, and the real next step: per-test kill attribution in the forced-kill log, so the next person can see *which* teardown escalates rather than only how many did. That is what determinism needs before a ceiling can mean anything.
+
+  Observed: `pwsh ./scripts/verify-office.ps1` → **`verify-office: PASS`, 46/46**, leak signal 26 against the ceiling of 26; `test-scripts.ps1` exit 0; `check-md-links` and `check-status` PASS. No product code changed. Checklist: C, J, K.
+
+- **Three test defects: one that could not fail, one that reported a pass as a fail, and a duplicate (commit `794bc9d`)** — all three were found by checking the tests against the code they claim to cover, and two of them only became visible when the live Office gate was actually run.
 
   **`A_failing_technical_record_sink_never_escapes_the_dispose` was proving nothing.** It drove a bare `ExcelApplicationStateScope` over a `Mock<Excel.Application>`, whose `ScreenUpdating` reads as `false`; so `SuppressScreenUpdating` captured nothing, `Dispose` restored nothing, `Report` was never called, and the throwing sink was never invoked. The test would have passed with the catch in `Report` deleted. It now uses `TestableScope` with an injected `ScreenUpdating` restore failure — the only thing that reaches the sink — and asserts the sink was called **once**. That count is the load-bearing part: removing the injection fails the test, which is how the old vacuity was confirmed rather than assumed.
 

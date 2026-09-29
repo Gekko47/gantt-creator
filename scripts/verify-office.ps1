@@ -31,27 +31,29 @@ param(
     # The number counts real test teardowns only -- a test that forces a kill
     # deliberately sets OfficeFixture.SuppressLeakSignal and is excluded.
     #
-    # RAISED 24 -> 26 on 2026-09-27 (product owner decision), and the direction
-    # of this ratchet is therefore NOT yet restored -- treat 26 as a temporary
-    # ceiling, not a new baseline. Two facts, recorded so the next person does
-    # not have to re-derive them:
-    #   1. R4.1's live AlternativeText probe
-    #      (ShapeOwnershipTagIntegrationTests) creates a real shape through the
-    #      real ExcelShapeWriter, because the probe's whole purpose is to write a
-    #      real tag and read it back off a live shape. A workbook holding a live
-    #      shape keeps the process alive, so that test legitimately needs a kill.
-    #   2. The measured count is NOT deterministic: repeated runs of the
-    #      identical tree produced 24, 25 and 26. The signal is load-dependent,
-    #      so 24 was already marginal against a 39-test suite and the excess was
-    #      never the deterministic off-by-one it first appeared to be.
-    # A production-side "fix" was considered and rejected: ExcelShapeWriter
-    # documents that it force-releases nothing, because its proxies are
-    # Excel-owned shared roots (AGENTS.md COM ownership). Releasing them to
-    # satisfy a counter would violate that rule rather than fix a leak. The
-    # alternative already built into this harness is OfficeFixture
-    # .SuppressLeakSignal, which excludes a test that intentionally forces a
-    # kill; adopting that is tracked as the next step, after which this ceiling
-    # can come back down. Do not raise it again without that evidence.
+    # L19's remedy LANDED on 2026-09-28: all seven tests that force an escalation
+    # on purpose now set OfficeFixture.SuppressLeakSignal -- ShapeOwnershipTag,
+    # ShapeRender, StyleRender, TextRender (x2), PolygonRender, RefreshIdempotence
+    # -- so a deliberate kill no longer counts against the signal.
+    #
+    # The ceiling is NOT lowered, because the measurement does not support it.
+    # Three full runs of the tree with the suppressions in place measured 24, 26
+    # and 26, and earlier identical trees measured 24, 25 and 26. A ceiling of 24
+    # was tried: the next run measured 26 and failed the gate on a suite that was
+    # 46/46 green. A gate that fails at random detects nothing, so 26 - the highest
+    # value observed - is the only defensible upper bound.
+    #
+    # That is a real limitation of the ratchet, not a settled position: a ceiling
+    # that cannot move until the signal becomes deterministic cannot enforce the
+    # stated end state of 0. Determinism has to come first, and it needs a
+    # measurement, not a number. A production-side "fix" was considered and
+    # rejected: ExcelShapeWriter documents that it force-releases nothing, because
+    # its proxies are Excel-owned shared roots (AGENTS.md COM ownership).
+    # Releasing them to satisfy a counter would violate that rule rather than fix
+    # a leak.
+    # Do not raise it above 26, and do not lower it below 26 without a run whose
+    # kill count is at or under the proposed figure -- a raise would mean the
+    # signal has stopped detecting regressions at all.
     [int]$MaxForcedKills = 26
 )
 
