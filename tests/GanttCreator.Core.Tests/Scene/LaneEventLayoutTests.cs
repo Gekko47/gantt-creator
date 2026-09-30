@@ -37,18 +37,21 @@ public sealed class LaneEventLayoutTests
     }
 
     [Fact]
-    public void Grows_the_lane_when_stacked_content_exceeds_the_minimum_height()
+    public void The_lane_height_is_fixed_when_stacked_content_exceeds_it()
     {
+        // R4.7D / ADR-0026 D7. This previously asserted the lane grew from an
+        // 18pt minimum to 34pt. Growth is removed: the height is the managed row
+        // height, and the overflow is reported instead of accommodated. Every
+        // event still receives a placement, so the feed stays complete.
         LaneEventInput[] events = [Input(1, 1), Input(2, 2), Input(3, 3)];
 
         LaneLayoutResult layout = Lane(events);
         LaneEventLayoutResult result = Layout(events, layout);
 
-        // Three 8pt slots plus two 2pt gaps and 6pt of padding is 34pt, so the
-        // lane grew past the 18pt minimum rather than compressing the events.
         LaneGeometry lane = Assert.Single(layout.Lanes);
-        Assert.Equal(34, lane.Height);
+        Assert.Equal(_metrics.LaneHeightPt, lane.Height);
         Assert.Equal(3, result.Placements.Count);
+        Assert.Contains(layout.Warnings, w => w.Code == LaneLayoutBuilder.LaneContentExceedsLaneHeightCode);
     }
 
     [Fact]

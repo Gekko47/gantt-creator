@@ -35,14 +35,13 @@ Applies to: `GanttCreator.Core` scene construction, layout, clipping.
 - [ ] Inclusive duration policy: `DurationDays = Finish.DayNumber - Start.DayNumber + 1`; activity width is `DurationDays * DayWidth`, with the left edge fixed at `DateToX(Start)`. `Finish` is never incremented. Milestones and delineators use only their point date X.
 - [ ] Effective stack indices are derived in Core from deterministic row/parent-child position; the visible `StackIndex` cell is neither trusted nor required for layout. Generated indices are consecutive; sparse compatibility values preserve order without empty height, and duplicate effective values share one centre.
 - [ ] **Lane height equals the measured worksheet row height (revision 8, ADR-0026).**
-      `LaneLayoutPt` auto-growth is removed: a lane-owning row's lane Top,
-      Height and Bottom equal its Excel row's exactly. The former rule —
-      `max(LaneHeightPt, contentHeight)`, "events are never compressed" — is
-      **deleted**, not weakened. Test with a projected child, with stacked
-      events exceeding the fixed height, and across expand/collapse. A
-      projected child creates no lane and consumes no lane height; content
-      that does not fit produces the documented warning and never grows the
-      lane.
+      `LaneHeightPt` is the lane height, **not a minimum the layout may exceed**:
+      lane auto-growth is removed, not capped. A lane that grows disagrees with
+      the Excel row it sits in, and a projected child must not be able to grow the
+      lane its parent owns. When lane content does not fit the fixed height the
+      scene emits `LaneContentExceedsRowHeight` and **neither compresses the
+      content nor grows the lane**. Test with stacked events exceeding the height,
+      with a projected child, and across expand/collapse.
 - [ ] Clipping never expands bounds; clipped events produce the documented
       warning, not a silent no-op (unless the entity contract says otherwise).
 - [ ] Deterministic ordering: shuffled input produces the same scene

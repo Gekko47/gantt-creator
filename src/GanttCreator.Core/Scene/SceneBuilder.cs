@@ -414,7 +414,13 @@ public static class SceneBuilder
         }
 
         List<ScenePrimitive> primitives = [];
-        List<SceneWarning> warnings = [.. laneLayout.Warnings, .. placements.Warnings];
+        // LaneEventLayout passes `layout.Warnings` through by design, so taking both
+        // lists here would add every lane warning twice. SceneValidator keys
+        // duplicates by (owner, code) and would report each one as a
+        // DuplicateWarning finding against a correct scene. The layout is the
+        // authoritative source for lane warnings; the placement feed adds none of
+        // its own.
+        List<SceneWarning> warnings = [.. laneLayout.Warnings];
 
         // The critical overlay clips to the parent's post-plot-clip visible span, so
         // the map is filled over the span events before any overlay is built.

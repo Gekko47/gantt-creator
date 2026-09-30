@@ -39,6 +39,46 @@ public static class LaneLayoutBuilder
 {
     private const string _ambiguousStackOverlapCode = "AmbiguousStackOverlap";
 
+    /// <summary>
+    /// The warning code for lane content that does not fit the fixed row height
+    /// (R4.7D, ADR-0026 D7). The content is neither compressed nor accommodated by
+    /// growing the lane; the user is told.
+    /// </summary>
+    public const string LaneContentExceedsLaneHeightCode = "LaneContentExceedsRowHeight";
+
+    /// <summary>
+    /// Derives a stable 32-hex-digit suffix from a lane key, for the synthetic
+    /// warning owner described on the overflow warning.
+    /// </summary>
+    /// <remarks>
+    /// A row id is <c>G-</c> plus 32 lowercase hex digits, so a lane warning can
+    /// only borrow that shape if the suffix really is 32 hex digits. SHA-256 is
+    /// used purely to obtain a stable 32-hex-digit string, not for any security
+    /// purpose: this is not authentication, and a collision would merge two
+    /// identical overflow messages rather than misreport anything.
+    /// </remarks>
+    private static string StableLaneWarningSuffix(string laneKey)
+    {
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(laneKey));
+
+        // Formatted as lowercase hex directly rather than via
+        // Convert.ToHexString(...).ToLowerInvariant(): a GanttRowId is
+        // `G-` plus 32 LOWERCASE hex digits, so the case is a contract, and
+        // CA1308 (prefer upper-case) would otherwise push a diagnostic-only
+        // preference onto a value the row-id parser rejects. This is formatting,
+        // not comparison, so the rule does not apply to it.
+        return string.Create(32, digest, static (span, bytes) =>
+        {
+            const string Digits = "0123456789abcdef";
+            for (var i = 0; i < 16; i++)
+            {
+                span[i * 2] = Digits[bytes[i] >> 4];
+                span[(i * 2) + 1] = Digits[bytes[i] & 0x0F];
+            }
+        });
+    }
+
     /// <summary>Attempts to build deterministic lane geometry.</summary>
     /// <param name="events">
     /// The validated event layout inputs. An empty collection is valid and produces an
@@ -141,7 +181,7 @@ public static class LaneLayoutBuilder
         string laneKey,
         int laneOrder,
         double laneTop,
-        IReadOnlyList<LaneEventInput> inputs,
+        LaneEventInput[] inputs,
         LaneLayoutMetrics metrics,
         List<SceneWarning> warnings
     )
@@ -201,10 +241,38 @@ public static class LaneLayoutBuilder
         }
 
         int[] effectiveValues = [.. effectiveSlots.Keys.OrderBy(value => value)];
+
+        // R4.7D / ADR-0026: the lane height is FIXED. The previous rule was
+        // `laneHeight = max(LaneHeightPt, contentHeight)` -- "the lane grows;
+        // events are never silently compressed" -- which is removed rather than
+        // capped. A lane that grows disagrees with the Excel row it is meant to
+        // sit in, and a projected child must not be able to grow the lane its
+        // parent owns. LaneHeightPt is now the height, not a minimum.
         var contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
         contentHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
         contentHeight += effectiveValues.Sum(value => effectiveSlots[value].Max(input => input.ResolvedHeightPt));
-        var laneHeight = Math.Max(metrics.LaneHeightPt, contentHeight);
+
+        if (contentHeight > metrics.LaneHeightPt + GeometryMath.Epsilon)
+        {
+            // Reported, never accommodated. Growing the lane is the defect this
+            // replaces; silently compressing the content would hide it instead.
+            //
+            // The owner is a synthetic row keyed by the LANE, not by one of the
+            // lane's own rows. SceneValidator keys duplicate warnings by
+            // (owner, code), so a row that owns several lanes would make this
+            // code repeat for the same owner and SceneValidator would report a
+            // DuplicateWarning finding against a correct scene. The identical
+            // collision was hit and fixed for AmbiguousStackOverlap in R4.7B.
+            warnings.Add(
+                new SceneWarning(
+                    SceneOwnerId.ForRow(GanttRowId.Parse("G-" + StableLaneWarningSuffix(laneKey))),
+                    LaneContentExceedsLaneHeightCode,
+                    $"Lane content needs {contentHeight:0.##}pt but the row height is {metrics.LaneHeightPt:0.##}pt; the content is not compressed."
+                )
+            );
+        }
+
+        var laneHeight = metrics.LaneHeightPt;
         var slots = new List<SlotGeometry>();
         var slotTop = laneTop + metrics.LanePaddingTopPt;
         for (var visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)

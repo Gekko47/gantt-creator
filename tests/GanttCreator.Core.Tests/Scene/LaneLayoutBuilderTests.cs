@@ -28,16 +28,30 @@ public sealed class LaneLayoutBuilderTests
     }
 
     [Fact]
-    public void Lane_grows_for_stacked_content_without_compressing_events()
+    public void Lane_height_is_fixed_and_overflow_is_reported_not_absorbed()
     {
+        // R4.7D / ADR-0026 D7 replaced this test's contract. It previously asserted
+        // the lane GREW to 34pt for three stacked 8pt events ("the lane grows;
+        // events are never silently compressed"). Growth is removed rather than
+        // capped: a lane that grows disagrees with the Excel row it sits in, and a
+        // projected child must not be able to grow the lane its parent owns.
         LaneEventInput[] events = [new(Event(1, "first"), 8), new(Event(2, "second"), 8), new(Event(3, "third"), 8)];
 
         LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(events, _metrics);
 
         LaneGeometry lane = Assert.Single(outcome.Layout!.Lanes);
-        Assert.Equal(34, lane.Height);
-        Assert.Equal(3, lane.Slots[0].Top);
-        Assert.Equal(31, lane.Slots[2].Bottom);
+
+        // The fixed row height, whatever the content needs.
+        Assert.Equal(_metrics.LaneHeightPt, lane.Height);
+
+        // The overflow is reported to the user rather than accommodated...
+        Assert.Contains(
+            outcome.Layout!.Warnings,
+            w => w.Code == LaneLayoutBuilder.LaneContentExceedsLaneHeightCode);
+
+        // ...and the content is not compressed to fit: the last slot still extends
+        // past the lane bottom, which is the honest outcome.
+        Assert.True(lane.Slots[2].Bottom > lane.Top + lane.Height);
     }
 
     [Fact]
@@ -57,8 +71,15 @@ public sealed class LaneLayoutBuilderTests
         Assert.Equal([0, 1], lane.Slots.Select(slot => slot.VisualSlotIndex));
         Assert.Equal([2, 7], lane.Slots.Select(slot => slot.EffectiveStackIndex));
         Assert.Equal(8, lane.Slots[0].Height);
-        Assert.Single(outcome.Layout.Warnings);
-        Assert.Equal("AmbiguousStackOverlap", outcome.Layout.Warnings[0].Code);
+
+        // Since R4.7D this case ALSO overflows the fixed 18pt row height (two 8pt
+        // slots, a 2pt gap and 6pt of padding is 24pt), so two warnings are
+        // expected rather than one. The test previously asserted a single
+        // AmbiguousStackOverlap, which only held while the lane could grow.
+        Assert.Contains(outcome.Layout.Warnings, w => w.Code == "AmbiguousStackOverlap");
+        Assert.Contains(
+            outcome.Layout.Warnings,
+            w => w.Code == LaneLayoutBuilder.LaneContentExceedsLaneHeightCode);
         Assert.Equal(2, lane.Slots[1].EventIds.Count);
     }
 
