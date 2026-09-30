@@ -225,9 +225,27 @@ public class ExcelWorkbookInitialiser(
                     wroteHeader,
                     createdTable,
                     createdConfigSheet);
-                return catalogueOutcome.Refusal == ConfigWriteRefusalReason.NoActiveWorkbook
-                    ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
-                    : WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected);
+
+                // Map each reason explicitly. A catch-all "everything else is
+                // TargetProtected" would tell the user their sheet is protected
+                // when the actual cause was a missing config sheet, an
+                // unpreservable catalogue, or a host write failure.
+                InitialiseRefusalReason reason = catalogueOutcome.Refusal switch
+                {
+                    ConfigWriteRefusalReason.NoActiveWorkbook
+                        => InitialiseRefusalReason.NoActiveWorkbook,
+                    ConfigWriteRefusalReason.TargetProtected
+                        => InitialiseRefusalReason.TargetProtected,
+                    ConfigWriteRefusalReason.ConfigSheetMissing
+                        => InitialiseRefusalReason.ConfigSheetExists,
+                    ConfigWriteRefusalReason.CataloguePreservationInvalid
+                        => InitialiseRefusalReason.CatalogueDrift,
+                    ConfigWriteRefusalReason.HostRejected
+                        => InitialiseRefusalReason.CatalogueWriteFailed,
+                    null => InitialiseRefusalReason.CatalogueWriteFailed,
+                    _ => InitialiseRefusalReason.CatalogueWriteFailed,
+                };
+                return WorkbookInitialiseOutcome.Refused(reason);
             }
 
             WritePlotAnchorName(target);

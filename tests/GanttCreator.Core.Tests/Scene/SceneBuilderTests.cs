@@ -20,10 +20,9 @@ public sealed class SceneBuilderTests
     // The plot top is 60 because the three header bands total 14 + 16 + 20 = 50pt
     // and are placed above the plot: with a smaller top the period band would be
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
-    private static readonly RectD _panelBounds = new(0, 0, 200, 200);
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
 
-    private static GanttStyleDefinition Style(string key, double height) =>
+    private static GanttStyleDefinition Style(string key, double height, string textColour = "#000000") =>
         new(
             key,
             new HashSet<GanttLabelPosition>
@@ -37,7 +36,7 @@ public sealed class SceneBuilderTests
             GanttLabelPosition.Inside,
             "#92D050",
             "#404040",
-            "#000000",
+            textColour,
             GanttHatchPattern.None,
             0,
             0,
@@ -55,9 +54,19 @@ public sealed class SceneBuilderTests
 
     private static readonly GanttStyleRegistry _registry = new(SharedStyles);
 
-    private static PanelCellGrid Grid() =>
+    /// <summary>
+    /// A uniform measured grid carrying exactly one height per projected panel row.
+    /// </summary>
+    /// <remarks>
+    /// The count is the event count because the panel now reproduces every source
+    /// row, and the measured heights are positional. A fixture that supplied one
+    /// height for many rows would now be refused, which is the intended behaviour
+    /// rather than an obstacle to work around.
+    /// </remarks>
+    private static PanelCellGrid Grid(int rowCount) =>
         PanelCellGrid.TryCreate(
             [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+            [.. Enumerable.Repeat(10.0, rowCount)],
             10,
             ["Id", "Description"]).Grid!;
 
@@ -70,13 +79,84 @@ public sealed class SceneBuilderTests
         new SceneStyle("PeriodHeader"),
         new SceneStyle("Title"));
 
+    [Fact]
+    public void A_delay_label_is_white_inside_its_body_and_black_outside_it()
+    {
+        // The end-to-end scene proof of entity guide section 17. The planner half is
+        // covered in LabelPlannerTests; what this adds is that SceneBuilder actually
+        // SUPPLIES the outside style. Before this change both LabelPlanRequest call
+        // sites omitted OutsideTextStyle, so the section 17 branch was unreachable
+        // and every delay label stayed white wherever it was placed - white on the
+        // chart background, which is unreadable.
+        //
+        // A registry whose DelayEvent carries the real DelayText token, so the
+        // white asserted here is the catalogue's value and not a literal.
+        var delayRegistry = new GanttStyleRegistry(
+        [
+            Style("AsPlannedActivity", 8),
+            Style("DelayEvent", 8, textColour: "#FFFFFF"),
+        ]);
+
+        // Two rows: a wide delay bar that keeps its label inside the red body, and a
+        // narrow one whose label cannot fit and is pushed outside it.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.DelayEvent, new DateOnly(2024, 1, 2), new DateOnly(2024, 1, 20), "DelayEvent"),
+                Event(2, GanttEntityType.DelayEvent, new DateOnly(2024, 1, 2), new DateOnly(2024, 1, 3), "DelayEvent"))
+            with
+            {
+                Registry = delayRegistry,
+                LabelStyle = new SceneStyle("DefaultText"),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        // Both rows contribute a description label, and the two must disagree on
+        // colour: the wide bar's label sits inside the red body, the narrow bar's
+        // does not. Asserting both colours are present is the section 17 proof - if
+        // the outside style were never supplied, both labels would be white.
+        string[] labelColours =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneText>()
+                .Where(text => text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))
+                .Select(text => text.Style.TextColour?.ToString() ?? "(null)"),
+        ];
+
+        Assert.Contains("#FFFFFF", labelColours);
+        Assert.Contains("#000000", labelColours);
+    }
+
+    [Fact]
+    public void A_non_delay_label_is_not_recoloured_by_the_outside_style()
+    {
+        // The control for the row above. A planned activity's label must keep its own
+        // style's text colour whether it is placed inside or outside, so the section
+        // 17 switch cannot be quietly widened to every entity.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1))
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneText label = Assert.Single(
+            outcome.Result!.Scene.Primitives
+                .OfType<SceneText>(),
+            text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        // The shared Style helper gives AsPlannedActivity the #000000 DefaultText
+        // value, so the label is black - but it got there through its OWN resolved
+        // style, not through the outside style.
+        Assert.Equal("#000000", label.Style.TextColour?.ToString());
+    }
+
     private static SceneBuildRequest Request(params GanttEvent[] events) =>
         new()
         {
             Events = events,
             Registry = _registry,
-            Grid = Grid(),
-            PanelBounds = _panelBounds,
+            Grid = Grid(events.Length),
             PlotBounds = _plotBounds,
             Metrics = _metrics,
             LaneMetrics = _laneMetrics,
@@ -174,7 +254,6 @@ public sealed class SceneBuilderTests
     public void Null_bounds_are_refused()
     {
         Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PlotBounds = null }).Refusal);
-        Assert.Equal(SceneBuilderRefusal.NullBounds, SceneBuilder.TryBuild(Request(Event(1)) with { PanelBounds = null }).Refusal);
     }
 
     [Fact]
@@ -204,7 +283,6 @@ public sealed class SceneBuilderTests
         // follow the content instead of constraining it.
         SceneBuildRequest request = Request(Event(1)) with
         {
-            PanelBounds = new RectD(0, 0, 200, 200),
             PlotBounds = new RectD(200, 20, 300, 140),
         };
 
@@ -222,16 +300,36 @@ public sealed class SceneBuilderTests
         // bounds to a zero origin and carrying one delta. Excel cannot express a
         // negative shape offset, so a negative chart origin is a real placement case,
         // not a hypothetical one - the content union starts at the panel origin here,
-        // so the derived bounds start at minus exactly one padding.
+        // so the derived bounds start at minus exactly one padding. The panel theme
+        // is what supplies that origin: with no panel the union starts at the plot,
+        // whose left edge is 200, and the derived bounds are positive.
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
-            Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with { ChartOuterPaddingPt = 6 });
+            Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with
+            {
+                ChartOuterPaddingPt = 6,
+                Panel = new PanelTheme(
+                    new SceneStyle("BodyFill"),
+                    new SceneStyle("BodyText"),
+                    new SceneStyle("HeaderFill"),
+                    new SceneStyle("HeaderText"),
+                    new SceneStyle("Border")),
+            });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         GanttScene scene = outcome.Result!.Scene;
 
-        // The negative origin is reachable, and negative by exactly one padding.
+        // The negative origin is reachable, and negative by exactly one padding, on
+        // the axis where the content genuinely extends left of zero: the panel's left
+        // edge sits at 0 while the plot's is at 200, so the union starts at 0 and the
+        // derived bounds start at minus one padding.
+        //
+        // The vertical origin is no longer asserted negative. It used to be, but only
+        // because the caller supplied a `PanelBounds` whose top happened to be 0 - an
+        // arbitrary rectangle, not a measurement. Now that the panel's own bounds are
+        // derived, the content's top is the period band and the derived top is
+        // positive. The subject of this test is that the translation is lossless, and
+        // that holds for a negative origin on either axis.
         Assert.True(scene.ChartBounds.Left < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
-        Assert.True(scene.ChartBounds.Top < 0, $"Expected a negative origin, got {scene.ChartBounds}.");
         Assert.Equal(-6, scene.ChartBounds.Left, precision: 9);
 
         // The padding's presence on all four sides is pinned in FrameBandsBuilderTests,
@@ -387,14 +485,165 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void A_splitter_and_spacer_alone_are_refused_because_neither_has_an_entity_primitive()
+    public void A_delineator_only_scene_is_not_empty_because_a_delineator_renders()
     {
-        Assert.Equal(
-            SceneBuilderRefusal.EmptyEvents,
-            SceneBuilder.TryBuild(Request(
-                Event(1, GanttEntityType.Splitter, styleKey: null),
-                Event(2, GanttEntityType.Spacer, styleKey: null))).Refusal);
+        // §24 makes a Delineator a full-height plot line that consumes no lane. It is
+        // therefore absent from the lane participants, and treating "no lane-bound
+        // event" as "empty scene" refused a chart that has a line to draw.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(_plotBounds.Top, line.From.Y);
+        Assert.Equal(_plotBounds.Bottom, line.To.Y);
     }
+
+
+    [Fact]
+    public void A_delineator_style_the_registry_supplies_is_preferred_over_the_catalogue_fallback()
+    {
+        // P1-4: the delineator fallback used to restate the stroke colour as a literal,
+        // making the token table and SceneBuilder two sources of truth. Both paths now
+        // read the catalogue, so a registry that supplies its own style wins and the
+        // fallback agrees with it rather than overriding it.
+        GanttStyleDefinition registryDelineator = new(
+            "DefaultDelineator",
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto, GanttLabelPosition.None },
+            EntityColourCapability.Stroke,
+            GanttLabelPosition.Auto,
+            null,
+            "#FF00FF",
+            "#000000",
+            GanttHatchPattern.None,
+            0,
+            0,
+            0.5,
+            0,
+            8);
+        GanttStyleRegistry registryWithDelineator = new(SharedStyles.Append(registryDelineator));
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null))
+                with { Registry = registryWithDelineator });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(ColourHex.Parse("#FF00FF"), line.Style.StrokeColour);
+    }
+
+    [Fact]
+    public void An_unresolvable_delineator_takes_the_catalogue_preset_not_a_restated_literal()
+    {
+        // The fallback path is proven reachable and proven to read the catalogue: the
+        // expected colour is the DelineatorStroke token, never a value written into
+        // this test, so a change to the token moves this assertion with it.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.ZLayer == ZLayer.Delineator);
+        Assert.Equal(
+            ColourHex.Parse(GanttCatalogues.GetPreset("DefaultDelineator").StrokeColour),
+            line.Style.StrokeColour);
+    }
+
+    [Fact]
+    public void Several_delineators_only_scene_builds_one_line_per_resolved_style()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 8), finish: null),
+                Event(2, GanttEntityType.Delineator, styleKey: null, start: new DateOnly(2024, 1, 20), finish: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // Two different dates are two groups, so two lines; neither consumed a lane.
+        Assert.Equal(2, outcome.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Count(candidate => candidate.ZLayer == ZLayer.Delineator));
+    }
+
+    [Fact]
+    public void A_splitter_and_spacer_only_scene_builds_the_splitter_band_and_no_spacer_primitive()
+    {
+        // This test previously asserted EmptyEvents, which encoded the defect as
+        // contractual: both rows were dropped before lane layout, so §10/§11 lane
+        // geometry was unreachable and a Splitter never rendered. The result is now
+        // defined explicitly — a Splitter emits a band, a Spacer emits nothing.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, GanttEntityType.Splitter, styleKey: null),
+                Event(2, GanttEntityType.Spacer, styleKey: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // §10: the band, plus its two major borders.
+        Assert.Equal(
+            3,
+            outcome.Result!.Scene.Primitives.Count(
+                candidate => candidate.PrimitiveId.Contains(SplitterBuilder.BandRole, StringComparison.Ordinal)));
+        // §11: "no foreground fill, border, or label" — a Spacer owns no primitive.
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Primitives,
+            candidate => candidate.PrimitiveId.Contains(":spacer", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_splitter_between_two_activities_displaces_the_second_by_exactly_the_splitter_height()
+    {
+        GanttEvent first = Event(1, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+        GanttEvent splitter = Event(2, GanttEntityType.Splitter, styleKey: null);
+        GanttEvent second = Event(3, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(first, splitter, second));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        double firstTop = BarTop(outcome, first);
+        double secondTop = BarTop(outcome, second);
+
+        // The lone activity lane is LaneHeightPt tall and the splitter is
+        // SplitterHeightPt, so the second bar sits exactly one splitter height lower.
+        Assert.Equal(_laneMetrics.LaneHeightPt + _laneMetrics.SplitterHeightPt, secondTop - firstTop);
+    }
+
+    [Fact]
+    public void A_splitter_and_a_spacer_between_two_activities_each_contribute_exactly_once()
+    {
+        GanttEvent first = Event(1, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+        GanttEvent splitter = Event(2, GanttEntityType.Splitter, styleKey: null);
+        GanttEvent spacer = Event(3, GanttEntityType.Spacer, styleKey: null);
+        GanttEvent second = Event(4, GanttEntityType.AsPlannedActivity, styleKey: "AsPlannedActivity");
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(first, splitter, spacer, second));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(
+            _laneMetrics.LaneHeightPt + _laneMetrics.SplitterHeightPt + _laneMetrics.SpacerHeightPt,
+            BarTop(outcome, second) - BarTop(outcome, first));
+    }
+
+    [Fact]
+    public void A_spacer_only_scene_is_not_empty_because_the_spacer_still_occupies_a_lane()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.Spacer, styleKey: null)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        // A Spacer renders no primitive, so the frame alone is the correct output.
+        Assert.DoesNotContain(
+            outcome.Result!.Scene.Primitives,
+            candidate => candidate.PrimitiveId.Contains(":spacer", StringComparison.Ordinal));
+    }
+
+    /// <summary>Reads one event's bar top from a built scene.</summary>
+    private static double BarTop(SceneBuildOutcome outcome, GanttEvent @event) =>
+        Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            candidate => candidate.PrimitiveId == ScenePrimitive.CreateId(SceneOwnerId.ForRow(@event.Id), "bar")).Bounds.Y;
 
     [Fact]
     public void A_milestone_emits_its_diamond_and_reads_only_the_start_date()
@@ -463,8 +712,11 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         // Core measures nothing: the grid the caller supplied must reach the panel
-        // builder unchanged, with the same columns and row height.
-        Assert.Equal(before.RowHeightPt, request.Grid!.RowHeightPt);
+        // builder unchanged, with the same columns and the same measured row heights.
+        // With per-row heights this is now a list, so it also proves no height was
+        // collapsed into a single sample on the way through.
+        Assert.Equal(before.RowHeightsPt, request.Grid!.RowHeightsPt);
+        Assert.Equal(before.HeaderHeightPt, request.Grid.HeaderHeightPt);
         Assert.Equal(
             before.Columns.Select(column => column.Name),
             request.Grid.Columns.Select(column => column.Name));
@@ -713,6 +965,7 @@ public sealed class SceneBuilderTests
         {
             Grid = PanelCellGrid.TryCreate(
                 [new PanelColumn("Id", 40), new PanelColumn("Start", 80), new PanelColumn("Finish", 80)],
+                [10.0],
                 10,
                 ["Id", "Start", "Finish"]).Grid,
             Panel = new PanelTheme(
@@ -760,6 +1013,7 @@ public sealed class SceneBuilderTests
         {
             Grid = PanelCellGrid.TryCreate(
                 [new PanelColumn("Id", 120), new PanelColumn("Type", 120)],
+                [10.0],
                 10,
                 ["Id", "Type"]).Grid,
             Panel = new PanelTheme(
@@ -1247,13 +1501,11 @@ public sealed class SceneBuilderTests
                     new PanelColumn("Start", 70),
                     new PanelColumn("Finish", 70),
                 ],
-                10,
-                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)], 10,                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
             // The data panel and the plot are unioned by FrameBandsBuilder to find
             // the content origin, and the title band is placed above that origin.
             // The panel therefore cannot start at y=0 or the title would sit above
             // the chart; it starts below the band stack instead.
-            PanelBounds = new RectD(0, 20, 520, 200),
             PlotBounds = new RectD(520, 110, 600, 290),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
@@ -1354,9 +1606,7 @@ public sealed class SceneBuilderTests
                     new PanelColumn("Start", 70),
                     new PanelColumn("Finish", 70),
                 ],
-                10,
-                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
-            PanelBounds = new RectD(0, 20, 520, 200),
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)], 10,                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
             PlotBounds = new RectD(520, 110, 600, 290),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),

@@ -39,14 +39,17 @@ public sealed record PanelTheme(
 /// and the header band is placed upward from it, which makes the alignment
 /// structural rather than a coincidence.
 /// </param>
-/// <param name="HeaderHeightPt">The header band height in points.</param>
 /// <param name="Theme">The resolved export styles.</param>
+/// <remarks>
+/// The header band's <em>height</em> is not a request member: it comes from
+/// <see cref="PanelCellGrid.HeaderHeightPt"/>, so the one measured header height has
+/// exactly one consumer and cannot be overridden by a second value.
+/// </remarks>
 public sealed record PanelBuildRequest(
     PanelCellGrid Grid,
     IReadOnlyList<PanelRow> Rows,
     RectD PlotBounds,
     double HeaderBottomPt,
-    double HeaderHeightPt,
     PanelTheme Theme);
 
 /// <summary>The reason a data-panel build was refused.</summary>
@@ -70,17 +73,26 @@ public enum PanelBuildRefusal
     /// <summary>The header bottom was not finite.</summary>
     NonFiniteHeaderBottom = 5,
 
-    /// <summary>The header height was not finite, or was not positive.</summary>
-    NonPositiveHeaderHeight = 6,
-
     /// <summary>A row was null.</summary>
-    NullRow = 7,
+    NullRow = 6,
 
     /// <summary>A row's cell count did not match the grid's column count.</summary>
-    CellCountMismatch = 8,
+    CellCountMismatch = 7,
 
     /// <summary>Two rows shared a row identity, which would collide primitive IDs.</summary>
-    DuplicateRow = 9,
+    DuplicateRow = 8,
+
+    /// <summary>
+    /// The number of panel rows did not match the number of measured body row heights.
+    /// </summary>
+    /// <remarks>
+    /// Section 3 reproduces the worksheet, and <see cref="PanelCellGrid.RowHeightsPt"/>
+    /// is positional, so a shorter or longer row list would shift every cell after
+    /// the divergence. Refusing is the only outcome that cannot be mistaken for a
+    /// correct panel: a silently padded or truncated layout would look plausible and
+    /// place every cell below the mismatch in the wrong row.
+    /// </remarks>
+    RowCountMismatch = 9,
 }
 
 /// <summary>The resolved data-panel primitives and their extents.</summary>
@@ -169,11 +181,6 @@ public static class PanelBuilder
             return Refused(PanelBuildRefusal.NonFiniteHeaderBottom);
         }
 
-        if (!double.IsFinite(request.HeaderHeightPt) || request.HeaderHeightPt <= 0)
-        {
-            return Refused(PanelBuildRefusal.NonPositiveHeaderHeight);
-        }
-
         PanelCellGrid grid = request.Grid;
         HashSet<GanttRowId> seen = [];
         foreach (PanelRow row in request.Rows)
@@ -194,13 +201,21 @@ public static class PanelBuilder
             }
         }
 
+        // The measured heights are positional, so the row count has to agree with
+        // them exactly. This is the guard against a source row that failed
+        // validation silently shifting every panel cell below it.
+        if (request.Rows.Count != grid.RowHeightsPt.Count)
+        {
+            return Refused(PanelBuildRefusal.RowCountMismatch);
+        }
+
         // Section 3: the panel's right edge touches the plot's left edge. Deriving
         // the panel origin from PlotBounds.Left rather than from the panel's own
         // width makes a gap or an overlap unrepresentable.
         var panelLeft = plot.Left - grid.TotalWidthPt;
-        var headerTop = request.HeaderBottomPt - request.HeaderHeightPt;
+        var headerTop = request.HeaderBottomPt - grid.HeaderHeightPt;
         var bodyTop = request.HeaderBottomPt;
-        var panelBottom = bodyTop + (request.Rows.Count * grid.RowHeightPt);
+        var panelBottom = bodyTop + grid.TotalRowHeightPt;
 
         List<ScenePrimitive> primitives = [];
         AddHeader(primitives, request, grid, panelLeft, headerTop);
@@ -211,7 +226,7 @@ public static class PanelBuilder
             new PanelBuildResult(
                 primitives,
                 new RectD(panelLeft, headerTop, grid.TotalWidthPt, panelBottom - headerTop),
-                new RectD(panelLeft, headerTop, grid.TotalWidthPt, request.HeaderHeightPt)),
+                new RectD(panelLeft, headerTop, grid.TotalWidthPt, grid.HeaderHeightPt)),
             null);
     }
     private static void AddHeader(
@@ -224,7 +239,7 @@ public static class PanelBuilder
         var x = panelLeft;
         foreach (PanelColumn column in grid.Columns)
         {
-            var bounds = new RectD(x, headerTop, column.WidthPt, request.HeaderHeightPt);
+            var bounds = new RectD(x, headerTop, column.WidthPt, grid.HeaderHeightPt);
             primitives.Add(
                 new SceneRect(
                     ScenePrimitive.CreateId(SceneOwnerId.Chart, $"header-cell:{column.Name}"),
@@ -252,17 +267,20 @@ public static class PanelBuilder
         double panelLeft,
         double bodyTop)
     {
+        // Each row's top is the running sum of the measured heights above it, not a
+        // row index times one height. That is the whole point of carrying a list.
+        var top = bodyTop;
         for (var rowIndex = 0; rowIndex < request.Rows.Count; rowIndex++)
         {
             PanelRow row = request.Rows[rowIndex];
             var owner = SceneOwnerId.ForRow(row.RowId);
-            var top = bodyTop + (rowIndex * grid.RowHeightPt);
+            var height = grid.RowHeightsPt[rowIndex];
             var x = panelLeft;
 
             for (var columnIndex = 0; columnIndex < grid.Columns.Count; columnIndex++)
             {
                 PanelColumn column = grid.Columns[columnIndex];
-                var bounds = new RectD(x, top, column.WidthPt, grid.RowHeightPt);
+                var bounds = new RectD(x, top, column.WidthPt, height);
                 primitives.Add(
                     new SceneRect(
                         ScenePrimitive.CreateId(owner, $"panel-cell:{column.Name}"),
@@ -287,6 +305,8 @@ public static class PanelBuilder
 
                 x += column.WidthPt;
             }
+
+            top += height;
         }
     }
     /// <summary>
@@ -333,9 +353,12 @@ public static class PanelBuilder
         // Identifiers are shifted up by one so each stays unique.
         AddHorizontalBorder(primitives, request, "panel-border-h:0", panelLeft, right, headerTop);
         AddHorizontalBorder(primitives, request, "panel-border-h:1", panelLeft, right, bodyTop);
-        for (var index = 0; index < request.Rows.Count; index++)
+        var y = bodyTop;
+        for (var index = 0; index < grid.RowHeightsPt.Count; index++)
         {
-            var y = bodyTop + ((index + 1) * grid.RowHeightPt);
+            // The same running sum the cell bodies use, so a border can never land on
+            // a different edge than the cell it frames when the heights differ.
+            y += grid.RowHeightsPt[index];
             AddHorizontalBorder(primitives, request, $"panel-border-h:{index + 2}", panelLeft, right, y);
         }
     }

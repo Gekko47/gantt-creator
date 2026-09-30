@@ -158,11 +158,11 @@ public sealed class SceneBenchmarkTests
             Registry = ReferenceSceneBuilder.StyleRegistry,
             Grid = PanelCellGrid.TryCreate(
                 [new PanelColumn("Id", 80), new PanelColumn("Description", 180)],
+                [.. Enumerable.Repeat(10.0, events.Count)],
                 10,
                 ["Id", "Description"]).Grid,
             // A thousand lanes need a plot tall enough to hold them, so the benchmark
             // geometry is scaled rather than reusing the small fixture geometry.
-            PanelBounds = new RectD(0, 20, 260, 200),
             PlotBounds = new RectD(260, 110, 3_000, 30_000),
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),

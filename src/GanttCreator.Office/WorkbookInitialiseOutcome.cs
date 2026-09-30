@@ -28,6 +28,14 @@ public enum InitialiseRefusalReason
 
     /// <summary>The catalogue or TypeOptions materialisation could not be validated.</summary>
     CatalogueDrift = 4,
+
+    /// <summary>
+    /// The catalogue write failed on the host and neither a protection problem
+    /// nor an absent workbook explained it. Distinct from
+    /// <see cref="TargetProtected"/>: telling a user their sheet is protected
+    /// when the host simply refused a write sends them to fix the wrong thing.
+    /// </summary>
+    CatalogueWriteFailed = 5,
 }
 
 /// <summary>

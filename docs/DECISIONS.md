@@ -24,6 +24,12 @@
 | ADR-0016 | Approved date display format for event dates | Accepted | 2026-09-26 | [`adr/0016-date-display-format-setting.md`](adr/0016-date-display-format-setting.md) |
 | ADR-0017 | Shared scene ownership for deduplicated entities | Accepted | 2026-09-26 | [`adr/0017-shared-scene-ownership.md`](adr/0017-shared-scene-ownership.md) |
 | ADR-0018 | Text alignment is its own type, not a label position | Accepted | 2026-09-26 | [`adr/0018-text-alignment-is-not-a-label-position.md`](adr/0018-text-alignment-is-not-a-label-position.md) |
+| ADR-0019 | Shape ownership carrier is `AlternativeText`, with a bounded versioned tag | Accepted | 2026-09-27 | [`adr/0019-shape-ownership-carrier.md`](adr/0019-shape-ownership-carrier.md) |
+| ADR-0020 | The application-state scope covers five settings, not six | Accepted | 2026-09-27 | [`adr/0020-application-state-scope-five-settings.md`](adr/0020-application-state-scope-five-settings.md) |
+| ADR-0021 | Structural rows reach lane layout; "empty" means no visible entity | Accepted | 2026-09-28 | [`adr/0021-structural-rows-and-empty-scene.md`](adr/0021-structural-rows-and-empty-scene.md) |
+| ADR-0022 | The §10 splitter band is a new scene builder on the existing style pipeline | Accepted | 2026-09-28 | [`adr/0022-splitter-band-builder.md`](adr/0022-splitter-band-builder.md) |
+| ADR-0023 | The panel measures per row, and the panel's bounds are derived | Accepted | 2026-09-28 | [`adr/0023-panel-measures-per-row.md`](adr/0023-panel-measures-per-row.md) |
+| ADR-0024 | Measure each row; a read-only measurement does not refuse a protected sheet | Accepted | 2026-09-28 | [`adr/0024-per-row-measurement-and-read-only-protection.md`](adr/0024-per-row-measurement-and-read-only-protection.md) |
 
 ## ADR template
 

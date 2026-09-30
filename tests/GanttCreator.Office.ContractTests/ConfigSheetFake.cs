@@ -72,6 +72,15 @@ internal sealed class ConfigSheetFake
         /// </summary>
         public string Name { get; }
 
+        /// <summary>
+        /// The table's current name, following any <c>Name</c> assignment the
+        /// production code made. <see cref="Name"/> is the name the fake was
+        /// constructed with, which is only the contract name after the writer
+        /// has assigned it — so a test that inspects the sheet after a rewrite
+        /// must read this instead.
+        /// </summary>
+        public string CurrentName => _name;
+
         public string[] Headers { get; }
 
         public List<object?[]> Body { get; }
@@ -97,6 +106,12 @@ internal sealed class ConfigSheetFake
 
     private readonly Dictionary<string, Mock<Excel.Range>> _cellRanges = new(StringComparer.Ordinal);
 
+    private int _failAddAt = -1;
+
+    private int _addCallCount;
+
+    private readonly List<Excel.Range> _clearedRanges = [];
+
     /// <summary>
     /// Initialises the fake with the given protection state and config
     /// sheet identity.
@@ -110,6 +125,30 @@ internal sealed class ConfigSheetFake
         _ = _worksheet.SetupGet(w => w.ListObjects).Returns(_listObjects.Object);
         _ = _listObjects.SetupGet(l => l.Count).Returns(() => _tables.Count);
     }
+
+    /// <summary>
+    /// Makes the Nth <c>ListObjects.Add</c> call fail, so a test can drive a
+    /// failure partway through the writer's five-table sequence.
+    /// </summary>
+    /// <param name="oneBasedIndex">
+    /// The one-based add-call index to fail, counted from this call: arming it
+    /// resets the add counter so a fixture that already ran a successful write
+    /// is not silently skipped.
+    /// </param>
+    public void FailAddAt(int oneBasedIndex)
+    {
+        _failAddAt = oneBasedIndex;
+        _addCallCount = 0;
+    }
+
+    /// <summary>
+    /// The cell ranges whose contents were cleared through the writer's
+    /// rollback seam, in call order.
+    /// </summary>
+    public List<Excel.Range> ClearedRanges => _clearedRanges;
+
+    /// <summary>How many times a table was created through the add seam.</summary>
+    public int AddCallCount => _addCallCount;
 
     /// <summary>Gets the mocked configuration worksheet.</summary>
     public Excel.Worksheet Worksheet => _worksheet.Object;
@@ -129,6 +168,17 @@ internal sealed class ConfigSheetFake
     /// <returns>The registered table object.</returns>
     public Excel.ListObject Add(Excel.Range extent)
     {
+        _addCallCount++;
+        if (_addCallCount == _failAddAt)
+        {
+            // An InvalidOperationException rather than a COMException, because
+            // that is how a refused COM call is reported once it crosses the
+            // interop boundary into managed code, and because CA2201 reserves
+            // the runtime's own exception types. The writer catches broadly for
+            // the same reason: the host chooses which of the two it raises.
+            throw new InvalidOperationException("The host refused the table write.");
+        }
+
         var payload = (object[,])extent.Value2;
         var columns = payload.GetLength(1);
         var headers = new string[columns];

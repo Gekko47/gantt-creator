@@ -119,6 +119,70 @@ public sealed class PanelBuilderTests
         Assert.Equal(_rowHeight, firstColumn[0].Bounds.Height);
         Assert.Equal(firstColumn[0].Bounds.Bottom, firstColumn[1].Bounds.Y);
     }
+    [Fact]
+    public void A_mixed_height_body_lays_out_on_the_exact_cumulative_positions()
+    {
+        // The regression this change exists for. With 12/24/15pt rows the cell tops
+        // must be bodyTop, bodyTop+12, bodyTop+36, and the panel bottom bodyTop+51.
+        // A single sample height would either refuse this table or place every row
+        // at the wrong edge, and a tolerance here would accept exactly that, so the
+        // positions are asserted exactly.
+        PanelRow[] rows = [Row(1, "first"), Row(2, "second"), Row(3, "third")];
+
+        PanelBuildOutcome outcome = BuildWithHeights(rows, 12.0, 24.0, 15.0);
+
+        Assert.True(outcome.Succeeded, "Panel build refused: " + outcome.Refusal);
+        double bodyTop = _plotY - _yearBandHeight;
+        double[] expectedTops = [bodyTop, bodyTop + 12.0, bodyTop + 36.0];
+        double[] expectedHeights = [12.0, 24.0, 15.0];
+
+        for (var index = 0; index < rows.Length; index++)
+        {
+            GanttRowId id = rows[index].RowId;
+            SceneRect cell = outcome.Result!.Primitives.OfType<SceneRect>()
+                .Single(rect => rect.PrimitiveId == ScenePrimitive.CreateId(SceneOwnerId.ForRow(id), "panel-cell:Id"));
+            Assert.Equal(new RectD(cell.Bounds.X, expectedTops[index], cell.Bounds.Width, expectedHeights[index]), cell.Bounds);
+        }
+
+        // The panel bottom is the exact sum of the measured heights plus the header.
+        Assert.Equal(bodyTop + 51.0, outcome.Result!.PanelBounds.Bottom);
+    }
+
+    [Fact]
+    public void Every_row_border_lands_on_its_own_rows_cumulative_edge()
+    {
+        // Borders use the same running sum as the cells, so a border can never frame
+        // a different edge than the cell it is supposed to frame.
+        PanelRow[] rows = [Row(1, "first"), Row(2, "second"), Row(3, "third")];
+
+        PanelBuildOutcome outcome = BuildWithHeights(rows, 12.0, 24.0, 15.0);
+
+        Assert.True(outcome.Succeeded, "Panel build refused: " + outcome.Refusal);
+        double bodyTop = _plotY - _yearBandHeight;
+        SceneLine[] horizontals = [.. outcome.Result!.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal))];
+        // Panel top, header/body boundary, then one bottom edge per measured row:
+        // 28 (top), 46 (boundary), 58, 82, 97 for 12/24/15pt rows.
+        Assert.Equal(
+            [bodyTop - _headerHeight, bodyTop, bodyTop + 12.0, bodyTop + 36.0, bodyTop + 51.0],
+            [.. horizontals.Select(line => line.From.Y)]);
+    }
+
+    [Fact]
+    public void A_row_count_that_disagrees_with_the_measured_heights_is_refused()
+    {
+        // Positional alignment is the whole contract, so a source row that failed
+        // validation - leaving more rows than heights, or fewer - must refuse rather
+        // than shift every cell below the divergence into the wrong row.
+        PanelRow[] threeRows = [Row(1, "first"), Row(2, "second"), Row(3, "third")];
+
+        Assert.Equal(
+            PanelBuildRefusal.RowCountMismatch,
+            PanelBuilder.TryBuild(Request(threeRows, GridWith([12.0, 24.0]))).Refusal);
+        Assert.Equal(
+            PanelBuildRefusal.RowCountMismatch,
+            PanelBuilder.TryBuild(Request(threeRows, GridWith([12.0, 24.0, 15.0, 9.0]))).Refusal);
+    }
 
     [Fact]
     public void Adjacent_cells_share_one_border_and_none_is_doubled()
@@ -186,19 +250,17 @@ public sealed class PanelBuilderTests
     }
 
     [Fact]
-    public void A_panel_with_no_rows_still_emits_its_header_and_its_top_and_bottom_borders()
+    public void A_zero_row_panel_is_now_unrepresentable_rather_than_a_header_with_no_body()
     {
-        // With no rows the header/body boundary is also the panel's bottom edge,
-        // so the panel stays closed rather than showing a dangling open bottom.
-        PanelBuildResult result = Build(rows: []).Result!;
-
-        Assert.Contains(result.Primitives.OfType<SceneText>(), text => text.Text == "Description");
-        SceneLine[] horizontals = [.. result.Primitives.OfType<SceneLine>()
-            .Where(line => line.PrimitiveId.Contains("panel-border-h:", StringComparison.Ordinal))];
-        Assert.Equal(2, horizontals.Length);
-        Assert.Equal(result.HeaderRowBounds.Top, horizontals[0].From.Y);
-        Assert.Equal(result.PanelBounds.Bottom, horizontals[1].From.Y);
-        Assert.Equal(result.HeaderRowBounds, result.PanelBounds);
+        // This test used to assert that a row-less panel still closed itself neatly.
+        // It no longer can be built: the measured grid requires at least one body row
+        // height, and the panel requires one row per measured height. That is the
+        // better outcome - a header with no body reads as a data table that lost its
+        // data, which is silent data loss, and `tblGanttData` always has a body. The
+        // guard is pinned here at the grid, which is where the emptiness is refused.
+        Assert.Equal(
+            PanelCellGridRefusal.NoRows,
+            PanelCellGrid.TryCreate([new PanelColumn("Id", 40)], [], 18.0, ["Id"]).Refusal);
     }
 
     [Fact]
@@ -306,15 +368,6 @@ public sealed class PanelBuilderTests
             PanelBuildRefusal.NonFiniteHeaderBottom,
             PanelBuilder.TryBuild(Request(TwoRows()) with { HeaderBottomPt = double.NaN }).Refusal);
 
-    [Theory]
-    [InlineData(0.0)]
-    [InlineData(-5.0)]
-    [InlineData(double.PositiveInfinity)]
-    public void A_non_positive_header_height_is_refused(double height) =>
-        Assert.Equal(
-            PanelBuildRefusal.NonPositiveHeaderHeight,
-            PanelBuilder.TryBuild(Request(TwoRows()) with { HeaderHeightPt = height }).Refusal);
-
     [Fact]
     public void A_null_row_is_refused() =>
         Assert.Equal(
@@ -350,16 +403,27 @@ public sealed class PanelBuilderTests
         IReadOnlyList<string>? blanks = null) =>
         PanelBuilder.TryBuild(Request(rows ?? TwoRows(blanks)));
 
-    private static PanelBuildRequest Request(IReadOnlyList<PanelRow> rows) =>
+    private static PanelBuildOutcome BuildWithHeights(
+        IReadOnlyList<PanelRow> rows,
+        params double[] rowHeightsPt) =>
+        PanelBuilder.TryBuild(Request(rows, GridWith(rowHeightsPt)));
+
+    private static PanelBuildRequest Request(IReadOnlyList<PanelRow> rows, PanelCellGrid? grid = null) =>
         new(
-            Grid(),
+            grid ?? GridFor(rows.Count),
             rows,
             new RectD(_plotLeft, _plotY, 400.0, 134.0),
             _plotY - _yearBandHeight,
-            _headerHeight,
             _theme);
 
-    private static PanelCellGrid Grid()
+    /// <summary>Builds a uniform grid carrying exactly one height per supplied row.</summary>
+    private static PanelCellGrid GridFor(int rowCount) =>
+        GridWith([.. Enumerable.Repeat(_rowHeight, rowCount)]);
+
+    private static PanelCellGrid Grid(params double[] rowHeightsPt) =>
+        GridWith([.. (rowHeightsPt.Length == 0 ? [_rowHeight] : rowHeightsPt)]);
+
+    private static PanelCellGrid GridWith(IReadOnlyList<double> rowHeightsPt)
     {
         // Widths vary so a cumulative-sum error cannot pass, and one column is
         // given a non-default alignment so the body-alignment pin has something
@@ -375,7 +439,7 @@ public sealed class PanelBuilderTests
                         : GanttTextAlignment.Left)),
         ];
         return PanelCellGrid
-            .TryCreate(columns, _rowHeight, [.. GanttTableSchema.Default.Columns.Where(c => c.IsRequired).Select(c => c.Name)])
+            .TryCreate(columns, rowHeightsPt, _headerHeight, [.. GanttTableSchema.Default.Columns.Where(c => c.IsRequired).Select(c => c.Name)])
             .Grid!;
     }
 
@@ -414,4 +478,8 @@ public sealed class PanelBuilderTests
         new PanelRow(GanttRowId.New(), Cells(blanks)),
         new PanelRow(GanttRowId.New(), Cells(blanks)),
     ];
+
+    /// <summary>One body row with distinct identity and the standard cell fixture.</summary>
+    private static PanelRow Row(int index, string description) =>
+        new(GanttRowId.New(), [.. Cells().Select((cell, columnIndex) => columnIndex == SchemaIndex("Description") ? description : cell)]);
 }

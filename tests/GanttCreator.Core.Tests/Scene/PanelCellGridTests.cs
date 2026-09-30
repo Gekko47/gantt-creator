@@ -17,7 +17,7 @@ public sealed class PanelCellGridTests
     private static readonly string[] Required = ["Id", "Type", "Description", "Start"];
 
     private static PanelCellGrid Grid(params PanelColumn[] columns) =>
-        PanelCellGrid.TryCreate(columns, 12.0, []).Grid
+        PanelCellGrid.TryCreate(columns, [12.0], 12.0, []).Grid
         ?? throw new InvalidOperationException("Fixture grid should be valid.");
 
     private static PanelColumn Col(string name, double width = 40.0) => new(name, width);
@@ -31,7 +31,59 @@ public sealed class PanelCellGridTests
 
         Assert.Equal(["Type", "Id", "Description"], grid.Columns.Select(c => c.Name));
         Assert.Equal(200.0, grid.TotalWidthPt);
-        Assert.Equal(12.0, grid.RowHeightPt);
+        Assert.Equal([12.0], grid.RowHeightsPt);
+        Assert.Equal(12.0, grid.HeaderHeightPt);
+    }
+
+    [Fact]
+    public void A_mixed_height_body_is_accepted_and_totalled_exactly()
+    {
+        // The whole point of the change: a worksheet body need not be uniform, so the
+        // grid carries a list and the panel bottom is the exact sum. A single sample
+        // height could only refuse this table or lay it out wrong.
+        PanelCellGrid grid =
+            PanelCellGrid.TryCreate([Col("Id")], [12.0, 24.0, 15.0], 18.0, []).Grid
+            ?? throw new InvalidOperationException("Fixture grid should be valid.");
+
+        Assert.Equal([12.0, 24.0, 15.0], grid.RowHeightsPt);
+        Assert.Equal(51.0, grid.TotalRowHeightPt);
+        Assert.Equal(18.0, grid.HeaderHeightPt);
+    }
+
+    [Fact]
+    public void A_missing_or_empty_row_height_list_is_refused()
+    {
+        // Positive test: with no measured heights there is no body to reproduce, and
+        // defaulting a height would place every cell at a guessed position.
+        Assert.Equal(
+            PanelCellGridRefusal.NoRows,
+            PanelCellGrid.TryCreate([Col("Id")], null, 12.0, Required).Refusal);
+        Assert.Equal(
+            PanelCellGridRefusal.NoRows,
+            PanelCellGrid.TryCreate([Col("Id")], [], 12.0, Required).Refusal);
+    }
+
+    [Fact]
+    public void A_non_positive_or_non_finite_header_height_is_refused()
+    {
+        // §4's header follows the live header-cell bounds, so the header height is a
+        // measurement in its own right and cannot be defaulted to a body height.
+        foreach (double height in new[] { 0.0, -1.0, double.NaN, double.PositiveInfinity })
+        {
+            Assert.Equal(
+                PanelCellGridRefusal.NonPositiveHeaderHeight,
+                PanelCellGrid.TryCreate([Col("Id")], [12.0], height, Required).Refusal);
+        }
+    }
+
+    [Fact]
+    public void One_bad_height_among_good_ones_is_refused()
+    {
+        // The guard is per row, not on an aggregate: an adapter that reads a mixed
+        // range could otherwise return one good height and one absent one.
+        Assert.Equal(
+            PanelCellGridRefusal.NonPositiveRowHeight,
+            PanelCellGrid.TryCreate([Col("Id")], [12.0, 0.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -48,7 +100,7 @@ public sealed class PanelCellGridTests
     {
         Assert.Equal(
             PanelCellGridRefusal.NullRequest,
-            PanelCellGrid.TryCreate(null, 12.0, Required).Refusal);
+            PanelCellGrid.TryCreate(null, [12.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -58,7 +110,7 @@ public sealed class PanelCellGridTests
         // cells and a body with no content, which §3 does not permit.
         Assert.Equal(
             PanelCellGridRefusal.NoColumns,
-            PanelCellGrid.TryCreate([], 12.0, Required).Refusal);
+            PanelCellGrid.TryCreate([], [12.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -69,7 +121,7 @@ public sealed class PanelCellGridTests
         {
             Assert.Equal(
                 PanelCellGridRefusal.NonPositiveWidth,
-                PanelCellGrid.TryCreate([Col("Id", width)], 12.0, Required).Refusal);
+                PanelCellGrid.TryCreate([Col("Id", width)], [12.0], 12.0, Required).Refusal);
         }
     }
 
@@ -80,7 +132,7 @@ public sealed class PanelCellGridTests
         {
             Assert.Equal(
                 PanelCellGridRefusal.NonPositiveRowHeight,
-                PanelCellGrid.TryCreate([Col("Id")], height, Required).Refusal);
+                PanelCellGrid.TryCreate([Col("Id")], [height], 12.0, Required).Refusal);
         }
     }
 
@@ -91,7 +143,7 @@ public sealed class PanelCellGridTests
         {
             Assert.Equal(
                 PanelCellGridRefusal.BlankColumnName,
-                PanelCellGrid.TryCreate([Col(name)], 12.0, Required).Refusal);
+                PanelCellGrid.TryCreate([Col(name)], [12.0], 12.0, Required).Refusal);
         }
     }
 
@@ -103,7 +155,7 @@ public sealed class PanelCellGridTests
         // different bounds, so it is refused rather than collapsed.
         Assert.Equal(
             PanelCellGridRefusal.DuplicateColumn,
-            PanelCellGrid.TryCreate([Col("Id", 30.0), Col("Id", 40.0)], 12.0, Required).Refusal);
+            PanelCellGrid.TryCreate([Col("Id", 30.0), Col("Id", 40.0)], [12.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -113,7 +165,7 @@ public sealed class PanelCellGridTests
         // panel missing Description cannot build an export composition.
         Assert.Equal(
             PanelCellGridRefusal.MissingRequiredColumn,
-            PanelCellGrid.TryCreate([Col("Id"), Col("Type")], 12.0, Required).Refusal);
+            PanelCellGrid.TryCreate([Col("Id"), Col("Type")], [12.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -121,7 +173,7 @@ public sealed class PanelCellGridTests
     {
         Assert.Equal(
             PanelCellGridRefusal.MissingRequiredColumn,
-            PanelCellGrid.TryCreate([Col("Id")], 12.0, [" "]).Refusal);
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [" "]).Refusal);
     }
 
     [Fact]
@@ -129,7 +181,7 @@ public sealed class PanelCellGridTests
     {
         Assert.Equal(
             PanelCellGridRefusal.UndefinedAlignment,
-            PanelCellGrid.TryCreate([Col("Id") with { Alignment = (GanttTextAlignment)99 }], 12.0, Required)
+            PanelCellGrid.TryCreate([Col("Id") with { Alignment = (GanttTextAlignment)99 }], [12.0], 12.0, Required)
                 .Refusal);
     }
 
@@ -140,14 +192,14 @@ public sealed class PanelCellGridTests
         // column that the live sheet does not actually have.
         Assert.Equal(
             PanelCellGridRefusal.MissingRequiredColumn,
-            PanelCellGrid.TryCreate([Col("ID"), Col("Type"), Col("Description"), Col("Start")], 12.0, Required)
+            PanelCellGrid.TryCreate([Col("ID"), Col("Type"), Col("Description"), Col("Start")], [12.0], 12.0, Required)
                 .Refusal);
     }
 
     [Fact]
     public void A_grid_with_no_required_columns_is_accepted()
     {
-        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate([Col("Id")], 12.0, []);
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, []);
 
         Assert.NotNull(outcome.Grid);
         Assert.Empty(outcome.Grid.RequiredColumns);

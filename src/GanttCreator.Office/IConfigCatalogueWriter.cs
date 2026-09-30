@@ -25,6 +25,19 @@ public enum ConfigWriteRefusalReason
     TargetProtected = 2,
     /// <summary>Existing configuration content could not be preserved safely.</summary>
     CataloguePreservationInvalid = 3,
+
+    /// <summary>
+    /// The host refused a table write partway through the five-table sequence.
+    /// Every table this call had already written was restored to its prior
+    /// state, so this refusal mutated nothing and the workbook needs no repair
+    /// pass.
+    /// </summary>
+    /// <remarks>
+    /// A refusal whose own restoration fails is <em>not</em> reported as a
+    /// refusal: the no-mutation guarantee would be false, so that case
+    /// propagates to the command boundary as an exception instead.
+    /// </remarks>
+    HostRejected = 4,
 }
 
 /// <summary>

@@ -281,12 +281,14 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Geometry:** `ChartBounds` is the union of the title, data panel, time headers, and plot plus `ChartOuterPaddingPt`. The outer frame follows the final bounds. Empty whitespace outside these bounds is not exported.
 
-**Origin and outer padding.** The padding is *inside* `ChartBounds` on all four sides; it is not a renderer-side margin. Because the bounds are derived by expanding the content union, a chart whose content starts at the origin has a **negative** `ChartBounds` origin, and negative coordinates are legal in the scene (`RectD` permits them deliberately). Two rules follow, and both are provisional pending the R4.3 Step-0 probe:
+**Origin and outer padding.** The padding is *inside* `ChartBounds` on all four sides; it is not a renderer-side margin. Because the bounds are derived by expanding the content union, a chart whose content starts at the origin has a **negative** `ChartBounds` origin, and negative coordinates are legal in the scene (`RectD` permits them deliberately). Two rules follow. The first was **provisional pending the R4.3 Step-0 probe and is now settled by it**; the second remains a renderer rule for R6.1.
 
 - A renderer **translates the chart bounds to a zero origin and carries the delta**. Excel cannot express a negative shape offset, so the placement must be computed, not copied. The translation is uniform across every primitive kind — a rect's `Bounds`, a line's `From`/`To`, a polygon's `Points`, and a text's `TextBounds` all shift by the same constant — and it must not change any relationship inside the scene, including whether a label sits outside the chart.
 - **The delta must be carried into the export bounds.** Since empty whitespace outside the bounds is not exported, dropping the delta on the way to an export or PNG crop would silently remove exactly `ChartOuterPaddingPt` of the margin the token exists to create.
 
-`FrameBandsBuilderTests.The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides` and `SceneBuilderTests.The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship` pin both rules in Core. What remains unprobed is how the host behaves, not what the contract is.
+**Host behaviour, probed 2026-09-28 (R4.3).** A negative shape `Left`/`Top` is **silently clamped to zero** — not rejected, not re-anchored — and a zero offset anchors to the sheet origin, cell `$A$1`. Because the clamp raises no error, an untranslated renderer produces a visibly wrong chart with nothing to catch it: the failure mode is content silently stacked at the origin. The translation is therefore structural, carried by `ChartOriginDelta` and applied by `SceneShapeRenderer`, rather than a caller convention. Negative values remain legal in the scene and legal nowhere in the host.
+
+`FrameBandsBuilderTests.The_outer_padding_is_inside_the_chart_bounds_on_all_four_sides` and `SceneBuilderTests.The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship` pin both rules in Core; `ChartOriginDelta`/`SceneShapeRenderer` contract tests and `ShapeRenderIntegrationTests` pin them against the live host.
 
 **Style:** `ChartBackground`, `MajorGridStroke`, and `MajorBoundaryPt`.
 
@@ -318,7 +320,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Source:** `tblGanttData`, visible approved columns, current Excel column widths, and row heights.
 
-**Geometry:** live view uses cells. Export composition reproduces each included cell as a background rectangle plus text and shared borders using the exact measured cell bounds in points. The panel right edge touches the plot left edge without overlap or gap.
+**Geometry:** live view uses cells. Export composition reproduces each included cell as a background rectangle plus text and shared borders using the exact measured cell bounds in points. The panel right edge touches the plot left edge without overlap or gap. Each body row uses its own measured height, in worksheet row order, and the panel's bounds are **derived** from the measured column widths and row heights rather than supplied alongside them. A body whose rows differ in height is reproduced faithfully, not refused.
 
 **Style:** workbook cell styles in the live sheet; export uses `DataPanelFill`, `DefaultText`, and the resolved border/font tokens. User-defined arbitrary cell formatting is not automatically interpreted as Gantt semantics.
 
@@ -334,7 +336,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Source:** schema display names and localisation resources.
 
-**Geometry:** follows live header-cell bounds. Export uses rectangles/text with shared borders. Header height aligns exactly with the period-header bottom.
+**Geometry:** follows live header-cell bounds. Export uses rectangles/text with shared borders. Header height aligns exactly with the period-header bottom. The header row's height is measured **separately** from the body rows — it is its own worksheet row and reusing a body height would be an assumption rather than a measurement. The panel reproduces **every** source row, in worksheet row order, including a `Splitter`, `Spacer`, `Delineator`, `Critical Interval`, or a row with `Visible=false`: `Visible` suppresses the entity and its label, not the data-panel row.
 
 **Style:** `HeaderFill`, `HeaderFontSizePt`, bold, centred unless the schema defines left alignment for Description.
 
@@ -432,11 +434,11 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 
 **Source:** `Type=Splitter`, `Description`, ordering, optional parent relationship.
 
-**Geometry:** occupies a complete lane across the included data panel and plot. It has no date geometry. Height is `SplitterHeightPt`.
+**Geometry:** occupies a complete lane across the included data panel and plot. It has no date geometry. Height is `SplitterHeightPt`. The band spans from the data panel's left edge to the plot's right edge and the full `SplitterHeightPt` of the lane, at `ZLayer.Section` (30). Its top and bottom borders are `MajorBoundaryPt` lines at `ZLayer.Frame` (80), so they frame the band rather than sitting beneath it. A `Splitter` occupies its own lane: a shared `LaneId` does not merge it into a neighbouring activity's lane.
 
-**Style:** `SplitterFill` with major top/bottom border; no activity fill.
+**Style:** `SplitterFill` with major top/bottom border; no activity fill. The style is the code-owned `Splitter` preset, so a change to the `SplitterFill` token changes the rendered band.
 
-**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs.
+**Labels:** supported positions are `DataPanelLeft`, `PlotCentre`, `Both`, and `None`; the initial default is `DataPanelLeft`. `Both` deliberately creates two scene text entities with stable role-derived IDs (`splitter-label` and `splitter-label-plot`). A blank `Description` renders the band and no label.
 
 **Validation/tests:** no required dates, deterministic group placement, export span, expand/collapse interaction where supported.
 
@@ -541,6 +543,8 @@ The centre of a slot is the lane top plus top padding, all preceding slot height
 **Default style:** transparent/white background with diagonal hatch and outline using the selected planned/actual/baseline colour family. Hatch angle is 45 degrees, pitch is `HatchPitchPt`, and stroke width is `HatchLinePt`.
 
 **Renderer rule:** the scene defines hatch angle, pitch, line width, clip rectangle, and colour. Excel/export may use a native pattern only if the compatibility test proves equivalent bounds and adequate appearance; otherwise emit editable clipped hatch lines as group children. PNG uses the same scene parameters.
+
+**R4.6 Step-0 probe (2026-09-28), host-confirmed.** The native pattern facility is `FillFormat.Patterned(MsoPatternType)`, and `msoPatternLightDownwardDiagonal` / `msoPatternLightUpwardDiagonal` / `msoPatternDiagonalCross` are distinct members, so forward, backward, and cross are each expressible. **`MsoPatternType` has no member controlling pitch or line width, so `HatchPitchPt` and `HatchLinePt` are not honoured by the native pattern.** This is the "compatibility test" the rule above refers to, run: it does not prove equivalence, so the deviation is recorded for R8.3's equivalence policy rather than approximated, and §18's group-children alternative remains the fallback if R8.3 rejects it. An unmapped `GanttHatchPattern` member is **refused** (thrown), never drawn as the nearest pattern.
 
 **Labels:** subtype style may place description Inside when contrast is sufficient; otherwise general `Auto`.
 
@@ -691,7 +695,8 @@ Placement priority is: explicit manual positions first; then critical milestones
 - Live shapes are generated artifacts. Direct manual formatting of them is not a persistent input and may be overwritten on Refresh.
 - User changes persist through table fields, Ribbon style settings, or approved named styles.
 - Editable export and PowerPoint shapes are unlocked normal Office shapes; every rectangle, diamond, line, and label can be selected after ungrouping.
-- Refresh touches only shapes carrying valid Gantt Creator ownership metadata.
+- The live renderer writes two ownership members on every shape it creates: the shape **name**, which is the stable scene primitive identifier, and the shape **alternative text**, which carries the ownership tag `GanttCreator.Owned.v1:{hash}`. The alternative-text member is the carrier because the Excel shape object has no `Tag` member (ADR-0019).
+- Refresh touches only shapes whose alternative text carries a valid `GanttCreator.Owned.v1:` tag.
 - Unknown or malformed ownership tags are reported; unowned shapes are never deleted.
 
 ## Entity-to-renderer equivalence
@@ -704,7 +709,7 @@ Placement priority is: explicit manual positions first; then critical milestones
 | Activity/delay | rectangle shapes | rectangle shapes | raster rectangles |
 | Procurement | pattern or editable hatch group after compatibility proof | editable hatch group | clipped raster hatch |
 | Critical interval | line shape | line shape | raster line |
-| Milestone | four-point freeform polygon | freeform polygon | raster polygon |
+| Milestone | diamond auto-shape at the polygon's bounding box | diamond auto-shape | raster polygon |
 | Labels | text box shapes | text box shapes | raster text at scene bounds |
 | Delineator | line plus text box | line plus text box | raster line/text |
 | Validation indicator | live cells/dialog only | excluded | excluded |
@@ -729,13 +734,13 @@ so the two cannot drift into a duplicate contract.
 | Activity/delay | `rect {row}:bar` | `Bounds` (already plot-clipped), `Style` fill + stroke + width, no hatch, `ZLayer.ActivityBody`, lane/stack order keys | rectangle shapes | rectangle shapes | raster rectangles | draw the clipped rectangle; do not recompute the span from dates |
 | Procurement | `rect {row}:bar` with `HatchPattern` | as Activity/delay, plus `HatchPattern` and its pitch/line tokens | **unresolved** — native pattern or editable hatch group | editable hatch group | clipped raster hatch | host representation is `unknown` until the R4.6/R8.3 compatibility proof; do not choose one here. **The hatch field is also unexercised**: the reference style set resolves `HatchPattern` to `None` for every style, so no committed scene primitive carries a hatch. Assert the scene fields, not a hatch value |
 | Critical interval | **`rect {row}:critical`**, height `CriticalLinePt` | `Bounds` (top edge = parent's post-clip top, height = `CriticalLinePt`), `Style` stroke + width, `ZLayer.CriticalOverlay` | **line** | **line** | raster line | **the scene rect is not the host object**: draw a line along the rect's top edge at its resolved thickness. Filling the rect is a defect |
-| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | four-point freeform polygon | freeform polygon | raster polygon | emit the four points in order; do not substitute a rotated square or an ellipse |
+| Milestone | `polygon {row}:marker`, four points | `Points` (exactly four), tip-to-tip = `MilestoneSizePt` on both axes, `Style` fill + stroke, `ZLayer.Milestone` | diamond auto-shape at the points' bounding box | diamond auto-shape | raster polygon | the four points are the *source*; the host object is a diamond auto-shape placed at their bounding box. The renderer must **refuse** a polygon that is not a symmetric axis-aligned diamond rather than approximating it — see "Milestone host object" below |
 | Description/date labels | `text {row}:label`, `{row}:date-start`, `{row}:date-finish` | `Text`, `TextBounds` (already measured), `Alignment`, `Style` (`DefaultText`/`DelayText`), `ZLayer.Label`, lane and stack order keys **present** | text box shapes | text box shapes | raster text at scene bounds | the label **side is already resolved into `TextBounds`**; do not re-measure, re-truncate, or reselect a side |
 | Delineator | `line {row}:delineator` + `text {row}:delineator-label` | line: `From`/`To` spanning `PlotBounds` top to bottom, `Style` stroke + width, `ZLayer.Delineator`. label: `Text`, `TextBounds`, `Alignment`, `Style`, `ZLayer.DelineatorLabel`, **no lane/stack keys** | line plus text box | line plus text box | raster line/text | a same-date pair emits **one shared line** but **one label per row**; the line's owner may be a `Rows` set, so a membership change is remove-then-recreate, never in-place |
 | Validation indicator | **none** | none | cells/dialog only | **excluded** | **excluded** | the model carries no primitive; a renderer must not invent one |
 | Legend (§25, optional) | **none today** | none | not built | not built | not built | an optional, product-owner-gated feature with no scene primitive yet |
 
-Four notes that govern the whole table:
+Five notes that govern the whole table:
 
 - **The panel row is exercised against a panel-bearing build, not the golden.**
   Panel primitives are emitted only when a `PanelTheme` is supplied, and the
@@ -763,6 +768,22 @@ Four notes that govern the whole table:
 - **Grouping is out of scope here.** `SceneGroup` membership and child order
   belong to the editable-export work. Their absence from this table means "not
   yet specified", not "not required".
+- **Milestone host object — why a diamond auto-shape, not a freeform.** The
+  scene models a milestone as a four-point `ScenePolygon`, but the live Excel
+  object is a **diamond auto-shape placed at that polygon's bounding box**. This
+  was changed from a freeform after measurement, not preference (R4.5, Office
+  `16.0.20326.20158` x64). `BuildFreeform` stores each vertex on a whole-EMU
+  grid, so a freeform's span lands **+1 EMU** (1 EMU = 1/12700 pt) off the scene
+  value — measured at +1.005, +0.993, +1.017, +0.969 and +0.969 EMU across exact
+  spans of 10, 20, 37.5, 100 and 253 pt, i.e. a **fixed one-unit quantisation,
+  not drift** (constant across a 25× size range). A diamond auto-shape is
+  *derived* from its `Left`/`Top`/`Width`/`Height` box rather than storing
+  absolute vertices, and measured **0.000 EMU at every span**, so it is exact
+  and the milestone row needs no tolerance of its own: `GeometryMath.Epsilon`
+  governs every family. A polygon that is **not** a symmetric axis-aligned
+  diamond is **refused** with a typed refusal, not approximated — a rotated or
+  skewed quadrilateral is not a diamond, and silently drawing it as one would
+  break the "renderers consume resolved primitives" rule.
 
 ## Minimum visual reference fixture
 

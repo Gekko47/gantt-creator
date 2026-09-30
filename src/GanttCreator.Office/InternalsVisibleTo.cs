@@ -1,3 +1,8 @@
+// GanttCreator.AddIn.Tests derives the internal virtual COM-indexer seams of
+// ExcelInsertedRowSelector. The selector was moved out of the AddIn project
+// (R4.1) because a COM adapter in the AddIn named the PIA and held proxies the
+// AddIn does not own; its contract test stayed with the command it serves.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("GanttCreator.AddIn.Tests")]
 // The Office contract tests substitute the adapter's internal virtual
 // indexer-seam members (ExcelWorkbookInitialiser.GetSheetAt/GetTableAt/
 // GetHeaderRange); expression trees cannot contain COM indexed properties, so

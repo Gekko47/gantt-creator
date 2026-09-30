@@ -393,6 +393,66 @@ public class ValidationReporterTests
     }
 
     [Fact]
+    public void Report_clips_a_long_user_note_so_the_written_note_fits_the_host_limit()
+    {
+        // Excel caps a cell note at roughly 255 characters. The add-in's own
+        // section is already clamped to that by GroupIntoNotes, but a user note
+        // long enough to push the *combination* over would otherwise hand the
+        // host an over-length text. Only the user's contribution may be clipped:
+        // the ownership sentinel lives in the add-in section and must survive so
+        // a later run still recognises and replaces the section.
+        ReporterGraph graph = Graph();
+        CellGraph cell = graph.Cell(1, ColumnOf("Start"));
+        cell.WithUserNote(new string('u', 400));
+
+        GanttValidationReportOutcome outcome = graph.Build().Report(
+            [Issue(1, "Start", GanttValidationSeverity.Error, "Start is not a date.")]);
+
+        Assert.Equal(1, outcome.NotesWritten);
+        var written = Assert.Single(cell.NoteTextWrites);
+
+        // The host limit is respected...
+        Assert.InRange(written.Length, 1, ValidationReportComposer.MaxNoteLength);
+        // ...the user's text is still present (clipped, not discarded)...
+        Assert.Contains("uuuu", written, StringComparison.Ordinal);
+        // ...and the add-in section, including the ownership sentinel, survives
+        // intact at the end.
+        Assert.Contains(ValidationReportComposer.NoteSentinelPrefix, written, StringComparison.Ordinal);
+        Assert.Contains("Start is not a date.", written, StringComparison.Ordinal);
+        Assert.EndsWith(
+            "Start is not a date.",
+            written,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Report_drops_the_user_note_entirely_when_no_budget_is_left_for_it()
+    {
+        // The degenerate case: the add-in section alone consumes the whole host
+        // budget, leaving no room for any user text. The user contribution is
+        // then dropped rather than truncated to nothing, so the written note is
+        // exactly the add-in section and still carries the ownership sentinel.
+        ReporterGraph graph = Graph();
+        CellGraph cell = graph.Cell(1, ColumnOf("Start"));
+
+        // A message long enough that GroupIntoNotes clamps the section to
+        // MaxNoteLength, leaving no room for a user prefix.
+        cell.WithUserNote("Mine.");
+        GanttValidationReportOutcome outcome = graph.Build().Report(
+            [Issue(1, "Start", GanttValidationSeverity.Error, new string('m', 400))]);
+
+        Assert.Equal(1, outcome.NotesWritten);
+        var written = Assert.Single(cell.NoteTextWrites);
+
+        Assert.InRange(written.Length, 1, ValidationReportComposer.MaxNoteLength);
+        Assert.DoesNotContain("Mine.", written, StringComparison.Ordinal);
+        Assert.StartsWith(
+            ValidationReportComposer.NoteSentinelPrefix,
+            written,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Report_replaces_a_stale_owned_note_on_the_offending_cell()
     {
         ReporterGraph graph = Graph();

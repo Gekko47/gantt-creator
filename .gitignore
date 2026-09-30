@@ -466,4 +466,9 @@ coverage/
 # L12 createdump diagnostic scripts (run on-demand on the exhibiting host) are tracked source;
 # only their output directory remains ignored.
 scripts/_artifacts/l12-diagnostic/
+
+# The external remediation brief is an input document, not a repository artefact. Its claims are
+# verified against source and the resulting work is tracked in docs/REMEDIATION-PLAN-A.md and
+# docs/STATUS.md, so committing the brief would add a second, unaudited source of requirements.
+docs/GanttCreator_R3_R4_Remediation_Brief.md
 [Oo]bj/

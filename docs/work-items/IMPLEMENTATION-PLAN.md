@@ -25,6 +25,23 @@
   named Step-0 obligation in its guide with an `unknown until probed`
   ledger row; a Tier-A upgrade fixes names against landed code, it does
   not license inventing host behaviour.
+- **Two of those four were answered by R4.1's Step-0 probe (2026-09-27),
+  and the probe falsified a fifth assumption nobody had flagged.** The
+  probe against the installed PIA resolved the R4.2 per-property
+  interop shapes (all six readable, and `Selection` confirmed read-only,
+  so restore is `Range.Select()`) and half of R4.3's line question
+  (endpoints are exact; R4.3 then decides plain line over connector). The
+  freeform (R4.5) and pattern/alpha (R4.6) questions remain unprobed.
+  **The falsified assumption: `Microsoft.Office.Interop.Excel.Shape` has
+  no `Tag` member**, which had been R4.1 D2's ownership carrier and was
+  inherited as a "fact" by R4.3 D2, R4.8 D1, and R9.4. `Tag` is a
+  *PowerPoint* member. [ADR-0019](../adr/0019-shape-ownership-carrier.md)
+  moves the carrier to `AlternativeText` and bounds the tag as
+  `GanttCreator.Owned.v1:{hash}`, and the four dependent guides are
+  amended. The lesson for the next just-in-time upgrade is the guide's own
+  rule working: a Tier-A upgrade may fix names against landed code, but a
+  **host-behaviour** claim that no probe has touched is a proposal, not a
+  fact, however plausible the member name looks.
 
 ## Implementer contract (read before executing any guide)
 
@@ -123,13 +140,13 @@ files only; the local audit verifies every file exists.
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R4.1 | `R4.1-excel-adapter-interfaces.md` | Upgraded to Tier A (2026-09-26) |
-| R4.2 | `R4.2-application-state-scope.md` | Upgraded to Tier A (2026-09-26) |
+| R4.1 | `R4.1-excel-adapter-interfaces.md` | **Landed** (`IShapeWritePort`, `IPanelGridMeasurementPort`, `ShapeOwnershipTag`; D2 corrected by ADR-0019; live `AlternativeText` probe **discharged** 2026-09-27) |
+| R4.2 | `R4.2-application-state-scope.md` | **Landed** (`ExcelApplicationStateScope`, five settings per ADR-0020; Office gate PASS 39/39) |
 | R4.3 | `R4.3-shape-render-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |
 | R4.5 | `R4.5-polygons-z-order.md` | Upgraded to Tier A (2026-09-26) |
 | R4.6 | `R4.6-style-token-mapping.md` | Upgraded to Tier A (2026-09-26) |
-| R4.7 | `R4.7-refresh-idempotence.md` | Upgraded to Tier A (2026-09-26) |
+| R4.7 | `R4.7-refresh-idempotence.md` | **Landed** (`ShapeReconciler` + `ShapeReconcilePlan`; D1's create-only premise expired with R4.6 and **D5 was added** replacing the unachievable "zero operations" pin with a fixed-point property, both approved 2026-09-28; **L18 decided** — refuse and surface; Office gate PASS 46/46) |
 | R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
 | R4.9 | `R4.9-refresh-command.md` | Upgraded to Tier A (2026-09-26; first live slice) |
 | R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26) |

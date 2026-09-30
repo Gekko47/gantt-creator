@@ -86,7 +86,7 @@ Full evidence-ledger format and verification workflow (fact/inference/proposal/u
 - Excel/PowerPoint calls execute on the required STA/main thread. Do not use `Task.Run` around COM.
 - Avoid chained COM property calls. Hold each COM proxy in a local variable and release it through one tested ownership helper.
 
-Full rules (nullable/analyzers/immutability conventions, `DateOnly` usage, geometry rounding policy, dependency-injection boundaries, `ScreenUpdating`/`EnableEvents`/`DisplayAlerts` save-restore discipline, error/logging conventions, XML doc policy): skill `02-architecture`.
+Full rules (nullable/analyzers/immutability conventions, `DateOnly` usage, geometry rounding policy, dependency-injection boundaries, the five-setting `ScreenUpdating`/`EnableEvents`/`DisplayAlerts`/status-bar/selection save-restore discipline (ADR-0020), error/logging conventions, XML doc policy): skill `02-architecture`.
 
 ## Testing rules
 

@@ -36,6 +36,15 @@ internal static class ConfigGraph
         internal override Excel.ListObject AddTable(Excel.ListObjects listObjects, object source) =>
             Fake.Add((Excel.Range)source);
 
+        internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) =>
+            Fake.ColumnAt(columns, index);
+
+        internal override void ClearContents(Excel.Range range)
+        {
+            Fake.ClearedRanges.Add(range);
+            _ = range.ClearContents();
+        }
+
         internal override Excel.Range GetCellRange(Excel.Worksheet worksheet, int row, int column) =>
             Fake.CellAt(ToAddress(row, column));
 

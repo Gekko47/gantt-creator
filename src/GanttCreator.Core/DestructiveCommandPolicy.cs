@@ -35,6 +35,20 @@ namespace GanttCreator.Core;
 public static class DestructiveCommandPolicy
 {
     /// <summary>
+    /// The dialog caption presented for every destructive-command confirmation.
+    /// Constant across all command classes, so it is declared once here rather
+    /// than repeated per command.
+    /// </summary>
+    public const string ConfirmationCaption = "Gantt Creator";
+
+    /// <summary>
+    /// The dialog main instruction presented for every destructive-command
+    /// confirmation. Constant across all command classes.
+    /// </summary>
+    public const string ConfirmationMainInstruction =
+        "Gantt Creator is about to make a destructive change";
+
+    /// <summary>
     /// The recognised destructive-command classes. Each future mutating command
     /// picks exactly one; the classification drives whether a confirmation is
     /// required and what the "cannot be undone" line must say.
@@ -92,18 +106,24 @@ public static class DestructiveCommandPolicy
     /// The confirmation kind the command must present. For every supported
     /// command today this is <see cref="ConfirmationKind.DestructiveButConfirmed"/>.
     /// </returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="commandClass"/> is the default
-    /// <c>0</c> value and no command class was specified — callers that
-    /// construct an unclassified command have made a programmer error.
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values. The default <c>0</c> value is a valid, named class
+    /// (<see cref="CommandClass.ClearTableBody"/>) and does not trigger this
+    /// exception.
     /// </exception>
     /// <remarks>
     /// <para>
-    /// The <see cref="ArgumentNullException"/> guard is intentional: a
-    /// destructive command that reaches the policy layer without a class is a
-    /// missing-classification defect, not a routine "no confirmation" case. The
-    /// guard makes that defect loud at the call site instead of silently
-    /// skipping the confirmation.
+    /// The guard is intentional: a destructive command that reaches the policy
+    /// layer without a class is a missing-classification defect, not a routine
+    /// "no confirmation" case. The guard makes that defect loud at the call
+    /// site instead of silently skipping the confirmation.
+    /// </para>
+    /// <para>
+    /// It is an <see cref="ArgumentOutOfRangeException"/> rather than an
+    /// <see cref="ArgumentNullException"/> because <paramref name="commandClass"/>
+    /// is a non-nullable value type: a caller cannot pass "no class" at all,
+    /// only a value outside the supported set.
     /// </para>
     /// </remarks>
     public static ConfirmationKind Classify(CommandClass commandClass) =>
@@ -113,8 +133,9 @@ public static class DestructiveCommandPolicy
             CommandClass.RecolumniseTable or
             CommandClass.ResetCatalogues => ConfirmationKind.DestructiveButConfirmed,
 
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class; every destructive command must be classified."),
         };
 
@@ -131,11 +152,11 @@ public static class DestructiveCommandPolicy
     /// The full confirmation body, including the no-undo line. Ready to hand to
     /// the confirmation dialog.
     /// </returns>
-    /// <exception cref="ArgumentNullException">
+    /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="commandClass"/> is unrecognised, per
     /// <see cref="Classify(CommandClass)"/>.
     /// </exception>
-    public static string BuildConfirmationText(CommandClass commandClass)
+    public static ConfirmationText BuildConfirmationText(CommandClass commandClass)
     {
         // Validate the classification first so the text is always built for a
         // recognised command.
@@ -148,9 +169,6 @@ public static class DestructiveCommandPolicy
         // undone, using exactly that phrasing. The exact line is pinned in test
         // so it cannot drift.
         const string noUndoLine = "This change cannot be undone.";
-        const string caption = "Gantt Creator";
-        const string mainInstruction =
-            "Gantt Creator is about to make a destructive change";
 
         // Count-only body: the text names the command and its subject but never
         // enumerates row counts, table sizes, or catalogue row counts from the
@@ -159,9 +177,7 @@ public static class DestructiveCommandPolicy
             CultureInfo.InvariantCulture,
             $"{commandName} {subject}. {noUndoLine}");
 
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"caption={caption}\nmainInstruction={mainInstruction}\nbody={body}");
+        return new ConfirmationText(ConfirmationCaption, ConfirmationMainInstruction, body);
     }
 
     /// <summary>
@@ -172,14 +188,19 @@ public static class DestructiveCommandPolicy
     /// <returns>
     /// The display name, e.g. "Clear table body".
     /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values, per <see cref="Classify(CommandClass)"/>.
+    /// </exception>
     public static string CommandDisplayName(CommandClass commandClass) =>
         commandClass switch
         {
             CommandClass.ClearTableBody => "Clear table body",
             CommandClass.RecolumniseTable => "Recolumnise table",
             CommandClass.ResetCatalogues => "Reset configuration catalogues",
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class."),
         };
 
@@ -191,6 +212,10 @@ public static class DestructiveCommandPolicy
     /// <returns>
     /// The subject phrase, e.g. "will delete all rows from the Gantt data table."
     /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// recognised values, per <see cref="Classify(CommandClass)"/>.
+    /// </exception>
     public static string CommandSubject(CommandClass commandClass) =>
         commandClass switch
         {
@@ -200,8 +225,31 @@ public static class DestructiveCommandPolicy
                 "will recreate the Gantt data table with the current columns.",
             CommandClass.ResetCatalogues =>
                 "will restore the configuration catalogues to their defaults.",
-            _ => throw new ArgumentNullException(
+            _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
+                commandClass,
                 "Unrecognised destructive-command class."),
         };
 }
+
+/// <summary>
+/// The three fields a destructive-command confirmation dialog renders, built
+/// by <see cref="DestructiveCommandPolicy.BuildConfirmationText(DestructiveCommandPolicy.CommandClass)"/>.
+/// </summary>
+/// <remarks>
+/// A record rather than a single formatted string: the dialog needs three
+/// separate fields, and encoding them into one newline-delimited string would
+/// make the boundary ambiguous the moment any field could contain a newline.
+/// <see cref="Caption"/> and <see cref="MainInstruction"/> are the same for
+/// every command; only <see cref="Body"/> varies.
+/// </remarks>
+/// <param name="Caption">The dialog caption.</param>
+/// <param name="MainInstruction">The dialog's main instruction line.</param>
+/// <param name="Body">
+/// The dialog body, naming the command and its subject and stating the exact
+/// no-undo line (ADR-0008 D3/D2).
+/// </param>
+public sealed record ConfirmationText(
+    string Caption,
+    string MainInstruction,
+    string Body);

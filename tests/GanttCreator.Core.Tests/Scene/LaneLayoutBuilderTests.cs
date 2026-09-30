@@ -63,6 +63,43 @@ public sealed class LaneLayoutBuilderTests
     }
 
     [Fact]
+    public void An_empty_input_is_a_successful_empty_layout_not_a_refusal()
+    {
+        // §24 makes a Delineator a plot-global entity that consumes no lane, so a
+        // scene of only delineators legitimately has no lanes. Refusing here forced
+        // SceneBuilder to report that scene as EmptyEvents, i.e. as having nothing to
+        // render. The empty case is therefore a success, and it is pinned here because
+        // the EmptyInput refusal it replaced was a real, deliberate contract.
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild([], _metrics);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Layout!.Lanes);
+        Assert.Empty(outcome.Layout.Warnings);
+    }
+
+    [Fact]
+    public void A_splitter_sharing_a_lane_id_with_an_activity_still_gets_its_own_fixed_lane()
+    {
+        // §10 puts a Splitter in a complete lane of its own. LaneLayoutBuilder picks
+        // its branch from the first input in a group, so a shared LaneId would group
+        // the splitter with the activity and build it as an ordinary event lane.
+        GanttEvent activity = Event(1, "activity");
+        GanttEvent splitter = Event(2, "splitter", GanttEntityType.Splitter, suppressLaneId: false);
+
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(activity, 8), new LaneEventInput(splitter, 18)],
+            _metrics
+        );
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, outcome.Layout!.Lanes.Count);
+        LaneGeometry splitterLane = Assert.Single(outcome.Layout.Lanes, lane => lane.IsSplitter);
+        Assert.Equal(18, splitterLane.Height);
+        Assert.Equal([splitter.Id], splitterLane.EventIds);
+    }
+
+
+    [Fact]
     public void Splitter_and_spacer_lanes_use_fixed_heights_and_preserve_sequence()
     {
         LaneEventInput spacer = new(Event(1, "spacer", GanttEntityType.Spacer), 1);
@@ -93,7 +130,6 @@ public sealed class LaneLayoutBuilderTests
     public void Invalid_inputs_return_typed_refusals_with_positive_cases()
     {
         Assert.Equal(LaneLayoutRefusal.NullInput, LaneLayoutBuilder.TryBuild(null, _metrics).Refusal);
-        Assert.Equal(LaneLayoutRefusal.EmptyInput, LaneLayoutBuilder.TryBuild([], _metrics).Refusal);
         Assert.Equal(LaneLayoutRefusal.NullMetrics, LaneLayoutBuilder.TryBuild([new LaneEventInput(Event(1, "one"), 8)], null).Refusal);
         Assert.Equal(
             LaneLayoutRefusal.InvalidMetrics,
@@ -122,12 +158,13 @@ public sealed class LaneLayoutBuilderTests
         GanttEntityType type = GanttEntityType.AsPlannedActivity,
         int? visibleStack = null,
         DateOnly? start = null,
-        DateOnly? finish = null
+        DateOnly? finish = null,
+        bool suppressLaneId = true
     ) =>
         new(
             row,
             GanttRowId.New(),
-            type is GanttEntityType.Splitter or GanttEntityType.Spacer ? null : _laneId,
+            type is GanttEntityType.Splitter or GanttEntityType.Spacer && suppressLaneId ? null : _laneId,
             visibleStack,
             type,
             null,

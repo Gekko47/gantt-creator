@@ -32,7 +32,7 @@ public enum LaneEventLayoutRefusal
     /// <summary>The input collection was null.</summary>
     NullInput = 0,
 
-    /// <summary>The lane layout was null or carried no lanes.</summary>
+    /// <summary>The lane layout was null.</summary>
     MissingLayout = 1,
 
     /// <summary>An input item or its event was null.</summary>
@@ -95,9 +95,22 @@ public static class LaneEventLayout
             return Refused(LaneEventLayoutRefusal.NullInput);
         }
 
-        if (layout is null || layout.Lanes.Count == 0)
+        if (layout is null)
         {
             return Refused(LaneEventLayoutRefusal.MissingLayout);
+        }
+
+        // An empty event set with a lane layout is a successful empty feed, not a
+        // refusal. A §24-only scene has plot-global entities and no lanes, so
+        // requiring at least one lane here would refuse the very scenes the empty
+        // input from LaneLayoutBuilder exists to allow. A layout that fails to cover
+        // a non-empty input is still caught, by the completeness check below.
+        if (events.Count == 0)
+        {
+            return new LaneEventLayoutCreationOutcome(
+                new LaneEventLayoutResult([], layout.Warnings),
+                null
+            );
         }
 
         if (events.Any(input => input?.Event is null))

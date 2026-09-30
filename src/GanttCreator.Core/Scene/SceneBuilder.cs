@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace GanttCreator.Core.Scene;
 
 /// <summary>The reason a scene could not be built.</summary>
@@ -49,9 +47,6 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
-
-    /// <summary>Gets the caller-supplied measured panel bounds.</summary>
-    public RectD? PanelBounds { get; init; }
 
     /// <summary>Gets the caller-supplied measured plot bounds.</summary>
     public RectD? PlotBounds { get; init; }
@@ -224,8 +219,10 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.NullPanelGrid);
         }
 
-        if (request.PanelBounds is not { } panelBounds
-            || request.PlotBounds is not { } plotBounds)
+        // The plot bounds are the only caller-supplied rectangle. The panel's bounds
+        // are derived by PanelBuilder (D-B1), so there is no second measurement of the
+        // panel for the frame to disagree with.
+        if (request.PlotBounds is not { } plotBounds)
         {
             return Refused(SceneBuilderRefusal.NullBounds);
         }
@@ -252,19 +249,36 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
-        // A hidden row validates but must not render, and a splitter or spacer is
-        // lane geometry with no entity primitive. A delineator is excluded too: §24
-        // makes it a full-height plot line, not a lane-bound entity, so giving it a
-        // lane would reserve vertical space for a row it must not occupy. It is
-        // built separately by the delineator pass.
-        List<GanttEvent> renderable =
+        // A hidden row validates but must not render. The visible rows are then split
+        // into the four categories the guide treats differently, because collapsing
+        // them into one "renderable" list is what made Splitter and Spacer geometry
+        // unreachable: a row that occupies vertical space, emits a foreground
+        // primitive, and is not lane-bound are three different questions.
+        List<GanttEvent> visible =
         [
-            .. request.Events.Where(@event =>
-                @event.Visible && @event.Type is not (GanttEntityType.Splitter
-                    or GanttEntityType.Spacer
-                    or GanttEntityType.Delineator)),
+            .. request.Events.Where(@event => @event.Visible),
         ];
-        if (renderable.Count == 0)
+
+        // Lane participants: every visible row that occupies a lane. §9 lanes, §10
+        // Splitter and §11 Spacer all take their position in the lane sequence here.
+        List<GanttEvent> laneParticipants =
+        [
+            .. visible.Where(@event => @event.Type != GanttEntityType.Delineator),
+        ];
+
+        // Plot-global entities: §24 makes a Delineator a full-height plot line, not a
+        // lane-bound entity, so giving it a lane would reserve vertical space for a row
+        // it must not occupy. It is built separately by the delineator pass.
+        List<GanttEvent> plotGlobalEntities =
+        [
+            .. visible.Where(@event => @event.Type == GanttEntityType.Delineator),
+        ];
+
+        // "Empty" means no visible scene-producing entity, not "no lane-bound ordinary
+        // event". A Delineator renders a line and consumes no lane, so a scene of only
+        // delineators is a real scene; refusing it reported a renderable chart as
+        // having nothing to draw.
+        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
@@ -272,50 +286,80 @@ public static class SceneBuilder
         List<LaneEventInput> laneInputs = [];
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
 
-        // A delineator takes no lane, so its resolved line style is collected
-        // separately and the grouping pass reads this map.
-        List<GanttEvent> delineators =
-        [
-            .. request.Events.Where(@event =>
-                @event.Visible && @event.Type == GanttEntityType.Delineator),
-        ];
         Dictionary<GanttRowId, SceneStyle> delineatorStyles = [];
-        foreach (GanttEvent @event in delineators)
+        foreach (GanttEvent @event in plotGlobalEntities)
         {
             // §24 draws the line from the resolved line style, but a Delineator has
-            // no named-style default and no built-in preset, so an unresolvable one
-            // is NOT a broken workbook: it falls back to the chart's own delineator
-            // token style rather than refusing the whole scene. Only Types that
-            // *have* a default are refused when it cannot resolve.
+            // no named-style default in the registry, so an unresolvable one is NOT a
+            // broken workbook: it falls back to the code-owned DefaultDelineator
+            // preset rather than refusing the whole scene. Only Types that *have* a
+            // default are refused when it cannot resolve.
             delineatorStyles[@event.Id] = TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null
                 ? resolved.Style
-                : new SceneStyle("DefaultDelineator", strokeColour: ColourHex.Parse("#404040"));
+                : CataloguePresetStyle("DefaultDelineator");
         }
 
-        foreach (GanttEvent @event in renderable)
+        foreach (GanttEvent @event in laneParticipants)
         {
-            // A Splitter, Spacer, or Delineator has no named-style default, so
-            // requiring a resolvable style for one would refuse a valid workbook.
-            // A Type that does have a default is still refused when it cannot
-            // resolve, which is the R2.7c Custom Activity rule.
-            ResolvedEventStyle? resolved = null;
-            var requiresStyle = @event.Type is not (GanttEntityType.Splitter
-                or GanttEntityType.Spacer
-                or GanttEntityType.Delineator);
-            if (requiresStyle)
+            // A Splitter and a Spacer have no named style in the registry, and
+            // GanttStyleResolver deliberately refuses a blank key rather than
+            // guessing, so requiring resolution would refuse a valid workbook. They
+            // take the code-owned preset instead — the same authority the delineator
+            // fallback uses, and the same one a registry that *does* carry the style
+            // resolves to, so both paths agree. Every other Type is refused when it
+            // cannot resolve, which is the R2.7c Custom Activity rule.
+            SceneStyle style;
+            if (TryResolveStyle(request.Registry, @event, out ResolvedEventStyle? resolved) && resolved is not null)
             {
-                if (!TryResolveStyle(request.Registry, @event, out resolved) || resolved is null)
-                {
-                    return Refused(SceneBuilderRefusal.UnresolvableStyle);
-                }
+                style = resolved.Style;
+            }
+            else if (LaneOrdering.OwnsItsOwnLane(@event))
+            {
+                style = CataloguePresetStyle(
+                    EntityTypeCatalog.GetDefinition(@event.Type)!.DefaultStyleKey);
+            }
+            else
+            {
+                return Refused(SceneBuilderRefusal.UnresolvableStyle);
             }
 
-            // A style-less Type still occupies a lane, so it carries an explicit
-            // zero-height marker style rather than being dropped from the map that
-            // the milestone and overlay passes read.
-            ResolvedEventStyle style = resolved ?? new ResolvedEventStyle(new SceneStyle("None"), 0);
-            styles[@event.Id] = style;
-            laneInputs.Add(new LaneEventInput(@event, style.HeightPt));
+            // A fixed-height lane takes its height from the resolved metrics rather
+            // than from the style's activity height, which a Splitter or Spacer preset
+            // does not carry. Passing the height the lane will actually occupy keeps
+            // the input honest instead of relying on the fixed-lane branch ignoring it.
+            // Every type is listed explicitly, per the repo's exhaustive-switch
+            // convention, so a type added later cannot silently take the 0 default.
+            ResolvedEventStyle? heightSource = resolved;
+            var heightPt = @event.Type switch
+            {
+                GanttEntityType.Splitter => laneMetrics.SplitterHeightPt,
+                GanttEntityType.Spacer => laneMetrics.SpacerHeightPt,
+                GanttEntityType.AsBuiltActivity
+                    or GanttEntityType.AsPlannedActivity
+                    or GanttEntityType.BaselineActivity
+                    or GanttEntityType.CriticalInterval
+                    or GanttEntityType.DelayEvent
+                    or GanttEntityType.AsBuiltProcurement
+                    or GanttEntityType.AsPlannedProcurement
+                    or GanttEntityType.BaselineProcurement
+                    or GanttEntityType.CustomActivity
+                    or GanttEntityType.AsBuiltMilestone
+                    or GanttEntityType.AsPlannedMilestone
+                    or GanttEntityType.BaselineMilestone
+                    or GanttEntityType.CriticalMilestone => heightSource?.HeightPt ?? 0,
+
+                // A Delineator never reaches this loop — §24 makes it a plot-global
+                // entity — so it is listed rather than defaulted, per the repo's
+                // exhaustive-switch convention. The discard arm remains because an
+                // unnamed enum value would otherwise be a compile error rather than
+                // a visible decision; it resolves to the same zero a style-less row
+                // has always contributed.
+                GanttEntityType.Delineator => 0,
+                _ => 0,
+            };
+
+            styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
+            laneInputs.Add(new LaneEventInput(@event, heightPt));
         }
 
         if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
@@ -340,7 +384,7 @@ public static class SceneBuilder
         // the offset cannot be applied twice.
         BuildSpans(placements, styles, timeScale, plotBounds, primitives, warnings, parentVisibleBounds);
         BuildOverlaysAndMilestones(request, placements, styles, timeScale, plotBounds, parentVisibleBounds, primitives, warnings);
-        return BuildFramePanelAndScene(request, timeScale, panelBounds, plotBounds, placements, delineators, delineatorStyles, parentVisibleBounds, primitives, warnings);
+        return BuildFramePanelAndScene(request, timeScale, plotBounds, laneLayout, placements, laneParticipants, plotGlobalEntities, delineatorStyles, styles, parentVisibleBounds, primitives, warnings);
     }
 
 
@@ -529,11 +573,13 @@ public static class SceneBuilder
     private static SceneBuildOutcome BuildFramePanelAndScene(
         SceneBuildRequest request,
         TimeScale timeScale,
-        RectD panelBounds,
         RectD plotBounds,
+        LaneLayoutResult laneLayout,
         LaneEventLayoutResult placements,
-        List<GanttEvent> delineators,
+        IReadOnlyList<GanttEvent> laneParticipants,
+        List<GanttEvent> plotGlobalEntities,
         Dictionary<GanttRowId, SceneStyle> delineatorStyles,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
@@ -547,12 +593,70 @@ public static class SceneBuilder
         // never becomes a visible empty strip.
         var showTitle = !string.IsNullOrWhiteSpace(request.Title);
 
+        // The panel is built FIRST, and its derived bounds are what the frame reads.
+        // This is the single-authority decision (D-B1): there is no caller-supplied
+        // panel rectangle any more, so the chart background cannot be sized from one
+        // rectangle while the panel is drawn in another. It is possible because
+        // PanelBuilder needs only the grid, the projected rows, the plot bounds, and
+        // the period-header bottom - all of which are known before the frame exists.
+        // Its primitives are held back until after the frame so the scene's emission
+        // order stays frame-then-panel.
+        PanelBuildOutcome? panelOutcome = null;
+        if (request.Panel is { } panelTheme)
+        {
+            // Section 4 fixes the header band's bottom edge to the period header's
+            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
+            // panel builder cannot know the plot bounds, so it is supplied here and
+            // SceneBuilderTests asserts the emitted bottom equals this value.
+            //
+            // Rows come from the source-row projection, not from lane placements: a
+            // Splitter, Spacer, Delineator, or hidden row is a row in the table §3
+            // reproduces and has no lane placement, so deriving panel rows from
+            // placements silently dropped exactly those rows.
+            PanelRowProjectionResult projected = PanelRowProjection.TryProject(
+                request.Events,
+                request.Grid,
+                request.DateFormat);
+            if (projected.Refusal is not null)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            PanelBuildOutcome panel = PanelBuilder.TryBuild(
+                new PanelBuildRequest(
+                    request.Grid!,
+                    projected.Rows,
+                    plotBounds,
+                    plotBounds.Y - request.YearBandHeightPt,
+                    panelTheme));
+
+            // A panel refusal must not be dropped: an empty panel would read as a
+            // scene with no data table, which is a silent data loss rather than an
+            // error. It reports the existing InvalidLayoutSettings rather than adding
+            // a member that could never be positively tested -- AGENTS.md treats an
+            // unreachable validator as a defect, exactly as R3.15 D2 removed the dead
+            // PlotOutsideChart guard. RowCountMismatch is now genuinely reachable,
+            // which is the point of the projection: a source row that failed
+            // validation can no longer shift every panel cell below it.
+            if (panel.Result is null)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            panelOutcome = panel;
+        }
+
+        // A scene with no panel has no panel rectangle to contribute, so the frame
+        // unions the plot and header bands alone. An empty rectangle would be
+        // accepted by RectD and would drag the content origin to the origin.
+        RectD framePanelBounds = panelOutcome?.Result?.PanelBounds ?? plotBounds;
+
         FrameBandsCreationOutcome frame = FrameBandsBuilder.TryBuild(
             new FrameBandsRequest(
                 timeScale,
                 request.Scale,
                 request.PeriodLabelFormat,
-                panelBounds,
+                framePanelBounds,
                 plotBounds,
                 request.ChartOuterPaddingPt,
                 request.TitleBandHeightPt,
@@ -585,7 +689,7 @@ public static class SceneBuilder
             timeScale,
             plotBounds,
             frameResult.Geometry.ChartBounds,
-            delineators,
+            plotGlobalEntities,
             delineatorStyles,
             primitives,
             warnings);
@@ -596,104 +700,37 @@ public static class SceneBuilder
             plotBounds,
             frameResult.Geometry.ChartBounds,
             placements,
+            styles,
             parentVisibleBounds,
             primitives,
             warnings);
 
-        if (request.Panel is { } panelTheme)
+        // §10's band spans the data panel and the plot, so it needs the panel's left
+        // edge. That edge is only known once the panel has been built, which is why
+        // this pass moved after the panel rather than with the other lane passes.
+        BuildSplitters(
+            request,
+            laneLayout,
+            styles,
+            framePanelBounds,
+            plotBounds,
+            laneParticipants,
+            frameTheme.MajorGrid,
+            primitives,
+            warnings);
+
+        // The panel primitives were built before the frame so their bounds could feed
+        // it; they are emitted here so the scene's primitive order stays
+        // frame-then-panel.
+        if (panelOutcome?.Result is { } built)
         {
-            // Section 4 fixes the header band's bottom edge to the period header's
-            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
-            // panel builder cannot know the plot bounds, so it is supplied here and
-            // SceneBuilderTests asserts the emitted bottom equals this value.
-            //
-            // The header band height is the §4 panel header's own height, not the
-            // year band: YearBandHeightPt belongs to §5, and reusing it here made a
-            // structural equality (the bottoms align) rest on an unrelated pairing.
-            // The height is derived from the panel's own measured row height so the
-            // header and the body rows share one metric.
-            PanelBuildOutcome panel = PanelBuilder.TryBuild(
-                new PanelBuildRequest(
-                    request.Grid!,
-                    [.. placements.Placements.Select(placement => new PanelRow(placement.Event.Id, Cells(placement.Event, request)))],
-                    plotBounds,
-                    plotBounds.Y - request.YearBandHeightPt,
-                    request.Grid!.RowHeightPt,
-                    panelTheme));
-
-            // A panel refusal must not be dropped: an empty panel would read as a
-            // scene with no data table, which is a silent data loss rather than an
-            // error. Every PanelBuildRefusal is precondition-checked upstream (the
-            // frame builder refuses a non-positive plot, and the grid guarantees a
-            // positive row height and a unique row per placement), so this branch is
-            // a defence against a future PanelBuilder refusal. It reports the existing
-            // InvalidLayoutSettings rather than adding a member that could never be
-            // positively tested -- AGENTS.md treats an unreachable validator as a
-            // defect, exactly as R3.15 D2 removed the dead PlotOutsideChart guard.
-            if (panel.Result is not { } panelResult)
-            {
-                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
-            }
-
-            primitives.AddRange(panelResult.Primitives);
+            primitives.AddRange(built.Primitives);
         }
 
         SceneCreationOutcome scene = GanttScene.TryCreate(frameResult.Geometry.ChartBounds, plotBounds, primitives, warnings);
-        return scene.Scene is { } built
-            ? new SceneBuildOutcome(new SceneBuildResult(built, timeScale), null)
+        return scene.Scene is { } sceneBuilt
+            ? new SceneBuildOutcome(new SceneBuildResult(sceneBuilt, timeScale), null)
             : Refused(SceneBuilderRefusal.InvalidLayoutSettings);
-    }
-
-    /// <summary>
-    /// Projects one event's cell texts in grid-column order, as §3 requires the
-    /// emitted bounds to follow the measured column order.
-    /// </summary>
-    /// <param name="event">The validated event supplying the cell values.</param>
-    /// <param name="request">The build request supplying the grid and the date format.</param>
-    /// <returns>
-    /// One entry per grid column. A column with no schema mapping, or a field the
-    /// entity type does not use, is <see langword="null"/>: blank is legal cell
-    /// data (R2.5 U2) and the builder already omits text for it.
-    /// </returns>
-    /// <remarks>
-    /// Dates go through <see cref="GanttDateFormatting"/> with the request's
-    /// approved format, so a panel cell and a §23 date label cannot disagree and
-    /// no host culture can re-derive the pattern.
-    /// </remarks>
-    private static List<string?> Cells(GanttEvent @event, SceneBuildRequest request)
-    {
-        List<string?> cells = new(request.Grid!.Columns.Count);
-        foreach (PanelColumn column in request.Grid.Columns)
-        {
-            cells.Add(column.Name switch
-            {
-                // Every schema column is mapped explicitly rather than relying on a
-                // default: a panel cell must reproduce the worksheet value it stands
-                // for, and a silently null column renders as a blank cell that reads
-                // as an empty worksheet cell.
-                "Id" => @event.Id.Value,
-                "Type" => EntityTypeCatalog.GetDefinition(@event.Type)?.DisplayName,
-                "Description" => @event.Description,
-                "Start" => @event.Start is { } start ? GanttDateFormatting.Format(start, request.DateFormat) : null,
-                "Finish" => @event.Finish is { } finish ? GanttDateFormatting.Format(finish, request.DateFormat) : null,
-                "LaneId" => @event.LaneId?.Value,
-                "StackIndex" => @event.StackIndex?.ToString(CultureInfo.InvariantCulture),
-                "ParentId" => @event.ParentId?.Value,
-                "StyleKey" => @event.StyleKey,
-                // The worksheet holds the enum member name, which is also what
-                // GanttRowValidator parses back, so the cell round-trips.
-                "LabelPosition" => @event.LabelPosition?.ToString(),
-                "FillColour" => @event.FillColour,
-                "StrokeColour" => @event.StrokeColour,
-                // ExcelCellConverter.ToText renders a bool as TRUE/FALSE, so the cell
-                // matches the value the table reader would parse back.
-                "Visible" => @event.Visible ? "TRUE" : "FALSE",
-                "SortOrder" => @event.SortOrder?.ToString(CultureInfo.InvariantCulture),
-                _ => null,
-            });
-        }
-
-        return cells;
     }
 
     /// <summary>
@@ -800,6 +837,7 @@ public static class SceneBuilder
         RectD plotBounds,
         RectD chartBounds,
         LaneEventLayoutResult placements,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
         Dictionary<GanttRowId, RectD> parentVisibleBounds,
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
@@ -808,6 +846,16 @@ public static class SceneBuilder
         {
             return;
         }
+
+        // §17's outside colour is the code-owned DefaultText token, not a second
+        // literal here: the token table stays the single authority, exactly as
+        // CataloguePresetStyle reads its preset rather than restating its colours.
+        ColourHex? defaultText = GanttCatalogues
+            .Colours.FirstOrDefault(token => token.Name == "DefaultText")
+            is { } defaultTextToken
+            && ColourHex.TryParse(defaultTextToken.HexValue, out ColourHex? parsed)
+                ? parsed
+                : null;
 
         LabelMetrics metrics = new(
             plotBounds,
@@ -841,14 +889,33 @@ public static class SceneBuilder
             // measured gap and truncate or suppress a label that has room.
             List<RectD> relevant = VerticalBand(occupants, shapeBounds);
 
+            // The inside label carries the row's own resolved text colour, so a
+            // delay event's label is DelayText over its red body. A row whose style
+            // resolved no text colour keeps the caller's label style untouched
+            // rather than being given a substitute: null means "unresolved", and
+            // the adapter reads that as "leave the font alone".
+            SceneStyle insideLabelStyle = styles.TryGetValue(@event.Id, out ResolvedEventStyle? rowStyle)
+                && rowStyle.Style.TextColour is { } insideTextColour
+                    ? labelStyle.WithTextColour(insideTextColour)
+                    : labelStyle;
+
+            // §17's outside colour. Supplied for every row, not only delays: the
+            // planner applies it only to a delay label placed outside its body, so
+            // a non-delay row's inside and outside styles are the same object and
+            // the switch cannot fire for it.
+            SceneStyle outsideLabelStyle = defaultText is { } outsideTextColour
+                ? labelStyle.WithTextColour(outsideTextColour)
+                : labelStyle;
+
             LabelPlanCreationOutcome description = LabelPlanner.TryPlan(
                 new LabelRequest(
                     @event,
                     @event.Description,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     shapeBounds,
-                    labelStyle,
+                    insideLabelStyle,
                     request.Metrics!,
+                    OutsideTextStyle: outsideLabelStyle,
                     LaneOrder: placement.LaneOrder,
                     StackIndex: placement.EffectiveStackIndex),
                 metrics,
@@ -878,6 +945,11 @@ public static class SceneBuilder
             // description was added would not contain it, and the date label would be
             // planned as if the row had no description at all -- which is exactly the
             // collision §23 requires the occupants list to prevent.
+            //
+            // A §23 date label is anchored Left or Right of the bar and is never
+            // placed inside a body, so it always takes the outside style. Passing
+            // the inside style here would put a delay event's DelayText beside its
+            // bar, where white-on-white is unreadable.
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -886,7 +958,7 @@ public static class SceneBuilder
                     metrics,
                     request.Metrics!,
                     request.DateFormat,
-                    labelStyle,
+                    outsideLabelStyle,
                     Occupants: VerticalBand(occupants, shapeBounds)));
             if (dates.Result is not { } planned)
             {
@@ -1056,9 +1128,122 @@ public static class SceneBuilder
                 style.FillColour,
                 style.StrokeColour,
                 hasDefinition ? definition!.StandardOutlinePt : null,
-                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None),
+                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None,
+                textColour: style.TextColour),
             heightPt);
         return true;
+    }
+
+    /// <summary>
+    /// The one catalogue fallback style for a row type with no named style.
+    /// </summary>
+    /// <param name="styleKey">The type's code-owned default style key.</param>
+    /// <returns>The preset's resolved fill and stroke, as a scene style.</returns>
+    /// <remarks>
+    /// A <c>Delineator</c>, <c>Splitter</c>, and <c>Spacer</c> have no named style in
+    /// the workbook registry, and <see cref="GanttStyleResolver"/> deliberately refuses
+    /// a blank key rather than guessing, so these rows can only be styled from the
+    /// code-owned preset. Restating a colour here would make the token table and this
+    /// method two sources of truth, and a change to the token would silently not reach
+    /// the scene. Reading the preset keeps the token table authoritative and is what
+    /// makes a registry that supplies its own style and this fallback agree.
+    /// </remarks>
+    private static SceneStyle CataloguePresetStyle(string styleKey)
+    {
+        GanttStylePreset preset = GanttCatalogues.GetPreset(styleKey);
+        return new SceneStyle(
+            preset.StyleKey,
+            string.IsNullOrEmpty(preset.FillColour) ? null : ColourHex.Parse(preset.FillColour),
+            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour));
+    }
+
+    /// <summary>
+    /// Builds the §10 splitter band, borders, and labels for every splitter lane.
+    /// </summary>
+    /// <param name="request">The build request, supplying the border width and label style.</param>
+    /// <param name="laneLayout">The lane layout, whose fixed lanes are the input.</param>
+    /// <param name="styles">The resolved style per row, read for the splitter rows.</param>
+    /// <param name="panelBounds">The data panel bounds; the band starts at its left edge.</param>
+    /// <param name="plotBounds">The plot rectangle; the band ends at its right edge.</param>
+    /// <param name="laneParticipants">The lane participants, read for the Splitter rows.</param>
+    /// <param name="borderStyle">
+    /// The chart's major-boundary style, supplying the §10 borders' stroke token. It is the
+    /// frame theme's <c>MajorGrid</c> style, so a splitter border is stroked by the same
+    /// authority as the chart frame lines rather than by a second, literal colour.
+    /// </param>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="warnings">The scene warnings to append to.</param>
+    /// <remarks>
+    /// A Spacer contributes no primitive at all (§11: "no foreground fill, border, or
+    /// label"), so only <c>IsSplitter</c> lanes reach the builder. A refusal is warned
+    /// rather than returned, matching the span, overlay, milestone, and delineator
+    /// passes: one unbuildable row must not silently remove the whole chart.
+    /// </remarks>
+    private static void BuildSplitters(
+        SceneBuildRequest request,
+        LaneLayoutResult laneLayout,
+        IReadOnlyDictionary<GanttRowId, ResolvedEventStyle> styles,
+        RectD panelBounds,
+        RectD plotBounds,
+        IReadOnlyList<GanttEvent> laneParticipants,
+        SceneStyle borderStyle,
+        List<ScenePrimitive> primitives,
+        List<SceneWarning> warnings)
+    {
+        var byId = laneParticipants.ToDictionary(@event => @event.Id);
+
+        foreach (LaneGeometry lane in laneLayout.Lanes)
+        {
+            if (!lane.IsSplitter)
+            {
+                continue;
+            }
+
+            foreach (GanttRowId id in lane.EventIds)
+            {
+                if (!byId.TryGetValue(id, out GanttEvent? @event) || !styles.TryGetValue(id, out ResolvedEventStyle? style))
+                {
+                    continue;
+                }
+
+                // §10's border is a *major* boundary, so its width is the
+                // MajorBoundaryPt token rather than the row's own outline width: the
+                // splitter preset carries no outline, and borrowing one would make the
+                // border width a function of a style the guide never defined it from. The
+                // stroke colour comes from the major-boundary style, because a line is a
+                // stroke and the band preset has no stroke token to contribute.
+                GanttLabelPosition position = @event.LabelPosition ?? GanttLabelPosition.DataPanelLeft;
+                // The lane layout is lane-relative — it starts at y=0 for the first
+                // lane — so the plot top is added here, exactly once, the same way
+                // BuildSpans offsets a slot centre. Without it the band would sit in
+                // the header bands and its label would fall outside the chart.
+                LaneGeometry chartLane = lane with { Top = lane.Top + plotBounds.Top };
+                SplitterCreationOutcome built = SplitterBuilder.TryBuild(
+                    new SplitterRequest(
+                        @event,
+                        style.Style,
+                        borderStyle,
+                        chartLane,
+                        panelBounds.X,
+                        plotBounds,
+                        request.MajorBoundaryPt,
+                        request.LabelStyle,
+                        request.Metrics!,
+                        position));
+
+                if (built.Result is not { } result)
+                {
+                    warnings.Add(
+                        new SceneWarning(
+                            SceneOwnerId.ForRow(id),
+                            "SplitterRefused",
+                            $"The §10 splitter band could not be built ({built.Refusal})."));
+                    continue;
+                }
+
+                primitives.AddRange(result.Primitives);
+            }
+        }
     }
 
     private static SceneBuildOutcome Refused(SceneBuilderRefusal refusal) => new(null, refusal);
