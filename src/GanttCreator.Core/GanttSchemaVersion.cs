@@ -22,10 +22,16 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 4 for R4.7A's <c>SiblingOrder</c> column
-    /// (ADR-0029 D5, step 1). R4.7C takes it to 5 for the <c>Duration</c> column
-    /// and the token/label-set changes; each schema-changing row takes its own bump,
-    /// so two rows can never claim one version number.
+    /// monotonically, and is currently 5 for R4.7C's <c>Duration</c> column,
+    /// column classification, <c>GanttRowHeightPt</c>, the retired
+    /// <c>CriticalLinePt</c>, and the added <c>CriticalFill</c> (ADR-0029 D5,
+    /// step 2). Each schema-changing row takes its own bump, so two rows can
+    /// never claim one version number.
     /// </summary>
-    public const int CurrentSchemaVersion = 4;
+    /// <remarks>
+    /// ADR-0029 D5 requires the bump to be the <em>last</em> change in the row's
+    /// commit sequence: every other change lands first, so the integrity checker
+    /// — not a manual review — is what notices a partial landing.
+    /// </remarks>
+    public const int CurrentSchemaVersion = 5;
 }

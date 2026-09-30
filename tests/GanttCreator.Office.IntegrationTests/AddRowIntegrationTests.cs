@@ -232,11 +232,12 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         // SiblingOrder after ParentId, which moved StyleKey from index 9 to 10
         // and left this helper reading a blank cell: the assertion compared the
         // expected style key against null and passed for the wrong reason on
-        // every earlier run. Excel's 1-based Cells indices are offset by the
-        // header row, hence the +1.
+        // every earlier run. R4.7C inserted Duration after Finish, moving it to 11,
+        // and the cross-check below caught that rather than letting it pass.
+        // Excel's 1-based Cells indices are offset by the header row, hence the +1.
         Assert.Equal(id, ColumnValue(range, "Id", 1));
         Assert.Equal(type, ColumnValue(range, "Type", 4));
-        Assert.Equal(styleKey, ColumnValue(range, "StyleKey", 10));
+        Assert.Equal(styleKey, ColumnValue(range, "StyleKey", 11));
     }
 
     /// <summary>

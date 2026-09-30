@@ -17,6 +17,7 @@ public sealed record GanttRowDto
         GanttCell<string> descriptionCell,
         GanttCell<DateOnly?> startCell,
         GanttCell<DateOnly?> finishCell,
+        GanttCell<string> durationCell,
         GanttCell<string> parentIdCell,
         GanttCell<int?> siblingOrderCell,
         GanttCell<string> styleKeyCell,
@@ -34,6 +35,7 @@ public sealed record GanttRowDto
         DescriptionCell = descriptionCell;
         StartCell = startCell;
         FinishCell = finishCell;
+        DurationCell = durationCell;
         ParentIdCell = parentIdCell;
         SiblingOrderCell = siblingOrderCell;
         StyleKeyCell = styleKeyCell;
@@ -47,7 +49,9 @@ public sealed record GanttRowDto
     /// <summary>
     /// Creates a normalized compatibility row from the pre-R2.4b shape.
     /// <c>SiblingOrder</c> is absent, which the validator reads as "the engine has
-    /// not assigned one yet" rather than as ordering.
+    /// not assigned one yet" rather than as ordering. <c>Duration</c> is absent for
+    /// the same reason: it is engine-owned and computed on Refresh (R4.7F), so a
+    /// caller constructing this shape has not supplied one.
     /// </summary>
     public GanttRowDto(
         int rowNumber,
@@ -74,6 +78,7 @@ public sealed record GanttRowDto
             Cell(description),
             Cell(start),
             Cell(finish),
+            GanttCells.Empty<string>(),
             Cell(parentId),
             GanttCells.Empty<int?>(),
             Cell(styleKey),
@@ -108,6 +113,16 @@ public sealed record GanttRowDto
 
     /// <summary>Raw typed Finish cell state.</summary>
     public GanttCell<DateOnly?> FinishCell { get; init; }
+
+    /// <summary>
+    /// Raw typed Duration cell state (R4.7C D1). Engine-owned and visible but
+    /// locked: the add-in writes it on Refresh (R4.7F) because the analyst must
+    /// read a duration without being able to invent one. It is text rather than a
+    /// number because the contract carries a non-duration marker (<c>-</c>) for
+    /// milestones and delineators, blank for structural rows, and no value at all
+    /// for invalid dates — a numeric column could express only the first case.
+    /// </summary>
+    public GanttCell<string> DurationCell { get; init; }
 
     /// <summary>Raw typed ParentId cell state.</summary>
     public GanttCell<string> ParentIdCell { get; init; }
@@ -157,6 +172,9 @@ public sealed record GanttRowDto
 
     /// <summary>Normalized Finish compatibility view.</summary>
     public DateOnly? Finish => FinishCell.Value;
+
+    /// <summary>Normalized Duration compatibility view.</summary>
+    public string? Duration => DurationCell.Value;
 
     /// <summary>Normalized ParentId compatibility view.</summary>
     public string? ParentId => ParentIdCell.Value;

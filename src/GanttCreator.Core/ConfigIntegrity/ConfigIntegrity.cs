@@ -1,5 +1,6 @@
-namespace GanttCreator.Core.ConfigIntegrity;
+using System.Globalization;
 
+namespace GanttCreator.Core.ConfigIntegrity;
 /// <summary>The deterministic integrity conditions detected during configuration repair.</summary>
 public enum ConfigIntegrityFindingKind
 {
@@ -57,6 +58,52 @@ public enum ConfigRepairClassification
 
     /// <summary>The finding is unsafe, unsupported, or unknown and must not be changed.</summary>
     Refuse = 2,
+}
+
+/// <summary>
+/// Builds the Ribbon-visible detail for a schema-version mismatch (R4.7C D6,
+/// ADR-0029 D6).
+/// </summary>
+/// <remarks>
+/// <para>
+/// A version mismatch is the one integrity finding that is <em>reported and never
+/// converted</em>: there is no migration, so the message has to tell the analyst
+/// what to do rather than imply that something will be fixed. A generic
+/// "catalogue mismatch" string is not actionable — it does not say which version
+/// the workbook carries, which the add-in expects, or that re-initialising is the
+/// remedy.
+/// </para>
+/// <para>
+/// The remedy is version-agnostic on purpose: a workbook from any earlier version
+/// lacks this schema, so every one of them needs Initialise. Naming the numbers
+/// keeps the message honest about what actually drifted.
+/// </para>
+/// </remarks>
+public static class SchemaVersionMismatchMessage
+{
+    /// <summary>
+    /// Builds the detail text for a workbook whose stored schema version differs
+    /// from the running add-in's.
+    /// </summary>
+    /// <param name="workbookVersion">The version stored on the workbook.</param>
+    /// <param name="expectedVersion">The version the running add-in requires.</param>
+    /// <returns>The actionable, Ribbon-visible detail.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when either version is not positive. A non-positive version is not a
+    /// version this builder can describe, and rendering "version 0" would be less
+    /// honest than refusing.
+    /// </exception>
+    public static string Build(int workbookVersion, int expectedVersion)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(workbookVersion);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedVersion);
+
+        // Invariant culture: the version numbers are the only interpolations, but
+        // a rendered message must not vary with the analyst's locale digits.
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"This workbook uses Gantt schema version {workbookVersion}, but this version of Gantt Creator requires version {expectedVersion}. There is no automatic upgrade: run Initialise Gantt Sheet on a copy of this workbook to create a current one, then enter your schedule again.");
+    }
 }
 
 /// <summary>One immutable configuration-integrity finding.</summary>

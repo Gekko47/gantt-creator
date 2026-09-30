@@ -23,16 +23,19 @@ public sealed class PanelBuilderTests
     [Fact]
     public void The_header_carries_the_schema_display_names_in_order_and_nothing_else()
     {
-        // The no-Duration pin, stated positively: the emitted header set equals
-        // the schema's, so neither a derived Duration column nor any other extra
-        // heading can appear. Sort/filter icons are not reproduced (section 4).
+        // The header set equals the schema's, so the emitted headers cannot drift
+        // from the workbook contract in either direction. This assertion was
+        // formerly a *negative* "no Duration header" pin, written when Duration did
+        // not exist; R4.7C added it to the schema, so the pin had to invert with
+        // the contract rather than be deleted (ADR-0029 D1).
         string[] expected = [.. GanttTableSchema.Default.Columns.Select(column => column.Name)];
 
         SceneText[] headers = [.. Build().Result!.Primitives.OfType<SceneText>()
             .Where(text => text.PrimitiveId.Contains("header-text:", StringComparison.Ordinal))];
 
         Assert.Equal(expected, headers.Select(text => text.Text).ToArray());
-        Assert.DoesNotContain(headers, text => text.Text.Contains("Duration", StringComparison.Ordinal));
+        // R4.7C: Duration is a visible schema column, so its header must appear.
+        Assert.Contains(headers, text => text.Text == "Duration");
         // Sort/filter arrows and filter funnels are not reproduced (section 4).
         Assert.All(headers, text => Assert.DoesNotContain(text.Text, IsSortOrFilterGlyph));
         Assert.Equal(GanttTableSchema.Default.Columns.Count, headers.Length);

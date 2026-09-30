@@ -118,8 +118,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 23 metric tokens, in entity-guide "Shared metric tokens" order
-    /// (name, default, valid range; all values in points).
+    /// The metric tokens, in entity-guide "Shared metric tokens" order
+    /// (name, default, valid range; all values in points). R4.7C renamed
+    /// <c>LaneHeightPt</c> to <c>GanttRowHeightPt</c> and retired
+    /// <c>CriticalLinePt</c> (ADR-0026 D1, ADR-0027 D4).
     /// </summary>
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
@@ -128,7 +130,7 @@ public static class GanttCatalogues
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),
         new("MinimumHeaderLabelWidthPt", 18, 6, 72),
-        new("LaneHeightPt", 18, 10, 72),
+        new("GanttRowHeightPt", 18, 10, 72),
         new("SplitterHeightPt", 18, 10, 72),
         new("SpacerHeightPt", 9, 0, 72),
         new("LanePaddingTopPt", 3, 0, 18),
@@ -140,7 +142,6 @@ public static class GanttCatalogues
         new("LabelHeightPt", 10, 6, 36),
         new("MaximumExternalLabelWidthPt", 144, 36, 360),
         new("StandardOutlinePt", 0.75, 0, 6),
-        new("CriticalLinePt", 2.25, 0.5, 12),
         new("GridLinePt", 0.5, 0.25, 3),
         new("MajorBoundaryPt", 1, 0.25, 6),
         new("DelineatorLinePt", 0.75, 0.25, 6),
@@ -149,9 +150,11 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 21 colour tokens, in entity-guide "Shared colour and typography
+    /// The colour tokens, in entity-guide "Shared colour and typography
     /// tokens" order (uppercase <c>#RRGGBB</c>; explicit alpha <c>FF</c>
-    /// unless transparency is named).
+    /// unless transparency is named). R4.7C added <c>CriticalFill</c>
+    /// (ADR-0027 D2), which shares <c>CriticalStroke</c>'s value but differs by
+    /// role, so the catalogue never carries a stroke token used as a fill.
     /// </summary>
     public static IReadOnlyList<GanttColourToken> Colours { get; } =
     [
@@ -162,6 +165,7 @@ public static class GanttCatalogues
         new("BaselineFill", "#00B050"),
         new("BaselineOutline", "#006100"),
         new("CriticalStroke", "#FF0000"),
+        new("CriticalFill", "#FF0000"),
         new("CriticalOutline", "#C00000"),
         new("DelayFill", "#FF0000"),
         new("DelayText", "#FFFFFF"),
@@ -234,8 +238,8 @@ public static class GanttCatalogues
             "BaselineActivity", "Baseline Activity", "BaselineFill", "BaselineOutline",
             GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", "ActivityHeightPt", null),
         ["CriticalInterval"] = () => Preset(
-            "CriticalInterval", "Critical Interval", null, "CriticalStroke",
-            GanttHatchPattern.None, "DefaultText", "CriticalLinePt", "ActivityHeightPt", null),
+            "CriticalInterval", "Critical Interval", "CriticalFill", "CriticalStroke",
+            GanttHatchPattern.None, "DefaultText", null, "ActivityHeightPt", null),
         ["DelayEvent"] = () => Preset(
             "DelayEvent", "Delay Event", "DelayFill", "CriticalOutline",
             GanttHatchPattern.None, "DelayText", "StandardOutlinePt", "ActivityHeightPt", null),

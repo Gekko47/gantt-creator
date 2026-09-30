@@ -87,6 +87,7 @@ public class GanttRowDtoTests
             GanttCells.Empty<string>(),
             GanttCells.Value<DateOnly?>(new DateOnly(2026, 9, 1)),
             GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.Value),
+            GanttCells.Value("12"),
             GanttCells.Empty<string>(),
             GanttCells.Value<int?>(3),
             GanttCells.Empty<string>(),
@@ -114,5 +115,11 @@ public class GanttRowDtoTests
         Assert.Equal(3, dto.SiblingOrder);
         Assert.Equal(GanttCellState.Unsupported, dto.StackIndexCell.State);
         Assert.Null(dto.StackIndex);
+
+        // R4.7C D1: Duration is its own cell, positioned between Finish and
+        // ParentId, so a read duration can never be mistaken for an authored date.
+        Assert.Equal(GanttCellState.Value, dto.DurationCell.State);
+        Assert.Equal("12", dto.Duration);
+        Assert.Equal(GanttCellState.Empty, dto.ParentIdCell.State);
     }
 }

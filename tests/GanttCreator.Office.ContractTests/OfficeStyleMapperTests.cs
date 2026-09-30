@@ -46,6 +46,10 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
             { "BaselineFill", "#00B050", 0x50B000 },
             { "BaselineOutline", "#006100", 0x006100 },
             { "CriticalStroke", "#FF0000", 0x0000FF },
+            // R4.7C / ADR-0027 D2: CriticalFill shares CriticalStroke's value but
+            // differs by role, so the catalogue never carries a stroke token used
+            // as a fill. Its host value is therefore identical.
+            { "CriticalFill", "#FF0000", 0x0000FF },
             { "CriticalOutline", "#C00000", 0x0000C0 },
             { "DelayFill", "#FF0000", 0x0000FF },
             { "DelayText", "#FFFFFF", 0xFFFFFF },
@@ -414,7 +418,7 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
     [Fact]
     public void The_matrix_covers_every_colour_token_the_catalogue_publishes()
     {
-        // The completeness guard for D4: if a twenty-second colour token is added
+        // The completeness guard for D4: if a twenty-third colour token is added
         // to the guide's table, this fails until a row is transcribed for it.
         // Without it, "the full matrix" would silently become "the matrix as it
         // was when it was written".

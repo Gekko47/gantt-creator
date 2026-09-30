@@ -202,7 +202,13 @@ public class ConfigCatalogueReaderTests
     {
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();
-        var index = GanttCatalogues.Metrics.ToList().FindIndex(metric => metric.Name == "LaneHeightPt");
+        // R4.7C renamed LaneHeightPt to GanttRowHeightPt (ADR-0026 D1). This test named
+        // the token literally, so the rename made FindIndex return -1 and the
+        // assignment wrote out of range instead of corrupting a metric — a failure
+        // that reads as an index bug rather than a stale token name.
+        var index = GanttCatalogues.Metrics.ToList()
+            .FindIndex(metric => metric.Name == "GanttRowHeightPt");
+        Assert.True(index >= 0, "GanttRowHeightPt must be present to exercise its range check.");
         fake.Tables[2].Body[index][1] = 999.0;
 
         var outcome = ConfigGraph.BuildReader(fake).Read();

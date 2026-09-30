@@ -387,6 +387,55 @@ public class GanttTableReaderTests
     }
 
     [Fact]
+    public void Read_carries_the_duration_text_into_its_own_cell()
+    {
+        // R4.7C D1: Duration is read as text, because the contract carries a
+        // non-duration marker for milestones and a blank for structural rows. A
+        // numeric cell state could represent only the day count.
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var sheet = new SheetGraph(table);
+        object?[] row = FullRow(id: "D-one", type: "As-Planned Activity");
+        var columns = GanttTableSchema.Default.Columns.ToList();
+        row[columns.FindIndex(c => c.Name == "Duration")] = "12";
+
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => BodyMatrix(row));
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        GanttRowDto read = Assert.Single(outcome.Rows);
+        Assert.Equal(GanttCellState.Value, read.DurationCell.State);
+        Assert.Equal("12", read.Duration);
+    }
+
+    [Fact]
+    public void Read_leaves_duration_empty_when_the_cell_is_blank()
+    {
+        // A row the engine has not written yet must read as empty, not as an
+        // unsupported cell: R4.7F computes the value on Refresh, and a blank is the
+        // honest pre-Refresh state.
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var sheet = new SheetGraph(table);
+
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => BodyMatrix(FullRow(id: "D-two", type: "As-Planned Activity")));
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        GanttRowDto read = Assert.Single(outcome.Rows);
+        Assert.Equal(GanttCellState.Empty, read.DurationCell.State);
+        Assert.Null(read.Duration);
+    }
+
+    [Fact]
     public void Read_returns_an_empty_list_when_the_table_has_no_body()
     {
         var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());

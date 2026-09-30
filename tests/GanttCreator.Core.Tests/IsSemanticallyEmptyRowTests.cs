@@ -33,6 +33,7 @@ public sealed class IsSemanticallyEmptyRowTests
             Cell(description),
             Cell(start),
             Cell(finish),
+            GanttCells.Empty<string>(),
             Cell(parentId),
             Cell<int>(siblingOrder),
             Cell(styleKey),

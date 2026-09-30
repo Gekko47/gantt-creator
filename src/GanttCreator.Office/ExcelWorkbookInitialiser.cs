@@ -726,6 +726,53 @@ public class ExcelWorkbookInitialiser(
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
+        ApplyColumnPresentation(table);
+    }
+
+    /// <summary>
+    /// Applies each column's <see cref="GanttColumnAccess"/> classification to the
+    /// live table: engine columns are hidden and every non-authoring column's cells
+    /// carry the locked format (R4.7C D1/D2, ADR-0029 D7/D8).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This runs on Initialise only. The acceptance test "un-hiding one and
+    /// refreshing restores it" is a <em>repair</em>, and repair on Refresh is
+    /// R4.8A's orchestration; wiring it here would give this adapter a second
+    /// trigger it does not own. What this row guarantees is that a freshly
+    /// initialised workbook is correct, and that the classification driving it is
+    /// the code-owned schema rather than a hand-written column list.
+    /// </para>
+    /// <para>
+    /// <b>Hidden, not just locked.</b> A cell's <c>Locked</c> flag has no effect
+    /// until the sheet is protected, and the add-in refuses a protected target
+    /// rather than protecting one (ADR-0008 D4). So <c>Locked</c> alone would
+    /// leave the engine columns fully visible on an ordinary sheet; hiding them
+    /// is what actually presents the table the product describes.
+    /// </para>
+    /// <para>
+    /// <b>Why the whole worksheet column is hidden.</b> Excel has no per-table
+    /// hidden flag: a ListObject column is hidden by hiding the worksheet column
+    /// behind it, which is what the Excel UI's own Hide command does. The
+    /// alternative, zero column width, leaves a visible sliver and breaks
+    /// print layout, so it is rejected.
+    /// </para>
+    /// </remarks>
+    private void ApplyColumnPresentation(ListObject table)
+    {
+        ListColumns columns = GetTableColumns(table);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (var index = 1; index <= schema.Count; index++)
+        {
+            ListColumn column = GetColumnAt(columns, index);
+            Excel.Range columnRange = column.Range;
+            columnRange.Locked = schema[index - 1].IsLocked;
+            Excel.Range entireColumn = GetEntireColumn(columnRange);
+            if (entireColumn.Hidden != schema[index - 1].IsHidden)
+            {
+                entireColumn.Hidden = schema[index - 1].IsHidden;
+            }
+        }
     }
 
     /// <summary>
@@ -840,4 +887,32 @@ public class ExcelWorkbookInitialiser(
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
         => target.Cells[1, 1].Resize[1, columnCount];
+
+    /// <summary>
+    /// Returns the table's list-column collection. Test seam over the COM
+    /// parameterised <c>ListObject.ListColumns</c> collection, so contract tests
+    /// can supply columns without a host.
+    /// </summary>
+    /// <param name="table">The created data table.</param>
+    /// <returns>The table's list columns.</returns>
+    internal virtual ListColumns GetTableColumns(ListObject table) => table.ListColumns;
+
+    /// <summary>
+    /// Returns the list column at the one-based index. Test seam over the COM
+    /// parameterised <c>ListColumns.Item</c> property (see the type remarks).
+    /// </summary>
+    /// <param name="columns">The table's list columns.</param>
+    /// <param name="index">The one-based column index.</param>
+    /// <returns>The list column at the index.</returns>
+    internal virtual ListColumn GetColumnAt(ListColumns columns, int index)
+        => columns[index];
+
+    /// <summary>
+    /// Returns the whole worksheet column behind a range. Test seam over the
+    /// COM parameterised <c>Range.EntireColumn</c> property, which is where the
+    /// per-column hidden state actually lives.
+    /// </summary>
+    /// <param name="range">The column's range.</param>
+    /// <returns>The entire worksheet column.</returns>
+    internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
 }
