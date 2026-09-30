@@ -26,6 +26,13 @@ public enum SceneBuilderRefusal
 
     /// <summary>One event's named style could not be resolved to a renderable style.</summary>
     UnresolvableStyle = 7,
+
+    /// <summary>
+    /// The hierarchy could not be resolved into render lanes: a parent is missing
+    /// or ambiguous, a child names a type that may not be one, or the chain is
+    /// deeper than the supported depth.
+    /// </summary>
+    UnresolvableProjection = 8,
 }
 
 /// <summary>
@@ -283,6 +290,39 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
 
+        // R4.7B: resolve the render lane for every event BEFORE any lane geometry is
+        // built, so a projected child groups with its parent's lane and no lane grows
+        // to accommodate it. Resolving here rather than in the Office layer keeps
+        // placement a function of the data, not of how the worksheet was read.
+        //
+        // Resolution runs over the WHOLE batch, not just the render-visible rows. A
+        // child whose parent is present but not rendered is still a valid hierarchy,
+        // and resolving over the visible set alone reports it as an unresolvable
+        // parent and refuses the whole scene. Only visible parents are mapped below,
+        // so such a child keeps its own row-scoped lane and the overlay pass declines
+        // to draw it -- there is no parent bar to clip against.
+        ProjectionResolution projection = ProjectionResolver.Resolve(request.Events);
+        if (!projection.Succeeded)
+        {
+            return Refused(SceneBuilderRefusal.UnresolvableProjection);
+        }
+
+        Dictionary<GanttRowId, GanttEvent> visibleById = [];
+        foreach (GanttEvent @event in laneParticipants)
+        {
+            visibleById[@event.Id] = @event;
+        }
+
+        Dictionary<GanttRowId, GanttEvent> laneOwnerByEntity = [];
+        foreach (EntityProjection resolvedProjection in projection.Projections)
+        {
+            if (resolvedProjection.IsProjected
+                && visibleById.TryGetValue(resolvedProjection.RenderLaneOwnerId, out GanttEvent? owner))
+            {
+                laneOwnerByEntity[resolvedProjection.SourceEntityId] = owner;
+            }
+        }
+
         List<LaneEventInput> laneInputs = [];
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
 
@@ -359,7 +399,8 @@ public static class SceneBuilder
             };
 
             styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
-            laneInputs.Add(new LaneEventInput(@event, heightPt));
+            _ = laneOwnerByEntity.TryGetValue(@event.Id, out GanttEvent? laneOwner);
+            laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
 
         if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)

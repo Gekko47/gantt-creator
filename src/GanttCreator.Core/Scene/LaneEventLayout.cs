@@ -165,7 +165,18 @@ public static class LaneEventLayout
                     return Refused(LaneEventLayoutRefusal.DuplicateEventId);
                 }
 
-                var effective = input.EffectiveStackIndex ?? index;
+                // R4.7B: a projected child shares its lane owner's slot, so its
+                // effective index is the owner's position WITHIN THIS LANE, not its
+                // own. Everything else keeps the pre-projection rule of its own
+                // position within the lane, so a table with no children is
+                // unaffected.
+                var effective = input.EffectiveStackIndex
+                    ?? (input.IsProjected
+                        && input.RenderLaneOwner is { } laneOwner
+                        && laneEvents.FirstOrDefault(e => e.Event.Id == laneOwner.Id) is { } ownerInput
+                            ? Array.IndexOf(laneEvents, ownerInput)
+                            : index);
+
                 if (effective < 0)
                 {
                     return Refused(LaneEventLayoutRefusal.InvalidSlotIndex);

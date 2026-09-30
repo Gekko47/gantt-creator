@@ -150,17 +150,54 @@ public static class LaneLayoutBuilder
         [
             .. inputs.OrderBy(input => input.Event.RowNumber).ThenBy(input => input.Event.Id.Value, StringComparer.Ordinal),
         ];
-        Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
-        for (var index = 0; index < rowOrdered.Length; index++)
+
+        // R4.7B: a projected child takes its lane owner's effective stack index, so
+        // it lands in the SAME slot and overlaps. Assigning it its own index by
+        // position would give it a second slot, stacking it below the parent and
+        // growing the lane -- which ADR-0026 D7 forbids and which is the whole
+        // reason a child is projected rather than given a lane of its own.
+        //
+        // Two passes, because the owner is not guaranteed to precede the child in
+        // row order: an authoring UI may place a child above its parent. Owners are
+        // therefore indexed first, and only then do children look one up.
+        var effectiveById = new Dictionary<GanttRowId, int>();
+        var ownIndex = 0;
+
+        foreach (LaneEventInput input in rowOrdered)
         {
-            var effective = rowOrdered[index].EffectiveStackIndex ?? index;
+            if (input.IsProjected)
+            {
+                continue;
+            }
+
+            effectiveById[input.Event.Id] = ownIndex;
+            ownIndex++;
+        }
+        foreach (LaneEventInput input in rowOrdered)
+        {
+            if (!input.IsProjected)
+            {
+                continue;
+            }
+
+            if (input.RenderLaneOwner is { } owner
+                && effectiveById.TryGetValue(owner.Id, out var ownerIndex))
+            {
+                effectiveById[input.Event.Id] = ownerIndex;
+            }
+        }
+
+        Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
+        foreach (LaneEventInput input in rowOrdered)
+        {
+            var effective = input.EffectiveStackIndex ?? effectiveById[input.Event.Id];
             if (!effectiveSlots.TryGetValue(effective, out List<LaneEventInput>? slotEvents))
             {
                 slotEvents = [];
                 effectiveSlots.Add(effective, slotEvents);
             }
 
-            slotEvents.Add(rowOrdered[index]);
+            slotEvents.Add(input);
         }
 
         int[] effectiveValues = [.. effectiveSlots.Keys.OrderBy(value => value)];
@@ -197,12 +234,36 @@ public static class LaneLayoutBuilder
         return new LaneGeometry(laneKey, laneOrder, laneTop, laneHeight, slots, laneEventIds, false, false);
     }
 
+    /// <summary>
+    /// Emits the same-stack overlap warning for a slot, once per slot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// R4.7B: a projected child shares its parent's slot <b>by design</b>, and
+    /// overlapping its parent is the intended presentation — REV6 §8 says several
+    /// children on one parent lane "may overlap", distinguished by date geometry,
+    /// Type, style, z-order and label. Emitting <c>AmbiguousStackOverlap</c> for
+    /// that case would report the product working, and it would also collide with
+    /// any genuine ambiguity on the same owner, because <c>SceneValidator</c> keys
+    /// duplicate warnings by (owner, code) and a parent can own more than one
+    /// slot.
+    /// </para>
+    /// <para>
+    /// So a pair where one event is projected onto the other is not ambiguous and
+    /// warns nothing; genuine same-slot overlap between unrelated rows still does.
+    /// </para>
+    /// </remarks>
     private static void AddAmbiguityWarning(List<LaneEventInput> slotEvents, List<SceneWarning> warnings)
     {
         for (var firstIndex = 0; firstIndex < slotEvents.Count; firstIndex++)
         {
             for (var secondIndex = firstIndex + 1; secondIndex < slotEvents.Count; secondIndex++)
             {
+                if (IsProjectionPair(slotEvents[firstIndex], slotEvents[secondIndex]))
+                {
+                    continue;
+                }
+
                 if (Overlaps(slotEvents[firstIndex].Event, slotEvents[secondIndex].Event))
                 {
                     warnings.Add(
@@ -216,6 +277,17 @@ public static class LaneLayoutBuilder
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Whether one of the two events is projected onto the lane the other owns, in
+    /// either direction. Such a pair shares a slot because the hierarchy says so.
+    /// </summary>
+    private static bool IsProjectionPair(LaneEventInput first, LaneEventInput second)
+    {
+        GanttRowId? firstParent = first.RenderLaneOwner?.Id;
+        GanttRowId? secondParent = second.RenderLaneOwner?.Id;
+        return (firstParent == second.Event.Id) || (secondParent == first.Event.Id);
     }
 
     private static bool Overlaps(GanttEvent first, GanttEvent second)
