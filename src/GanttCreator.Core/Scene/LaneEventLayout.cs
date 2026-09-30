@@ -138,8 +138,20 @@ public static class LaneEventLayout
             slotsByLane[lane.LaneKey] = slots;
         }
 
+        // Duplicates are detected before any numbering, not during it. The derived
+        // map is keyed by row ID, so a repeated ID would be silently overwritten by
+        // the second occurrence and the duplicate would then surface as a missing
+        // slot -- reporting a layout problem for what is really two rows claiming one
+        // identity.
         Dictionary<GanttRowId, LaneEventPlacement> placements = [];
         HashSet<GanttRowId> seen = [];
+        foreach (LaneEventInput input in events)
+        {
+            if (!seen.Add(input.Event.Id))
+            {
+                return Refused(LaneEventLayoutRefusal.DuplicateEventId);
+            }
+        }
 
         foreach (LaneGeometry lane in layout.Lanes)
         {
@@ -156,26 +168,67 @@ public static class LaneEventLayout
                     .ThenBy(input => input.Event.Id.Value, StringComparer.Ordinal),
             ];
 
-            for (var index = 0; index < laneEvents.Length; index++)
+            // R4.7B: a projected child shares its lane owner's slot, so it takes the
+            // owner's index rather than one of its own. This MUST number exactly as
+            // `LaneLayoutBuilder.BuildEventLane` numbers, because the two passes read
+            // the same map: the builder decides which slots exist, and this feed
+            // resolves each event to one of them. Numbering the whole array -- rather
+            // than only the non-projected events -- gave the two passes different
+            // answers whenever a child sat above its parent, and the child was then
+            // resolved to a slot that did not exist.
+            //
+            // Owners are indexed first, in row order, and only then do children look
+            // one up: an authoring UI may place a child above its parent, so a child
+            // is not guaranteed to precede the owner it depends on.
+            Dictionary<GanttRowId, int> effectiveById = [];
+            var ownIndex = 0;
+            foreach (LaneEventInput input in laneEvents)
             {
-                LaneEventInput input = laneEvents[index];
-                GanttEvent @event = input.Event;
-                if (!seen.Add(@event.Id))
+                if (input.IsProjected)
                 {
-                    return Refused(LaneEventLayoutRefusal.DuplicateEventId);
+                    continue;
                 }
 
-                // R4.7B: a projected child shares its lane owner's slot, so its
-                // effective index is the owner's position WITHIN THIS LANE, not its
-                // own. Everything else keeps the pre-projection rule of its own
-                // position within the lane, so a table with no children is
-                // unaffected.
-                var effective = input.EffectiveStackIndex
-                    ?? (input.IsProjected
-                        && input.RenderLaneOwner is { } laneOwner
-                        && laneEvents.FirstOrDefault(e => e.Event.Id == laneOwner.Id) is { } ownerInput
-                            ? Array.IndexOf(laneEvents, ownerInput)
-                            : index);
+                effectiveById[input.Event.Id] = ownIndex;
+                ownIndex++;
+            }
+
+            foreach (LaneEventInput input in laneEvents)
+            {
+                if (!input.IsProjected)
+                {
+                    continue;
+                }
+
+                if (input.RenderLaneOwner is { } projectedOwner
+                    && effectiveById.TryGetValue(projectedOwner.Id, out var ownerEffective))
+                {
+                    effectiveById[input.Event.Id] = ownerEffective;
+                }
+            }
+
+            foreach (LaneEventInput input in laneEvents)
+            {
+                GanttEvent @event = input.Event;
+
+                // A supplied compatibility value takes precedence, exactly as
+                // `LaneLayoutBuilder.BuildEventLane` applies it, so a caller that
+                // names its own slot is never overridden. Only a projected child
+                // whose owner is not in this lane has no derived index at all, and
+                // that is a broken projection rather than a placement decision.
+                int effective;
+                if (input.EffectiveStackIndex is { } supplied)
+                {
+                    effective = supplied;
+                }
+                else if (effectiveById.TryGetValue(@event.Id, out var derived))
+                {
+                    effective = derived;
+                }
+                else
+                {
+                    return Refused(LaneEventLayoutRefusal.MissingLayout);
+                }
 
                 if (effective < 0)
                 {

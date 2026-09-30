@@ -48,19 +48,25 @@ Describe 'check-status.ps1' {
             function Invoke-CheckStatusHarness {
                 param(
                     [string]$StatusBody,
-                    [string]$WorkItemsRelativePath = 'WORK-ITEMS'
+                    [string]$WorkItemsRelativePath = 'WORK-ITEMS',
+                    [string]$WorkingDirectory
                 )
                 $statusFile = Join-Path $script:tempRoot 'STATUS.md'
                 $StatusBody | Set-Content -LiteralPath $statusFile -Encoding utf8
                 $outFile = Join-Path $script:tempRoot 'out.txt'
                 $errFile = Join-Path $script:tempRoot 'err.txt'
+                # The working directory defaults to the harness repository root,
+                # which is what every other test here runs from. A test that needs
+                # to prove the gate is independent of the caller's location passes
+                # an explicit directory instead.
+                $cwd = if ($WorkingDirectory) { $WorkingDirectory } else { $script:tempRoot }
                 $proc = Start-Process -FilePath pwsh -ArgumentList @(
                     '-NoProfile','-File',(Join-Path $script:harness 'check-status.ps1'),
                     '-StatusPath','STATUS.md',
                     '-RoadmapPath','ROADMAP.md',
                     '-WorkItemsPath',$WorkItemsRelativePath
                 ) -NoNewWindow -Wait -PassThru `
-                    -WorkingDirectory $script:tempRoot `
+                    -WorkingDirectory $cwd `
                     -RedirectStandardOutput $outFile -RedirectStandardError $errFile
                 $combined = (Get-Content -LiteralPath $outFile -Raw) + (Get-Content -LiteralPath $errFile -Raw)
                 return [pscustomobject]@{ Exit = $proc.ExitCode; Output = $combined }
@@ -397,6 +403,43 @@ References roadmap item ``R4.7A`` which is present and has a guide.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0
+        }
+
+        # The guide lookup resolved the guides directory against the caller's
+        # working directory rather than the repository root, so every suffixed ID
+        # reported "no work-item guide" whenever the gate ran from anywhere but the
+        # root. The pre-commit hook and CI both run it from the root, which is why
+        # every other test here passed. This runs it from an unrelated directory
+        # with the guide directory still reachable only via the repository root.
+        It 'finds a suffixed roadmap items guide when run from outside the repository root' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
+            New-Item -ItemType Directory -Path $guide -Force | Out-Null
+            '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+
+            # A directory that is NOT the repository root and holds no guides of
+            # its own, so a lookup relative to the working directory finds nothing.
+            $elsewhere = Join-Path $script:tempRoot 'elsewhere'
+            New-Item -ItemType Directory -Path $elsewhere -Force | Out-Null
+            # Non-vacuity: the guide really is outside the working directory, and
+            # really is reachable from the repository root.
+            (Resolve-Path -LiteralPath $guide).Path.StartsWith((Resolve-Path -LiteralPath $elsewhere).Path) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md')) | Should -BeTrue
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` which is present and has a guide.
+"@
+            $r = Invoke-CheckStatusHarness $body 'WORK-ITEMS' $elsewhere
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Not -Match 'no work-item guide'
         }
 
         # Guards the deliberate scoping: the guide rule is enforced only for

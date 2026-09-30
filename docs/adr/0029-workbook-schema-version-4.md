@@ -1,4 +1,4 @@
-# ADR-0029 — Workbook schema version 4: hierarchy, derived Duration, fixed row geometry
+# ADR-0029 — Workbook schema versions 4 and 5: hierarchy, derived Duration, fixed row geometry
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
@@ -41,21 +41,32 @@ two of them change the visible column set.
   `CriticalInterval` preset keeps its `ActivityHeightPt` reference and gains a
   `CriticalFill` colour token carrying `#FF0000` (ADR-0027 D2). The
   `CriticalInterval` type gains the `Fill` colour capability (ADR-0027 D5).
-- **D4 — `Above` and `Below` are removed from the permitted label-position sets**
-  (ADR-0028 D1). Retained: `None`, `Auto`, `Left`, `Right`, `Inside`, the four
-  delineator corners, and the splitter positions.
+- **D4 — The label-set change belongs to R4.7G, not to R4.7C.** ADR-0028 D1
+  removes `Above` and `Below` from the permitted label-position sets, and the
+  retained set is `None`, `Auto`, `Left`, `Right`, `Inside`, the four delineator
+  corners, and the splitter positions. This is a schema contract change and so
+  needs a bump, but **it is R4.7G's bump**: ADR-0028 and `03-ROADMAP.md` both
+  assign the removal to R4.7G, and the R4.7C work item's own scope list omits it.
+  Earlier drafts of this ADR listed the label set among R4.7C's changes and put
+  it in step 2 of the table below; that is corrected to a step of its own, taken
+  by R4.7G at **5 → 6**.
 - **D5 — The schema advances in two steps, one per row that changes it, and
   never two rows for one version number.** This ADR originally said "3 → 4" for
   all of D1-D4, which was **wrong**: `R4.7A` adds the `SiblingOrder` column and
-  `R4.7C` adds `Duration`, the metric-token changes and the label set. Two rows
+  `R4.7C` adds `Duration` and the metric-token changes. Two rows
   claiming one bump would either collide or skip a version, and
   `ConfigIntegrity` cannot detect that, because the version is the signal it
-  compares against. Corrected on 2026-09-29 to:
+  compares against. Corrected on 2026-09-29 to, and extended on 2026-09-30 when
+  the label-set change was moved off R4.7C onto R4.7G (D4):
 
   | Step | Row | Change | Version |
   | --- | --- | --- | --- |
   | 1 | R4.7A | `SiblingOrder` column | **3 → 4** |
-  | 2 | R4.7C | `Duration` column, `GanttRowHeightPt`, `CriticalLinePt` retired, `CriticalFill`, label set | **4 → 5** |
+  | 2 | R4.7C | `Duration` column, `GanttRowHeightPt`, `CriticalLinePt` retired, `CriticalFill` | **4 → 5** |
+  | 3 | R4.7G | permitted label-position set (`Above`/`Below` removed, ADR-0028 D1) | **5 → 6** |
+
+  **No row is excluded from the progression**; each schema change lands in the
+  row whose change requires it, and each row bumps exactly once.
 
   Within each row, the bump is the **last** change in that row's commit sequence,
   so all the other changes land first and the integrity checker is the gate rather
@@ -84,7 +95,8 @@ two of them change the visible column set.
 - `GanttRowDto` gains `DurationCell` and `SiblingOrderCell` in the same
   constructor positions as the schema, so the reader, the validator and the
   schema cannot disagree about column order.
-- A user's first save after this change produces a version-4 workbook. Because
+- A user's first save after this change produces a version-**5** workbook, because
+  R4.7C's bump is the last of the two this ADR covers (D5). Because
   no migration is written, an older workbook is reported, not converted — which
   is the correct behaviour for a pre-release product and must be stated in the
   Ribbon-visible error rather than left to a generic integrity message.

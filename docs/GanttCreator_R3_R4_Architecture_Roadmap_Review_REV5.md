@@ -8,7 +8,7 @@
 >
 > | This document proposes | Resolved as |
 > | --- | --- |
-> | §7, §16 — emit a truthful **line** primitive for Critical Interval | **Rejected.** Stays a **filled rectangle** (`CriticalFill` = `#FF0000`), half the parent bar's height, top-aligned. `CriticalLinePt` retired. |
+> | §7, §16 — emit a truthful **line** primitive for Critical Interval | **Rejected.** Stays a **filled rectangle** (`CriticalFill` = `#FF0000`), half the predetermined `ActivityHeightPt`, **centred on its own visual slot** and derived from its **own** dates (owner ruling 2026-09-30 — **not** top-aligned to the parent, and the parent governs lane membership only). `CriticalLinePt` retired. |
 > | §9 — remove live lane auto-growth | **Accepted**, and it reverses `LaneLayoutBuilder` plus checklist §B. ADR-0026. |
 > | §12 — Row Styling | Accepted; unchanged. |
 > | §15 — label positions | **Changed.** `Above`/`Below` removed (as REV6 also requires); delineator corners retained. |

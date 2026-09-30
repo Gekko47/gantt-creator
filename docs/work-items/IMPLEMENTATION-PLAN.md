@@ -14,12 +14,35 @@
 > the two input documents these guides implement are not self-consistent with the
 > entity guide, and the register records which of their proposals were rejected.
 >
-> The guides are authored; **none of their product code has been written**. `R4.7A`
-> is next and is unblocked. `R4.7A` → `R4.7B` → `R4.7D` are strictly sequential;
-> `R4.7C`, `R4.7F`, `R4.7G` and `R4.7H` are independent; `R4.7E` needs `R4.7B`
-> and `R4.7C`; `R4.8A` needs all seven. `scripts/check-status.ps1` now requires a
-> letter-suffixed roadmap ID to have a guide here, so a row cannot ship without
-> one.
+> **Implementation state as of 2026-09-30: all eight R4.7 rows have landed;
+> R4.8A is next.** This header previously read "the guides are authored; **none of
+> their product code has been written**. `R4.7A` is next", which had been true
+> when the guides were authored and was **stale** by the time it was read. The
+> verified state, from `docs/STATUS.md` and each guide's own status section:
+>
+> | Row | State | Notes |
+> | --- | --- | --- |
+> | R4.7A | **Landed** | identity and hierarchy; took the schema 3 → 4 |
+> | R4.7B | **Landed** | projection; golden regenerated (`14b47f3`, `11130c3`) |
+> | R4.7C | **Landed** | workbook presentation; took the schema 4 → 5 |
+> | R4.7D | **Landed** | row geometry and outline groups; Office gate 46/46; golden regenerated |
+> | R4.7E | **Complete** | critical interval as a parent-independent filled rectangle; golden regenerated (`806a632`) |
+> | R4.7F | **Implemented** | derived `Duration`; Office gate green |
+> | R4.7G | **Landed** | horizontal-only label positions; took the schema 5 → 6 |
+> | R4.7H | **Implemented** | `SizePreset` and the single `PlotGeometryResolver` |
+> | **R4.8A** | **Next** | Refresh orchestration — the last row before R4.9 |
+>
+> `R4.7A` → `R4.7B` → `R4.7D` were strictly sequential and are done; `R4.7C`,
+> `R4.7F`, `R4.7G` and `R4.7H` were independent; `R4.7E` needed `R4.7B` and
+> `R4.7C`; **`R4.8A` needs all eight R4.7 rows**, which is why it is the only one
+> still open. `scripts/check-status.ps1` requires a letter-suffixed roadmap ID to
+> have a guide here, so a row cannot ship without one.
+>
+> **The schema version is now 6**, three bumps past the 3 this header predates
+> (3→4 R4.7A, 4→5 R4.7C, 5→6 R4.7G); ADR-0029 D5 holds the full progression.
+> The standing risk into R4.8A is the Office COM leak ratchet, at **26 forced
+> kills against a ceiling of 26** (`KNOWN-LIMITATIONS.md` L19) — R4.8A's new
+> adapter surface is the first thing that could push it over.
 
 > Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **94** roadmap-guide records: **41 Tier A and 53 Tier B** — counts re-taken from the table itself on 2026-09-27, superseding the "92 / 39 / 53" of 2026-09-26, which had itself corrected the earlier "90 / 27 / 63" (`R5.6b` and `R2.7d` had never been counted). The two rows still uncounted were `R3.16` and `R3.17`, both Tier A: the Phase-3 exit had already landed them, so the 2026-09-26 recount of 92 predated them. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
 

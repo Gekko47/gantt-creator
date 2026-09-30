@@ -125,7 +125,42 @@ public sealed class ExcelDurationWriterTests
 
     private static DurationWritePlan Plan(params DurationWrite[] writes) => new(writes, []);
 
-        private static object?[] PayloadOf(List<object?> assignments)
+    /// <summary>
+    /// A writer whose column payload is supplied verbatim, so a test can present the
+    /// bare scalar Excel returns for a one-cell range rather than the array shape
+    /// every other test uses.
+    /// </summary>
+    private sealed class ScalarPayloadWriter(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        object? payload,
+        List<object?> assignments)
+        : ExcelDurationWriter(application, guard)
+    {
+        internal int WriteCount => assignments.Count;
+
+        internal override bool TryFindTable(
+            Excel.Sheets sheets,
+            out Excel.Worksheet? resolvedWorksheet,
+            out Excel.ListObject? resolvedTable)
+        {
+            resolvedWorksheet = new Mock<Excel.Worksheet>().Object;
+            resolvedTable = new Mock<Excel.ListObject>().Object;
+            return true;
+        }
+
+        internal override bool TryGetDurationColumnRange(Excel.ListObject source, out Excel.Range? column)
+        {
+            column = new Mock<Excel.Range>().Object;
+            return true;
+        }
+
+        internal override object? GetRangeValues(Excel.Range range) => payload;
+
+        internal override void SetRangeValues(Excel.Range range, object written) => assignments.Add(written);
+    }
+
+    private static object?[] PayloadOf(List<object?> assignments)
         {
             var payload = Assert.IsType<object[,]>(Assert.Single(assignments));
             return [.. payload.Cast<object?>()];
@@ -228,6 +263,30 @@ public sealed class ExcelDurationWriterTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(DurationWriteRefusalReason.NoActiveWorkbook, outcome.Refusal);
         Assert.Equal(0, writer.WriteCount);
+    }
+
+    [Fact]
+    public void A_single_cell_column_reported_as_a_scalar_is_written_not_refused()
+    {
+        // A one-row, one-column `Value2` range returns a bare scalar rather than a
+        // SAFEARRAY, and `ReadRows` only handles the array shape -- so this payload
+        // produced no rows and the adapter refused with `WriteFailed`. A table with
+        // exactly one body row is an ordinary workbook, not a broken one, and it has a
+        // `Duration` value to write. Positive test for the scalar branch.
+        List<object?> assignments = [];
+        (Mock<Excel.Application> application, Mock<Excel.Worksheet> worksheet, Mock<Excel.ListObject> table) = Graph();
+        var writer = new ScalarPayloadWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            "7",
+            assignments);
+
+        DurationWriteOutcome outcome = writer.Write(Plan(new DurationWrite(1, "9")));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(1, writer.WriteCount);
+        Assert.Equal(["9"], PayloadOf(assignments));
     }
 
     [Fact]

@@ -78,6 +78,29 @@ public class WorkbookInitialiserTests
         public List<bool> HiddenWrites { get; } = [];
 
         /// <summary>
+        /// Pre-sets each column's current <c>Hidden</c> state, so a test can start from
+        /// a sheet that already matches (or deliberately contradicts) the schema.
+        /// </summary>
+        /// <param name="states">The schema index and the state that column already carries.</param>
+        public void SetExistingHiddenState(IEnumerable<(int Index, bool Hidden)> states)
+        {
+            foreach ((int index, bool hidden) in states)
+            {
+                _existingHidden[index] = hidden;
+            }
+
+            // The per-column mocks captured their starting value when the graph was
+            // constructed, so a later call has to push the new value into each one.
+            for (var index = 0; index < _presettableHidden.Count; index++)
+            {
+                _presettableHidden[index][0] = _existingHidden.TryGetValue(index, out bool set) && set;
+            }
+        }
+
+        /// <summary>The one-element boxed state each column's <c>Hidden</c> mock reads.</summary>
+        private readonly List<object[]> _presettableHidden = [];
+
+        /// <summary>
         /// Unboxes an <c>object</c>-typed PIA property write. <c>IRange.Locked</c>
         /// and <c>IRange.Hidden</c> are declared <see cref="object"/> in this
         /// interop assembly (probed, not assumed), so the value arrives boxed and
@@ -107,6 +130,24 @@ public class WorkbookInitialiserTests
 
         private string _name;
         private string? _existingTableName;
+        private bool _tableWasCreated;
+
+        /// <summary>
+        /// The <c>Hidden</c> state each column starts in, keyed by schema index. A
+        /// column absent from this map reads as visible, which is what an untouched
+        /// worksheet column reports.
+        /// </summary>
+        private readonly Dictionary<int, bool> _existingHidden = [];
+
+        /// <summary>
+        /// The final <c>Hidden</c> state of each column, in column order, read back
+        /// from what the adapter wrote. This is the observable end state; a per-column
+        /// write list cannot answer "is this column hidden?" once writes are skipped
+        /// for columns that already match.
+        /// </summary>
+        public bool[] HiddenStates => [.. _finalHidden];
+
+        private readonly List<bool> _finalHidden = [];
 
         public WorksheetGraph(string name)
         {
@@ -138,7 +179,11 @@ public class WorkbookInitialiserTests
                 .Callback<Excel.XlSheetVisibility>(value => VisibleValues.Add(value));
 
             _ = Table.SetupSet(t => t.Name = It.IsAny<string>())
-                .Callback<string>(value => AssignedTableNames.Add(value));
+                .Callback<string>(value =>
+                {
+                    AssignedTableNames.Add(value);
+                    MarkTableCreated();
+                });
 
             // R2.7 appearance settings (ADR-0007 D8): plain bool properties,
             // captured so the mutation set can assert them.
@@ -162,8 +207,21 @@ public class WorkbookInitialiserTests
             // why these are wired explicitly — otherwise the presentation step
             // would silently no-op and its tests would pass vacuously.
             _ = Table.SetupGet(t => t.ListColumns).Returns(ListColumns.Object);
+
+            // `ListColumns.Count` is read by every column walk, including the
+            // rollback's visibility restore. Unconfigured, Moq returns 0 and the
+            // walk silently does nothing -- which would make the rollback test pass
+            // for the wrong reason.
+            _ = ListColumns.SetupGet(l => l.Count)
+                .Returns(() => _tableWasCreated || _existingTableName is not null
+                    ? Columns.Count
+                    : 0);
             for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
             {
+                // A `for` loop has one `index` variable, so the closures below would
+                // all capture the same final value. Each column needs its own copy,
+                // or every recorded write lands on the last column.
+                int columnIndex = index;
                 var columnRange = new Mock<Excel.Range>();
                 var entireColumn = new Mock<Excel.Range>();
                 var column = new Mock<Excel.ListColumn>();
@@ -171,8 +229,27 @@ public class WorkbookInitialiserTests
                 _ = columnRange.SetupGet(r => r.EntireColumn).Returns(entireColumn.Object);
                 _ = columnRange.SetupSet(r => r.Locked = It.IsAny<object>())
                     .Callback<object>(value => LockedWrites.Add(RequireBool(value)));
+
+                // The `Hidden` getter is wired to the recorded state, not left
+                // unconfigured. `Range.Hidden` is `object`-typed, so an unconfigured
+                // getter returns null, and the adapter cannot then tell "visible" from
+                // "the host did not say" -- a test that wants to prove the adapter
+                // SKIPS a write it does not need has to hand it a real state. A column
+                // with no preset state starts as visible, the ordinary default for an
+                // untouched worksheet column. The value is boxed because the PIA
+                // delivers an `object`; the adapter under test does the unboxing.
+                var hidden = new object[1];
+                hidden[0] = _existingHidden.TryGetValue(columnIndex, out bool startHidden) && startHidden;
+                _presettableHidden.Add(hidden);
+                _finalHidden.Add(false);
+                _ = entireColumn.SetupGet(r => r.Hidden).Returns(() => hidden[0]);
                 _ = entireColumn.SetupSet(r => r.Hidden = It.IsAny<object>())
-                    .Callback<object>(value => HiddenWrites.Add(RequireBool(value)));
+                    .Callback<object>(value =>
+                    {
+                        hidden[0] = value;
+                        _finalHidden[columnIndex] = RequireBool(value);
+                        HiddenWrites.Add(RequireBool(value));
+                    });
                 Columns.Add(column);
             }
         }
@@ -207,9 +284,20 @@ public class WorkbookInitialiserTests
         internal Excel.ListObject TableAt(int index)
         {
             Assert.Equal(1, index);
-            return _existingTableName is null
+            return _existingTableName is null && !_tableWasCreated
                 ? throw new InvalidOperationException("No table was configured for this sheet.")
                 : Table.Object;
+        }
+
+        /// <summary>
+        /// Records that the adapter created the add-in's own table on this sheet, so
+        /// the rollback paths that look the table up again can find it.
+        /// </summary>
+        internal void MarkTableCreated()
+        {
+            _tableWasCreated = true;
+            ListObjectCount = 1;
+            _ = Table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
         }
 
         /// <summary>
@@ -550,9 +638,9 @@ public class WorkbookInitialiserTests
     [Fact]
     public void Initialise_applies_the_column_presentation_contract()
     {
-        // R4.7C D1/D2, ADR-0029 D7/D8. Every schema column is written once, and
-        // what it carries is derived from the schema's classification rather than
-        // from a list maintained beside it.
+        // R4.7C D1/D2, ADR-0029 D7/D8. Every schema column is locked, and what it
+        // carries is derived from the schema's classification rather than from a list
+        // maintained beside it.
         var active = BlankActiveSheet();
         var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
         var graph = new WorkbookGraph(active);
@@ -562,13 +650,21 @@ public class WorkbookInitialiserTests
 
         IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
         Assert.Equal(columns.Count, active.LockedWrites.Count);
-        Assert.Equal(columns.Count, active.HiddenWrites.Count);
 
         for (var index = 0; index < columns.Count; index++)
         {
             Assert.Equal(columns[index].IsLocked, active.LockedWrites[index]);
-            Assert.Equal(columns[index].IsHidden, active.HiddenWrites[index]);
         }
+
+        // Visibility is a write-if-different, so only the columns whose state
+        // actually has to change appear. On a fresh worksheet every authoring column
+        // already reads visible and no engine column does, so every recorded write is
+        // `true` and there is exactly one per hidden column -- not one per column,
+        // which is what the always-true guard used to produce.
+        Assert.Equal(
+            columns.Count(column => column.IsHidden),
+            active.HiddenWrites.Count);
+        Assert.All(active.HiddenWrites, written => Assert.True(written));
     }
 
     [Fact]
@@ -583,17 +679,20 @@ public class WorkbookInitialiserTests
 
         _ = graph.Build(active).Initialise();
 
+        bool[] hidden = active.HiddenStates;
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, hidden.Length);
+
         IReadOnlyList<string> authoring = ["Type", "Description", "Start", "Finish"];
         foreach (string name in authoring)
         {
             int index = IndexOf(name);
-            Assert.False(active.HiddenWrites[index]);
+            Assert.False(hidden[index]);
             Assert.False(active.LockedWrites[index]);
         }
 
         // Duration is the one user-visible locked column (ADR-0029 D3).
         int duration = IndexOf("Duration");
-        Assert.False(active.HiddenWrites[duration]);
+        Assert.False(hidden[duration]);
         Assert.True(active.LockedWrites[duration]);
 
         foreach (string name in new[]
@@ -603,7 +702,7 @@ public class WorkbookInitialiserTests
         })
         {
             int index = IndexOf(name);
-            Assert.True(active.HiddenWrites[index]);
+            Assert.True(hidden[index]);
             Assert.True(active.LockedWrites[index]);
         }
     }
@@ -668,6 +767,78 @@ public class WorkbookInitialiserTests
         active.VerifyTableCreated(Times.Never());
         graph.VerifySheetsAdded(Times.Never());
         Assert.Empty(active.WrittenValues);
+    }
+
+    /// <summary>
+    /// A column already carrying the schema's visibility is not rewritten.
+    /// </summary>
+    /// <remarks>
+    /// The guard that avoided this write compared an <c>object</c>-typed
+    /// <c>Range.Hidden</c> against a <c>bool</c> with <c>!=</c>, which boxed the
+    /// right-hand side and compared references. That is always true, so every column
+    /// was written on every Initialise and an already-correct workbook was marked
+    /// dirty for nothing. This asserts the skip, which only happens when the value is
+    /// unwrapped to a real boolean first.
+    /// <para>
+    /// The end state is asserted rather than the write count, because the run ends in
+    /// a rollback whose own visibility restore legitimately writes. What must hold is
+    /// that the presentation step left every column where it found it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Initialise_does_not_rewrite_a_column_that_already_has_the_schemas_visibility()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        active.SetExistingHiddenState(
+            schema.Select((column, index) => (index, column.IsHidden)));
+
+        _ = graph.Build(active).Initialise();
+
+        // No column is written by the presentation step. The only writes that occur
+        // are the rollback's unhide pass, and those are all `false` -- restoring
+        // visibility, never hiding. The always-true guard wrote all 16 columns,
+        // every one of them, whatever the host actually reported.
+        Assert.DoesNotContain(active.HiddenWrites, written => written);
+    }
+
+    /// <summary>
+    /// A refused Initialise leaves no column hidden.
+    /// </summary>
+    /// <remarks>
+    /// Hiding a column is a <em>worksheet</em> change that outlives the table, so
+    /// rolling back the table and the header while leaving the engine columns hidden
+    /// would leave the user's sheet altered after a refusal the message calls a
+    /// zero-mutation outcome. This asserts the visibility is restored too.
+    /// </remarks>
+    [Fact]
+    public void A_refused_initialise_restores_the_visibility_it_applied()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write())
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.Equal(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+            outcome);
+
+        // Every engine column was hidden by the presentation step, and the rollback
+        // must have unhidden every one of them again.
+        int hiddenColumns = GanttTableSchema.Default.Columns.Count(column => column.IsHidden);
+        Assert.True(hiddenColumns > 0, "The schema must hide at least one column for this to mean anything.");
+        Assert.Equal(
+            hiddenColumns,
+            active.HiddenWrites.Count(written => !written));
     }
 
     [Fact]

@@ -80,17 +80,22 @@ REV5 §7 and REV6 §9 require *"a truthful line-like scene primitive. Do not emi
 a thin rectangle that each renderer reinterprets."* **Rejected**, on the
 owner's stated grounds that a rectangle is easier to size.
 
-The resolved representation:
+The resolved representation (**as amended by the owner ruling of 2026-09-30**):
 
 - the scene primitive **stays `SceneRect`**, as `CriticalOverlayBuilder`
   already emits;
 - the rect is **filled**, using a new **`CriticalFill`** colour token carrying
   **`#FF0000`** — the same red as the existing `CriticalStroke` token at
   `GanttCatalogues.cs:164`;
-- the rect's **height is half the parent activity bar's resolved height**, and
-  it is **top-aligned** on the parent's top edge. The builder already receives
-  `ParentVisibleBounds`, a `RectD` carrying the parent's resolved height, so
-  this needs no new token;
+- the rect's **height is half the predetermined `ActivityHeightPt`**, and it is
+  **centred on its own visual slot**, exactly as an ordinary span bar is. It is
+  **not** half the parent bar's resolved height and **not** top-aligned to the
+  parent;
+- the rect's **horizontal extent comes from its own Start and Finish**, clipped
+  only to the **plot**. It may be shorter than, equal to, or longer than its
+  parent, and an interval lying wholly outside its parent is still drawn — the
+  parent is never read for geometry at all, and governs lane membership and
+  nothing else. The link survives only through R4.7B's lane projection;
 - the **`CriticalLinePt` metric is retired**. The `CriticalInterval` preset
   keeps its `ActivityHeightPt` reference, which supplies the half-height
   denominator;
@@ -100,6 +105,17 @@ The resolved representation:
   catalogue, the validator, and the checklist — change in the same commit**, or
   the entity renders filled while the validator rejects the user's own
   override.
+
+**Superseded on 2026-09-30, and the reason is recorded here because two documents
+still carried the old rule.** This section previously read *"the rect's height is
+half the parent activity bar's resolved height, and it is top-aligned on the
+parent's top edge … the builder already receives `ParentVisibleBounds`"*. That was
+the geometry in force when this register was written, and the owner later replaced
+it. `CriticalOverlayRequest` no longer carries `ParentVisibleBounds` at all, and
+`TryBuild` no longer takes a parent-bounds dictionary. A parent-dependent overlay
+made the entity's geometry depend on a row it did not own, which is what made
+`CriticalIntervalOutsideParent` — and the silent deletion of an interval falling
+outside its parent — possible in the first place.
 
 A note on the drift this resolves: the guide previously said all three
 renderers draw a *line* from this rect, but **no renderer implemented that** —
@@ -159,19 +175,34 @@ active users, this is still in development."* Consequences:
 
 ## 5. Fixture and golden consequences
 
-`tests/golden/scene/reference-scene.json` contains **no critical overlay
-primitive**. Its only `critical` occurrence is the warning
-`CriticalIntervalOutsideParent`, because the canonical fixture's critical
-interval lies wholly outside its parent span and so emits no overlay. The
-golden has therefore never pinned the critical representation, which is how the
-guide/code divergence survived.
+**Corrected 2026-09-30: the premise of this section was false and is withdrawn.**
+It previously read that `tests/golden/scene/reference-scene.json` "contains **no
+critical overlay primitive**" and that its only `critical` occurrence was the
+warning `CriticalIntervalOutsideParent`. That was wrong on both counts. The
+snapshot **did** carry a critical primitive, and the second interval had been
+*silently deleted* — not absent, deleted — for falling outside its parent span.
+The golden was the evidence that the drift existed, not evidence that it was
+harmless, and reading it as "critical-free" is how the divergence survived.
 
-R4.7E therefore adds a critical child to the **vertical integration fixture**,
-not to the canonical fixture, so the representation becomes pinned without
-forcing a golden regeneration. Expected golden regenerations across the whole
-pre-R4.9 sequence: **two** — R4.7B and R4.7D. Each requires human review and a
-stated reason, and each ships in the same commit as its code change, per
-R3.17's recorded D3 precedent.
+The committed golden now carries **two** critical primitives
+(`…000c1:critical` and `…000c2:critical`), regenerated in `806a632` after the
+parent-independent geometry landed in `017199f`. The second one came back because
+removing the parent clip stopped deleting it. Both are **filled rectangles at
+half the predetermined `ActivityHeightPt`, centred on their own visual slot, and
+derived from their own dates** — the representation the register's §2.5 now
+records.
+
+R4.7E's **colour-capability** change (the later commit) did not regenerate the
+golden: it adds a critical child to the **vertical integration fixture** rather
+than the canonical fixture, which pins the fill contract without touching the
+snapshot. The distinction matters because two different claims were conflated —
+"the geometry change did not move the golden" was never true, and "the
+capability flip did not move it" is.
+
+Expected golden regenerations across the whole pre-R4.9 sequence: **three** — R4.7B,
+R4.7D, and R4.7E's geometry change. Each requires human review and a stated
+reason, and each ships in the same commit as its code change, per R3.17's recorded
+D3 precedent.
 
 ## 6. Roadmap rows this register drives
 

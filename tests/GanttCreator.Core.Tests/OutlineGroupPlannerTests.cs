@@ -174,9 +174,8 @@ public sealed class OutlineGroupPlannerTests
     }
 
     /// <summary>
-    /// A child whose parent is not a row of this table cannot be grouped, and is not
-    /// reported for ungrouping either: there is no stale group to clear, because the
-    /// validator owns that case. The planner is silent rather than noisy.
+    /// A Critical Interval is an ordinary child, so it forms a group exactly as any
+    /// other child does: one group under its parent, holding the child's row.
     /// </summary>
     [Fact]
     public void A_critical_interval_child_forms_a_group()

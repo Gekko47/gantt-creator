@@ -559,12 +559,19 @@ public static class SceneBuilder
                 // vertical placement from its own slot, so there is no parent lookup
                 // here at all. `parentVisibleBounds` is still built for span bars,
                 // but the critical path does not read it.
+                //
+                // The slot centre is lane-relative and the overlay is placed in chart
+                // coordinates, so the plot top is added here exactly as the span pass
+                // and the milestone pass add it. Omitting it drew the critical bar
+                // `plotBounds.Top` points above its own lane -- outside the plot, and
+                // in the header bands -- which the committed golden recorded rather
+                // than caught, because the golden pinned the wrong Y faithfully.
                 CriticalOverlayCreationOutcome overlay = CriticalOverlayBuilder.TryBuild(
                     new CriticalOverlayRequest(
                         @event,
                         resolved.Style,
                         resolved.HeightPt,
-                        placement.SlotCentreY,
+                        placement.SlotCentreY + plotBounds.Top,
                         placement.LaneOrder,
                         placement.EffectiveStackIndex),
                     timeScale);

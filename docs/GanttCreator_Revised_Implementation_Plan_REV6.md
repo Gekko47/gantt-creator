@@ -8,7 +8,7 @@
 >
 > | This document proposes | Resolved as |
 > | --- | --- |
-> | §9, §16 — "Core must emit a truthful line-like scene primitive" | **Rejected.** The critical overlay stays a **filled rectangle** (`CriticalFill` = `#FF0000`), half the parent bar's resolved height, top-aligned, `CriticalLinePt` retired. The stated reason was ease of sizing. |
+> | §9, §16 — "Core must emit a truthful line-like scene primitive" | **Rejected.** The critical overlay stays a **filled rectangle** (`CriticalFill` = `#FF0000`), half the **predetermined** `ActivityHeightPt`, **centred on its own visual slot** and derived from its **own** dates, `CriticalLinePt` retired. (Owner ruling 2026-09-30 supersedes the earlier "half the parent bar's resolved height, top-aligned" wording recorded here: the parent is never read for geometry and governs lane membership only.) The stated reason for the rejection was ease of sizing. |
 > | §16 — separate `HostShapeKey` from `PrimitiveId` | **Rejected.** R4.7's L18 refusal stands. |
 > | §15 — remove `Above`/`Below` | **Accepted.** Retain `Auto`, `Left`, `Right`, `Inside` (UI: Centre), `None`, the four delineator corners, and the splitter positions. |
 > | §15 — `Auto` is largest-space-that-fits | **Accepted, with the existing truncation retained.** ADR-0015's D4/D5/D6 stand; this document does not replace them. Nothing new needs to be built. |

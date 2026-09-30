@@ -105,6 +105,30 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// The row span is named by its whole-row A1 address, so the write covers every
+    /// column of every row in the group rather than one cell.
+    /// </summary>
+    /// <remarks>
+    /// The adapter's other seams are stubbed, so this pins the part the stub
+    /// bypasses. The previous form indexed <c>Rows</c> with two integers, which the
+    /// PIA defines as <c>Item(RowIndex, ColumnIndex)</c> -- a single cell -- so a
+    /// group of several children outlined one cell and the other rows kept their old
+    /// level. A single-row group is the same address as the cell it used to select,
+    /// which is why the defect was invisible for a one-child group.
+    /// </remarks>
+    [Theory]
+    [InlineData(3, 4, "3:4")]
+    [InlineData(5, 5, "5:5")]
+    [InlineData(1, 16384, "1:16384")]
+    public void The_row_span_address_covers_every_row_between_first_and_last(
+        int firstRow,
+        int lastRow,
+        string expected)
+    {
+        Assert.Equal(expected, ExcelOutlineGroupWriter.RowSpanAddress(firstRow, lastRow));
+    }
+
+    /// <summary>
     /// A parent with two contiguous children writes exactly one range at the child
     /// outline level. The parent row is excluded, which is what keeps the
     /// <c>-</c>/<c>+</c> control on the parent rather than consuming it.

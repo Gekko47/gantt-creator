@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -225,13 +226,43 @@ public class ExcelOutlineGroupWriter(
     /// <param name="firstRow">The first worksheet row.</param>
     /// <param name="lastRow">The last worksheet row.</param>
     /// <returns>The range, or <see langword="null"/> when the host does not resolve it.</returns>
+    /// <remarks>
+    /// <para>
+    /// The span is selected by its whole-row A1 address (<c>"5:7"</c>), which spans
+    /// every column of those rows. The previous form used the two-argument
+    /// <c>Rows</c> indexer, and reflection over the installed
+    /// <c>Microsoft.Office.Interop.Excel</c> 14.0.1 shows that indexer is
+    /// <c>Item(RowIndex, ColumnIndex)</c> -- a single cell at
+    /// <c>(firstRow, lastRow)</c>, not the rows between them. Every
+    /// <c>WriteOutlineLevel</c> therefore reached exactly one cell, so a group of
+    /// several children outlined a single cell and every other row in the group kept
+    /// whatever level it already had.
+    /// </para>
+    /// <para>
+    /// The whole row span is written rather than one cell per row because
+    /// <c>OutlineLevel</c> is a row property: one write across the span is both
+    /// correct and cheaper than N row writes. This PIA exposes no four-argument
+    /// <c>Cells</c> indexer (verified by reflection: <c>Range</c> carries only the
+    /// two-argument <c>Item</c>), so the address form is the way to name the span.
+    /// </para>
+    /// </remarks>
     internal virtual Excel.Range? GetRowsRange(Excel.Worksheet worksheet, int firstRow, int lastRow)
     {
         ArgumentNullException.ThrowIfNull(worksheet);
 
-        Excel.Range? rows = worksheet.Rows;
-        return rows?[firstRow, lastRow];
+        return worksheet.Range[RowSpanAddress(firstRow, lastRow)];
     }
+
+    /// <summary>
+    /// Formats the whole-row A1 address for an inclusive row span, invariantly and
+    /// without a sheet qualifier (the address is resolved against the worksheet it
+    /// is read from). <c>"5:7"</c> spans every column of rows 5 through 7.
+    /// </summary>
+    /// <param name="firstRow">The first worksheet row.</param>
+    /// <param name="lastRow">The last worksheet row.</param>
+    /// <returns>The row-span address.</returns>
+    internal static string RowSpanAddress(int firstRow, int lastRow) =>
+        string.Create(CultureInfo.InvariantCulture, $"{firstRow}:{lastRow}");
 
     /// <summary>
     /// Writes an outline level to a row range. Test seam over the COM

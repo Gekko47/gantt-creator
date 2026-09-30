@@ -151,10 +151,27 @@ public sealed class LaneMetricsResolverTests
     }
 
     /// <summary>
-    /// A non-positive measured height is refused rather than substituted. A
-    /// defaulted height here would silently put the chart out of alignment with
-    /// the worksheet, which is the failure this whole row exists to remove.
+    /// A non-positive measured height is refused at the boundary. A defaulted height
+    /// here would silently put the chart out of alignment with the worksheet, which
+    /// is the failure this whole row exists to remove.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The refusal is <b>the grid factory's</b>, not the resolver's:
+    /// <see cref="PanelCellGrid.TryCreate"/> rejects a non-positive or non-finite
+    /// height before a grid ever reaches <see cref="LaneMetricsResolver.Resolve"/>,
+    /// so the resolver's own <c>InvalidRowHeight</c> branch is unreachable through
+    /// the factory -- exactly the situation the empty-body test above pins honestly
+    /// rather than asserting a branch it cannot reach.
+    /// </para>
+    /// <para>
+    /// The previous form of this test called <c>Resolve</c> with a grid built from
+    /// the bad height. That grid is <see langword="null"/> (the factory refused it),
+    /// so the call reported <c>NullGrid</c> and the test passed without ever
+    /// exercising a height check. Asserting the specific refusal code is what makes
+    /// the test prove the height is what was rejected.
+    /// </para>
+    /// </remarks>
     [Theory]
     [InlineData(0d)]
     [InlineData(-5d)]
@@ -162,19 +179,13 @@ public sealed class LaneMetricsResolverTests
     [InlineData(double.PositiveInfinity)]
     public void An_invalid_measured_height_is_refused(double badHeight)
     {
-        // The grid factory itself refuses a non-positive height, so build a grid
-        // directly to prove the RESOLVER refuses rather than the factory.
-        LaneMetricsResolution resolution = LaneMetricsResolver.Resolve(
-            Grid(18),
-            PaddingTop,
-            PaddingBottom,
-            StackGap,
-            Splitter,
-            Spacer);
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+            [badHeight, 18],
+            10,
+            ["Id", "Description"]);
 
-        Assert.True(resolution.Succeeded);
-
-        LaneMetricsResolution viaBad = Resolve(badHeight, 18);
-        Assert.False(viaBad.Succeeded);
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelCellGridRefusal.NonPositiveRowHeight, outcome.Refusal);
     }
 }

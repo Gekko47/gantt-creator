@@ -93,7 +93,16 @@ public class ExcelDurationWriter(
             return DurationWriteOutcome.Refused(DurationWriteRefusalReason.TableMissing);
         }
 
-        List<object?[]> current = ExcelValue2Matrix.ReadRows(GetRangeValues(column));
+        // A one-row, one-column `Value2` range returns a bare scalar, not a
+        // SAFEARRAY, so `ReadRows` (which only handles the array shape) reports no
+        // rows. That is not an empty column -- it is a column with one cell -- and
+        // treating it as empty refused the write for a workbook that plainly has a
+        // `Duration` value to write. The scalar is normalised into the same one-row,
+        // one-cell shape here; array payloads keep going through `ReadRows` unchanged.
+        var raw = GetRangeValues(column);
+        List<object?[]> current = raw is Array
+            ? ExcelValue2Matrix.ReadRows(raw)
+            : [RawValueRow(raw)];
         if (current.Count == 0)
         {
             return DurationWriteOutcome.Refused(DurationWriteRefusalReason.WriteFailed);
@@ -133,6 +142,14 @@ public class ExcelDurationWriter(
 
         return DurationWriteOutcome.Ok(plan.WriteCount, plan.WriteCount);
     }
+
+    /// <summary>
+    /// Wraps a scalar <c>Value2</c> payload as the one-row, one-cell shape the merge
+    /// below reads, so a single-body-row table takes the same path as a many-row one.
+    /// </summary>
+    /// <param name="value">The scalar cell value Excel returned.</param>
+    /// <returns>A single row carrying that one value.</returns>
+    private static object?[] RawValueRow(object? value) => [value];
 
     /// <summary>
     /// Converts the merged column into the rectangular payload Excel's

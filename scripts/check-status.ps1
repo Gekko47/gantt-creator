@@ -56,6 +56,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $statusFile = Join-Path $repoRoot $StatusPath
 $roadmapFile = Join-Path $repoRoot $RoadmapPath
 
+# The work-item guide directory, resolved once against the repository root and
+# shared by the two checks that read it. Resolving it here rather than in the
+# guide lookup alone means the roadmap-ID check and the evidence-command check
+# can never disagree about where the guides live.
+$workItemsDir = Join-Path $repoRoot $WorkItemsPath
+
 if (-not (Test-Path -LiteralPath $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
 if (-not (Test-Path -LiteralPath $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
 
@@ -229,11 +235,18 @@ foreach ($t in $tokens)
 # silently skipped every letter-suffixed row, so STATUS could cite a work item
 # the roadmap never defined and the gate would still pass -- the exact failure
 # this check exists to prevent, on exactly the rows it was about to be needed
-# for. The suffix class must be case-insensitive in effect: the suffixes are
-# UPPER case (A-H), and a lower-case-only `[a-z]?` matches none of them, which
-# a first attempt at this fix demonstrated -- the token was skipped entirely
-# and two tests asserting the violation passed it silently.
-$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Za-z]?\b') |
+# for.
+#
+# The suffix class is UPPERCASE-only, `[A-Z]`, and that is deliberate. The
+# roadmap's suffixes are uppercase (R4.7A..R4.7H, R4.8A) and the Phase 2/5
+# rows that use lowercase (R2.7a, R2.7b, R5.6a) are matched by the *unsuffixed*
+# `R2.7` / `R5.6` alternative, so a lowercase spelling still resolves against
+# the base row and can never be mistaken for a distinct, guide-requiring ID.
+# Accepting `[A-Za-z]` instead made `R2.7a` demand a guide lookup for a row the
+# roadmap spells lowercase, while `R2.7A` demanded one for a row it does not --
+# so the case-insensitive class was wrong in the opposite direction from the
+# original `[a-z]?` bug this check records.
+$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Z]?\b') |
     ForEach-Object { $_.Value } | Select-Object -Unique
 foreach ($id in $idTokens)
 {
@@ -246,9 +259,16 @@ foreach ($id in $idTokens)
     # that cites no guide is how R4.7A-R4.7H would ship as nine rows nobody can
     # implement from. Only enforced for suffixed IDs so the pre-existing rows,
     # several of which are landed or deferred by name, are not retro-required.
-    if ($id -match '\d+[A-Za-z]$')
+    if ($id -match '\d+[A-Z]$')
     {
-        $guide = Get-ChildItem -LiteralPath $WorkItemsPath -Filter "$id-*.md" -ErrorAction SilentlyContinue
+        # Resolved against $repoRoot, not the current directory. The guide
+        # directory is a repository path like every other one this gate checks,
+        # and `-LiteralPath 'docs/work-items'` silently resolved against the
+        # caller's working directory instead -- so a run started from anywhere
+        # but the repository root found no guide and reported a violation for
+        # every suffixed ID. $workItemsDir is the same resolved path check 4
+        # already uses, so the two cannot drift.
+        $guide = Get-ChildItem -LiteralPath $workItemsDir -Filter "$id-*.md" -ErrorAction SilentlyContinue
         if (-not $guide)
         {
             $violations.Add("STATUS references suffixed roadmap item '$id', which has no work-item guide in $WorkItemsPath.")
@@ -276,7 +296,8 @@ foreach ($id in $idTokens)
 #     because STATUS claims describe the repository as it stands; a work
 #     item may legitimately cite a file a later item will create, and
 #     refusing that would be a false positive.
-$workItemsDir = Join-Path $repoRoot $WorkItemsPath
+# $workItemsDir is resolved once at the top of this script and shared with the
+# roadmap-ID guide lookup above.
 $workItemCommandLineCount = 0
 if (Test-Path -LiteralPath $workItemsDir)
 {

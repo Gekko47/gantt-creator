@@ -47,10 +47,14 @@ public sealed class PlotGeometryAuthorityTests
         foreach (var root in ProductionRoots)
         {
             var directory = Path.Combine(repositoryRoot, root);
-            if (!Directory.Exists(directory))
-            {
-                continue;
-            }
+            // A missing root FAILS the test rather than being skipped. Skipping is how
+            // a renamed or deleted production project would silently stop being
+            // scanned, leaving this guard green while covering nothing -- the test
+            // would pass because it examined less, not because the contract holds.
+            Assert.True(
+                Directory.Exists(directory),
+                $"Production root '{root}' does not exist under the repository root; "
+                + "a missing root would be silently skipped rather than scanned.");
 
             foreach (var file in Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
             {
@@ -87,10 +91,12 @@ public sealed class PlotGeometryAuthorityTests
         foreach (var root in ProductionRoots)
         {
             var directory = Path.Combine(repositoryRoot, root);
-            if (!Directory.Exists(directory))
-            {
-                continue;
-            }
+            // Same reason as the scan above: a missing root must fail, not shrink
+            // the set of files this caller-count guard inspects.
+            Assert.True(
+                Directory.Exists(directory),
+                $"Production root '{root}' does not exist under the repository root; "
+                + "a missing root would be silently skipped rather than scanned.");
 
             foreach (var file in Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories))
             {

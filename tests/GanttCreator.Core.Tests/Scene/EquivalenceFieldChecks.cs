@@ -37,8 +37,6 @@ internal static class EquivalenceFieldChecks
     /// <summary>
     /// Gets the critical-interval overlay height the reference scene is built with.
     /// </summary>
-    /// The critical-interval overlay height the reference scene is built with.
-    /// </summary>
     /// <remarks>
     /// HALF the predetermined <c>ActivityHeightPt</c> (owner ruling
     /// 2026-09-30 / ADR-0027 D3). The old value was the retired
