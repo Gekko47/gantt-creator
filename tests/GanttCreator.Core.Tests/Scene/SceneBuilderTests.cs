@@ -654,8 +654,53 @@ public sealed class SceneBuilderTests
         Assert.Contains(outcome.Result!.Scene.Primitives, p => p.ZLayer == ZLayer.Milestone);
     }
 
+    /// <summary>
+    /// A critical interval is clipped to the PLOT, not to its parent (owner ruling
+    /// 2026-09-30). This test used to be named and commented as proving parent
+    /// clipping, but its only assertion — that the overlay is narrower than the
+    /// plot — is satisfied by any child that fits inside the plot, so it proved
+    /// nothing about the parent at all. It is restated here to discriminate: the
+    /// child's OWN dates run past the plot finish and past its parent's finish,
+    /// and the overlay must stop exactly at the plot edge.
+    /// </summary>
     [Fact]
-    public void A_critical_interval_clips_to_its_parents_visible_span()
+    public void A_critical_interval_clips_to_the_plot_and_not_to_its_parent()
+    {
+        GanttEvent parent = Event(1, finish: new DateOnly(2024, 1, 10));
+        GanttEvent child = Event(
+            2,
+            GanttEntityType.CriticalInterval,
+            // Starts before the plot opens and finishes well after both the plot
+            // and the parent end, so any of the three could be the clip source.
+            new DateOnly(2023, 12, 20),
+            new DateOnly(2024, 2, 20),
+            "CriticalInterval",
+            parentId: parent.Id);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect overlay = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.CriticalOverlay);
+
+        // Clipped to the plot on both edges, and not to the shorter parent.
+        Assert.Equal(_plotBounds.Left, overlay.Bounds.Left, precision: 6);
+        Assert.Equal(_plotBounds.Right, overlay.Bounds.Right, precision: 6);
+        Assert.Equal(_plotBounds.Width, overlay.Bounds.Width, precision: 6);
+        Assert.True(
+            overlay.Bounds.Width > _plotBounds.Width * 0.9,
+            "The overlay must span the plot, proving it was NOT clipped to the parent's shorter span.");
+    }
+
+    /// <summary>
+    /// ADR-0027 D2/D5: the overlay is a FILLED rectangle. A renderer receives the
+    /// primitive and paints it, so the scene must actually carry a fill — an
+    /// unfilled or outline-only rect here is the defect the ADR removes, not a
+    /// variant. This asserts the fill the catalogue preset resolves.
+    /// </summary>
+    [Fact]
+    public void A_critical_interval_overlay_resolves_a_fill_not_just_an_outline()
     {
         GanttEvent parent = Event(1);
         GanttEvent child = Event(
@@ -669,14 +714,13 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        // The overlay must be narrower than the plot, proving it was clipped to the
-        // parent rather than spanning the whole plot.
         SceneRect overlay = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             rect => rect.ZLayer == ZLayer.CriticalOverlay);
-        Assert.True(
-            overlay.Bounds.Width < _plotBounds.Width,
-            "A critical overlay must clip to its parent, not span the full plot.");
+
+        Assert.NotNull(overlay.Style.FillColour);
+        // Half the predetermined ActivityHeightPt (8 in this fixture), per D3.
+        Assert.Equal(4, overlay.Bounds.Height, precision: 6);
     }
 
     [Fact]

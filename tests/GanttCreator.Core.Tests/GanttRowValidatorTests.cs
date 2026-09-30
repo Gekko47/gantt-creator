@@ -850,8 +850,11 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Fill_on_critical_interval_is_a_capability_error()
+    public void Fill_on_critical_interval_is_accepted()
     {
+        // ADR-0027 D5 inverted this rule. It is kept as its own test rather than
+        // deleted so the inversion stays visible: the identical row that was a
+        // blocking error now validates, and the fill reaches the event.
         var parentId = NewId();
         GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId);
         var child = new GanttRowDto(
@@ -874,11 +877,9 @@ public class GanttRowValidatorTests
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(
-            outcome.Issues,
-            i => i.RowNumber == 3 && i.Field == "FillColour" && i.Code == GanttValidationCodes.ColourNotAllowedForType
-        );
+        Assert.True(outcome.IsValid);
+        GanttEvent resolved = Assert.Single(outcome.Events, e => e.Type == GanttEntityType.CriticalInterval);
+        Assert.Equal("#FF0000", resolved.FillColour);
     }
 
     [Fact]
@@ -1305,18 +1306,69 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Fill_on_a_critical_interval_is_accepted_and_reaches_the_event()
+    {
+        // ADR-0027 D5/D6. The entity renders as a filled rectangle, so a user
+        // FillColour override is now permitted. This is the POSITIVE test for the
+        // changed path: before the capability flip this row was a blocking error,
+        // and a preset that fills while the validator refuses the user's own fill
+        // is a defect that looks like a rendering choice.
+        string parentId = NewId();
+        string childId = NewId();
+        GanttRowDto parent = ValidSpan(typeText: "As-Planned Activity") with { IdCell = GanttCells.Value(parentId) };
+        GanttRowDto child = CriticalIntervalRow(2, childId, parentId, "#0000FF");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid, "A fill override on a critical interval is now legal.");
+
+        // And it must actually REACH the event, not merely stop being an error: a
+        // silent drop here would be the same class of defect as a silent refusal.
+        GanttEvent resolved = Assert.Single(outcome.Events, e => e.Id.Value == childId);
+        Assert.Equal("#0000FF", resolved.FillColour);
+    }
+
+    [Fact]
+    public void Stroke_on_a_critical_interval_stays_allowed()
+    {
+        // The capability gained Fill; Stroke must not have been lost in the flip.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(typeText: "As-Planned Activity") with { IdCell = GanttCells.Value(parentId) };
+        GanttRowDto child = CriticalIntervalRow(2, NewId(), parentId) with
+        {
+            StrokeColourCell = GanttCells.Value("#FF00FF"),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid);
+    }
+
+    [Fact]
     public void Critical_interval_cycle_member_with_a_field_error_is_not_reported_as_a_cycle()
     {
         string firstId = NewId();
         string secondId = NewId();
         GanttValidationOutcome outcome = GanttRowValidator.Validate([
-            CriticalIntervalRow(2, firstId, secondId, "#ff0000"),
+            // The field error this test needs used to be a FillColour override on a
+            // critical interval, which ADR-0027 D5 made LEGAL. LabelPosition is
+            // used instead: a critical interval still permits only `None`, so
+            // "Left" is a real field error that must suppress the cycle report
+            // without being misreported as one.
+            CriticalIntervalRow(2, firstId, secondId) with
+            {
+                LabelPositionCell = GanttCells.Value("Left"),
+            },
             CriticalIntervalRow(3, secondId, firstId),
         ]);
 
         Assert.False(outcome.IsValid);
-        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentCycle);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.RowNumber == 2 && i.Code == GanttValidationCodes.LabelNotAllowedForType);
+        Assert.DoesNotContain(
+            outcome.Issues,
+            i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentCycle);
         Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
     }
 

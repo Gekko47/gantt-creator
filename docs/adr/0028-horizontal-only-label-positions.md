@@ -53,14 +53,25 @@ So the cascade the owner described is the cascade that is built, except that
   advertising a removed position.
 - **D2 — The retained horizontal set is `None`, `Auto`, `Left`, `Right`,
   `Inside`.** `Inside` is surfaced in the Ribbon as **Centre**, which is the
-  owner's term for it. The numeric values of the retained members are unchanged,
-  so no stored ordinal is invalidated.
+  owner's term for it. **CORRECTED 2026-09-30: the retained members were
+  renumbered contiguously** — `Inside` moved 6 → 4 and the delineator corners and
+  splitter positions each shifted down by two as `Above`/`Below` vacated 5/6. This
+  ADR originally claimed *"the numeric values of the retained members are
+  unchanged, so no stored ordinal is invalidated"*, which is **false as an
+  arithmetic claim**. It is safe in effect, but for a different reason than stated:
+  the enum is persisted **by name**
+  (`GanttTypeCatalogueRow.AllowedLabelPositions` serialises
+  `position.ToString()`), so **no workbook stores a number** and renumbering cannot
+  orphan a stored value. Contiguity was chosen over a retained 5/6 gap because a
+  gap requires a marker member nothing consumes, which CA1700 correctly rejects.
 - **D3 — The delineator corner positions are retained**: `TopLeft`, `TopRight`,
   `BottomLeft`, `BottomRight`. They are not above/below positions; they are the
   four corners of a full-height line. The landed R3.10 `DelineatorBuilder`
-  depends on them, and removing them would break that row.
+  depends on them, and removing them would break that row. **Renumbered 5-8** as a
+  consequence of D2's correction above.
 - **D4 — The splitter positions are retained**: `DataPanelLeft`, `PlotCentre`,
   `Both`, which the splitter band and the landed R3.x builders depend on.
+  **Renumbered 9-11** as a consequence of D2's correction above.
 - **D5 — ADR-0015 D4, D5 and D6 stand unchanged.** The widest-gap truncation
   fallback, the single-character `…`, and the nothing-to-place outcome are
   **reused as built**. No new label machinery is written. This ADR amends ADR-0015

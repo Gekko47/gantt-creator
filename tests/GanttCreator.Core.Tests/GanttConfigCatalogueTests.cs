@@ -291,7 +291,7 @@ public class GanttConfigCatalogueTests
 
         GanttStylePreset critical = GanttCatalogues.GetPreset("CriticalInterval");
         Assert.Equal(GanttLabelPosition.None, critical.DefaultLabelPosition);
-        Assert.Equal(EntityColourCapability.Stroke, critical.ColourCapability);
+        Assert.Equal(EntityColourCapability.Fill | EntityColourCapability.Stroke, critical.ColourCapability);
 
         GanttStylePreset delay = GanttCatalogues.GetPreset("DelayEvent");
         Assert.Equal(GanttLabelPosition.Inside, delay.DefaultLabelPosition);
@@ -570,10 +570,16 @@ public class GanttConfigCatalogueTests
     /// retired <c>CriticalLinePt</c>, and the added <c>CriticalFill</c>. This test
     /// failing on those changes is the guard working, not a regression -- it is
     /// the mechanism that makes an unrecorded schema change visible.
+    /// Advanced again by R4.7E: granting <c>CriticalInterval</c> the
+    /// <c>Fill</c> colour capability (ADR-0027 D5) changes the type catalogue
+    /// and therefore this hash. A user workbook written before this change
+    /// carries the older hash, which <c>ExcelConfigCatalogueReader</c> reports
+    /// as an actionable mismatch rather than silently rendering a Critical
+    /// Interval the validator would now accept a fill for.
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "982c1daeccc5a88306c58b7d2948cc5ea6e86ab0c75f2c739aefa14c8dbf295d";
+        "b18599b369df56467192774f98c2da8f117b2f06343148f0f81f44e50042f9f8";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

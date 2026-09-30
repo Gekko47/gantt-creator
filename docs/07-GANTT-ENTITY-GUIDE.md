@@ -518,13 +518,13 @@ A **projected child creates no lane and consumes no lane height.** It renders on
 
 **Geometry (revision 8 — filled rectangle, ADR-0027; geometry independence revised 2026-09-30):** the critical interval is an **ordinary span**. Apply the inclusive span rule to **its own Start and Finish** and clip to the plot. It is **not** clipped to, top-aligned to, or otherwise constrained by its parent's span: it may be shorter than, equal to, or longer than its parent, and an interval lying wholly outside its parent is still drawn. The bar is a **filled rectangle** whose height is **half the predetermined `ActivityHeightPt`** (not the parent's resolved height), vertically **centred on its own visual slot** exactly as an ordinary span bar is. It is filled with `CriticalFill` (`#FF0000`, the same red as `CriticalStroke`). `CriticalLinePt` is retired and no replacement token exists, so there is nothing to configure. The rectangle **is** the host object: Excel, PowerPoint and raster each draw the primitive they are given, and **no renderer reinterprets it as a line**. This replaces revision 6's rule that the rect was a bounds carrier and every renderer drew a line along its top edge — that rule was never implemented by any of the three. Multiple critical intervals may project onto one parent. The bar consumes no lane height. The **parent link still governs lane membership** (a projected child renders on the parent's lane) but nothing else; a standalone critical span is still invalid unless an approved style explicitly supports it.
 
-**Style:** solid `CriticalStroke`, square line caps unless approved otherwise. It must remain visually above the body and below labels/milestones.
+**Style:** solid `CriticalFill` (`#FF0000`); a per-row `FillColour` override is **permitted** and replaces the fill. `CriticalLinePt` is retired and no replacement token exists, so there is nothing to configure. It must remain visually above the body and below labels/milestones.
 
 **Labels:** none by default. A critical milestone is a milestone subtype, not a zero-length interval.
 
-**Validation:** parent exists and is a span; the Critical Interval parent relationship is acyclic; interval intersects parent; start ≤ finish. Out-of-parent portions warn and clip or reject according to the approved validation policy.
+**Validation:** parent exists and is a span; the Critical Interval parent relationship is acyclic; start ≤ finish. The parent link is checked for **existence and acyclicity only** — the interval is deliberately **not** required to intersect its parent, and no out-of-parent warning or clip exists (owner ruling 2026-09-30). Out-of-**plot** portions warn and clip per the plot policy.
 
-**Tests:** multiple disjoint/adjacent/overlapping children, parent clipping, top-edge position, thickness, z-order, missing parent.
+**Tests:** multiple disjoint/adjacent/overlapping children, plot clipping, own-slot centring, half height, fill (preset and override), z-order, missing parent, acyclicity, and an interval lying wholly outside its parent.
 
 ## 17. Delay event
 

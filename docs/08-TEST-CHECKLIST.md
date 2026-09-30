@@ -69,8 +69,11 @@ Applies to: any code that creates, validates, or renders entity instances.
       non-blocking "not used" warning, not silent data loss.
 - [ ] `Custom Activity` requires a valid `StyleKey`; unknown key is a
       validation error. The renderer must not fall back silently.
-- [ ] Critical intervals clip to both the plot **and** the visible parent
-      span. Out-of-parent portions warn and clip per the approved policy.
+- [ ] Critical intervals clip to the **plot only** (owner ruling 2026-09-30). A
+      critical interval's extent is its own Start/Finish and may be shorter than,
+      equal to, or longer than its parent; it is **not** clipped to the parent
+      span, and one lying wholly outside the parent is still drawn. Out-of-plot
+      portions warn and clip per the approved policy.
 
 ---
 
