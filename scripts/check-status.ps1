@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
     Accuracy gate for docs/STATUS.md. Wired into verify-quick.ps1 so the
