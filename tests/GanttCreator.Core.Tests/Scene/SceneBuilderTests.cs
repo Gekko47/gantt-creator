@@ -312,6 +312,10 @@ public sealed class SceneBuilderTests
                     new SceneStyle("HeaderFill"),
                     new SceneStyle("HeaderText"),
                     new SceneStyle("Border")),
+                // A drawn panel belongs to a profile whose destination has no cells of
+                // its own. The live profile is refused a panel (R4.8A D4), so a
+                // panel-bearing test must name the profile it is really exercising.
+                Profile = SceneCompositionProfile.Raster,
             });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
@@ -786,6 +790,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
                 new SceneStyle("HeaderText", bold: true),
                 new SceneStyle("Border")),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
@@ -1023,6 +1030,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill"),
                 new SceneStyle("HeaderText"),
                 new SceneStyle("Border")),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
@@ -1071,6 +1081,7 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill"),
                 new SceneStyle("HeaderText"),
                 new SceneStyle("Border")),
+            Profile = SceneCompositionProfile.Raster,
         };
         GanttEvent @event = request.Events[0];
 
@@ -1682,6 +1693,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
                 new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
                 new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5)),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome build = SceneBuilder.TryBuild(request);

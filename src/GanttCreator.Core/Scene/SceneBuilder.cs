@@ -33,6 +33,20 @@ public enum SceneBuilderRefusal
     /// deeper than the supported depth.
     /// </summary>
     UnresolvableProjection = 8,
+
+    /// <summary>
+    /// A <see cref="SceneCompositionProfile.LiveExcel"/> request carried a data
+    /// panel (R4.8A D4).
+    /// </summary>
+    /// <remarks>
+    /// The live worksheet's own cells <em>are</em> the data panel, so a drawn
+    /// replica would be drawn on top of the user's own cells rather than beside
+    /// them. This was previously expressible-but-unenforced — a caller simply left
+    /// <see cref="SceneBuildRequest.Panel"/> null — so the mistake compiled, ran,
+    /// and presented as a rendering bug. Refusing makes it a typed, reportable
+    /// condition instead.
+    /// </remarks>
+    LiveProfileCarriesPanel = 9,
 }
 
 /// <summary>
@@ -81,7 +95,26 @@ public sealed record SceneBuildRequest
     public FrameBandsTheme? FrameTheme { get; init; }
 
     /// <summary>Gets the resolved data-panel styles, or null to omit the panel.</summary>
+    /// <remarks>
+    /// Carrying a value here for a
+    /// <see cref="SceneCompositionProfile.LiveExcel"/> build is refused as
+    /// <see cref="SceneBuilderRefusal.LiveProfileCarriesPanel"/>. The rule lives on
+    /// <see cref="SceneCompositionProfiles"/>; this member only records what it
+    /// means for a caller.
+    /// </remarks>
     public PanelTheme? Panel { get; init; }
+
+    /// <summary>
+    /// Gets the composition profile this request is for (R4.8A D4), which decides
+    /// whether <see cref="Panel"/> may be supplied at all.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see cref="SceneCompositionProfile.LiveExcel"/> rather than to a
+    /// profile that draws a panel. The default is the safe direction: a caller who
+    /// forgets to set a profile gets the profile that refuses a panel, never one
+    /// that silently draws a replica over the user's cells.
+    /// </remarks>
+    public SceneCompositionProfile Profile { get; init; } = SceneCompositionProfile.LiveExcel;
 
     /// <summary>Gets the inclusive plot start date.</summary>
     public DateOnly PlotStart { get; init; }
@@ -229,6 +262,27 @@ public static class SceneBuilder
         if (request is null)
         {
             return Refused(SceneBuilderRefusal.NullRequest);
+        }
+
+        // R4.8A D4. The live sheet's real cells are the data panel, so drawing one
+        // would cover the user's own cells.
+        //
+        // Checked FIRST, before the content and measurement validations, and that
+        // order is deliberate rather than incidental. A panel on a live request is a
+        // request-construction error: it is true of the request itself, independent
+        // of its events or its measurements, and it is the one condition the caller
+        // must fix before anything else can be diagnosed. Checked after EmptyEvents,
+        // an otherwise-valid live request that merely also carried a panel would be
+        // reported as having no events, and the caller would go looking for rows that
+        // were there all along.
+        //
+        // It is also checked before any geometry is derived, because the panel's
+        // bounds feed the frame rectangle (BuildFramePanelAndScene reads the built
+        // panel to size the chart background) — a live request carrying a panel
+        // would otherwise have produced a wrong frame before anything could notice.
+        if (!SceneCompositionProfiles.DrawsDataPanel(request.Profile) && request.Panel is not null)
+        {
+            return Refused(SceneBuilderRefusal.LiveProfileCarriesPanel);
         }
 
         if (request.Events is null || request.Events.Count == 0 || request.Events.Any(@event => @event is null))
