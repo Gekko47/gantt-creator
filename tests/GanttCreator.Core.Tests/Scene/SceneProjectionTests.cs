@@ -119,7 +119,7 @@ public sealed class SceneProjectionTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
+
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,
@@ -265,11 +265,14 @@ public sealed class SceneProjectionTests
 
     /// <summary>
     /// A child whose parent is present but NOT rendered keeps its own row-scoped lane
-    /// and is not absorbed into a lane that does not exist. The overlay pass then
-    /// declines to draw it, which is the pre-R4.7B behaviour for this case.
+    /// and is not absorbed into a lane that does not exist. Since the owner ruling
+    /// of 2026-09-30 the overlay pass then DRAWS it anyway, from its own dates in
+    /// the shared lane: the parent governs lane membership, not the entity's
+    /// geometry or its visibility. This pins that a hidden parent neither absorbs
+    /// the child into a phantom lane nor erases it.
     /// </summary>
     [Fact]
-    public void A_child_of_an_unrendered_parent_is_not_absorbed()
+    public void A_child_of_an_unrendered_parent_is_not_absorbed_but_is_still_drawn()
     {
         GanttRowId parentId = NewId();
         GanttEvent parent = Event(1) with { Id = parentId, Visible = false };
@@ -278,7 +281,9 @@ public sealed class SceneProjectionTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        Assert.DoesNotContain(outcome.Result!.Scene.Primitives, p => p.ZLayer == ZLayer.CriticalOverlay);
+        Assert.Single(
+            outcome.Result!.Scene.Primitives,
+            p => p.ZLayer == ZLayer.CriticalOverlay);
     }
 
     /// <summary>

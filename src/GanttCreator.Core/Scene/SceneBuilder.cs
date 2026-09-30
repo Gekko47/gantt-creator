@@ -121,8 +121,15 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the milestone diamond tip-to-tip size.</summary>
     public double MilestoneSizePt { get; init; }
 
-    /// <summary>Gets the critical-interval overlay line width.</summary>
-    public double CriticalLinePt { get; init; }
+    /// <summary>
+    /// No longer a request input. The critical-interval overlay's height is half
+    /// the resolved style's <c>ActivityHeightPt</c>, so the retired
+    /// <c>CriticalLinePt</c> thickness token has no remaining role here
+    /// (ADR-0027 D4, owner ruling 2026-09-30). It was previously a defaulted
+    /// property that nothing populated, so a caller that forgot it silently
+    /// passed 0 and the overlay refused — a missing entity, not a wrong-looking
+    /// one. Removing the field makes that unrepresentable.
+    /// </summary>
 
     /// <summary>Gets the delineator line width, from the <c>DelineatorLinePt</c> token.</summary>
     public double DelineatorLinePt { get; init; }
@@ -534,30 +541,26 @@ public static class SceneBuilder
 
             if (@event.Type is GanttEntityType.CriticalInterval)
             {
-                // A critical interval whose parent emitted no visible span has
-                // nothing to clip against, so the plot is the outer bound and the
-                // builder refuses rather than drawing a full-width overlay.
-                RectD parentBounds = @event.ParentId is { } parentId
-                    && parentVisibleBounds.TryGetValue(parentId, out RectD found)
-                        ? found
-                        : plotBounds;
-
+                // Owner ruling 2026-09-30: the critical interval is an ordinary
+                // span. Its horizontal extent comes from its own dates and its
+                // vertical placement from its own slot, so there is no parent lookup
+                // here at all. `parentVisibleBounds` is still built for span bars,
+                // but the critical path does not read it.
                 CriticalOverlayCreationOutcome overlay = CriticalOverlayBuilder.TryBuild(
                     new CriticalOverlayRequest(
                         @event,
                         resolved.Style,
-                        parentBounds,
-                        request.CriticalLinePt,
+                        resolved.HeightPt,
+                        placement.SlotCentreY,
                         placement.LaneOrder,
                         placement.EffectiveStackIndex),
-                    timeScale,
-                    parentVisibleBounds);
+                    timeScale);
                 if (overlay.Result is not { } overlayResult)
                 {
                     warnings.Add(new SceneWarning(
                         SceneOwnerId.ForRow(@event.Id),
-                        "CriticalOverlayRefused",
-                        "The critical interval could not be overlaid on its parent."));
+                        "CriticalIntervalNotDrawn",
+                        "The critical interval could not be drawn."));
                     continue;
                 }
 

@@ -34,8 +34,6 @@ public static class EntityTypeCatalog
             GanttLabelPosition.Left,
             GanttLabelPosition.Right,
             GanttLabelPosition.Inside,
-            GanttLabelPosition.Above,
-            GanttLabelPosition.Below,
             GanttLabelPosition.None,
         ]);
 
@@ -45,8 +43,6 @@ public static class EntityTypeCatalog
             GanttLabelPosition.Auto,
             GanttLabelPosition.Left,
             GanttLabelPosition.Right,
-            GanttLabelPosition.Above,
-            GanttLabelPosition.Below,
             GanttLabelPosition.None,
         ]);
 

@@ -236,7 +236,7 @@ internal static class EquivalenceFields
             [new("overlay", ScenePrimitive.CreateId(SceneOwnerId.ForRow(SceneBuilderTests.CriticalProbeRow), "critical"))],
             [
                 EquivalenceFieldChecks.Kind("overlay", "rect", $"{EquivalenceFieldChecks.Shared} - point-based geometry. §11 models the overlay as a thin rectangle in the scene; the *host* object is a line"),
-                EquivalenceFieldChecks.CriticalLineHeight("overlay", "Entity guide §11 and the 'Critical interval' row: the overlay is CriticalLinePt tall, so a renderer can read the top edge as the line"),
+                EquivalenceFieldChecks.CriticalLineHeight("overlay", "Entity guide §11 and the 'Critical interval' row: the overlay is half the predetermined ActivityHeightPt tall (owner ruling 2026-09-30), so a renderer draws the rect it is handed rather than a configured-thickness line"),
                 EquivalenceFieldChecks.AtLayer("overlay", ZLayer.CriticalOverlay, $"{EquivalenceFieldChecks.ZOrder} - critical interval overlays sit at layer 50"),
                 EquivalenceFieldChecks.StrokeResolved("overlay", "Entity guide §11 'Style': the overlay resolves the standard outline, which is the line thickness a renderer draws"),
                 EquivalenceFieldChecks.OutlineWidthResolved("overlay", "Entity guide §11 'Style': the resolved outline is the resolved line width"),

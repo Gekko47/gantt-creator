@@ -224,11 +224,12 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
-    public void A_milestone_never_uses_inside_and_falls_through_to_above()
+    public void A_milestone_auto_order_is_right_then_left_and_never_inside()
     {
-        // §20/ADR-0015 D2: a milestone's Auto order is Right → Left → Above →
-        // Below, so a milestone boxed in on both sides lands Above and never
-        // considers the Inside position a span would use.
+        // §20/ADR-0015 D2: a milestone's Auto order is Right → Left. Above and
+        // Below were the old third and fourth entries and are retired (owner
+        // ruling 2026-09-30), so a milestone boxed in on both sides has no
+        // vertical escape and must fall back rather than reach for one.
         LabelPlanResult result = Plan(
             Request(
                 Shape(100, 20, 20),
@@ -242,7 +243,13 @@ public sealed class LabelPlannerTests
             ]
         );
 
-        Assert.Equal(GanttLabelPosition.Above, result.Position);
+        // With the vertical positions gone there is no third option, so a
+        // milestone boxed in on both sides SUPPRESSES its label with one warning
+        // rather than reaching above or below the shape. That is the ruling's
+        // intended consequence: a fixed lane height cannot guarantee vertical
+        // room, so vertical placement is refused rather than approximated.
+        Assert.Null(result.Position);
+        Assert.Null(result.Primitive);
     }
 
     [Fact]
@@ -257,30 +264,21 @@ public sealed class LabelPlannerTests
         Assert.Equal(160, result.Bounds.Value.Right);
     }
 
-    [Fact]
-    public void An_above_label_sits_one_gap_above_the_shape_top_edge()
+    /// <summary>
+    /// Above and Below were retired by owner ruling 2026-09-30. This pins that
+    /// they are not merely denied by the catalogue but are <em>not parseable</em>
+    /// from a stored cell value — which is what makes ADR-0029 D6's "reported,
+    /// never coerced" achievable, since there is no value left to coerce.
+    /// </summary>
+    [Theory]
+    [InlineData("Above")]
+    [InlineData("Below")]
+    public void A_retired_label_position_name_does_not_parse(string stored)
     {
-        // §22: "Above: horizontally centred; label bottom = shape top −
-        // LabelGapPt", so the 10pt label spans 7..17 on a bar whose top is 20.
-        LabelPlanResult result = Plan(Shape(100, 20, 100), "abcde", GanttLabelPosition.Above);
-
-        Assert.Equal(GanttLabelPosition.Above, result.Position);
-        Assert.Equal(17, result.Bounds!.Value.Bottom);
-        Assert.Equal(7, result.Bounds.Value.Top);
-        // Horizontally centred: 100 + ((100 - 20) / 2).
-        Assert.Equal(140, result.Bounds.Value.Left);
-    }
-
-    [Fact]
-    public void A_below_label_sits_one_gap_below_the_shape_bottom_edge()
-    {
-        // §22: "Below: horizontally centred; label top = shape bottom + LabelGapPt",
-        // and the bar's bottom is 28, so the label starts at 31.
-        LabelPlanResult result = Plan(Shape(100, 20, 100), "abcde", GanttLabelPosition.Below);
-
-        Assert.Equal(GanttLabelPosition.Below, result.Position);
-        Assert.Equal(31, result.Bounds!.Value.Top);
-        Assert.Equal(140, result.Bounds.Value.Left);
+        Assert.False(Enum.TryParse(stored, ignoreCase: false, out GanttLabelPosition _));
+        Assert.DoesNotContain(
+            Enum.GetValues<GanttLabelPosition>(),
+            position => string.Equals(position.ToString(), stored, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -350,16 +348,14 @@ public sealed class LabelPlannerTests
     }
 
     [Fact]
-    public void The_widest_gap_fallback_never_places_above_the_chart_top_edge()
+    public void The_widest_gap_fallback_cannot_leave_the_chart_vertically()
     {
-        // A 200pt milestone band whose top edge sits 5pt below the chart's top
-        // edge. The 60-character text is 240pt, so no cascade position holds it
-        // and the ADR-0015 widest-gap measure runs: Above and Below each offer the
-        // shape's full 200pt, which beats the 97pt Left gap, and the cascade order
-        // tries Above first. §22's "Above: label bottom = shape top − LabelGapPt"
-        // puts that box at 5 − 3 − 10 = −8, i.e. above the chart's top edge of 0 —
-        // and the gap measure is blind to the chart, so containment is the only
-        // thing that keeps the label on the panel. Below is chosen instead.
+        // This scenario is WHY Above and Below were retired (owner ruling
+        // 2026-09-30): a 200pt band whose top sits 5pt below the chart's top edge
+        // let the vertical positions place a label at 5 − 3 − 10 = −8, outside the
+        // chart. With those positions gone the fallback can only choose Left or
+        // Right, so vertical escape is now unrepresentable rather than merely
+        // defended against by a containment check.
         var topEdgeMetrics = _labelMetrics with { ChartBounds = new RectD(-6, 0, 322, 106) };
 
         LabelPlanResult result = PlanOutcome(
@@ -373,21 +369,16 @@ public sealed class LabelPlannerTests
             )
             .Result!;
 
-        Assert.Equal(GanttLabelPosition.Below, result.Position);
-        Assert.True(result.WasTruncated);
-        // Below: label top = shape bottom + LabelGapPt = 13 + 3 = 16.
-        Assert.Equal(16, result.Bounds!.Value.Top);
+        Assert.True(result.Position is GanttLabelPosition.Left or GanttLabelPosition.Right);
+        Assert.True(result.Bounds!.Value.Bottom <= topEdgeMetrics.ChartBounds.Bottom);
         Assert.True(result.Bounds.Value.Top >= topEdgeMetrics.ChartBounds.Top);
     }
 
     [Fact]
     public void The_widest_gap_fallback_never_places_below_the_chart_bottom_edge()
     {
-        // The mirror case, and the one that proves the containment check rather
-        // than the tie-break: the band sits near the chart's bottom, so Below
-        // would land at 96 + 3 = 99 and end at 109, past the chart's bottom edge
-        // of 106. Above is blocked by an in-lane occupant, so before the fix the
-        // 200pt Below gap was selected and the label was drawn off the panel.
+        // The mirror case, near the chart's bottom. The result must stay inside the
+        // chart AND must be a horizontal position.
         var bottomEdgeMetrics = _labelMetrics with { ChartBounds = new RectD(-6, 0, 322, 106) };
 
         LabelPlanResult result = PlanOutcome(
@@ -402,8 +393,7 @@ public sealed class LabelPlannerTests
             )
             .Result!;
 
-        Assert.NotEqual(GanttLabelPosition.Below, result.Position);
-        Assert.Equal(GanttLabelPosition.Left, result.Position);
+        Assert.True(result.Position is GanttLabelPosition.Left or GanttLabelPosition.Right);
         Assert.True(result.Bounds!.Value.Bottom <= bottomEdgeMetrics.ChartBounds.Bottom);
     }
 
@@ -627,8 +617,6 @@ public sealed class LabelPlannerTests
     [InlineData(GanttLabelPosition.Left, GanttTextAlignment.Right)]
     [InlineData(GanttLabelPosition.Right, GanttTextAlignment.Left)]
     [InlineData(GanttLabelPosition.Inside, GanttTextAlignment.Centre)]
-    [InlineData(GanttLabelPosition.Above, GanttTextAlignment.Centre)]
-    [InlineData(GanttLabelPosition.Below, GanttTextAlignment.Centre)]
     public void The_emitted_alignment_follows_the_product_rule_not_the_position_enum(
         GanttLabelPosition position,
         GanttTextAlignment expected)

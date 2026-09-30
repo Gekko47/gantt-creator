@@ -200,15 +200,17 @@ public sealed class EquivalenceThinSliceTests
     }
 
     [Fact]
-    public void A_critical_overlay_of_the_wrong_height_is_reported_as_missing_the_line_height()
+    public void A_critical_overlay_of_the_wrong_height_is_reported_as_missing_the_half_height()
     {
-        // §11's overlay is CriticalLinePt tall and a renderer draws a line along its top
-        // edge. An overlay that is a thick band instead still passes every other field
-        // in the row, so only this assertion catches it.
+        // The overlay is HALF the predetermined ActivityHeightPt (owner ruling
+        // 2026-09-30). An overlay of some other thickness still passes every other
+        // field in the row, so only this assertion catches it — and the retired
+        // CriticalLinePt token means a renderer can no longer be handed a
+        // configured line thickness to fall back on.
         GanttScene fat = ReplacePrimitive(ReferenceScene(), _criticalId, WithThickCriticalOverlay);
 
         Assert.Equal<string>(
-            ["the CriticalLinePt overlay height"],
+            ["the half predetermined overlay height"],
             EquivalenceFields.CriticalInterval.UnsatisfiedFields(fat));
     }
 

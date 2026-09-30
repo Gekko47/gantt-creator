@@ -166,7 +166,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             // Every band height must be strictly positive, and the three bands must
             // fit above the plot: 14 + 16 + 20 = 50, leaving 110 of plot height.
             TitleBandHeightPt = 14,
@@ -681,10 +680,14 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void A_critical_interval_whose_parent_is_invisible_emits_no_overlay()
+    public void A_critical_interval_whose_parent_is_invisible_is_still_drawn()
     {
-        // A hidden parent is not rendered, so no visible span exists to clip
-        // against; an overlay must not appear without one.
+        // This used to assert that NO overlay is emitted, because the builder
+        // clipped to the parent's visible bar and a hidden parent emitted none.
+        // Owner ruling 2026-09-30 removes that dependency: the interval draws from
+        // its OWN dates in its own lane, so a hidden parent does not erase it. The
+        // parent still governs LANE membership via R4.7B projection — it just no
+        // longer governs whether the entity is drawn.
         GanttEvent parent = Event(1, visible: false);
         GanttEvent child = Event(
             2,
@@ -697,9 +700,11 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        Assert.DoesNotContain(
-            outcome.Result!.Scene.Primitives,
+        SceneRect bar = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             primitive => primitive.ZLayer == ZLayer.CriticalOverlay);
+        // Half the parent's activity height, from the child's own dates.
+        Assert.Equal(4, bar.Bounds.Height, 10);
     }
 
     [Fact]
@@ -1519,7 +1524,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             // The three header bands total 50pt and stack above the plot, which
             // starts at 110 so they all fit inside the chart. FrameBandsBuilder does
             // not itself check this fit (an R3.5 finding recorded in the work item),
@@ -1620,7 +1624,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,

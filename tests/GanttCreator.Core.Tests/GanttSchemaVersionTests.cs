@@ -5,7 +5,7 @@ namespace GanttCreator.Core.Tests;
 public class GanttSchemaVersionTests
 {
     [Fact]
-    public void Current_schema_version_is_the_current_version_five()
+    public void Current_schema_version_is_the_current_version_six()
     {
         // Schema v2 added the nonblank title/default and PeriodLabelFormat contract (ADR-0014).
         // Schema v3 adds the DateDisplayFormat contract (ADR-0016).
@@ -16,7 +16,7 @@ public class GanttSchemaVersionTests
         // is the signal it compares against.
         // Schema v5 adds the Duration column, the column classification, the
         // GanttRowHeightPt rename, the retired CriticalLinePt, and CriticalFill.
-        Assert.Equal(5, GanttSchemaVersion.CurrentSchemaVersion);
+        Assert.Equal(6, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

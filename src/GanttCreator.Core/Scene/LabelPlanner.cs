@@ -159,8 +159,6 @@ public static class LabelPlanner
     [
         GanttLabelPosition.Right,
         GanttLabelPosition.Left,
-        GanttLabelPosition.Above,
-        GanttLabelPosition.Below,
     ];
 
     /// <summary>Attempts to plan one label.</summary>
@@ -382,7 +380,7 @@ public static class LabelPlanner
             // The text fits, so the box hugs the measured text rather than
             // stretching across the whole free gap. Left stays anchored at the
             // shape's near edge and Right at its far edge; the three positions
-            // §22 describes as centred (Inside, Above, Below) centre the fitted
+            // §22 describes as centred (Inside) centre the fitted
             // text inside the shape's own horizontal extent.
             var textWidth = Math.Min(measured.WidthPt, width);
             var left = geometry.X;
@@ -390,7 +388,7 @@ public static class LabelPlanner
             {
                 left = geometry.Right - textWidth;
             }
-            else if (position is GanttLabelPosition.Inside or GanttLabelPosition.Above or GanttLabelPosition.Below)
+            else if (position == GanttLabelPosition.Inside)
             {
                 left = geometry.X + ((geometry.Width - textWidth) / 2);
             }
@@ -533,8 +531,7 @@ public static class LabelPlanner
             GanttLabelPosition.Left => GanttTextAlignment.Right,
 
             // Centred placements (§22), so their text is centred.
-            GanttLabelPosition.Inside or GanttLabelPosition.Above or GanttLabelPosition.Below
-                => GanttTextAlignment.Centre,
+            GanttLabelPosition.Inside => GanttTextAlignment.Centre,
 
             // Text starts at the shape's right edge.
             GanttLabelPosition.Right => GanttTextAlignment.Left,
@@ -609,27 +606,6 @@ public static class LabelPlanner
                     // treats it as the narrowest usable position by construction.
                     freeWidth = Math.Max(0, shape.Width);
                     bounds = new RectD(shape.X, top, freeWidth, height);
-                    break;
-                }
-
-            case GanttLabelPosition.Above:
-                {
-                    // §22: "Above: horizontally centred; label bottom = shape top −
-                    // LabelGapPt". The vertical placement therefore comes from the
-                    // shape's top edge, not from the vertically-centred default.
-                    freeWidth = Math.Max(0, shape.Width);
-                    var aboveTop = shape.Top - metrics.LabelGapPt - metrics.LabelHeightPt;
-                    bounds = new RectD(shape.X, aboveTop, freeWidth, height);
-                    break;
-                }
-
-            case GanttLabelPosition.Below:
-                {
-                    // §22: "Below: horizontally centred; label top = shape bottom +
-                    // LabelGapPt".
-                    freeWidth = Math.Max(0, shape.Width);
-                    var belowTop = shape.Bottom + metrics.LabelGapPt;
-                    bounds = new RectD(shape.X, belowTop, freeWidth, height);
                     break;
                 }
 

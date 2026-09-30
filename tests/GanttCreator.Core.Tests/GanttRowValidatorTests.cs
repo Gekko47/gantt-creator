@@ -710,7 +710,11 @@ public class GanttRowValidatorTests
         GanttRowDto badLabel = ValidSpan(
             typeText: "Custom Activity",
             styleKey: "MyStyle",
-            labelPositionText: "Above");
+            // A position that parses but is outside the style's set. It used to be
+            // "Above", which the owner ruling retired: an unparseable name can
+            // only ever produce UnknownLabelPosition, so it no longer exercises
+            // the capability check this test is about.
+            labelPositionText: nameof(GanttLabelPosition.TopLeft));
         GanttRowDto badColour = ValidSpan(
             typeText: "Custom Activity",
             styleKey: "MyStyle",
@@ -721,6 +725,32 @@ public class GanttRowValidatorTests
 
         Assert.Contains(labelOutcome.Issues, i => i.Code == GanttValidationCodes.LabelNotAllowedForType);
         Assert.Contains(colourOutcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_retired_label_position_is_reported_and_never_coerced()
+    {
+        // ADR-0029 D6 (owner ruling 2026-09-30): a stored "Above"/"Below" is
+        // REPORTED, never coerced to a neighbouring position. This is the validator
+        // half of the removal, and it is the reason the enum members were deleted
+        // rather than merely denied: there is nothing left to silently substitute.
+        foreach (string stored in new[] { "Above", "Below" })
+        {
+            GanttRowDto row = ValidSpan(
+                typeText: "As-Planned Activity",
+                labelPositionText: stored);
+
+            GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+            Assert.False(outcome.IsValid);
+            GanttValidationIssue issue = Assert.Single(
+                outcome.Issues,
+                i => i.Code == GanttValidationCodes.UnknownLabelPosition);
+            Assert.Equal("LabelPosition", issue.Field);
+            // Reported verbatim: the message names the stored value so the analyst
+            // can see which cell needs changing.
+            Assert.Contains(stored, issue.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

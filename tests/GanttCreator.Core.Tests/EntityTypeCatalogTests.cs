@@ -25,10 +25,10 @@ public class EntityTypeCatalogTests
     ];
 
     private static readonly GanttLabelPosition[] s_spanLabels =
-        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside, GanttLabelPosition.Above, GanttLabelPosition.Below, GanttLabelPosition.None];
+        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside, GanttLabelPosition.None];
 
     private static readonly GanttLabelPosition[] s_milestoneLabels =
-        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Above, GanttLabelPosition.Below, GanttLabelPosition.None];
+        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.None];
 
     private static readonly GanttLabelPosition[] s_delineatorLabels =
         [GanttLabelPosition.Auto, GanttLabelPosition.TopLeft, GanttLabelPosition.TopRight, GanttLabelPosition.BottomLeft, GanttLabelPosition.BottomRight, GanttLabelPosition.None];

@@ -373,8 +373,6 @@ public static class DateLabelBuilder
             {
                 GanttLabelPosition.Right => new RectD(visible.Right + gap, top, measured.WidthPt, height),
                 GanttLabelPosition.Inside => new RectD(centred, top, measured.WidthPt, height),
-                GanttLabelPosition.Above => new RectD(centred, visible.Top - gap - height, measured.WidthPt, height),
-                GanttLabelPosition.Below => new RectD(centred, visible.Bottom + gap, measured.WidthPt, height),
 
                 GanttLabelPosition.None
                 or GanttLabelPosition.Auto
@@ -391,13 +389,12 @@ public static class DateLabelBuilder
             };
         }
 
-        // Above and Below flip to each other; everything else tries the two
-        // external sides. Inside is deliberately absent: a box inside a clipped
-        // sliver is unreadable, and §23 wants the date legible.
+        // Every remaining position tries the two external sides. Inside is
+        // deliberately absent: a box inside a clipped sliver is unreadable, and
+        // §23 wants the date legible. Above and Below used to flip to each other
+        // here; both are retired (owner ruling 2026-09-30).
         GanttLabelPosition[] order = position switch
         {
-            GanttLabelPosition.Above => [GanttLabelPosition.Above, GanttLabelPosition.Below],
-            GanttLabelPosition.Below => [GanttLabelPosition.Below, GanttLabelPosition.Above],
             GanttLabelPosition.None
             or GanttLabelPosition.Auto
             or GanttLabelPosition.Left
