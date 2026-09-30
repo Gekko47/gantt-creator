@@ -1,3 +1,18 @@
+- **R4.7H is implemented: `SizePreset` and the single `PlotGeometryResolver` (this change)** — the last missing R4.7 prerequisite, and the row R4.8A was blocked on.
+
+  **The authority is structural, not a convention.** `PlotGeometryAuthorityTests` scans every production source root for the D2 subtraction applied inline and fails naming the file. It also caps production callers of the resolver at **one**, because two callers are not two derivations but they are two places to keep in step. It currently asserts *at most* one: the intended caller is R4.8A's `ISceneBuildRequestFactory`, which has not landed.
+
+  **The guard was proven to fire.** A probe file performing the inline subtraction was dropped into `GanttCreator.Office`; the suite failed naming `TempAuthorityProbe.cs`; the probe was removed. A guard that has only ever passed is not evidence.
+
+  **A real bug, caught by the tests on first run.** `PlotGeometryOutcome.Succeeded` was `Geometry is not null`, but the insufficient-width refusal deliberately returns a **populated** geometry so the caller can report the shortfall — so that refusal reported as a **success**. Three tests failed together. It now reads `Geometry.Succeeded`, and the doc comment states why the null check is wrong, because the next person will be tempted to simplify it back.
+
+  **D3 is enforced on the refusal path, not just the happy one.** A test asserts that a panel too wide for the preset leaves the measured width exactly as it was. Shrinking the panel inside the refusal would be D3's defect arriving through the back door.
+
+  **Exactness is pinned to a tolerance of 1e-9, not "close to".** A4 is authored in millimetres and converted; the landscape preset is the **exact transpose** of portrait rather than a second declaration that could drift; the aspect ratio is **derived** from the dimensions rather than stored, because a hand-maintained ratio field eventually disagrees with its own dimensions and nothing notices until print. `ByKey` returns null for an unknown key rather than defaulting to A4 — silently substituting a preset renders a chart the user never asked for.
+
+  Observed: Core **1250/1250**, Architecture **87/87**, Office.ContractTests **539/539**, AddIn **203/203**. Checklist: N, B, I. **The COM leak ratchet is still at 26 against a ceiling of 26** and remains the standing risk for R4.8A's new adapter surface.
+
+
 - **R4.7F is implemented: `Duration` is calculated in Core and written in one bulk pass (this change)** — `DurationCalculator` is pure and Office-free; `ExcelDurationWriter` performs exactly **one** ranged assignment over the `Duration` column, never a per-cell loop.
 
   **The date MODE decides what is read, not the kind.** A delineator is a structural drawing primitive but still reads `Start` as its single date, so keying off `EntityKind` would have given it a blank while a milestone correctly got the marker. This was the one design decision worth stating explicitly, because the obvious implementation gets it wrong for exactly one of the sixteen types.

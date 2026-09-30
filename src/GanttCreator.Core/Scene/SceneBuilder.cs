@@ -52,10 +52,23 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the named-style registry used to resolve each event's style.</summary>
     public GanttStyleRegistry Registry { get; init; } = GanttStyleRegistry.Empty;
 
+    /// <summary>
+    /// Gets the resolved size preset this composition was built against (R4.7H D7).
+    /// The preset is carried so a caller, a diagnostic, and a test can all name the
+    /// budget the chart was composed for. It is <b>not</b> re-read here:
+    /// <see cref="PlotBounds"/> is already the resolver's output, so deriving the plot
+    /// twice from the same preset is exactly the second authority D1 forbids.
+    /// </summary>
+    public SizePreset? Preset { get; init; }
+
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
 
-    /// <summary>Gets the caller-supplied measured plot bounds.</summary>
+    /// <summary>
+    /// Gets the caller-supplied measured plot bounds. These must be the output of
+    /// <see cref="PlotGeometryResolver"/> (R4.7H D1); the architecture test fails if a
+    /// second construction site appears.
+    /// </summary>
     public RectD? PlotBounds { get; init; }
 
     /// <summary>Gets the single injected text-metrics seam.</summary>
