@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using GanttCreator.Core;
+using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
@@ -48,7 +49,7 @@ public class ExcelDurationWriter(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null) : IDurationWritePort
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
@@ -64,14 +65,14 @@ public class ExcelDurationWriter(
             return DurationWriteOutcome.Ok(0, 0);
         }
 
-        Excel.Application? application = _application;
-        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        Application? application = _application;
+        Workbook? workbook = application?.ActiveWorkbook;
         if (workbook is null)
         {
             return DurationWriteOutcome.Refused(DurationWriteRefusalReason.NoActiveWorkbook);
         }
 
-        if (!TryFindTable(workbook.Sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+        if (!TryFindTable(workbook.Sheets, out Worksheet? worksheet, out ListObject? table)
             || worksheet is null
             || table is null)
         {
@@ -122,7 +123,15 @@ public class ExcelDurationWriter(
             var target = write.RowNumber - 1;
             if (target < 0 || target >= merged.Length)
             {
-                continue;
+                // Refuse the whole write rather than `continue`. Skipping the row and
+                // carrying on wrote back a column that silently omitted a planned
+                // value, then reported `plan.WriteCount` cells as written -- so the
+                // caller was told every planned duration had landed when one had not,
+                // and the only symptom was a stale number in a cell nobody was
+                // watching. An out-of-range target means the plan and the table
+                // disagree about the table's extent, which is not something this
+                // adapter may resolve by guessing.
+                return DurationWriteOutcome.Refused(DurationWriteRefusalReason.WriteFailed);
             }
 
             // An empty text is written as null, which is how Excel stores a blank
@@ -184,13 +193,13 @@ public class ExcelDurationWriter(
     /// <param name="column">The body range of the <c>Duration</c> column.</param>
     /// <returns>Whether the column was found and has a body.</returns>
     internal virtual bool TryGetDurationColumnRange(
-        Excel.ListObject table,
+        ListObject table,
         out Excel.Range? column)
     {
         ArgumentNullException.ThrowIfNull(table);
 
         column = null;
-        Excel.ListColumns? columns = table.ListColumns;
+        ListColumns? columns = table.ListColumns;
         if (columns is null)
         {
             return false;
@@ -199,7 +208,7 @@ public class ExcelDurationWriter(
         var columnCount = columns.Count;
         for (var index = 1; index <= columnCount; index++)
         {
-            Excel.ListColumn candidate = GetColumnAt(columns, index);
+            ListColumn candidate = GetColumnAt(columns, index);
             if (string.Equals(candidate.Name, "Duration", StringComparison.Ordinal))
             {
                 column = candidate.DataBodyRange;
@@ -233,18 +242,46 @@ public class ExcelDurationWriter(
     /// <param name="worksheet">The resolved worksheet.</param>
     /// <param name="table">The resolved table.</param>
     /// <returns>Whether both were found.</returns>
+    /// <remarks>
+    /// <para>
+    /// The sheets are enumerated as <see cref="object"/> rather than as
+    /// <c>Excel.Worksheet</c>. A workbook can hold a chart sheet, and the strongly-typed
+    /// <c>foreach</c> performs a runtime cast on every element: a chart sheet raised
+    /// InvalidCastException out of the middle of the loop, so a workbook the add-in
+    /// must handle refused to write with an exception rather than a typed refusal.
+    /// Enumerating as <see cref="object"/> and skipping anything that is not a
+    /// worksheet makes the scan total over whatever the workbook contains.
+    /// </para>
+    /// <para>
+    /// The table name comes from <see cref="GanttTableSchema.TableName"/> rather than a
+    /// literal, so the single authority for the name is the schema. The comparison is
+    /// case-insensitive because Excel preserves whatever case a name was created with,
+    /// and a workbook whose table was created by an earlier build with different
+    /// capitalisation is the same table.
+    /// </para>
+    /// </remarks>
     internal virtual bool TryFindTable(
-        Excel.Sheets sheets,
-        out Excel.Worksheet? worksheet,
-        out Excel.ListObject? table)
+        Sheets sheets,
+        out Worksheet? worksheet,
+        out ListObject? table)
     {
         worksheet = null;
         table = null;
-        foreach (Excel.Worksheet candidate in sheets)
+        foreach (var entry in sheets)
         {
-            foreach (Excel.ListObject candidateTable in candidate.ListObjects)
+            if (entry is not Worksheet candidate)
             {
-                if (string.Equals(candidateTable.Name, "tblGanttData", StringComparison.Ordinal))
+                // A chart sheet or any other non-worksheet entry: it cannot carry the
+                // Gantt table, so it is skipped rather than cast.
+                continue;
+            }
+
+            // Held in a local rather than chained into the inner loop, per the
+            // no-chained-COM-calls rule: each proxy is named once and used directly.
+            ListObjects listObjects = candidate.ListObjects;
+            foreach (ListObject candidateTable in listObjects)
+            {
+                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
                 {
                     worksheet = candidate;
                     table = candidateTable;
@@ -260,5 +297,5 @@ public class ExcelDurationWriter(
     /// <param name="columns">The table's list columns.</param>
     /// <param name="index">The one-based column index.</param>
     /// <returns>The list column.</returns>
-    internal virtual Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => columns[index];
+    internal virtual ListColumn GetColumnAt(ListColumns columns, int index) => columns[index];
 }

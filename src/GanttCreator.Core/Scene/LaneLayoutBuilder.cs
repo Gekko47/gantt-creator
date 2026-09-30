@@ -23,6 +23,15 @@ public enum LaneLayoutRefusal
 
     /// <summary>Two input events carried the same stable row ID.</summary>
     DuplicateEventId = 6,
+
+    /// <summary>
+    /// A projected event named a render-lane owner that is not in this layout, and
+    /// carried no compatibility stack value of its own, so the slot it belongs to
+    /// cannot be determined. Refused rather than defaulted to a slot: the child would
+    /// otherwise be placed in an arbitrary lane position and render somewhere its
+    /// hierarchy does not put it.
+    /// </summary>
+    UnresolvedRenderLaneOwner = 7,
 }
 
 /// <summary>The typed result of attempting to build lane geometry.</summary>
@@ -149,10 +158,21 @@ public static class LaneLayoutBuilder
             LaneEventInput[] laneInputs = [.. group];
             var isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
             var isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
-            LaneGeometry lane =
+            LaneGeometry? lane =
                 isSplitter || isSpacer
                     ? BuildFixedLane(group.Key, laneOrder, laneTop, laneInputs, isSplitter, isSpacer, metrics)
                     : BuildEventLane(group.Key, laneOrder, laneTop, laneInputs, metrics, warnings);
+
+            // A typed refusal, not an exception: an unrepresentable hierarchy is a
+            // reportable condition, and this builder's whole surface is TryBuild
+            // returning a reason. Propagated as the layout's outcome so the caller
+            // sees WHICH lane could not be laid out rather than a thrown
+            // KeyNotFoundException from deep inside a private helper.
+            if (lane is null)
+            {
+                return Refused(LaneLayoutRefusal.UnresolvedRenderLaneOwner);
+            }
+
             lanes.Add(lane);
             laneTop += lane.Height;
             laneOrder++;
@@ -177,7 +197,18 @@ public static class LaneLayoutBuilder
         return new LaneGeometry(laneKey, laneOrder, laneTop, height, [slot], eventIds, isSplitter, isSpacer);
     }
 
-    private static LaneGeometry BuildEventLane(
+    /// <summary>
+    /// Builds one event lane's slots, or returns <see langword="null"/> when a
+    /// projected child's render-lane owner cannot be resolved in this lane.
+    /// </summary>
+    /// <param name="laneKey">The lane's key, for the overflow warning owner.</param>
+    /// <param name="laneOrder">The lane's zero-based order.</param>
+    /// <param name="laneTop">The lane's top edge in points.</param>
+    /// <param name="inputs">The lane's events.</param>
+    /// <param name="metrics">The resolved lane metrics.</param>
+    /// <param name="warnings">The scene warning sink.</param>
+    /// <returns>The lane, or <see langword="null"/> for an unresolved render-lane owner.</returns>
+    private static LaneGeometry? BuildEventLane(
         string laneKey,
         int laneOrder,
         double laneTop,
@@ -220,16 +251,31 @@ public static class LaneLayoutBuilder
                 continue;
             }
 
+            // TryGetValue, not the indexer. A projected child whose owner is not in
+            // this lane has no slot to inherit; the indexer threw a
+            // KeyNotFoundException straight out of a builder whose entire contract is
+            // to return a typed refusal, so one unrepresentable hierarchy crashed the
+            // caller instead of being reported. The owner may legitimately be absent
+            // when a caller lays out a subset of the table.
             if (input.RenderLaneOwner is { } owner
                 && effectiveById.TryGetValue(owner.Id, out var ownerIndex))
             {
                 effectiveById[input.Event.Id] = ownerIndex;
+            }
+            else if (input.EffectiveStackIndex is null)
+            {
+                // No owner to inherit from and no compatibility value supplied, so the
+                // effective slot is genuinely unknown. Surfaced by TryBuild as
+                // UnresolvedRenderLaneOwner.
+                return null;
             }
         }
 
         Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
         foreach (LaneEventInput input in rowOrdered)
         {
+            // A supplied compatibility stack value is authoritative and is used as-is:
+            // the caller assigned it, so no lookup is needed or wanted.
             var effective = input.EffectiveStackIndex ?? effectiveById[input.Event.Id];
             if (!effectiveSlots.TryGetValue(effective, out List<LaneEventInput>? slotEvents))
             {

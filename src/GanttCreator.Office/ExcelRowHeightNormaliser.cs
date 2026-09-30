@@ -130,6 +130,13 @@ public class ExcelRowHeightNormaliser(
             return RowHeightNormalisationOutcome.Ok(0);
         }
 
+        // Each row's KIND is read from its own Type cell, because the height policy
+        // differs by kind: a Splitter follows `SplitterPt` and a Spacer `SpacerPt`,
+        // never the managed height. Passing every row as MeasuredRowKind.Managed --
+        // as this did -- meant a splitter or spacer row was dragged to the managed
+        // height on the very Refresh that was supposed to restore the sheet, so the
+        // section header and the blank separator were permanently the wrong height and
+        // no lane could line up with its row.
         List<MeasuredRowHeight> measured = [];
         for (var index = 1; index <= rowCount; index++)
         {
@@ -139,7 +146,7 @@ public class ExcelRowHeightNormaliser(
                     RowHeightNormalisationRefusalReason.InvalidMeasurement);
             }
 
-            measured.Add(new MeasuredRowHeight(index, height));
+            measured.Add(new MeasuredRowHeight(index, height, KindOfRow(table, index)));
         }
 
         RowHeightNormalisationPlan? plan = RowHeightNormaliser.Plan(
@@ -167,6 +174,114 @@ public class ExcelRowHeightNormaliser(
 
         return RowHeightNormalisationOutcome.Ok(written);
     }
+
+    /// <summary>
+    /// Maps one body row's <c>Type</c> cell to the height policy its row follows.
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <param name="index">The one-based body-row index.</param>
+    /// <returns>The row kind; <see cref="MeasuredRowKind.Managed"/> for anything else.</returns>
+    /// <remarks>
+    /// The Type column is located through <see cref="GanttTableSchema"/> rather than a
+    /// literal index, so a column reorder cannot silently start measuring the wrong
+    /// cell. An unreadable, blank or unrecognised Type is <b>Managed</b>: that is the
+    /// policy every ordinary activity, milestone and child row follows, and guessing a
+    /// structural kind for a row whose Type could not be read would write a height the
+    /// row's own type never asked for.
+    /// </remarks>
+    private MeasuredRowKind KindOfRow(Excel.ListObject table, int index) =>
+        TryGetTypeColumn(table, out Excel.Range? typeColumn)
+        && typeColumn is not null
+        && ReadTypeCellText(typeColumn, index) is { } text
+        && EntityTypeCatalog.TryParse(text, out GanttEntityType parsed)
+            ? parsed switch
+            {
+                // Only the two structural rows follow their own token. Every other type
+                // -- activity, milestone, interval, procurement -- is an ordinary
+                // managed row, and listing them explicitly (rather than a discard arm)
+                // makes a future structural type fail here instead of being silently
+                // normalised to the managed height.
+                GanttEntityType.Splitter => MeasuredRowKind.Splitter,
+                GanttEntityType.Spacer => MeasuredRowKind.Spacer,
+                GanttEntityType.AsBuiltActivity
+                or GanttEntityType.AsPlannedActivity
+                or GanttEntityType.BaselineActivity
+                or GanttEntityType.DelayEvent
+                or GanttEntityType.AsBuiltProcurement
+                or GanttEntityType.AsPlannedProcurement
+                or GanttEntityType.BaselineProcurement
+                or GanttEntityType.CustomActivity
+                or GanttEntityType.AsBuiltMilestone
+                or GanttEntityType.AsPlannedMilestone
+                or GanttEntityType.BaselineMilestone
+                or GanttEntityType.CriticalMilestone
+                or GanttEntityType.CriticalInterval
+                or GanttEntityType.Delineator => MeasuredRowKind.Managed,
+                _ => MeasuredRowKind.Managed,
+            }
+            : MeasuredRowKind.Managed;
+
+    /// <summary>
+    /// Locates the <c>Type</c> column's body range, by name from the schema.
+    /// Test seam over the COM list-column indexer.
+    /// </summary>
+    /// <param name="source">The Gantt data table.</param>
+    /// <param name="typeColumn">The resolved column's body range.</param>
+    /// <returns>Whether the column was found and has a body.</returns>
+    internal virtual bool TryGetTypeColumn(Excel.ListObject source, out Excel.Range? typeColumn)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        typeColumn = null;
+        Excel.ListColumns? columns = source.ListColumns;
+        if (columns is null
+            || !GanttTableSchema.Default.TryGetColumn("Type", out GanttTableColumn? typeDef)
+            || typeDef is null)
+        {
+            return false;
+        }
+
+        for (var index = 1; index <= columns.Count; index++)
+        {
+            Excel.ListColumn candidate = ColumnAt(columns, index);
+            if (string.Equals(candidate.Name, typeDef.Name, StringComparison.Ordinal))
+            {
+                typeColumn = candidate.DataBodyRange;
+                return typeColumn is not null;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reads one body row's <c>Type</c> text. Test seam over the COM cell read.
+    /// </summary>
+    /// <param name="typeColumn">The <c>Type</c> column's body range.</param>
+    /// <param name="index">The one-based body-row index.</param>
+    /// <returns>The cell's text, or <see langword="null"/> when it is not readable text.</returns>
+    internal virtual string? ReadTypeCellText(Excel.Range typeColumn, int index)
+    {
+        ArgumentNullException.ThrowIfNull(typeColumn);
+
+        return CellValueAt(typeColumn, index) as string;
+    }
+
+    /// <summary>Reads one cell of a column by its one-based row index. Test seam.</summary>
+    /// <param name="column">The column range.</param>
+    /// <param name="index">The one-based row index.</param>
+    /// <returns>The cell's raw value.</returns>
+    internal virtual object? CellValueAt(Excel.Range column, int index)
+    {
+        Excel.Range? rows = column.Rows;
+        return rows?[index].Value2;
+    }
+
+    /// <summary>Returns the list column at the one-based index. Test seam.</summary>
+    /// <param name="columns">The table's list columns.</param>
+    /// <param name="index">The one-based column index.</param>
+    /// <returns>The list column.</returns>
+    internal virtual Excel.ListColumn ColumnAt(Excel.ListColumns columns, int index) => columns[index];
 
     /// <summary>Finds the Gantt worksheet and its table. Test seam over the COM collection indexers.</summary>
     /// <param name="sheets">The workbook's sheet collection.</param>

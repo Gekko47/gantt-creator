@@ -315,9 +315,14 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
-    public void Refuses_a_non_positive_predetermined_height()
+    public void A_negative_predetermined_height_is_refused()
     {
-        CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: 0);
+        // A DISTINCT boundary from the zero case above, which is what the zero case is
+        // for: 0 was the silent value a caller that forgot the retired CriticalLinePt
+        // used to pass, and it refused the overlay, dropping the entity from the chart.
+        // This row pins the negative side of the same rule so deleting either leaves the
+        // other still covering the validator.
+        CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: -4);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(CriticalOverlayRefusal.InvalidGeometry, outcome.Refusal);

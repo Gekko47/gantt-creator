@@ -397,8 +397,25 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexRequired);
     }
 
+    /// <summary>
+    /// A Critical Interval with a blank <c>ParentId</c> is a valid TOP-LEVEL row, not
+    /// a blocking error.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite -- that a parentless interval was
+    /// refused with <c>ParentMissingOrMalformed</c>. That requirement contradicted
+    /// <c>EntityHierarchyCatalog</c>, which lists <c>CriticalInterval</c> among the
+    /// types that may own children precisely so a level-1 interval can own a level-2
+    /// child, and contradicted <c>EntityProjection</c>, which resolves such a child's
+    /// render lane. With the requirement in place the catalogue's entry and the
+    /// projection's top-level boundary were both unreachable: no such hierarchy could
+    /// ever validate. The depth rule is now the single authority on what an interval
+    /// may parent, and it is pinned by
+    /// <c>GanttHierarchyLimitsTests.A_top_level_critical_interval_may_own_a_child</c>
+    /// and <c>A_nested_critical_interval_cannot_own_a_child</c>.
+    /// </remarks>
     [Fact]
-    public void Critical_interval_without_parent_is_a_blocking_error()
+    public void A_critical_interval_without_a_parent_is_a_valid_top_level_row()
     {
         var row = new GanttRowDto(
             2,
@@ -410,6 +427,45 @@ public class GanttRowValidatorTests
             new DateOnly(2026, 9, 2),
             new DateOnly(2026, 9, 3),
             null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null
+        );
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentMissingOrMalformed);
+
+        // And it must reach Events as a real event, not merely stop being an error:
+        // a silent drop would be the same class of defect as a silent refusal.
+        GanttEvent resolved = Assert.Single(outcome.Events);
+        Assert.Equal(GanttEntityType.CriticalInterval, resolved.Type);
+        Assert.Null(resolved.ParentId);
+    }
+
+    /// <summary>
+    /// The validator-side companion to the row above: a MALFORMED <c>ParentId</c> is
+    /// still a blocking error for a Critical Interval. Blank is now legal, so this
+    /// case is what keeps <c>ParentMissingOrMalformed</c> reachable at all --
+    /// without it the code would be dead and the positive test would pass vacuously.
+    /// </summary>
+    [Fact]
+    public void A_critical_interval_with_a_malformed_parent_is_a_blocking_error()
+    {
+        var row = new GanttRowDto(
+            2,
+            NewId(),
+            NewLaneId(),
+            0,
+            "Critical Interval",
+            "Critical part",
+            new DateOnly(2026, 9, 2),
+            new DateOnly(2026, 9, 3),
+            "not-a-row-id",
             null,
             null,
             null,

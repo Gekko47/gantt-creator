@@ -17,16 +17,27 @@ public sealed class ExcelRowHeightNormaliserTests
     private const double SpacerPt = 6;
 
     /// <summary>
-    /// Overrides the COM seams so the test can supply row heights and record
-    /// writes without a live Excel host.
+    /// Overrides the COM seams so the test can supply row heights, the per-row
+    /// <c>Type</c> text, and record writes without a live Excel host.
     /// </summary>
+    /// <param name="application">The application object.</param>
+    /// <param name="guard">The protection guard.</param>
+    /// <param name="worksheet">The resolved worksheet.</param>
+    /// <param name="table">The resolved table.</param>
+    /// <param name="heights">One measured height per body row.</param>
+    /// <param name="written">The rows written, recorded by the test double.</param>
+    /// <param name="types">
+    /// One Type display name per body row. When absent, no Type column resolves and
+    /// every row is treated as managed -- which is what the pre-existing tests rely on.
+    /// </param>
     private sealed class TestableNormaliser(
         object? application,
         IWorksheetProtectionGuard guard,
         Excel.Worksheet worksheet,
         Excel.ListObject table,
         IReadOnlyList<double> heights,
-        List<int> written)
+        List<int> written,
+        IReadOnlyList<string>? types = null)
         : ExcelRowHeightNormaliser(application, guard)
     {
         internal override bool TryFindTable(
@@ -51,6 +62,21 @@ public sealed class ExcelRowHeightNormaliserTests
                 .Callback<object>(_ => written.Add(index));
             return row.Object;
         }
+
+        internal override bool TryGetTypeColumn(Excel.ListObject source, out Excel.Range? typeColumn)
+        {
+            if (types is null)
+            {
+                typeColumn = null;
+                return false;
+            }
+
+            typeColumn = new Mock<Excel.Range>().Object;
+            return true;
+        }
+
+        internal override string? ReadTypeCellText(Excel.Range typeColumn, int index) =>
+            types is null || index < 1 || index > types.Count ? null : types[index - 1];
 
         private Excel.Range SourceBody { get; } = new Mock<Excel.Range>().Object;
     }
@@ -213,6 +239,97 @@ public sealed class ExcelRowHeightNormaliserTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.InvalidMeasurement, outcome.Refusal);
         Assert.Empty(written);
+    }
+
+    /// <summary>
+    /// A <c>Splitter</c> row is restored to <c>SplitterPt</c>, never to the managed
+    /// height.
+    /// </summary>
+    /// <remarks>
+    /// The measurement pass used to build every <c>MeasuredRowHeight</c> with the
+    /// default <see cref="MeasuredRowKind.Managed"/>, ignoring the row's own
+    /// <c>Type</c>. So a structural row was rewritten to the managed height by the very
+    /// Refresh meant to restore the sheet: the section header and the blank separator
+    /// could never be the right height, and the lane for such a row could not line up
+    /// with the worksheet row it sits in. This is the positive test for reading the
+    /// Type column -- deleting that read fails it.
+    /// </remarks>
+    [Fact]
+    public void A_splitter_row_is_restored_to_the_splitter_token_not_the_managed_height()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            // Row 1 is dragged; row 2 is a splitter already at its own token.
+            [45, SplitterPt],
+            written,
+            types: ["As-Planned Activity", "Splitter"]);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+
+        Assert.True(outcome.Succeeded);
+        // Only the dragged managed row is written. If the splitter had been treated as
+        // managed it would have been rewritten to 18pt -- a second write that this
+        // assertion would catch.
+        Assert.Equal(1, outcome.RowsWritten);
+        Assert.Equal([1], written);
+    }
+
+    /// <summary>
+    /// The mirror case for <c>Spacer</c>, and the pair that shows the kind is read from
+    /// the Type rather than assumed: both rows sit at their own tokens and neither is
+    /// written.
+    /// </summary>
+    [Fact]
+    public void A_spacer_row_is_restored_to_the_spacer_token_not_the_managed_height()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            [SpacerPt],
+            written,
+            types: ["Spacer"]);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.RowsWritten);
+        Assert.Empty(written);
+    }
+
+    /// <summary>
+    /// A dragged structural row is restored to its OWN token rather than left alone.
+    /// The no-op case above proves the splitter is not over-written; this proves it is
+    /// still recognised when it does need a write, which is the case the missing Type
+    /// read broke in production.
+    /// </summary>
+    [Fact]
+    public void A_dragged_splitter_row_is_restored_to_the_splitter_token()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            [45],
+            written,
+            types: ["Splitter"]);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.RowsWritten);
+        Assert.Equal([1], written);
     }
 
     /// <summary>

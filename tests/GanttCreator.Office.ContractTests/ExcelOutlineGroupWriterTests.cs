@@ -38,6 +38,8 @@ public sealed class ExcelOutlineGroupWriterTests
 
         internal override Excel.Range? GetTableBody(Excel.ListObject source) => SourceBody;
 
+        internal override int GetBodyRowCount(Excel.Range body) => BodyRowCount;
+
         internal override int? ReadFirstWorksheetRow(Excel.Range range) => FirstWorksheetRow;
 
         internal override Excel.Range? GetRowsRange(Excel.Worksheet source, int firstRow, int lastRow)
@@ -57,6 +59,14 @@ public sealed class ExcelOutlineGroupWriterTests
         }
 
         internal int FirstWorksheetRow { get; set; } = 2;
+
+        /// <summary>
+        /// How many body rows the table reports. Defaults to 0 so an existing test that
+        /// says nothing about the table's extent performs no reset writes -- which is
+        /// what keeps the pre-existing "flat table writes nothing" assertions valid
+        /// rather than silently rewritten.
+        /// </summary>
+        internal int BodyRowCount { get; set; }
 
         private int _pendingFirst;
 
@@ -183,7 +193,118 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
-    /// An empty event list succeeds with nothing written rather than refusing.
+    /// The promotion case, and the reason the reset pass covers every ungrouped body
+    /// row rather than only <c>plan.RowsToUngroup</c>.
+    /// </summary>
+    /// <remarks>
+    /// A parent with two children is grouped, so a previous Refresh left body rows
+    /// 2-3 at outline level 2. The parent is then deleted: both children are promoted
+    /// to top level, and the new plan contains no group and no <c>RowsToUngroup</c>
+    /// entry for them either -- the planner only flags rows the CURRENT hierarchy
+    /// cannot express. Clearing just those flagged rows left the former child at level
+    /// 2, so the sheet kept a collapse control for a hierarchy that no longer existed
+    /// and collapsing it would hide a top-level row. This asserts the former child
+    /// receives a level-1 write.
+    /// </remarks>
+    [Fact]
+    public void A_promoted_child_receives_a_top_level_write_after_its_parent_is_deleted()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            // The deleted parent's row is gone from the table, but two of the three
+            // original rows survive: the table body is the two promoted children. The
+            // pass resets body rows 1-2, which are worksheet rows 2-3.
+            BodyRowCount = 2,
+        };
+
+        // Both children promoted: no ParentId, so the plan has no groups at all.
+        OutlineGroupOutcome outcome = writer.Apply([Event(1, NewId()), Event(2, NewId())]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.GroupsApplied);
+
+        // With no groups every body row resets, so one contiguous range covers both
+        // promoted former children -- including body row 2.
+        var reset = Assert.Single(writes);
+        Assert.Equal(ExcelOutlineGroupWriter.TopLevelOutlineLevel, reset.Level);
+        Assert.Equal(2, reset.First);
+        Assert.Equal(3, reset.Last);
+    }
+
+    /// <summary>
+    /// A group survives the reset pass: the rows the plan DOES group must not be
+    /// reset, or the reset would erase the grouping the next phase is about to apply.
+    /// Body row 1 is the parent and rows 2-3 are its children, so only row 1 resets.
+    /// </summary>
+    [Fact]
+    public void A_grouped_child_is_not_reset_by_the_pass_that_clears_stale_levels()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.GroupsApplied);
+
+        var reset = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.TopLevelOutlineLevel);
+        Assert.Equal(2, reset.First);
+        Assert.Equal(2, reset.Last);
+
+        var grouped = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.ChildOutlineLevel);
+        Assert.Equal(3, grouped.First);
+        Assert.Equal(4, grouped.Last);
+    }
+
+    /// <summary>
+    /// Contiguous rows collapse into one write. A table of promoted children is the
+    /// common shape, and one COM round-trip per row is the cost the contiguous-range
+    /// pass exists to avoid.
+    /// </summary>
+    [Theory]
+    [InlineData(new int[0], 0)]
+    [InlineData(new[] { 3 }, 1)]
+    [InlineData(new[] { 1, 2, 3 }, 1)]
+    [InlineData(new[] { 1, 2, 4, 5, 6, 9 }, 3)]
+    public void Contiguous_rows_collapse_into_one_range_each(int[] rows, int expectedRangeCount)
+    {
+        IReadOnlyList<(int First, int Last)> ranges = ExcelOutlineGroupWriter.ContiguousRanges(rows);
+
+        Assert.Equal(expectedRangeCount, ranges.Count);
+    }
+
+    /// <summary>
+    /// The ranges themselves, not merely their count: a wrong boundary would still
+    /// produce the right number of writes while resetting the wrong rows.
+    /// </summary>
+    [Fact]
+    public void Contiguous_ranges_cover_exactly_the_supplied_rows()
+    {
+        IReadOnlyList<(int First, int Last)> ranges = ExcelOutlineGroupWriter.ContiguousRanges([1, 2, 4, 5, 6, 9]);
+
+        Assert.Equal([(1, 2), (4, 6), (9, 9)], ranges);
+    }
+
+    /// <summary>
+    /// An empty hierarchy succeeds with nothing written rather than refusing.
     /// </summary>
     [Fact]
     public void An_empty_hierarchy_succeeds_with_no_writes()

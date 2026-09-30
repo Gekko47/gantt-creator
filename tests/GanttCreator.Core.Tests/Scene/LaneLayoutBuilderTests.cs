@@ -27,6 +27,58 @@ public sealed class LaneLayoutBuilderTests
         Assert.Equal(17, lane.Slots[1].Centre);
     }
 
+    /// <summary>
+    /// A projected child whose render-lane owner is not in the layout, and which
+    /// carries no compatibility stack value, has no slot it can be assigned to.
+    /// </summary>
+    /// <remarks>
+    /// The slot assignment read <c>effectiveById[input.Event.Id]</c> through the
+    /// dictionary indexer, so this case threw <c>KeyNotFoundException</c> from inside a
+    /// private helper of a builder whose entire public surface is
+    /// <c>TryBuild</c> returning a typed refusal. An unrepresentable hierarchy is a
+    /// reportable condition, so it is now refused as
+    /// <see cref="LaneLayoutRefusal.UnresolvedRenderLaneOwner"/> instead of crashing
+    /// the caller. Reverting the change to the indexer fails this test.
+    /// </remarks>
+    [Fact]
+    public void A_projected_child_whose_owner_is_absent_is_refused_rather_than_throwing()
+    {
+        GanttEvent owner = Event(1, "owner");
+        GanttEvent orphan = Event(2, "orphan");
+
+        // The owner is deliberately NOT part of the layout, and the child names it as
+        // its render-lane owner, so the lookup cannot succeed.
+        LaneEventInput orphanInput = new(orphan, 8, EffectiveStackIndex: null, RenderLaneOwner: owner);
+
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild([orphanInput], _metrics);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LaneLayoutRefusal.UnresolvedRenderLaneOwner, outcome.Refusal);
+        Assert.Null(outcome.Layout);
+    }
+
+    /// <summary>
+    /// The counterpart to the refusal above: a supplied compatibility stack value is
+    /// authoritative, so an absent owner does NOT refuse. The child's position comes
+    /// from the value the caller assigned, not from an owner that cannot be found.
+    /// </summary>
+    [Fact]
+    public void A_supplied_effective_stack_index_survives_an_absent_render_lane_owner()
+    {
+        GanttEvent owner = Event(1, "owner");
+        GanttEvent child = Event(2, "child");
+
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(child, 8, EffectiveStackIndex: 4, RenderLaneOwner: owner)],
+            _metrics);
+
+        Assert.True(outcome.Succeeded);
+        LaneGeometry lane = Assert.Single(outcome.Layout!.Lanes);
+        SlotGeometry slot = Assert.Single(lane.Slots);
+        Assert.Equal(4, slot.EffectiveStackIndex);
+        Assert.Equal(child.Id, Assert.Single(slot.EventIds));
+    }
+
     [Fact]
     public void Lane_height_is_fixed_and_overflow_is_reported_not_absorbed()
     {

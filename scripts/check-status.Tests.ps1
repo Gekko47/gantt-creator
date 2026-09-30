@@ -350,9 +350,13 @@ References roadmap item ``R4.7A`` which is absent.
 
             # The guide is required for a suffixed ID, so its presence is part
             # of "this row is properly defined" rather than a separate concern.
+            # It is STAGED, because the gate requires the guide to be in the git
+            # index: a guide that exists only in the working tree is absent from
+            # a clean CI checkout, so the row would be unimplementable there.
             $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
             New-Item -ItemType Directory -Path $guide -Force | Out-Null
             '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+            git -C $script:tempRoot add WORK-ITEMS/R4.7A-identity-and-hierarchy.md | Out-Null
 
             $body = @"
 # Status
@@ -361,6 +365,39 @@ References roadmap item ``R4.7A`` which is present.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0
+        }
+
+        # The tracking requirement's negative control, and the positive test for
+        # the branch that enforces it: a matching guide that exists on disk but
+        # was never added must still be rejected. Without this, `Get-ChildItem`
+        # alone would pass and the index requirement could be deleted with no
+        # test failing.
+        It 'exits 1 when the only matching work-item guide is untracked' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
+            New-Item -ItemType Directory -Path $guide -Force | Out-Null
+            $guideFile = Join-Path $guide 'R4.7A-identity-and-hierarchy.md'
+            '# Work item' | Set-Content -LiteralPath $guideFile -Encoding utf8
+
+            # Non-vacuity: the file IS on disk and matches the filter, and git does
+            # NOT know it. Only the tracking requirement can produce the violation.
+            (Test-Path -LiteralPath $guideFile) | Should -BeTrue
+            (& git -C $script:tempRoot ls-files --error-unmatch -- 'WORK-ITEMS/R4.7A-identity-and-hierarchy.md' 2>$null) | Should -BeNullOrEmpty
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A`` whose guide is present but never added.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "references suffixed roadmap item 'R4\.7A', which has no tracked work-item guide"
         }
 
         # A suffixed row with no guide is a row nobody can implement. This
@@ -381,10 +418,10 @@ References roadmap item ``R4.7A`` which is present but has no guide.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Not -Be 0
-            $r.Output | Should -Match "references suffixed roadmap item 'R4\.7A', which has no work-item guide"
+            $r.Output | Should -Match "references suffixed roadmap item 'R4\.7A', which has no tracked work-item guide"
         }
 
-        It 'exits 0 when a referenced letter-suffixed roadmap id has a work-item guide' {
+        It 'exits 0 when a referenced letter-suffixed roadmap id has a staged work-item guide' {
             @'
 # Roadmap
 | R0.8 | foo |
@@ -395,6 +432,10 @@ References roadmap item ``R4.7A`` which is present but has no guide.
             $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
             New-Item -ItemType Directory -Path $guide -Force | Out-Null
             '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+            # Staged but NOT committed: this is the correct authoring workflow --
+            # a work item introduced and cited by the same commit -- and it must
+            # stay valid. Reading HEAD instead of the index would reject it.
+            git -C $script:tempRoot add WORK-ITEMS/R4.7A-identity-and-hierarchy.md | Out-Null
 
             $body = @"
 # Status
@@ -422,6 +463,7 @@ References roadmap item ``R4.7A`` which is present and has a guide.
             $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
             New-Item -ItemType Directory -Path $guide -Force | Out-Null
             '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+            git -C $script:tempRoot add WORK-ITEMS/R4.7A-identity-and-hierarchy.md | Out-Null
 
             # A directory that is NOT the repository root and holds no guides of
             # its own, so a lookup relative to the working directory finds nothing.
@@ -439,7 +481,7 @@ References roadmap item ``R4.7A`` which is present and has a guide.
 "@
             $r = Invoke-CheckStatusHarness $body 'WORK-ITEMS' $elsewhere
             $r.Exit   | Should -Be 0
-            $r.Output | Should -Not -Match 'no work-item guide'
+            $r.Output | Should -Not -Match 'no tracked work-item guide'
         }
 
         # Guards the deliberate scoping: the guide rule is enforced only for
@@ -458,6 +500,79 @@ References roadmap item ``R1.0`` which is present and has no guide.
 "@
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Be 0
+        }
+
+        # A LOWERCASE suffix (R2.7a) is a sub-item of a base row the roadmap
+        # defines, so it is normalised to that base before the lookup. This test
+        # pins that it is captured and checked at all: the old `[A-Z]?` class
+        # matched R2.7a only by accident of the optional group, and a lowercase
+        # ID whose base row is genuinely missing must be reported.
+        It 'exits 1 when a lowercase-suffixed roadmap id has no base row' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R2.7a`` whose base row R2.7 is absent.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            # Reported against the NORMALISED base ID, which is what the roadmap
+            # is actually asked about.
+            $r.Output | Should -Match "STATUS references roadmap item 'R2\.7' which is absent"
+        }
+
+        It 'exits 0 for a lowercase-suffixed roadmap id whose base row is present' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R2.7 | foo |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $body = @"
+# Status
+
+References roadmap item ``R2.7a``, whose base row ``R2.7`` is present.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            # A lowercase sub-item must NOT demand a guide of its own: it is not a
+            # distinct roadmap row, so requiring one would invent an obligation
+            # the roadmap does not state.
+            $r.Output | Should -Not -Match 'suffixed roadmap item'
+        }
+
+        # The counterpart to the two rows above: an UPPERCASE suffix stays intact.
+        # If the normalisation stripped it, R4.7A would resolve against a base row
+        # R4.7 the roadmap may not define, and the guide requirement would vanish.
+        It 'keeps an uppercase suffix intact rather than normalising it away' {
+            @'
+# Roadmap
+| R0.8 | foo |
+| R1.0 | bar |
+| R4.7A | bar |
+'@ | Set-Content -LiteralPath (Join-Path $script:tempRoot 'ROADMAP.md') -Encoding utf8
+
+            $guide = Join-Path $script:tempRoot 'WORK-ITEMS'
+            New-Item -ItemType Directory -Path $guide -Force | Out-Null
+            '# Work item' | Set-Content -LiteralPath (Join-Path $guide 'R4.7A-identity-and-hierarchy.md') -Encoding utf8
+            git -C $script:tempRoot add WORK-ITEMS/R4.7A-identity-and-hierarchy.md | Out-Null
+
+            $body = @"
+# Status
+
+References roadmap item ``R4.7A``, which is present with its guide.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            # No violation at all, which only holds if the uppercase ID was the one
+            # looked up against both the roadmap and the guide filter.
+            $r.Output | Should -Not -Match 'violation'
         }
 
         It 'exits 1 when STATUS references a path that resolves outside the repository' {

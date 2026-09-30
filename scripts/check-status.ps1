@@ -19,9 +19,15 @@
       3. Roadmap IDs    -- every R<major>.<minor>[<suffix>] token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
          work item the roadmap does not define. The letter suffix is part
-         of the ID (R4.7A, R4.8A). A suffixed ID must additionally have a
-         work-item guide in docs/work-items/, so a letter-suffixed row
-         cannot ship with nothing to implement it from.
+         of the ID (R4.7A, R4.8A). A lowercase suffix (R2.7a) is a
+         sub-item of a base row the roadmap already defines, so it is
+         normalised to that base (R2.7) before the lookup and never
+         demands a guide of its own. An uppercase-suffixed ID must
+         additionally have a work-item guide in docs/work-items/ that
+         appears in the git INDEX -- present on disk alone is not enough,
+         because a clean CI checkout has only tracked files, while a
+         staged new guide stays valid so a work item may be cited in the
+         same commit that introduces it.
       4. Work-item evidence commands -- inside fenced code blocks in
          docs/work-items/*.md, every path a *command* line names must exist
          on disk. Both a separated path (`src/Foo/Bar.cs`) and a bare
@@ -226,6 +232,42 @@ foreach ($t in $tokens)
 }
 
 # --- 3. Roadmap IDs ---
+# Returns whether a candidate work-item guide is known to git, reading the INDEX
+# rather than HEAD.
+#
+# The index is what this gate must validate: it runs as a pre-commit hook, so the
+# tree of the commit about to be made IS the index, and a newly authored guide
+# that has been staged is legitimate even though HEAD does not have it yet.
+# Using HEAD would reject exactly the correct workflow -- add a work item and cite
+# it in STATUS in the same commit -- and block the change for being new.
+#
+# The path handed to git is the canonical root-relative form with forward
+# slashes, because that is the spelling git records and prints on every host.
+function Test-GuideIsTracked {
+    <#
+    .SYNOPSIS
+        Whether a work-item guide file appears in the git index.
+
+    .DESCRIPTION
+        Takes a FileInfo for a guide inside the work-items directory and asks git
+        whether the index knows that path. Reads the index (the default for
+        `git ls-files`) rather than HEAD, so a staged new guide counts as tracked
+        and an untracked working-tree file does not.
+
+        An absent repository, or a git invocation that fails, is treated as
+        "not tracked" rather than as a pass: a guide the gate cannot confirm is
+        one the gate must report.
+    #>
+    param([Parameter(Mandatory)][System.IO.FileInfo]$Guide)
+
+    $relative = [System.IO.Path]::GetRelativePath(
+        [System.IO.Path]::GetFullPath($repoRoot),
+        [System.IO.Path]::GetFullPath($Guide.FullName)).Replace('\', '/')
+
+    $tracked = @(git -C $repoRoot ls-files --error-unmatch -- $relative 2>$null)
+    return $LASTEXITCODE -eq 0 -and $tracked.Count -gt 0
+}
+
 # Roadmap IDs appear in bold and plain prose as well as backticks, so scan
 # the raw status text rather than the backticked token list.
 #
@@ -237,17 +279,28 @@ foreach ($t in $tokens)
 # this check exists to prevent, on exactly the rows it was about to be needed
 # for.
 #
-# The suffix class is UPPERCASE-only, `[A-Z]`, and that is deliberate. The
-# roadmap's suffixes are uppercase (R4.7A..R4.7H, R4.8A) and the Phase 2/5
-# rows that use lowercase (R2.7a, R2.7b, R5.6a) are matched by the *unsuffixed*
-# `R2.7` / `R5.6` alternative, so a lowercase spelling still resolves against
-# the base row and can never be mistaken for a distinct, guide-requiring ID.
-# Accepting `[A-Za-z]` instead made `R2.7a` demand a guide lookup for a row the
-# roadmap spells lowercase, while `R2.7A` demanded one for a row it does not --
-# so the case-insensitive class was wrong in the opposite direction from the
-# original `[a-z]?` bug this check records.
-$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Z]?\b') |
-    ForEach-Object { $_.Value } | Select-Object -Unique
+# The suffix class is `[A-Za-z]` and the case is decided afterwards, because the
+# two spellings mean different things. An UPPERCASE suffix (R4.7A..R4.7H,
+# R4.8A) is part of the ID: the roadmap defines that exact row, and a suffixed ID
+# must additionally have a work-item guide. A LOWERCASE suffix (R2.7a..R2.7d,
+# R5.6a, R8.2a) is a sub-item of a base row the roadmap already defines, so it is
+# normalised to that base ID (R2.7a -> R2.7) before the roadmap lookup and is
+# never treated as guide-requiring.
+#
+# The capture therefore has to accept BOTH cases and strip the lowercase one
+# explicitly. Matching only `[A-Z]` — as this check did — meant a lowercase
+# reference such as `R2.7a` was captured as `R2.7` only by accident of the
+# optional group's greediness, while a lowercase ID whose base row is genuinely
+# absent from the roadmap (`R2.9z`) either matched its base and passed, or failed
+# for the wrong reason. Normalising here makes the lowercase case deliberate:
+# the base row is what must exist.
+$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Za-z]*\b') |
+    ForEach-Object {
+        # Uppercase suffix kept whole; lowercase suffix removed so the base row
+        # is what the roadmap is asked about.
+        if ($_.Value -cmatch '^[Rr]\d+\.\d+([a-z]+)$') { $_.Value.Substring(0, $_.Value.Length - $Matches[1].Length) }
+        else { $_.Value }
+    } | Select-Object -Unique
 foreach ($id in $idTokens)
 {
     if ($roadmap -notmatch [regex]::Escape("| $id |"))
@@ -268,10 +321,18 @@ foreach ($id in $idTokens)
         # but the repository root found no guide and reported a violation for
         # every suffixed ID. $workItemsDir is the same resolved path check 4
         # already uses, so the two cannot drift.
-        $guide = Get-ChildItem -LiteralPath $workItemsDir -Filter "$id-*.md" -ErrorAction SilentlyContinue
+        #
+        # A file merely PRESENT on disk is not enough, for the same reason check
+        # 2 requires git tracking: a guide that exists only in the working tree
+        # is absent from a clean CI checkout, so the row would be unimplementable
+        # there. The *index* rather than HEAD, for the reason check 2 records --
+        # this gate is a pre-commit hook, so the index is the tree of the commit
+        # about to be made and a staged-but-uncommitted new guide is legitimate.
+        $guide = Get-ChildItem -LiteralPath $workItemsDir -Filter "$id-*.md" -ErrorAction SilentlyContinue |
+            Where-Object { Test-GuideIsTracked $_ }
         if (-not $guide)
         {
-            $violations.Add("STATUS references suffixed roadmap item '$id', which has no work-item guide in $WorkItemsPath.")
+            $violations.Add("STATUS references suffixed roadmap item '$id', which has no tracked work-item guide in $WorkItemsPath.")
         }
     }
 }

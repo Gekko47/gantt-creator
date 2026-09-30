@@ -166,11 +166,153 @@ public sealed class ExcelDurationWriterTests
             return [.. payload.Cast<object?>()];
         }
 
+    /// <summary>
+    /// A planned row outside the table's body must refuse the whole write, not be
+    /// silently skipped.
+    /// </summary>
+    /// <remarks>
+    /// The merge loop `continue`d on an out-of-range target and then reported
+    /// <c>plan.WriteCount</c> cells as written. The caller was therefore told every
+    /// planned duration had landed while one had been dropped, and the only symptom
+    /// was a stale number in a cell nothing was watching -- which is exactly the class
+    /// of silent divergence the all-errors contract exists to prevent. A plan and a
+    /// table that disagree about the extent is refused, and this test also pins that
+    /// nothing was assigned.
+    /// </remarks>
+    [Fact]
+    public void A_planned_row_outside_the_body_refuses_instead_of_skipping_it()
+    {
+        List<object?> assignments = [];
+        TestableWriter writer = Writer(ProtectionGuardOutcome.NotProtected, ["12", "7"], assignments);
+
+        // Row 3 does not exist in a two-row body.
+        DurationWriteOutcome outcome = writer.Write(Plan(new DurationWrite(3, "9")));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DurationWriteRefusalReason.WriteFailed, outcome.Refusal);
+        Assert.Equal(0, writer.WriteCount);
+    }
+
+    [Fact]
+    public void An_out_of_range_row_beside_a_valid_one_refuses_the_whole_plan()
+    {
+        // The mixed case is the one that mattered: the valid row must NOT be written
+        // while the invalid one is dropped, because a partially applied plan leaves
+        // the column in a state no caller asked for and no caller was told about.
+        List<object?> assignments = [];
+        TestableWriter writer = Writer(ProtectionGuardOutcome.NotProtected, ["12", "7"], assignments);
+
+        DurationWriteOutcome outcome = writer.Write(
+            Plan(new DurationWrite(1, "9"), new DurationWrite(99, "3")));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DurationWriteRefusalReason.WriteFailed, outcome.Refusal);
+        Assert.Equal(0, writer.WriteCount);
+    }
+
+    /// <summary>
+    /// Wires a sheet's <c>ListObjects</c> collection so it enumerates the supplied
+    /// tables. The PIA type is a COM collection rather than an enumerable, so the
+    /// enumerator has to be stubbed explicitly -- an unconfigured collection
+    /// enumerates as empty and the table lookup would silently never match.
+    /// </summary>
+    /// <param name="tables">The tables the sheet reports.</param>
+    /// <returns>A mocked <c>ListObjects</c> collection.</returns>
+    private static Mock<Excel.ListObjects> ListObjectsContaining(params Excel.ListObject[] tables)
+    {
+        var collection = new Mock<Excel.ListObjects>();
+        List<Excel.ListObject> entries = [.. tables];
+        _ = collection.Setup(c => c.GetEnumerator()).Returns(() => (System.Collections.IEnumerator)entries.GetEnumerator());
+        return collection;
+    }
+
+    /// <summary>
+    /// Wires a workbook's <c>Sheets</c> collection so it enumerates the supplied
+    /// entries. The PIA declares <c>GetEnumerator()</c> as returning the non-generic
+    /// <see cref="IEnumerator"/> (verified by reflection over the installed
+    /// interop assembly), which is what the adapter's <c>object</c> loop consumes.
+    /// </summary>
+    /// <param name="entries">The sheets, of any kind, the workbook reports.</param>
+    /// <returns>A mocked <c>Sheets</c> collection.</returns>
+    private static Mock<Excel.Sheets> SheetsContaining(params object[] entries)
+    {
+        var sheets = new Mock<Excel.Sheets>();
+        List<object> list = [.. entries];
+        _ = sheets.Setup(s => s.GetEnumerator()).Returns(() => (System.Collections.IEnumerator)list.GetEnumerator());
+        return sheets;
+    }
+
+    /// <summary>
+    /// A table name is matched case-insensitively, because Excel preserves whatever
+    /// capitalisation the table was created with and the same table must still be
+    /// found.
+    /// </summary>
+    [Fact]
+    public void The_table_is_found_regardless_of_the_capitalisation_excel_stored()
+    {
+        var matchingTable = new Mock<Excel.ListObject>();
+        var ganttSheet = new Mock<Excel.Worksheet>();
+        var otherSheet = new Mock<Excel.Worksheet>();
+
+        // `tblGanttData` upper-cased. Excel preserves whatever capitalisation the
+        // table was created with, so this spelling must still resolve.
+        _ = matchingTable.SetupGet(t => t.Name).Returns("TBLGANTTDATA");
+        _ = ganttSheet.SetupGet(w => w.ListObjects).Returns(ListObjectsContaining(matchingTable.Object).Object);
+        _ = otherSheet.SetupGet(w => w.ListObjects).Returns(ListObjectsContaining().Object);
+
+        // The real enumeration shape: a COM collection, plus a chart sheet that is
+        // NOT a Worksheet and must be skipped rather than cast.
+        Mock<Excel.Sheets> sheets = SheetsContaining(
+            otherSheet.Object,
+            new Mock<Excel.Chart>().Object,
+            ganttSheet.Object);
+
+        var writer = new ExcelDurationWriter(new Mock<Excel.Application>().Object);
+
+        bool found = writer.TryFindTable(
+            sheets.Object,
+            out Excel.Worksheet? resolvedWorksheet,
+            out Excel.ListObject? resolvedTable);
+
+        Assert.True(found);
+        Assert.Same(ganttSheet.Object, resolvedWorksheet);
+        Assert.Same(matchingTable.Object, resolvedTable);
+    }
+
+    /// <summary>
+    /// A workbook holding a chart sheet before the Gantt sheet must not throw. The
+    /// previous strongly-typed <c>foreach</c> cast every entry to
+    /// <c>Excel.Worksheet</c>, so the chart sheet raised InvalidCastException out of
+    /// the middle of the scan instead of being skipped.
+    /// </summary>
+    [Fact]
+    public void A_chart_sheet_is_skipped_rather_than_cast()
+    {
+        Mock<Excel.Sheets> sheets = SheetsContaining(new Mock<Excel.Chart>().Object);
+
+        var writer = new ExcelDurationWriter(new Mock<Excel.Application>().Object);
+
+        bool found = writer.TryFindTable(
+            sheets.Object,
+            out Excel.Worksheet? resolvedWorksheet,
+            out Excel.ListObject? resolvedTable);
+
+        Assert.False(found);
+        Assert.Null(resolvedWorksheet);
+        Assert.Null(resolvedTable);
+    }
+
     [Fact]
     public void A_plan_is_written_in_one_bulk_assignment_not_one_per_cell()
     {
         // D5's whole point. Three changed rows must produce ONE ranged write; a
         // per-cell loop would produce three and dominate Refresh on a large table.
+        //
+        // The third row was `DurationWrite(4, ...)` against a THREE-row column. That
+        // row was out of range, and it used to be silently skipped -- so this test
+        // passed while asserting `CellsWritten == 3` for a plan of which only two
+        // values were ever written. The rows are now in range, so the count it asserts
+        // is the count the adapter actually performed.
         List<object?> assignments = [];
         TestableWriter writer = Writer(
             ProtectionGuardOutcome.NotProtected,
@@ -178,9 +320,9 @@ public sealed class ExcelDurationWriterTests
             assignments);
 
         DurationWriteOutcome outcome = writer.Write(Plan(
-            new DurationWrite(2, "5"),
-            new DurationWrite(3, "12"),
-            new DurationWrite(4, "-")));
+            new DurationWrite(1, "5"),
+            new DurationWrite(2, "12"),
+            new DurationWrite(3, "-")));
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, writer.WriteCount);

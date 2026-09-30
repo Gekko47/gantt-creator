@@ -18,8 +18,9 @@ namespace GanttCreator.Core;
 /// lane/stack are required for spans and critical intervals (lane optional for
 /// critical intervals when the parent supplies it), optional for milestones,
 /// and warned-not-read for delineators, splitters, and spacers;
-/// <c>Critical Interval</c> requires a <c>ParentId</c> present in the same
-/// batch whose target is a span, with an acyclic parent relationship; <c>Custom Activity</c> requires a
+/// <c>ParentId</c> is optional for every child-capable type and a supplied value
+/// must name a row in the same batch whose target may own children; a cycle is
+/// refused; <c>Custom Activity</c> requires a
 /// <c>StyleKey</c> whose existence is deferred to R2.9; label positions and
 /// colour overrides are checked against the type's catalogue capabilities
 /// (skipped for Custom); <c>Description</c> is optional for every type;
@@ -95,6 +96,15 @@ public static class GanttRowValidator
 
         CheckCriticalParents(rows, perRow, canonicalById, duplicateIds, issues);
         CheckChildCapacityAndDepth(rows, perRow, canonicalById, duplicateIds, issues);
+
+        // Run propagation a second time. A parent can only become blocked in the
+        // pass above -- the seven-child cap is reported against the PARENT's row, and
+        // the depth rule is what blocks a parent that is itself a child -- and a
+        // child of such a parent would otherwise survive as a valid event pointing at
+        // a row that is not in `Events`. Without this second pass the outcome also
+        // depended on row order for those rows: a child authored above its parent was
+        // decided before the parent's blocking finding existed.
+        PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);
 
         var events = new List<GanttEvent>();
         for (var i = 0; i < rows.Count; i++)
@@ -476,13 +486,22 @@ public static class GanttRowValidator
             finish = null;
         }
 
-        // ParentId (R4.7A D9). Three cases, split by the child-capability matrix
+        // ParentId (R4.7A D9). Two cases, split by the child-capability matrix
         // rather than by `isCriticalInterval`:
-        //   * a Critical Interval REQUIRES a parent;
+        //   * a Critical Interval MAY carry a parent, but no longer REQUIRES one;
         //   * any other child-capable type may carry one -- a top-level row simply
         //     leaves it blank, which is what makes a promoted child valid again
         //     after its parent is deleted;
         //   * a type the matrix excludes still reports NotUsedByType.
+        // The `isCriticalInterval` branch used to make ParentId mandatory for that
+        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, which
+        // lists CriticalInterval among the types that may own children precisely so
+        // a TOP-LEVEL interval can own a level-2 child under the uniform depth
+        // rule -- and it contradicted <c>EntityProjection</c>, which resolves such
+        // a child onto the interval's own lane. The requirement therefore made the
+        // catalogue's entry and the projection's boundary unreachable. A blank
+        // ParentId is now legal for every child-capable type, and the DEPTH rule is
+        // the single authority on what a Critical Interval may parent.
         // The previous `else if (parentText is not null)` branch was reached by any
         // non-critical row, so a child-capable span carrying a real ParentId emitted
         // a spurious "not used by this Type" warning *alongside* its legitimate
@@ -490,56 +509,37 @@ public static class GanttRowValidator
         // used above, so the two decisions cannot disagree.
         GanttRowId? parentId = null;
         var parentText = row.ParentId;
-        if (!parentBlocked)
+        if (!parentBlocked && parentRelevant)
         {
-            if (isCriticalInterval)
-            {
-                if (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null)
-                {
-                    Add(
-                        "ParentId",
-                        GanttValidationCodes.ParentMissingOrMalformed,
-                        GanttValidationSeverity.Error,
-                        "ParentId is required for Critical Interval and must be a well-formed row Id."
-                    );
-                }
-                else
-                {
-                    parentId = parentParsed;
-                }
-            }
-            else if (parentRelevant)
-            {
-                // Optional for a non-critical child: blank means top-level, which is
-                // valid. A supplied value must parse, and is then resolved against
-                // the batch by the cross-row parent pass.
-                if (parentText is not null
-                    && (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null))
-                {
-                    Add(
-                        "ParentId",
-                        GanttValidationCodes.ParentMissingOrMalformed,
-                        GanttValidationSeverity.Error,
-                        "ParentId must be blank or a well-formed row Id."
-                    );
-                }
-                else if (parentText is not null)
-                {
-                    _ = GanttRowId.TryParse(parentText, out parentId);
-                }
-            }
-            else if (parentText is not null)
+            // Optional for every child-capable type: blank means top-level, which
+            // is valid. A supplied value must parse, and is then resolved against
+            // the batch by the cross-row parent pass.
+            if (parentText is not null
+                && (!GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) || parentParsed is null))
             {
                 Add(
                     "ParentId",
-                    GanttValidationCodes.NotUsedByType,
-                    GanttValidationSeverity.Warning,
-                    "ParentId is not used by this Type and is ignored for geometry."
+                    GanttValidationCodes.ParentMissingOrMalformed,
+                    GanttValidationSeverity.Error,
+                    "ParentId must be blank or a well-formed row Id."
                 );
-                if (GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) && parentParsed is not null)
-                {
-                    parentId = parentParsed;
-                }
+            }
+            else if (parentText is not null)
+            {
+                _ = GanttRowId.TryParse(parentText, out parentId);
+            }
+        }
+        else if (!parentBlocked && parentText is not null)
+        {
+            Add(
+                "ParentId",
+                GanttValidationCodes.NotUsedByType,
+                GanttValidationSeverity.Warning,
+                "ParentId is not used by this Type and is ignored for geometry."
+            );
+            if (GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) && parentParsed is not null)
+            {
+                parentId = parentParsed;
             }
         }
 
@@ -809,7 +809,7 @@ public static class GanttRowValidator
                         "ParentId",
                         GanttValidationCodes.ParentInvalid,
                         GanttValidationSeverity.Error,
-                        $"ParentId '{key}' references a row that did not validate as a usable span event."
+                        $"ParentId '{key}' references a row that did not validate as a usable event."
                     )
                 );
                 perRow[i] = parsed with { HasBlockingError = true };
@@ -847,15 +847,36 @@ public static class GanttRowValidator
     }
 
     /// <summary>
-    /// Blocks every still-undecided Critical Interval whose canonical parent row
-    /// is already blocked, repeating until no further row is blocked so a chain
-    /// of dependent intervals is covered.
+    /// Blocks every still-undecided child row whose canonical parent row is already
+    /// blocked, repeating until no further row is blocked so a chain of dependent
+    /// children is covered.
     /// </summary>
     /// <param name="rows">The neutral body rows in table order.</param>
     /// <param name="perRow">The per-row state to update.</param>
     /// <param name="canonicalById">First-canonical row index by Id text.</param>
     /// <param name="duplicateIds">Ids carried by more than one row.</param>
     /// <param name="issues">The row issue sink.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Every child-capable type, not only Critical Interval.</b> The predicate is
+    /// <see cref="EntityHierarchyCatalog.MayBeChild"/> -- the single matrix -- so a
+    /// child activity, child milestone or critical milestone is propagated exactly as
+    /// a critical interval is. Keying on <c>Type == CriticalInterval</c> meant a child
+    /// whose parent had just been refused for an unrelated reason (a bad date, a style
+    /// key that does not resolve) survived as a valid event pointing at a parent that
+    /// was not in <c>Events</c> at all, and the chart then had to resolve that edge
+    /// itself. The matrix is the same authority the direct parent pass consults, so
+    /// the two cannot disagree about who is a child.
+    /// </para>
+    /// <para>
+    /// <b>Order independence.</b> The direct pass decides a child against whatever its
+    /// parent row currently looks like, and an authoring surface may place a child
+    /// above its parent. This pass is what makes the outcome independent of input
+    /// order, and it runs again after <see cref="CheckChildCapacityAndDepth"/> so a
+    /// parent that only becomes blocked THERE -- over the seven-child cap, or the depth
+    /// rule -- propagates to its own children in the same validation.
+    /// </para>
+    /// </remarks>
     private static void PropagateBlockedParents(
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
@@ -870,7 +891,8 @@ public static class GanttRowValidator
         var decided = new HashSet<int>();
         for (var i = 0; i < rows.Count; i++)
         {
-            if (perRow[i] is { Type: GanttEntityType.CriticalInterval, HasBlockingError: true })
+            if (perRow[i] is { HasBlockingError: true }
+                && EntityHierarchyCatalog.MayBeChild(perRow[i]!.Type ?? GanttEntityType.Spacer))
             {
                 _ = decided.Add(i);
             }
@@ -886,10 +908,11 @@ public static class GanttRowValidator
                     decided.Contains(i)
                     || perRow[i] is not
                     {
-                        Type: GanttEntityType.CriticalInterval,
                         HasBlockingError: false,
                         Event.ParentId: { } parentId,
+                        Type: { } rowType,
                     }
+                    || !EntityHierarchyCatalog.MayBeChild(rowType)
                     || duplicateIds.Contains(parentId.Value)
                     || !canonicalById.TryGetValue(parentId.Value, out var parentIndex)
                     || perRow[parentIndex] is not { HasBlockingError: true }
@@ -904,7 +927,7 @@ public static class GanttRowValidator
                         "ParentId",
                         GanttValidationCodes.ParentInvalid,
                         GanttValidationSeverity.Error,
-                        $"ParentId '{parentId.Value}' references a row that did not validate as a usable span event."
+                        $"ParentId '{parentId.Value}' references a row that did not validate as a usable event."
                     )
                 );
                 perRow[i] = perRow[i]! with { HasBlockingError = true };

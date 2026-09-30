@@ -153,6 +153,19 @@ public static class PlotGeometryResolver
             return Refused(PlotGeometryRefusal.InvalidOrigin);
         }
 
+        // The vertical bounds must stay INSIDE the preset's own height, exactly as
+        // the horizontal check below refuses a plot wider than the page. Without it a
+        // caller could place the plot at y = -50, or ask for a height that runs past
+        // the bottom of the page, and the resolver would return a rectangle that
+        // describes nothing printable -- with no typed refusal to report. Refused
+        // rather than clamped: clamping would silently draw a chart somewhere the
+        // caller did not ask for, which is the substitution this resolver exists to
+        // prevent (D3/D4).
+        if (topPt < 0 || topPt + heightPt > preset.HeightPt)
+        {
+            return Refused(PlotGeometryRefusal.InvalidOrigin);
+        }
+
         var plotWidth = preset.WidthPt - textPanelWidthPt - leftChromePt - rightChromePt;
         if (plotWidth < MinimumPlotWidthPt)
         {

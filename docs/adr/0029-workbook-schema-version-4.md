@@ -1,4 +1,4 @@
-# ADR-0029 — Workbook schema versions 4 and 5: hierarchy, derived Duration, fixed row geometry
+# ADR-0029 — Workbook schema versions 4, 5 and 6: hierarchy, derived Duration, fixed row geometry, horizontal-only labels
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
@@ -50,11 +50,12 @@ two of them change the visible column set.
   Earlier drafts of this ADR listed the label set among R4.7C's changes and put
   it in step 2 of the table below; that is corrected to a step of its own, taken
   by R4.7G at **5 → 6**.
-- **D5 — The schema advances in two steps, one per row that changes it, and
+- **D5 — The schema advances in three steps, one per row that changes it, and
   never two rows for one version number.** This ADR originally said "3 → 4" for
-  all of D1-D4, which was **wrong**: `R4.7A` adds the `SiblingOrder` column and
-  `R4.7C` adds `Duration` and the metric-token changes. Two rows
-  claiming one bump would either collide or skip a version, and
+  all of D1-D4, which was **wrong**: `R4.7A` adds the `SiblingOrder` column,
+  `R4.7C` adds `Duration` and the metric-token changes, and `R4.7G` changes the
+  permitted label-position set. Three rows each claiming one bump would either
+  collide or skip a version, and
   `ConfigIntegrity` cannot detect that, because the version is the signal it
   compares against. Corrected on 2026-09-29 to, and extended on 2026-09-30 when
   the label-set change was moved off R4.7C onto R4.7G (D4):
@@ -95,8 +96,8 @@ two of them change the visible column set.
 - `GanttRowDto` gains `DurationCell` and `SiblingOrderCell` in the same
   constructor positions as the schema, so the reader, the validator and the
   schema cannot disagree about column order.
-- A user's first save after this change produces a version-**5** workbook, because
-  R4.7C's bump is the last of the two this ADR covers (D5). Because
+- A user's first save after R4.7C produces a version-**5** workbook, because
+  R4.7C's bump is the second of the three steps D5 covers. Because
   no migration is written, an older workbook is reported, not converted — which
   is the correct behaviour for a pre-release product and must be stated in the
   Ribbon-visible error rather than left to a generic integrity message.

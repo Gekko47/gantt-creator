@@ -72,6 +72,68 @@ public sealed class PlotGeometryResolverTests
     }
 
     [Fact]
+    public void The_plot_never_crosses_the_presets_bottom_edge()
+    {
+        // The vertical counterpart to the horizontal rule above, and the POSITIVE test
+        // for the bound: a plot flush with the page bottom is the boundary that must
+        // still succeed, so an off-by-one in the new check would fail here rather than
+        // only in the refusal rows below.
+        SizePreset preset = SizePresets.Presentation16x9;
+        double height = 140;
+
+        PlotGeometryOutcome outcome = Resolve(
+            preset,
+            400,
+            top: preset.HeightPt - height,
+            height: height);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(preset.HeightPt, outcome.Geometry!.PlotBounds.Bottom, TolerancePt);
+    }
+
+    [Fact]
+    public void A_plot_top_above_the_presets_top_edge_refuses()
+    {
+        // A negative top places content off the page, above the frame. The vertical
+        // finite/positive checks alone accepted it, so the resolver returned a
+        // rectangle describing something unprintable with no refusal to report.
+        PlotGeometryOutcome outcome = Resolve(SizePresets.Presentation16x9, 400, top: -50);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PlotGeometryRefusal.InvalidOrigin, outcome.Refusal);
+        Assert.Null(outcome.Geometry);
+    }
+
+    [Fact]
+    public void A_plot_running_past_the_presets_bottom_edge_refuses()
+    {
+        // 60 + 140 fits inside a 720pt-tall preset; 700 + 140 does not. Refused rather
+        // than clamped, for the reason D3/D4 give: clamping would silently draw the
+        // chart somewhere the caller did not ask for.
+        SizePreset preset = SizePresets.Presentation16x9;
+        PlotGeometryOutcome outcome = Resolve(preset, 400, top: preset.HeightPt - 100, height: 140);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PlotGeometryRefusal.InvalidOrigin, outcome.Refusal);
+        Assert.Null(outcome.Geometry);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void A_non_finite_plot_top_still_refuses(double top)
+    {
+        // Guards the existing finite check, which the new bound check must not have
+        // displaced: NaN fails every comparison, so without the explicit
+        // `double.IsFinite` test it would have slipped through the new `topPt < 0`
+        // branch entirely.
+        PlotGeometryOutcome outcome = Resolve(SizePresets.Presentation16x9, 400, top: top);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PlotGeometryRefusal.InvalidOrigin, outcome.Refusal);
+    }
+
+    [Fact]
     public void An_insufficient_remainder_refuses_and_names_the_shortfall()
     {
         // D4, as a POSITIVE test for the refusal path. The number is the point:

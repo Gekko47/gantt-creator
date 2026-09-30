@@ -85,20 +85,37 @@ public class ExcelOutlineGroupWriter(
             return OutlineGroupOutcome.Ok(0, 0);
         }
 
-        if (ReadFirstWorksheetRow(body) is not { } firstRow)
+        if (ReadFirstWorksheetRow(body) is not { } firstWorksheetRow)
         {
             return OutlineGroupOutcome.Ok(0, 0);
         }
 
         OutlineGroupPlan plan = OutlineGroupPlanner.Plan(events);
 
+        // The reset pass covers the table's own rows, not just the events supplied:
+        // a row whose parent was deleted is still a body row, and it is exactly the
+        // row carrying the stale level. When the host reports no body the pass writes
+        // nothing at all, which keeps the "already correct sheet stays untouched"
+        // property intact.
+        var bodyRowCount = GetBodyRowCount(body);
+
         // Stale groups are cleared first: Excel refuses to regroup a sheet whose
         // outline disagrees with the request. The two lists never overlap, so the
         // order of these phases cannot change the outcome.
+        //
+        // EVERY body row the plan does not group is reset, not merely the rows the
+        // planner flagged. `RowsToUngroup` covers only the rows the CURRENT hierarchy
+        // cannot express -- a child above its parent, a run broken by an unrelated
+        // row. It knows nothing about a child that WAS grouped by a previous Refresh
+        // and is no longer a child: when a parent is deleted its children are
+        // promoted, the new plan contains no group for them, and they are absent from
+        // `RowsToUngroup` too. Their stale level-2 outline therefore survived the
+        // Refresh, so the sheet kept a collapse control for a hierarchy that no
+        // longer existed, and re-collapsing it hid a top-level row.
         var ungrouped = 0;
-        foreach (var bodyRow in plan.RowsToUngroup)
+        foreach ((var first, var last) in ContiguousRanges(RowsToReset(plan, bodyRowCount)))
         {
-            if (Ungroup(worksheet, firstRow, bodyRow))
+            if (UngroupRange(worksheet, firstWorksheetRow, first, last))
             {
                 ungrouped++;
             }
@@ -108,7 +125,7 @@ public class ExcelOutlineGroupWriter(
         foreach (OutlineGroup group in plan.Groups)
         {
             if (group.ChildRowNumbers.Count > 0
-                && Group(worksheet, firstRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
+                && Group(worksheet, firstWorksheetRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
             {
                 applied++;
             }
@@ -116,6 +133,74 @@ public class ExcelOutlineGroupWriter(
 
         return OutlineGroupOutcome.Ok(applied, ungrouped);
     }
+
+    /// <summary>
+    /// The body rows the plan does not place in a group, and which therefore carry a
+    /// stale outline level if they had one.
+    /// </summary>
+    /// <param name="plan">The planned groups.</param>
+    /// <param name="bodyRowCount">How many body rows the table has.</param>
+    /// <returns>The rows to reset, ascending.</returns>
+    private static List<int> RowsToReset(OutlineGroupPlan plan, int bodyRowCount)
+    {
+        HashSet<int> grouped = [.. plan.Groups.SelectMany(group => group.ChildRowNumbers)];
+        return
+        [
+            .. Enumerable
+                .Range(1, bodyRowCount)
+                .Where(row => !grouped.Contains(row))
+                .Order(),
+        ];
+    }
+
+    /// <summary>
+    /// Collapses a set of ascending rows into contiguous inclusive spans, so a run of
+    /// reset rows costs one COM write rather than one per row. A table of N promoted
+    /// children is the common shape here, and N round-trips per Refresh is the cost
+    /// this pass exists to avoid.
+    /// </summary>
+    /// <param name="rows">The rows to cover, ascending and without duplicates.</param>
+    /// <returns>The contiguous inclusive spans covering every supplied row.</returns>
+    internal static IReadOnlyList<(int First, int Last)> ContiguousRanges(IReadOnlyList<int> rows)
+    {
+        List<(int First, int Last)> ranges = [];
+        var index = 0;
+        while (index < rows.Count)
+        {
+            var first = rows[index];
+            var last = first;
+            index++;
+            while (index < rows.Count && rows[index] == last + 1)
+            {
+                last = rows[index];
+                index++;
+            }
+
+            ranges.Add((first, last));
+        }
+
+        return ranges;
+    }
+
+    /// <summary>
+    /// Returns an inclusive body-row span to outline level 1, clearing any stale
+    /// group across the whole span in one write.
+    /// </summary>
+    /// <param name="worksheet">The target worksheet.</param>
+    /// <param name="firstWorksheetRow">The worksheet row of body row 1.</param>
+    /// <param name="firstBodyRow">The first body row of the span.</param>
+    /// <param name="lastBodyRow">The last body row of the span.</param>
+    /// <returns>Whether the host accepted the write.</returns>
+    private bool UngroupRange(
+        Excel.Worksheet worksheet,
+        int firstWorksheetRow,
+        int firstBodyRow,
+        int lastBodyRow) =>
+        SetOutlineLevel(
+            worksheet,
+            firstWorksheetRow + firstBodyRow - 1,
+            firstWorksheetRow + lastBodyRow - 1,
+            TopLevelOutlineLevel);
 
     /// <summary>
     /// Places the inclusive body-row span at outline level 2, which is what
@@ -151,18 +236,6 @@ public class ExcelOutlineGroupWriter(
             firstWorksheetRow + firstChildBodyRow - 1,
             firstWorksheetRow + lastChildBodyRow - 1,
             ChildOutlineLevel);
-
-    /// <summary>Returns a body row to outline level 1, clearing any stale group.</summary>
-    /// <param name="worksheet">The target worksheet.</param>
-    /// <param name="firstWorksheetRow">The worksheet row of body row 1.</param>
-    /// <param name="bodyRow">The body row to ungroup.</param>
-    /// <returns>Whether the host accepted the write.</returns>
-    private bool Ungroup(Excel.Worksheet worksheet, int firstWorksheetRow, int bodyRow) =>
-        SetOutlineLevel(
-            worksheet,
-            firstWorksheetRow + bodyRow - 1,
-            firstWorksheetRow + bodyRow - 1,
-            TopLevelOutlineLevel);
 
     /// <summary>Writes an outline level across an inclusive worksheet row range.</summary>
     /// <param name="worksheet">The target worksheet.</param>
@@ -209,6 +282,19 @@ public class ExcelOutlineGroupWriter(
         ArgumentNullException.ThrowIfNull(table);
 
         return table.DataBodyRange;
+    }
+
+    /// <summary>
+    /// Reads the body row count. Test seam over the COM parameterised collection.
+    /// </summary>
+    /// <param name="body">The table's data-body range.</param>
+    /// <returns>How many body rows the table has.</returns>
+    internal virtual int GetBodyRowCount(Excel.Range body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        Excel.Range? rows = body.Rows;
+        return rows?.Count ?? 0;
     }
 
     /// <summary>Reads the worksheet row number of a range's first row. Test seam over <c>Range.Row</c>.</summary>

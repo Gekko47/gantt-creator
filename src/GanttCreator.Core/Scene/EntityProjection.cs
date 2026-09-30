@@ -190,10 +190,13 @@ public static class ProjectionResolver
                 return new ProjectionResolution([], ProjectionRefusal.IncompatibleHierarchy);
             }
 
-            // Depth: the lane owner must itself be top-level. A Critical Interval may
-            // parent another Critical Interval while remaining a child of an activity,
-            // so the test is on the parent of the CHILD, not on the child's own depth
-            // -- the same distinction the validator's depth check uses.
+            // Depth: the lane owner must itself be top-level. A Critical Interval is a
+            // LEVEL-2 child whenever it has a parent, so an interval that is itself a
+            // child cannot own a further child -- that would be depth 3. The test is
+            // therefore on the parent of the CHILD, which is the same distinction the
+            // validator's depth check uses, so the two cannot disagree. A TOP-LEVEL
+            // Critical Interval (no parent of its own) may own a child; the comment
+            // that claimed otherwise described the withdrawn exemption.
             if (parent.ParentId is not null)
             {
                 return new ProjectionResolution([], ProjectionRefusal.HierarchyTooDeep);

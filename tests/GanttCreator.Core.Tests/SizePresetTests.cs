@@ -1,8 +1,8 @@
 namespace GanttCreator.Core.Tests;
 
 /// <summary>
-/// R4.7H: the three presets carry <b>exact</b> dimensions and a declared
-/// orientation, and the catalogue is internally consistent.
+/// R4.7H: the presets carry <b>exact</b> dimensions and a declared orientation, and the
+/// catalogue is internally consistent.
 /// </summary>
 public sealed class SizePresetTests
 {
@@ -79,9 +79,14 @@ public sealed class SizePresetTests
     }
 
     [Fact]
-    public void The_catalogue_holds_exactly_the_three_named_presets()
+    public void The_catalogue_holds_exactly_the_four_preset_keys()
     {
-        // A4 counts as one preset with two orientations, so three keys.
+        // Three NAMED sizes produce four KEYS: A4 contributes two keys, one per
+        // orientation (A4Portrait, A4Landscape), because a stored setting names a
+        // specific page orientation rather than a paper size. The count is therefore 4
+        // while the number of named sizes is 3, and both numbers are correct -- the test
+        // name and its comment previously said "three", which contradicted the
+        // assertion directly beneath them.
         Assert.Equal(4, SizePresets.All.Count);
         Assert.Equal(
             ["A4Landscape", "A4Portrait", "Presentation16x9", "Presentation4x3"],

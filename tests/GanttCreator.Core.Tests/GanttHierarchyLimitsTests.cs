@@ -242,7 +242,45 @@ public sealed class GanttHierarchyLimitsTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate(
             [interval, Child(3, NewId(), intervalId)]);
 
+        // The whole point of the boundary: the pair is VALID, not merely free of a
+        // depth finding. A top-level Critical Interval is a level-1 parent with a
+        // level-2 child, which is exactly what EntityHierarchyCatalog lists
+        // CriticalInterval among the child-owning types for. While the validator
+        // still demanded a ParentId for that type, the interval itself was refused,
+        // so this hierarchy could never exist and the catalogue entry was
+        // unreachable -- the assertion below would have passed for the wrong reason.
+        Assert.True(outcome.IsValid);
         Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentMissingOrMalformed);
+        Assert.Equal(2, outcome.Events.Count);
+    }
+
+    /// <summary>
+    /// The mirror of the boundary above: a Critical Interval that IS a child cannot
+    /// own a child of its own, because that would be depth 3. The depth rule is
+    /// uniform in the type of the row being refused, so this is not a
+    /// Critical-Interval special case -- it is the same rule
+    /// <see cref="A_span_child_of_a_critical_interval_is_too_deep"/> pins for a
+    /// non-critical child. Asserted here so the two ends of the owner's rule sit in
+    /// one place and cannot drift apart.
+    /// </summary>
+    [Fact]
+    public void A_nested_critical_interval_cannot_own_a_child()
+    {
+        var activityId = NewId();
+        var intervalId = NewId();
+        List<GanttRowDto> rows =
+        [
+            Parent(2, activityId),
+            CriticalIntervalRow(3, intervalId, activityId),
+            Child(4, NewId(), intervalId),
+        ];
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
+
+        Assert.False(outcome.IsValid);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        Assert.Equal(4, issue.RowNumber);
     }
 
     /// <summary>
@@ -264,5 +302,92 @@ public sealed class GanttHierarchyLimitsTests
         Assert.False(outcome.IsValid);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ParentUnknown);
         Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.TooManyChildren);
+    }
+
+    /// <summary>
+    /// The seven-child cap blocks the PARENT, and every one of that parent's children
+    /// must drop with it. Before propagation was generalised and re-run after the
+    /// capacity pass, the parent was refused but its eight children stayed in
+    /// <c>Events</c> as valid rows pointing at a parent that was not there -- so the
+    /// renderer received a hierarchy it could not lay out, and the only signal the
+    /// user got was the single finding on the parent's row.
+    /// </summary>
+    [Fact]
+    public void Every_child_of_a_refused_parent_is_absent_from_the_events()
+    {
+        var parentId = NewId();
+        List<GanttRowDto> rows = FamilyWithChildren(parentId, 8);
+        List<string> childIds = [.. rows.Skip(1).Select(row => row.IdCell.Value!)];
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
+
+        Assert.False(outcome.IsValid);
+        // The parent is refused for the cap, and each child for the unusable parent.
+        Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.TooManyChildren);
+        Assert.Equal(8, outcome.Issues.Count(i => i.Code == GanttValidationCodes.ParentInvalid));
+
+        // Non-vacuity: the children really were valid rows before this pass ran --
+        // they carry ids, types and dates, so nothing but propagation removed them.
+        // The parent is dropped too (it carries the TooManyChildren finding), so the
+        // whole nine-row family leaves Events together: a hierarchy the chart cannot
+        // lay out is refused as a whole rather than half-built.
+        Assert.Equal(8, childIds.Distinct(StringComparer.Ordinal).Count());
+        Assert.DoesNotContain(outcome.Events, e => e.Id.Value == parentId);
+        Assert.DoesNotContain(outcome.Events, e => childIds.Contains(e.Id.Value, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Order independence for a chain that crosses both passes. A parent over the cap
+    /// is blocked by the capacity pass, which runs AFTER the direct parent pass has
+    /// already decided its children -- so a child authored ABOVE its parent is the
+    /// case that could only be covered by the second propagation run. The reversed
+    /// table must produce the same findings, not merely a failing one.
+    /// </summary>
+    [Fact]
+    public void Shuffling_an_over_capacity_activity_chain_preserves_the_validation_codes()
+    {
+        var parentId = NewId();
+        List<GanttRowDto> forward = FamilyWithChildren(parentId, 8);
+        List<GanttRowDto> reversed = [.. Enumerable.Reverse(forward)];
+
+        GanttValidationOutcome forwardOutcome = GanttRowValidator.Validate(forward);
+        GanttValidationOutcome reversedOutcome = GanttRowValidator.Validate(reversed);
+
+        Assert.Equal(
+            forwardOutcome.Issues.Select(i => (i.RowNumber, i.Code)).OrderBy(x => x.RowNumber).ThenBy(x => x.Code, StringComparer.Ordinal),
+            reversedOutcome.Issues.Select(i => (i.RowNumber, i.Code)).OrderBy(x => x.RowNumber).ThenBy(x => x.Code, StringComparer.Ordinal));
+
+        // And the same for which rows survive into the scene.
+        Assert.Equal(
+            forwardOutcome.Events.Select(e => e.Id.Value).Order(StringComparer.Ordinal),
+            reversedOutcome.Events.Select(e => e.Id.Value).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Propagation is not a Critical-Interval-only behaviour. A child activity whose
+    /// parent is refused for an unrelated reason -- here a start date after its finish,
+    /// nothing to do with hierarchy -- must be blocked too, because its parent is not
+    /// a usable event. Keying propagation on <c>Type == CriticalInterval</c> left this
+    /// child in <c>Events</c> pointing at a row that had been dropped.
+    /// </summary>
+    [Fact]
+    public void A_child_activity_of_a_date_invalid_parent_is_blocked()
+    {
+        var parentId = NewId();
+
+        // Valid in every respect except the dates: Start is after Finish.
+        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, start: new DateOnly(2026, 6, 1), finish: new DateOnly(2026, 1, 1));
+        GanttRowDto child = Child(3, NewId(), parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.StartAfterFinish);
+
+        GanttValidationIssue childIssue = Assert.Single(
+            outcome.Issues,
+            i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
+        Assert.Equal("ParentId", childIssue.Field);
+        Assert.DoesNotContain(outcome.Events, e => e.RowNumber == 3);
     }
 }

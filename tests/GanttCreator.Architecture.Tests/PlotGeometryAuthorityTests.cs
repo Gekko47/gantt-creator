@@ -1,4 +1,7 @@
 using System.IO;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace GanttCreator.Architecture.Tests;
 
@@ -34,10 +37,29 @@ public sealed class PlotGeometryAuthorityTests
     ];
 
     /// <summary>
-    /// No production file may apply the D2 subtraction inline. This is the specific
+    /// No production file may derive plot bounds itself. This is the specific
     /// duplication the row exists to prevent: the same formula written a second time
     /// somewhere that will drift from the first.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The scan is SYNTAX-based, via Roslyn, rather than a substring search. The
+    /// substring form looked for three literal spellings of the subtraction
+    /// (<c>"WidthPt -"</c>, <c>"- TextPanelWidthPt"</c>, <c>"- textPanelWidthPt"</c>),
+    /// which ordinary formatting defeats: put the operand on the next line, name the
+    /// preset variable something else, or parenthesise it, and a second derivation sails
+    /// through while the test stays green. That is the worst failure mode for this guard
+    /// -- it would report the single-authority claim as enforced while examining nothing.
+    /// </para>
+    /// <para>
+    /// The rule is stated on the syntax fact a derivation must contain: a subtraction
+    /// whose operand reads a size preset's own <c>WidthPt</c>. Line breaks, spacing,
+    /// extra parentheses and variable naming are irrelevant. An unrelated
+    /// <c>WidthPt</c> subtraction -- a text measurement's width inside
+    /// <c>DateLabelBuilder</c>, say -- is NOT flagged, because the operand there is not a
+    /// preset member.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void Plot_bounds_are_not_derived_outside_the_resolver()
     {
@@ -64,18 +86,115 @@ public sealed class PlotGeometryAuthorityTests
                     continue;
                 }
 
-                var text = File.ReadAllText(file);
-                if (text.Contains("WidthPt -", StringComparison.Ordinal)
-                    || text.Contains("- TextPanelWidthPt", StringComparison.Ordinal)
-                    || text.Contains("- textPanelWidthPt", StringComparison.Ordinal))
+                if (DerivesPresetWidth(File.ReadAllText(file)))
                 {
-                    offenders.Add($"{relative}: derives plot width by inline subtraction");
+                    offenders.Add($"{relative}: derives plot bounds from a size preset width");
                 }
             }
         }
 
         Assert.Empty(offenders);
     }
+
+    /// <summary>
+    /// The positive control for the syntax scan above: a second derivation written with
+    /// different formatting, a different variable name and an extra pair of parentheses
+    /// -- every shape the previous substring form missed -- is still detected.
+    /// </summary>
+    [Fact]
+    public void The_syntax_scan_detects_a_renamed_and_reformatted_derivation()
+    {
+        const string Sneaky = """
+            class Sneaky
+            {
+                RectD Bounds(SizePreset paper, double columnPt)
+                {
+                    var chrome = 10;
+                    var width =
+                        paper.WidthPt
+                        - columnPt
+                        - chrome;
+                    return new RectD(columnPt + chrome, 0, width, paper.HeightPt);
+                }
+            }
+            """;
+
+        Assert.True(DerivesPresetWidth(Sneaky));
+    }
+
+    /// <summary>
+    /// The negative control: a subtraction of a width that is NOT a preset's is not a
+    /// plot derivation. <c>DateLabelBuilder</c> really does subtract
+    /// <c>measured.WidthPt</c>, and flagging that would make the guard cry wolf on
+    /// legitimate code and get switched off.
+    /// </summary>
+    [Fact]
+    public void The_syntax_scan_ignores_an_unrelated_width_subtraction()
+    {
+        const string Unrelated = """
+            class Labeller
+            {
+                RectD Place(RectD visible, double gap, double measuredWidthPt)
+                {
+                    return new RectD(visible.Left - gap - measuredWidthPt, 0, measuredWidthPt, 10);
+                }
+            }
+            """;
+
+        Assert.False(DerivesPresetWidth(Unrelated));
+    }
+
+    /// <summary>
+    /// Whether a source subtracts a size preset's own width.
+    /// </summary>
+    /// <param name="source">The C# source text.</param>
+    /// <returns><see langword="true"/> when a preset-width subtraction is present.</returns>
+    private static bool DerivesPresetWidth(string source)
+    {
+        SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
+
+        return root
+            .DescendantNodes()
+            .OfType<BinaryExpressionSyntax>()
+            .Where(binary => binary.IsKind(SyntaxKind.SubtractExpression))
+            .Any(binary => ContainsPresetWidth(binary.Left) || ContainsPresetWidth(binary.Right));
+    }
+
+    /// <summary>
+    /// Whether a subtree reads a size preset's <c>WidthPt</c>, at any depth and through
+    /// any number of parentheses.
+    /// </summary>
+    /// <param name="node">The subtree to search.</param>
+    /// <returns><see langword="true"/> when a preset width read is present.</returns>
+    private static bool ContainsPresetWidth(SyntaxNode? node) =>
+        node is not null
+        && node
+            .DescendantNodesAndSelf()
+            .OfType<MemberAccessExpressionSyntax>()
+            .Any(access =>
+                access.Name.Identifier.ValueText == "WidthPt"
+                && access.Expression is IdentifierNameSyntax identifier
+                && PresetVariableNames.Contains(identifier.Identifier.ValueText));
+
+    /// <summary>
+    /// Local names treated as holding a <c>SizePreset</c>. This is the one place the
+    /// scan consults a name, and the limitation is recorded rather than hidden: this
+    /// assembly deliberately has NO project reference to compile against (that
+    /// isolation is what lets it assert Core carries no Office dependency), so the
+    /// preset's static type cannot be resolved and the receiver has to be recognised
+    /// textually. A derivation that reads a preset width through a local named
+    /// something outside this set would be missed.
+    /// </summary>
+    private static readonly HashSet<string> PresetVariableNames = new(StringComparer.Ordinal)
+    {
+        "preset",
+        "paper",
+        "sizePreset",
+        "size",
+        "a4",
+        "presentation",
+        "selected",
+    };
 
     /// <summary>
     /// At most one production caller may invoke the resolver. Two callers are not two

@@ -839,6 +839,12 @@ public class WorkbookInitialiserTests
         Assert.Equal(
             hiddenColumns,
             active.HiddenWrites.Count(written => !written));
+
+        // The write COUNT alone is not the end state: a rollback that unhid the right
+        // number of columns but left one hidden -- or re-hid a column on its way -- would
+        // satisfy the count above while still handing the user an altered sheet. This
+        // asserts the observable state the user is left with: no column is hidden.
+        Assert.DoesNotContain(active.HiddenStates, hidden => hidden);
     }
 
     [Fact]

@@ -157,7 +157,9 @@ leaves D4, D5 and D6 intact.
 ### 3.3 `CriticalOverlayHeightRatio` as a configurable ratio token
 
 Not introduced as a user-facing setting. The half-height is derived from the
-parent bar's resolved height, which needs no new token; see §2.5.
+predetermined `ActivityHeightPt` of the `CriticalInterval` preset itself, which
+needs no new token; see §2.5. The parent is never read for geometry at all — it
+governs lane membership and nothing else.
 
 ## 4. No migration work
 
