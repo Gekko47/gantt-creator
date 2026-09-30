@@ -115,7 +115,10 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.Equal(2, table.Range.Rows.Count);
             Assert.NotNull(table.DataBodyRange);
             Assert.Equal(1, table.DataBodyRange.Rows.Count);
-            Assert.Equal(14, table.DataBodyRange.Columns.Count);
+            // Derived from the schema, not hard-coded. R4.7A added SiblingOrder
+            // and the schema grew to 15 columns; a literal here silently went
+            // stale and only the live Office gate caught it.
+            Assert.Equal(GanttTableSchema.Default.Columns.Count, table.DataBodyRange.Columns.Count);
             AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('0').Value);
         }
         finally
@@ -224,8 +227,39 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     private static void AssertRow(Excel.ListRow row, string type, string styleKey, string id)
     {
         Excel.Range range = row.Range;
-        Assert.Equal(id, Convert.ToString(range.Cells[1, 1].Value2, System.Globalization.CultureInfo.InvariantCulture));
-        Assert.Equal(type, Convert.ToString(range.Cells[1, 4].Value2, System.Globalization.CultureInfo.InvariantCulture));
-        Assert.Equal(styleKey, Convert.ToString(range.Cells[1, 9].Value2, System.Globalization.CultureInfo.InvariantCulture));
+
+        // Resolved by COLUMN NAME, never by a literal index. R4.7A inserted
+        // SiblingOrder after ParentId, which moved StyleKey from index 9 to 10
+        // and left this helper reading a blank cell: the assertion compared the
+        // expected style key against null and passed for the wrong reason on
+        // every earlier run. Excel's 1-based Cells indices are offset by the
+        // header row, hence the +1.
+        Assert.Equal(id, ColumnValue(range, "Id", 1));
+        Assert.Equal(type, ColumnValue(range, "Type", 4));
+        Assert.Equal(styleKey, ColumnValue(range, "StyleKey", 10));
+    }
+
+    /// <summary>
+    /// Reads one cell by the column's position in the workbook schema, so a future
+    /// column insertion cannot silently shift what this helper reads.
+    /// </summary>
+    /// <param name="rowRange">The row's range.</param>
+    /// <param name="columnName">The schema column name.</param>
+    /// <param name="expectedIndex">The 1-based Excel index the schema implies, asserted as a cross-check.</param>
+    /// <returns>The cell's text.</returns>
+    private static string ColumnValue(Excel.Range rowRange, string columnName, int expectedIndex)
+    {
+        var index = GanttTableSchema.Default.Columns
+            .Select((column, position) => (column.Name, Position: position))
+            .Single(entry => string.Equals(entry.Name, columnName, StringComparison.Ordinal))
+            .Position;
+
+        // The cross-check is the point: a mismatch here means the workbook and the
+        // schema have diverged, which is a defect rather than a stale literal.
+        Assert.Equal(expectedIndex, index + 1);
+
+        return Convert.ToString(
+            rowRange.Cells[1, index + 1].Value2,
+            System.Globalization.CultureInfo.InvariantCulture);
     }
 }

@@ -80,12 +80,12 @@ public sealed class EntityHierarchyCatalogTests
     }
 
     /// <summary>
-    /// A Critical Interval is both a child of an activity and a parent of another
-    /// Critical Interval. The second half is pre-existing landed behaviour, not a
-    /// new case: a critical interval's child is commonly authored above it, and
-    /// <c>GanttRowValidatorTests</c> pins order-independence for exactly that. An
-    /// initial version of this matrix made CriticalInterval child-only and broke
-    /// that test, which is why both directions are asserted here.
+    /// A Critical Interval is both a child of an activity and a parent, but the
+    /// two are not independent: a Critical Interval may own a child only while it
+    /// is TOP-LEVEL. Once it is a child itself, any child of its own is depth 3
+    /// and the uniform depth check refuses it. This asserts the capability pair
+    /// separately from that depth rule, which
+    /// <c>GanttHierarchyLimitsTests</c> and <c>ProjectionResolverTests</c> own.
     /// </summary>
     [Fact]
     public void Critical_interval_may_be_both_a_child_and_a_parent()

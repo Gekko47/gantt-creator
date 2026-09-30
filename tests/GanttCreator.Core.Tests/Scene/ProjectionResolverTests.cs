@@ -131,11 +131,11 @@ public sealed class ProjectionResolverTests
     }
 
     /// <summary>
-    /// A Critical Interval may parent another Critical Interval while remaining a
-    /// child of an activity. That is landed behaviour, not a new case, so the depth
-    /// rule must not refuse it. The depth test is on the lane owner -- here the
-    /// outer interval, which is itself a child of the activity -- and the inner
-    /// interval still resolves onto the outer one's lane.
+    /// A Critical Interval that is itself a child of an activity cannot own a child
+    /// of its own. The inner interval would be depth 3, and its lane owner (the
+    /// outer interval) is itself a child, so the render lane is ambiguous. This
+    /// refusal is now the same rule the validator applies: the depth check no
+    /// longer exempts Critical Interval children, so the two cannot disagree.
     /// </summary>
     [Fact]
     public void A_critical_interval_child_of_a_critical_interval_refuses_as_too_deep()
@@ -149,11 +149,30 @@ public sealed class ProjectionResolverTests
             Event(3, outerInterval, GanttEntityType.CriticalInterval, activity),
             Event(4, innerInterval, GanttEntityType.CriticalInterval, outerInterval));
 
-        // The inner interval's lane owner (the outer interval) is itself a child, so
-        // the render lane is ambiguous. This is the same rule the validator applies
-        // and the two must not disagree.
         Assert.False(resolution.Succeeded);
         Assert.Equal(ProjectionRefusal.HierarchyTooDeep, resolution.Refusal);
+    }
+
+    /// <summary>
+    /// The boundary the owner's rule leaves intact: a TOP-LEVEL Critical Interval
+    /// may own a child, because the lane owner is a level-1 row and the child is a
+    /// level-2 projection on it. This is the case the depth rule must not
+    /// over-reach into, and it is why <c>EntityHierarchyCatalog</c> still lists
+    /// CriticalInterval among the types that may own children.
+    /// </summary>
+    [Fact]
+    public void A_top_level_critical_interval_projects_its_child_onto_its_own_lane()
+    {
+        GanttRowId interval = NewId();
+        GanttRowId child = NewId();
+
+        ProjectionResolution resolution = Resolve(
+            Event(2, interval, GanttEntityType.CriticalInterval),
+            Event(3, child, parentId: interval));
+
+        EntityProjection projection = Assert.Single(resolution.Projections, p => p.SourceEntityId == child);
+        Assert.Equal(interval, projection.RenderLaneOwnerId);
+        Assert.True(projection.IsProjected);
     }
 
     /// <summary>

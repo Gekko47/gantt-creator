@@ -40,7 +40,7 @@ public sealed class GanttHierarchyLimitsTests
             true,
             null);
 
-    private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string parentId) =>
+    private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string? parentId) =>
         new(
             rowNumber,
             id,
@@ -183,12 +183,15 @@ public sealed class GanttHierarchyLimitsTests
 
     /// <summary>
     /// A Critical Interval parented by an activity, with a Critical Interval child
-    /// of its own, is depth-legal: the critical interval's parent is top-level, so
-    /// the child sits at depth 2. This is the pre-existing landed shape that the
-    /// matrix correction preserved, and the depth check must not break it.
+    /// of its own, is depth 3 and must be refused. The child used to be exempt from
+    /// the depth check on the grounds that the shape was pre-existing landed
+    /// behaviour; the owner has ruled that a Critical Interval is a level-2 child
+    /// and cannot itself own a child, so the exemption is withdrawn. This is the
+    /// test that pins the withdrawn exemption, so a later re-introduction is a
+    /// deliberate contract change rather than a silent regression.
     /// </summary>
     [Fact]
-    public void A_critical_interval_child_of_a_critical_interval_is_depth_legal()
+    public void A_critical_interval_child_of_a_critical_interval_is_too_deep()
     {
         var activityId = NewId();
         var outerIntervalId = NewId();
@@ -198,17 +201,16 @@ public sealed class GanttHierarchyLimitsTests
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([activity, outerInterval, innerInterval]);
 
-        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        Assert.False(outcome.IsValid);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        Assert.Equal(4, issue.RowNumber);
     }
 
     /// <summary>
-    /// The counterpart to the test above, and the reason the depth rule is stated
-    /// in terms of the CHILD's type: a plain span child of a Critical Interval
-    /// parent IS depth 3 and must be refused, even though the critical-interval
-    /// parent is itself a child. The first draft of this check tested the
-    /// parent's state instead, which wrongly allowed this case and wrongly
-    /// refused the legal one above -- the two tests together are what make the
-    /// rule unambiguous.
+    /// A span child of a Critical Interval parent is the same depth-3 case, and is
+    /// refused on the same rule. Together with the test above this shows the depth
+    /// check no longer branches on the child's type at all: the two rows differ
+    /// only in the type of the row being refused, and both are refused.
     /// </summary>
     [Fact]
     public void A_span_child_of_a_critical_interval_is_too_deep()
@@ -222,6 +224,25 @@ public sealed class GanttHierarchyLimitsTests
         Assert.False(outcome.IsValid);
         GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
         Assert.Equal(4, issue.RowNumber);
+    }
+
+    /// <summary>
+    /// The boundary the owner's rule leaves intact: a Critical Interval that is
+    /// itself TOP-LEVEL may own a child, because that is a level-1 parent with a
+    /// level-2 child. This is the case the depth rule must not over-reach into,
+    /// and it is why <c>EntityHierarchyCatalog</c> still lists CriticalInterval
+    /// among the types that may own children.
+    /// </summary>
+    [Fact]
+    public void A_top_level_critical_interval_may_own_a_child()
+    {
+        var intervalId = NewId();
+        GanttRowDto interval = CriticalIntervalRow(2, intervalId, parentId: null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(
+            [interval, Child(3, NewId(), intervalId)]);
+
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
     }
 
     /// <summary>

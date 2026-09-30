@@ -70,6 +70,14 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelPlotAnchorRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelGanttRowIdentityRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelShapeWriter.cs", "Create"),
+        // R4.7D: the two workspace-geometry writers. Both mutate the user's
+        // VISIBLE worksheet -- a row height and an outline level are user-facing
+        // data, not generated content -- so both are data mutations under
+        // ADR-0008 D4 and must consult the guard before their first write. The
+        // outline writer is listed at "Apply", its first mutating member, so the
+        // guard is reached before any outline-level write.
+        new("src/GanttCreator.Office/ExcelRowHeightNormaliser.cs", "Normalise"),
+        new("src/GanttCreator.Office/ExcelOutlineGroupWriter.cs", "Apply"),
     ];
 
     /// <summary>
@@ -146,6 +154,11 @@ public sealed class ProtectionGuardFirstTests
         // classification for the same reason.
         "src/GanttCreator.Office/ShapeReconcilePlan.cs",
         "src/GanttCreator.Office/ShapeReconciler.cs",
+        // R4.7D: the two workspace-geometry ports. These are interface
+        // declarations only -- no interop proxy, no statement, nothing to guard.
+        // Their implementations are the two mutating adapters registered above.
+        "src/GanttCreator.Office/IRowHeightNormalisationPort.cs",
+        "src/GanttCreator.Office/IOutlineGroupPort.cs",
     ];
 
     /// <summary>
@@ -198,6 +211,14 @@ public sealed class ProtectionGuardFirstTests
         "shapes.AddTextbox(",
         "Shapes.BuildFreeform(",
         "shapes.BuildFreeform(",
+        // R4.7D: worksheet row geometry. `RowHeight` and `OutlineLevel` are
+        // user-visible worksheet data, not generated content, so writing either is
+        // a data mutation under ADR-0008 D4. Both are matched as assignments -- a
+        // following `=` makes one a comparison rather than a mutation, exactly as
+        // for `Value2 =`. Without these two patterns the geometry writers would be
+        // auto-classified read-only and would escape the guard ordering silently.
+        ".RowHeight=",
+        ".OutlineLevel=",
     ];
 
     /// <summary>

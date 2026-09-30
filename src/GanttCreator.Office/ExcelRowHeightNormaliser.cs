@@ -1,0 +1,245 @@
+using GanttCreator.Core;
+using Excel = Microsoft.Office.Interop.Excel;
+
+namespace GanttCreator.Office;
+
+/// <summary>Why managed row heights could not be normalised.</summary>
+public enum RowHeightNormalisationRefusalReason
+{
+    /// <summary>The application object or active workbook was absent.</summary>
+    NoActiveWorkbook = 0,
+
+    /// <summary>The Gantt worksheet or its <c>tblGanttData</c> table was missing.</summary>
+    TableMissing = 1,
+
+    /// <summary>The target worksheet is protected.</summary>
+    TargetProtected = 2,
+
+    /// <summary>
+    /// The measured rows could not be turned into a plan: a height was
+    /// non-finite or non-positive, or a row kind was unrecognised. Refused rather
+    /// than defaulted, because a wrong row height is the exact misalignment this
+    /// write exists to remove.
+    /// </summary>
+    InvalidMeasurement = 3,
+}
+
+/// <summary>The typed result of normalising managed row heights.</summary>
+/// <param name="RowsWritten">How many rows had a height written.</param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/> on success.</param>
+public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNormalisationRefusalReason? Refusal)
+{
+    /// <summary>Gets whether normalisation completed.</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Creates a successful outcome.</summary>
+    /// <param name="rowsWritten">How many rows were written.</param>
+    /// <returns>The successful outcome.</returns>
+    public static RowHeightNormalisationOutcome Ok(int rowsWritten) => new(rowsWritten, null);
+
+    /// <summary>Creates a refusal.</summary>
+    /// <param name="refusal">The refusal reason.</param>
+    /// <returns>The refusal outcome.</returns>
+    public static RowHeightNormalisationOutcome Refused(RowHeightNormalisationRefusalReason refusal) =>
+        new(0, refusal);
+}
+
+/// <summary>
+/// Live adapter that restores every managed row of <c>tblGanttData</c> to
+/// <c>GanttRowHeightPt</c>, so the worksheet and the chart cannot disagree about
+/// how tall a row is (R4.7D, ADR-0026 D3/D4).
+/// </summary>
+/// <param name="application">
+/// The Excel application object, or <see langword="null"/> when the host supplied
+/// none. A foreign object fails the interface cast and degrades to the
+/// no-active-workbook refusal with no mutation.
+/// </param>
+/// <param name="protectionGuard">
+/// The protection guard, consulted first per ADR-0008 D4 because this adapter
+/// mutates.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>Why this is the add-in's job.</b> The lane height is the measured row height,
+/// and the measurement is only meaningful once the sheet is uniform. A user who
+/// drags one managed row taller would otherwise change one lane and desynchronise
+/// the chart from the rows being read, so the drag is restored on Initialise, on
+/// hierarchy mutation and on Refresh.
+/// </para>
+/// <para>
+/// <b>Why rows already at the token are skipped.</b> The plan excludes them, so a
+/// correctly normalised sheet produces an empty write set. Writing them anyway
+/// would mark the workbook dirty on every Refresh.
+/// </para>
+/// <para>
+/// <b>COM ownership.</b> The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
+/// <c>ListObject</c> and <c>Range</c> objects reached here are Excel-owned shared
+/// roots. This adapter takes no ownership, never calls
+/// <c>FinalReleaseComObject</c>, and holds every proxy in a local used without
+/// chained member expressions.
+/// </para>
+/// <para>
+/// The <c>internal virtual</c> seams isolate the COM parameterised properties so
+/// contract tests can substitute them; the real <c>RowHeight</c> round-trip is
+/// exercised by the tagged live-Office integration test.
+/// </para>
+/// </remarks>
+public class ExcelRowHeightNormaliser(
+    object? application,
+    IWorksheetProtectionGuard? protectionGuard = null) : IRowHeightNormalisationPort
+{
+    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <inheritdoc />
+    public RowHeightNormalisationOutcome Normalise(double managedHeightPt, double splitterHeightPt, double spacerHeightPt)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.NoActiveWorkbook);
+        }
+
+        if (!TryFindTable(workbook.Sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+            || worksheet is null
+            || table is null)
+        {
+            return RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TableMissing);
+        }
+
+        // First check in a mutating adapter (ADR-0008 D4), before any COM write.
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return RowHeightNormalisationOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? RowHeightNormalisationRefusalReason.NoActiveWorkbook
+                    : RowHeightNormalisationRefusalReason.TargetProtected);
+        }
+
+        Excel.Range? body = GetTableBody(table);
+        if (body is null)
+        {
+            return RowHeightNormalisationOutcome.Ok(0);
+        }
+
+        var rowCount = GetBodyRowCount(body);
+        if (rowCount == 0)
+        {
+            return RowHeightNormalisationOutcome.Ok(0);
+        }
+
+        List<MeasuredRowHeight> measured = [];
+        for (var index = 1; index <= rowCount; index++)
+        {
+            if (GetBodyRowAt(body, index) is not { } row || ToPoints(row.RowHeight) is not { } height)
+            {
+                return RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.InvalidMeasurement);
+            }
+
+            measured.Add(new MeasuredRowHeight(index, height));
+        }
+
+        RowHeightNormalisationPlan? plan = RowHeightNormaliser.Plan(
+            measured,
+            managedHeightPt,
+            splitterHeightPt,
+            spacerHeightPt);
+        if (plan is null)
+        {
+            return RowHeightNormalisationOutcome.Refused(
+                RowHeightNormalisationRefusalReason.InvalidMeasurement);
+        }
+
+        var written = 0;
+        foreach (RowHeightNormalisation decision in plan.Rows)
+        {
+            if (decision.TargetHeightPt is not { } target || GetBodyRowAt(body, decision.RowNumber) is not { } targetRow)
+            {
+                continue;
+            }
+
+            targetRow.RowHeight = target;
+            written++;
+        }
+
+        return RowHeightNormalisationOutcome.Ok(written);
+    }
+
+    /// <summary>Finds the Gantt worksheet and its table. Test seam over the COM collection indexers.</summary>
+    /// <param name="sheets">The workbook's sheet collection.</param>
+    /// <param name="worksheet">The resolved worksheet.</param>
+    /// <param name="table">The resolved table.</param>
+    /// <returns>Whether both were found.</returns>
+    internal virtual bool TryFindTable(
+        Excel.Sheets sheets,
+        out Excel.Worksheet? worksheet,
+        out Excel.ListObject? table)
+    {
+        worksheet = null;
+        table = null;
+        foreach (Excel.Worksheet candidate in sheets)
+        {
+            foreach (Excel.ListObject candidateTable in candidate.ListObjects)
+            {
+                if (string.Equals(candidateTable.Name, "tblGanttData", StringComparison.Ordinal))
+                {
+                    worksheet = candidate;
+                    table = candidateTable;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets a table's data-body range. Test seam over the COM parameterised property.</summary>
+    /// <param name="table">The table.</param>
+    /// <returns>The body range, or <see langword="null"/> when there is no body.</returns>
+    internal virtual Excel.Range? GetTableBody(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        return table.DataBodyRange;
+    }
+
+    /// <summary>Reads the body row count. Test seam over <c>Range.Rows.Count</c>.</summary>
+    /// <param name="body">The body range.</param>
+    /// <returns>The row count.</returns>
+    internal virtual int GetBodyRowCount(Excel.Range body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        Excel.Range? rows = body.Rows;
+        return rows?.Count ?? 0;
+    }
+
+    /// <summary>Reads one body row by its 1-based index. Test seam over <c>Range.Rows.Item</c>.</summary>
+    /// <param name="body">The body range.</param>
+    /// <param name="index">The 1-based row index.</param>
+    /// <returns>The row range, or <see langword="null"/> when the host does not resolve it.</returns>
+    internal virtual Excel.Range? GetBodyRowAt(Excel.Range body, int index)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        return body.Rows is { } rows ? rows[index] : null;
+    }
+
+    /// <summary>
+    /// Converts a host-reported height to points, treating an absent measurement as
+    /// absent rather than as zero.
+    /// </summary>
+    /// <param name="raw">The boxed host value.</param>
+    /// <returns>The points, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// <c>DBNull.Value</c> is refused too, not just <see langword="null"/>: an
+    /// <c>Object</c>-typed Excel member returns it for a range with no single value,
+    /// and converting it would throw an <see cref="InvalidCastException"/> rather
+    /// than the typed refusal this adapter reports.
+    /// </remarks>
+    private static double? ToPoints(object? raw) =>
+        raw is null or DBNull ? null : Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture);
+}

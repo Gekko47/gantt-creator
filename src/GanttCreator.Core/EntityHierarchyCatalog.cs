@@ -30,13 +30,15 @@ namespace GanttCreator.Core;
 /// <para>
 /// <b>Nesting depth.</b> Per the R4.7A guide, multi-level nesting beyond two
 /// levels (a top-level parent, then children) is <b>rejected</b> rather than
-/// supported. <see cref="MaxDepth"/> is the authority for that limit.
-/// <c>CriticalInterval</c> is a child <em>and</em> a parent, but only of another
-/// Critical Interval, so a chain cannot run deeper than the depth limit: a
-/// critical interval's own parent must be a top-level row. The existing
-/// cycle walk in <c>GanttRowValidator</c> terminates at a span parent, and this
-/// classification is what makes that termination correct rather than
-/// incidental.
+/// supported. <see cref="MaxDepth"/> is the authority for that limit, and it is
+/// uniform: a parent that is itself a child puts any child of it at depth 3,
+/// whatever that child's type is. A <c>CriticalInterval</c> is therefore a
+/// level-2 child and cannot itself own a child -- its own parent must be
+/// top-level. This matches the depth check in <c>GanttRowValidator</c> and the
+/// check in <c>EntityProjection</c>, which must agree or one would accept a
+/// hierarchy the other refuses to render. The cycle walk in
+/// <c>GanttRowValidator</c> terminates at a span parent, and this classification
+/// is what makes that termination correct rather than incidental.
 /// </para>
 /// </remarks>
 public static class EntityHierarchyCatalog
@@ -64,14 +66,14 @@ public static class EntityHierarchyCatalog
         GanttEntityType.BaselineProcurement,
         GanttEntityType.CustomActivity,
 
-        // A Critical Interval may itself be the parent of another Critical
-        // Interval. This is pre-existing landed behaviour, not a new case: the
-        // child is commonly authored above its parent, and
-        // GanttRowValidator has an order-independence test for it. An initial
-        // version of this matrix made CriticalInterval child-only, which broke
-        // that test and would have disallowed a hierarchy the product already
-        // supports. It cannot own a NON-critical child, so the depth limit below
-        // still bounds every chain.
+        // A Critical Interval may own a child, but only while it is itself
+        // TOP-LEVEL: a level-1 interval with a level-2 child is within
+        // MaxDepth. Once the interval is a child of an activity, the depth
+        // check refuses any child it might own, because that would be depth 3.
+        // So this entry stays, and the uniform depth rule does the rest --
+        // the capability here is "may own children", not "may always do so at
+        // any depth". A Critical Interval may also own a non-critical child,
+        // which is the same depth-2 case.
         GanttEntityType.CriticalInterval,
     ];
 

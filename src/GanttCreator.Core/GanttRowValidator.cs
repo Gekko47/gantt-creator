@@ -967,16 +967,19 @@ public static class GanttRowValidator
             }
             siblings.Add(i);
 
-            // Depth: a grandchild is refused -- a child of a child. The one
-            // legal exception is a Critical Interval's child, because a critical
-            // interval may parent another critical interval while remaining a
-            // child of an activity. That shape is pre-existing landed behaviour,
-            // and the check must not break it, so the rule is about the CHILD's
-            // type, not the parent's: a critical interval child of a critical
-            // interval sits at depth 2, while a span child of a critical interval
-            // would be depth 3.
+            // Depth: a grandchild is refused -- a child of a child. The rule is
+            // uniform in the child's type: a parent that is itself a child puts
+            // any child of it at depth 3, whichever type that child is. A
+            // Critical Interval used to be exempted here, on the grounds that a
+            // critical interval may parent another critical interval while
+            // remaining a child of an activity. The owner has ruled that
+            // Critical Interval is a level-2 child and cannot itself own a child,
+            // so the exemption is withdrawn (R4.7 reconciliation, 2026-09-29) and
+            // the depth rule now matches MaxDepth, EntityProjection, and the
+            // EntityHierarchyCatalog contract comment, which all already said a
+            // critical interval's own parent must be top-level.
             ValidatedRow? parent = perRow[parentIndex];
-            if (parent?.Event?.ParentId is not null && parsed.Type != GanttEntityType.CriticalInterval)
+            if (parent?.Event?.ParentId is not null)
             {
                 issues.Add(
                     new GanttValidationIssue(
