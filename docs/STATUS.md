@@ -1,3 +1,17 @@
+- **The critical interval is now a parent-independent span, and `Above`/`Below` are gone (this change)** — Three owner rulings of 2026-09-30 landed in `017199f`, with the golden regenerated separately in `806a632`.
+
+  **The silent-vanish bug is the substantive fix.** `SceneBuildRequest.CriticalLinePt` was a defaulted property that nothing populated, so a caller that omitted it passed `0`, `CriticalOverlayBuilder` refused `InvalidGeometry`, and `SceneBuilder` swallowed that as a `CriticalOverlayRefused` warning and `continue`d. The critical interval did not look wrong — it was **absent**, behind a warning no user reads. The field is now deleted rather than merely unused, which makes the failure unrepresentable.
+
+  **The critical interval is an ordinary span.** Its height is half the **predetermined** `ActivityHeightPt`, vertically centred on its own visual slot, and its horizontal bounds come from its **own** Start and Finish, clipped only to the plot. `CriticalOverlayRequest` carries no parent at all, so the interval may be shorter than, equal to, or longer than its parent, and one lying wholly outside its parent is now **drawn** where it used to be deleted. `UnresolvedParent`, `ClippedToParentCode` and `OutsideParentCode` were removed as meaningless. The parent link survives only for **lane membership** via R4.7B projection.
+
+  **The golden proves the second half of that.** It went from one critical primitive to **two**: the fixture's second interval had been silently deleted for falling outside its parent, and removing the clip restored it. That also disproved a claim repeated in two documents — the roadmap and the entity guide header both asserted the snapshot "contains no critical overlay primitive". It did. **Both claims are corrected in place with the reasoning they supported withdrawn.**
+
+  **`Above`/`Below` are removed outright, not merely denied**, so ADR-0029 D6's "reported, never coerced" has nothing to coerce — a stored value now fails to parse and surfaces as `UnknownLabelPosition`. Remaining enum values were renumbered contiguously because the enum is stored by **name**. A milestone boxed in on both sides now **suppresses its label** instead of escaping vertically, which makes unrepresentable the defect two existing tests existed to defend against (a label placed at y = −8, outside the chart). Schema 5 → 6.
+
+  **Text drift corrected in the same change:** entity guide §16 (both the geometry rule and the equivalence row, now stating "do not read the parent"), the span and milestone label-position rows, the retired-token row, the roadmap revision note, and the R4.7E work item, whose D3 is now explicitly marked superseded with the remainder recorded as outstanding.
+
+  Observed: Core **1180/1180**, Office.ContractTests **532/532**, Architecture **84/84**, AddIn **203/203**, Raster **41/41**, Office.IntegrationTests **46/46, exit 0 (7m 7s)**, Release build **0 warnings** with `/warnaserror`. Checklist: B, C, D, G, I, M. **Still open in R4.7E: the `EntityColourCapability.Fill` flip and the matching validator change**, which ADR-0027 D6 requires to land together — the preset fills while the validator still refuses a user `FillColour` override, which is the exact partial state that ADR warns is a defect that looks like a rendering choice.
+
 # Status
 
 > Short factual handoff for human reviewers and for restarting a Cline session.
