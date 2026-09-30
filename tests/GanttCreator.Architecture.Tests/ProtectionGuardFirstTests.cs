@@ -78,6 +78,11 @@ public sealed class ProtectionGuardFirstTests
         // guard is reached before any outline-level write.
         new("src/GanttCreator.Office/ExcelRowHeightNormaliser.cs", "Normalise"),
         new("src/GanttCreator.Office/ExcelOutlineGroupWriter.cs", "Apply"),
+        // R4.7F: the Duration writer mutates the user's VISIBLE worksheet -- the
+        // engine-owned Duration column is user-facing table data, not generated
+        // content -- so it is a data mutation under ADR-0008 D4 and consults the
+        // guard before its single ranged write.
+        new("src/GanttCreator.Office/ExcelDurationWriter.cs", "Write"),
     ];
 
     /// <summary>
@@ -104,6 +109,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
+        "src/GanttCreator.Office/IDurationWritePort.cs",
         "src/GanttCreator.Office/IShapeWritePort.cs",
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",

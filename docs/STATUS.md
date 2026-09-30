@@ -1,3 +1,20 @@
+- **R4.7F is implemented: `Duration` is calculated in Core and written in one bulk pass (this change)** — `DurationCalculator` is pure and Office-free; `ExcelDurationWriter` performs exactly **one** ranged assignment over the `Duration` column, never a per-cell loop.
+
+  **The date MODE decides what is read, not the kind.** A delineator is a structural drawing primitive but still reads `Start` as its single date, so keying off `EntityKind` would have given it a blank while a milestone correctly got the marker. This was the one design decision worth stating explicitly, because the obvious implementation gets it wrong for exactly one of the sixteen types.
+
+  **A milestone shows `-`, a structural row shows blank, and neither shows a count.** Computing `0` for a point entity would assert it is a zero-length span, which is a different claim; a `-` on a `Splitter` would assert a date it does not have. The marker means "this row has a date but no span", so a milestone with a **missing** start is a **refusal**, not a marker — there is nothing to assert.
+
+  **No invalid date ever produces a number.** A `0`, a `-1`, and a stale carry-over from the previous Refresh all read as real, wrong durations in a user's table, so D4 is implemented as a typed refusal plus a **clear**: a row whose dates became invalid has its cell blanked rather than abandoned. Leaving yesterday's number there is precisely the misleading value the decision forbids. `DurationCalculatorTests` asserts this as a positive test.
+
+  **The catalogue hash moved** (`982c1da…` → `b18599b…`, then to the R4.7E value). That guard firing is the mechanism working: `ExcelConfigCatalogueReader` reports the mismatch as an actionable message rather than silently rendering with stale metadata.
+
+  **The architecture test caught the new adapter, which is what it is for.** `ProtectionGuardFirstTests` failed twice on `ExcelDurationWriter.cs` — unclassified, then mutating-without-registration — because the engine-owned `Duration` column is user-facing worksheet data, so the writer is a data mutation under ADR-0008 D4 and must consult the guard before its write. Both registrations are now in place, with the port classified as non-mutating.
+
+  Observed: Core **1213/1213**, Office.ContractTests **539/539**, Architecture **84/84**, AddIn **203/203**, Raster **41/41**, Office.IntegrationTests **46/46, exit 0 (7m 25s)**, Release build **0 warnings** with `/warnaserror`. Checklist: F, C, I. **Still open in R4.7F: R4.7H (`SizePreset`/`PlotGeometryResolver`) is absent, which blocks R4.8A.**
+
+  **The COM leak ratchet is now AT its ceiling: 26 forced kills against a ceiling of 26, up from 25.** It passed by exactly zero margin. This is not introduced by this change — the count moved with a new Office test surface — but the next leak will fail the gate. It needs addressing before R4.9.
+
+
 - **R4.7E is complete — the Critical Interval fill contract is closed (this change)** — `CriticalInterval` now carries `EntityColourCapability.Fill | Stroke`, the validator accepts a user `FillColour` override on it, and the equivalence row asserts the **fill** rather than a stroke/width pair.
 
   **The partial state ADR-0027 D6 warns about is now closed.** It was: the preset fills with `CriticalFill`, the equivalence table and entity guide described a filled rectangle, but `EntityTypeCatalog` still granted `Stroke` only — so the validator refused the user's own `FillColour`. That reads as a rendering choice rather than a defect, which is exactly why D6 requires the catalogue, the validator and the checklist to land together. The validator itself needed no special case: it reads `definition.ColourCapability` generically, so the one-line catalogue flip changes the acceptance path, and the positive test asserts the fill **reaches the event** rather than merely ceasing to be an error.
