@@ -165,6 +165,31 @@ public sealed class ProtectionGuardFirstTests
         // Their implementations are the two mutating adapters registered above.
         "src/GanttCreator.Office/IRowHeightNormalisationPort.cs",
         "src/GanttCreator.Office/IOutlineGroupPort.cs",
+        // R4.8A: the scene-request factory and its port. The factory is a pure
+        // function over events, a settings map, a registry, and a measured grid - it
+        // reads no COM proxy, names no interop type, and mutates nothing - so a
+        // protection consultation would be unreachable code rather than a missing
+        // guard. The protection question for the refresh it feeds is asked by the
+        // orchestrator below, before any write, which is where it belongs: a
+        // read-only collaborator cannot know whether the refresh as a whole may
+        // proceed.
+        "src/GanttCreator.Office/ISceneBuildRequestFactory.cs",
+        "src/GanttCreator.Office/ExcelSceneBuildRequestFactory.cs",
+        // R4.8A: the orchestrator's port and outcome. A pure interface declaration
+        // with no statement and nothing to guard.
+        "src/GanttCreator.Office/IGanttRefreshOrchestrator.cs",
+        // R4.8A: the refresh orchestrator. It DOES drive a refresh that mutates the
+        // visible worksheet, so it is listed here for a precise reason rather than
+        // because it is inert: it holds no COM proxy and performs no direct mutation
+        // itself - every write is delegated to a registered mutating adapter, each of
+        // which consults the guard. Classifying it as a mutating adapter is
+        // impossible, and trying produced a clear "no mutation shape was found in it"
+        // failure, which is this registry working correctly. What the orchestrator
+        // DOES do is consult the guard itself, before the first write, so a protected
+        // sheet is refused once at the boundary rather than being discovered halfway
+        // through - and that behaviour is pinned by
+        // GanttRefreshOrchestratorTests.The_protection_guard_is_consulted_before_any_write.
+        "src/GanttCreator.Office/GanttRefreshOrchestrator.cs",
     ];
 
     /// <summary>
