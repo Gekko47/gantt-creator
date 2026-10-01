@@ -248,7 +248,13 @@ public sealed class GanttRefreshOrchestrator(
             GanttCatalogues.MetricDefault("SpacerHeightPt"));
         if (!heights.Succeeded)
         {
-            return Refuse(GanttRefreshRefusal.RowHeightRefused, "The row heights could not be normalised.");
+            // The Duration column has already been written at this point, so the
+            // outcome reports it rather than claiming nothing was touched.
+            return RefuseAfterWrites(
+                GanttRefreshRefusal.RowHeightRefused,
+                "The row heights could not be normalised.",
+                validation.Issues,
+                duration.CellsWritten);
         }
 
         // Step 9-10. Measure the live panel, then resolve the scene inputs. The
@@ -256,7 +262,11 @@ public sealed class GanttRefreshOrchestrator(
         PanelGridOutcome grid = _panelMeasurement.Measure(ExcelSceneBuildRequestFactory.MeasuredColumns);
         if (!grid.Succeeded)
         {
-            return Refuse(GanttRefreshRefusal.MeasurementRefused, "The worksheet columns could not be measured.");
+            return RefuseAfterWrites(
+                GanttRefreshRefusal.MeasurementRefused,
+                "The worksheet columns could not be measured.",
+                validation.Issues,
+                duration.CellsWritten);
         }
 
         // The style registry comes from the configuration read, not from
@@ -271,25 +281,33 @@ public sealed class GanttRefreshOrchestrator(
             grid.Grid!);
         if (!request.Succeeded)
         {
-            return Refuse(GanttRefreshRefusal.SceneRequestRefused, request.Message!);
+            return RefuseAfterWrites(
+                GanttRefreshRefusal.SceneRequestRefused,
+                request.Message!,
+                validation.Issues,
+                duration.CellsWritten);
         }
 
         // Step 11. Build the scene. A refusal here is still before any shape write.
         SceneBuildOutcome scene = SceneBuilder.TryBuild(request.Request);
         if (!scene.Succeeded)
         {
-            return Refuse(
+            return RefuseAfterWrites(
                 GanttRefreshRefusal.SceneBuildRefused,
-                "The chart could not be composed: " + scene.Refusal + ".");
+                "The chart could not be composed: " + scene.Refusal + ".",
+                validation.Issues,
+                duration.CellsWritten);
         }
 
         // Step 12. Translate the scene into host shape requests.
         SceneTranslationOutcome translated = _renderer.Translate(scene.Result!.Scene);
         if (translated.Refusals.Count > 0)
         {
-            return Refuse(
+            return RefuseAfterWrites(
                 GanttRefreshRefusal.TranslationRefused,
-                translated.Refusals.Count + " chart element(s) could not be drawn, so the chart was not rebuilt.");
+                translated.Refusals.Count + " chart element(s) could not be drawn, so the chart was not rebuilt.",
+                validation.Issues,
+                duration.CellsWritten);
         }
 
         // Step 13. The first and only shape mutation of the whole pipeline. Every
@@ -315,11 +333,14 @@ public sealed class GanttRefreshOrchestrator(
                 "The chart was partly updated before Excel refused a change ("
                     + reconcile.CompletedCount
                     + " element(s) written), so it may show a mixture of the old and new layout. Refresh again to finish.",
-                validation.Issues)
+                validation.Issues,
+                duration.CellsWritten,
+                reconcile.CompletedCount)
             : GanttRefreshOutcome.Refused(
                 GanttRefreshRefusal.ReconciliationRefused,
                 "Excel refused the first chart change, so the existing chart is unchanged.",
-                validation.Issues);
+                validation.Issues,
+                duration.CellsWritten);
     }
 
     /// <summary>
@@ -339,6 +360,35 @@ public sealed class GanttRefreshOrchestrator(
 
     private static GanttRefreshOutcome Refuse(GanttRefreshRefusal refusal, string message) =>
         GanttRefreshOutcome.Refused(refusal, message);
+
+    /// <summary>
+    /// Refuses with the worksheet writes that already landed before this point.
+    /// </summary>
+    /// <param name="refusal">Why the refresh did not complete.</param>
+    /// <param name="message">The explanation shown to the user.</param>
+    /// <param name="issues">The validation issues found.</param>
+    /// <param name="durationCellsWritten">
+    /// How many <c>Duration</c> cells were written before the refusal.
+    /// </param>
+    /// <param name="shapesWritten">How many shape operations ran before the refusal.</param>
+    /// <returns>The refusal outcome, carrying the real counts.</returns>
+    /// <remarks>
+    /// <b>Why the counts cannot stay zero.</b> The class remark promises the caller can
+    /// tell "the chart was not touched" from "the sheet was not touched at all". A
+    /// plain <see cref="GanttRefreshOutcome.Refused"/> hardcodes both counts to zero,
+    /// so a refusal that happened <em>after</em> the Duration write reported that
+    /// nothing had been written when the Duration column had in fact been changed —
+    /// untrue, and the kind of untruth a user hits as a workbook that is dirty for no
+    /// stated reason. Every refusal reached after a mutation therefore reports what it
+    /// actually did.
+    /// </remarks>
+    private static GanttRefreshOutcome RefuseAfterWrites(
+        GanttRefreshRefusal refusal,
+        string message,
+        IReadOnlyList<GanttValidationIssue> issues,
+        int durationCellsWritten,
+        int shapesWritten = 0) =>
+        GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten);
 
     private static string Describe(GanttTableReadRefusalReason refusal) =>
         refusal switch

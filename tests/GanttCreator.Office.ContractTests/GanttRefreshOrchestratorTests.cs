@@ -131,6 +131,102 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// A refusal reached after the Duration write reports the write, rather than
+    /// claiming nothing was touched.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the discarded counts.</b>
+    /// <c>GanttRefreshOutcome.Refused</c> hardcoded both counts to zero, so a refusal
+    /// after the Duration column had been changed reported "0 duration cells written"
+    /// — untrue, and the kind of untruth a user meets as a workbook that is dirty for
+    /// no stated reason.
+    /// </para>
+    /// <para>
+    /// The measurement is injected rather than inferred: the fake duration writer
+    /// reports a known count, so the assertion is that the orchestrator <em>passed it
+    /// through</em>, not that it happened to match something.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refusal_after_the_duration_write_reports_what_it_wrote()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.DurationCellsWritten = 3;
+
+        // Refuse at a step that runs AFTER the Duration write.
+        fakes.FactoryRefused = true;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.SceneRequestRefused, outcome.Refusal);
+        Assert.Equal(3, outcome.DurationCellsWritten);
+    }
+
+    /// <summary>
+    /// A refusal before any worksheet write still reports zero, so the widened
+    /// property is not simply always-true.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the test above. Without it, an implementation that reported
+    /// a phantom write count on every refusal would satisfy the positive case and the
+    /// count would carry no information.
+    /// </remarks>
+    [Fact]
+    public void A_refusal_before_any_write_reports_zero_writes()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.TableReadRefused = true;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(0, outcome.DurationCellsWritten);
+        Assert.Equal(0, outcome.ShapesWritten);
+        Assert.False(outcome.LeftPartiallyApplied);
+    }
+
+    /// <summary>
+    /// A refusal that wrote something reports the sheet as partly applied, even when
+    /// no shape moved.
+    /// </summary>
+    /// <remarks>
+    /// <c>LeftPartiallyApplied</c> previously named only
+    /// <c>PartialReconciliation</c>, so it said "no" here while the user's Duration
+    /// column had genuinely changed. Stating it on the counts makes the property an
+    /// observable fact rather than an enum comparison.
+    /// </remarks>
+    [Fact]
+    public void A_refusal_that_wrote_the_duration_column_is_partly_applied()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.DurationCellsWritten = 2;
+        fakes.FactoryRefused = true;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.True(outcome.LeftPartiallyApplied);
+    }
+
+    /// <summary>
+    /// A successful refresh reports the same duration count it would have on a
+    /// refusal, so the two paths cannot drift apart.
+    /// </summary>
+    [Fact]
+    public void A_successful_refresh_reports_its_duration_writes()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.DurationCellsWritten = 5;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(5, outcome.DurationCellsWritten);
+    }
+
+    /// <summary>
     /// D2: the steps run in the fixed order the work item names, with the shape
     /// reconciliation last.
     /// </summary>

@@ -112,10 +112,25 @@ public sealed record GanttRefreshOutcome(
 
     /// <summary>
     /// Gets whether the sheet was left in a partly-applied state that the user must
-    /// know about, which is <see cref="GanttRefreshRefusal.PartialReconciliation"/>
-    /// and nothing else.
+    /// know about.
     /// </summary>
-    public bool LeftPartiallyApplied => Refusal == GanttRefreshRefusal.PartialReconciliation;
+    /// <remarks>
+    /// <para>
+    /// This is <see cref="GanttRefreshRefusal.PartialReconciliation"/> <em>or</em> any
+    /// refusal reached after a worksheet write landed. It previously named only
+    /// <c>PartialReconciliation</c>, which understated the second case: a refusal
+    /// after the Duration write left the user's Duration column changed even though no
+    /// shape had been touched, and this property said the sheet was clean.
+    /// </para>
+    /// <para>
+    /// The test is stated on the counts rather than on the refusal member, because the
+    /// counts are the observable fact — they cannot be true while nothing was written.
+    /// </para>
+    /// </remarks>
+    public bool LeftPartiallyApplied =>
+        Refusal == GanttRefreshRefusal.PartialReconciliation
+        || ShapesWritten > 0
+        || DurationCellsWritten > 0;
 
     /// <summary>Creates a successful outcome.</summary>
     /// <param name="issues">The validation issues found, warnings included.</param>
@@ -131,12 +146,29 @@ public sealed record GanttRefreshOutcome(
     /// <param name="refusal">Why the refresh did not complete.</param>
     /// <param name="message">The explanation shown to the user.</param>
     /// <param name="issues">The validation issues found, which may be empty.</param>
+    /// <param name="durationCellsWritten">
+    /// How many <c>Duration</c> cells were written before the refusal. Zero is correct
+    /// only for a refusal reached before any worksheet write.
+    /// </param>
+    /// <param name="shapesWritten">How many shape operations ran before the refusal.</param>
     /// <returns>The refusal outcome.</returns>
+    /// <remarks>
+    /// The counts used to be hardcoded to zero, which made the class's own promise —
+    /// that a caller can tell "the chart was not touched" from "the sheet was not
+    /// touched at all" — false for every refusal after the Duration write. A caller now
+    /// passes what actually happened.
+    /// </remarks>
     public static GanttRefreshOutcome Refused(
         GanttRefreshRefusal refusal,
         string message,
-        IReadOnlyList<GanttValidationIssue>? issues = null) =>
-        new(refusal, message, issues ?? [], 0, 0);
+        IReadOnlyList<GanttValidationIssue>? issues = null,
+        int durationCellsWritten = 0,
+        int shapesWritten = 0) =>
+        // NOTE: the record's positional order is (ShapesWritten, DurationCellsWritten),
+        // which is the REVERSE of this method's parameter order. Named arguments are
+        // used deliberately: passing them positionally swapped the two counts, which
+        // is exactly the class of defect this method was widened to fix.
+        new(refusal, message, issues ?? [], ShapesWritten: shapesWritten, DurationCellsWritten: durationCellsWritten);
 }
 
 /// <summary>

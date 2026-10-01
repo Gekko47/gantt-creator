@@ -48,6 +48,17 @@ internal sealed class RefreshFakes
     /// <summary>Whether the duration write refuses.</summary>
     public bool DurationRefused { get; set; }
 
+    /// <summary>
+    /// How many Duration cells the fake writer reports as written.
+    /// </summary>
+    /// <remarks>
+    /// Settable so a test can assert that the orchestrator passes the writer's own
+    /// count through to the outcome. Deriving it from the plan instead would make an
+    /// assertion about pass-through indistinguishable from an assertion about the
+    /// planner.
+    /// </remarks>
+    public int DurationCellsWritten { get; set; }
+
     /// <summary>Whether the outline write refuses.</summary>
     public bool OutlineRefused { get; set; }
 
@@ -232,7 +243,11 @@ internal sealed class RefreshFakes
             owner.Steps.Add("Duration");
             return owner.DurationRefused
                 ? DurationWriteOutcome.Refused(DurationWriteRefusalReason.WriteFailed)
-                : DurationWriteOutcome.Ok(plan.WriteCount, plan.WriteCount);
+
+                // CellsWritten is the orchestrator-reported count (first parameter);
+                // writeCount is the planner's own. Injected so a test can prove the
+                // orchestrator passes the former through.
+                : DurationWriteOutcome.Ok(owner.DurationCellsWritten, plan.WriteCount);
         }
     }
 
