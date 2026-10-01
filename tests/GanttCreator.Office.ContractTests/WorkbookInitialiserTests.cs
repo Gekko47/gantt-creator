@@ -22,32 +22,28 @@ namespace GanttCreator.Office.ContractTests;
 public class WorkbookInitialiserTests
 {
     /// <summary>
-    /// The expected plot-anchor <c>refersTo</c>, derived from the schema rather
-    /// than pinned to a letter. The anchor sits one column right of the table's
-    /// last column, so R4.7A's <c>SiblingOrder</c> correctly moved it from
-    /// <c>$O$1</c> to <c>$P$1</c>; a pinned letter would have failed without
-    /// saying why, and would have failed again on the next column.
+    /// <summary>
+    /// The expected plot-anchor <c>refersTo</c>, taken from
+    /// <see cref="GanttSheetLayout"/> — the same authority the production code uses.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This helper used to restate the anchor itself, deriving the column from the
+    /// schema and hardcoding the <c>$1</c> row. That made it a <b>fourth</b> copy of
+    /// the anchor rule alongside the initialiser, the integrity checker, and the
+    /// repairer — the arrangement R4.7I slice 1 D1 exists to dissolve.
+    /// </para>
+    /// <para>
+    /// It also had two live bugs of its own. The column was right but the row was
+    /// not: ADR-0030's reserved row moves the header to row 2, and this helper still
+    /// expected row 1, so it failed with a Moq message naming an anchor the product
+    /// never writes. And its column conversion was a third <c>ToA1Column</c> clone.
+    /// Deriving the expectation from the authority means this test can only fail when
+    /// the <em>layout</em> is wrong, which is the thing it exists to catch.
+    /// </para>
+    /// </remarks>
     private static string ExpectedPlotAnchorRefersTo()
-    {
-        int anchorColumnIndex = GanttTableSchema.Default.Columns.Count + 1;
-        return $"='{GanttWorkbookContract.GanttSheetLabel}'!${ColumnLetter(anchorColumnIndex)}$1";
-    }
-
-    /// <summary>Converts a one-based Excel column index to its letters.</summary>
-    private static string ColumnLetter(int oneBasedIndex)
-    {
-        var letters = string.Empty;
-        var remaining = oneBasedIndex;
-        while (remaining > 0)
-        {
-            int index = (remaining - 1) % 26;
-            letters = (char)('A' + index) + letters;
-            remaining = (remaining - 1) / 26;
-        }
-
-        return letters;
-    }
+        => GanttSheetLayout.BuildPlotAnchorRefersTo(GanttWorkbookContract.GanttSheetLabel);
 
     /// <summary>
     /// One mocked worksheet: its name (getter backed by a field the setter
@@ -915,8 +911,9 @@ public class WorkbookInitialiserTests
 
         _ = graph.Build(active).Initialise();
 
-        // 14 schema columns → the anchor is column 15 = "O"; the name is
-        // sheet-scoped and refers to the post-rename label.
+        // The anchor is one column past the table's last column and sits on the HEADER
+        // row, which ADR-0030's reserved row moved to row 2. Both facts come from
+        // GanttSheetLayout, so this asserts the layout rather than restating it.
         active.VerifyAnchorName(ExpectedPlotAnchorRefersTo(), Times.Once());
     }
 

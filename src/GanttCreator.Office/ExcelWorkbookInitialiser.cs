@@ -914,48 +914,10 @@ public class ExcelWorkbookInitialiser(
     /// <param name="target">The Gantt worksheet.</param>
     private static void WritePlotAnchorName(Worksheet target)
     {
-        var anchorColumnIndex = GanttTableSchema.Default.Columns.Count + 1;
         Names names = target.Names;
         _ = names.Add(
             GanttWorkbookContract.PlotAnchorDefinedName,
-            BuildAnchorRefersTo(target.Name, anchorColumnIndex));
-    }
-
-    /// <summary>
-    /// Builds the <c>refersTo</c> string for the plot anchor:
-    /// <c>='&lt;escaped sheet name&gt;'!$&lt;column&gt;$1</c> in invariant
-    /// culture. Sheet names may contain apostrophes, so each is doubled
-    /// inside the quoted reference.
-    /// </summary>
-    /// <param name="sheetName">The final label of the Gantt worksheet.</param>
-    /// <param name="anchorColumnIndex">The one-based anchor column index.</param>
-    /// <returns>The <c>refersTo</c> string.</returns>
-    private static string BuildAnchorRefersTo(string sheetName, int anchorColumnIndex)
-    {
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"='{escaped}'!${ToA1Column(anchorColumnIndex)}$1");
-    }
-
-    /// <summary>
-    /// Converts a one-based column index to its A1-style letter sequence
-    /// (1 → A, 26 → Z, 27 → AA), culture-invariant.
-    /// </summary>
-    /// <param name="columnIndex">The one-based column index.</param>
-    /// <returns>The A1-style column letters.</returns>
-    private static string ToA1Column(int columnIndex)
-    {
-        System.Text.StringBuilder builder = new();
-        var remaining = columnIndex;
-        while (remaining > 0)
-        {
-            var digit = (remaining - 1) % 26;
-            _ = builder.Insert(0, (char)('A' + digit));
-            remaining = (remaining - 1) / 26;
-        }
-
-        return builder.ToString();
+            GanttSheetLayout.BuildPlotAnchorRefersTo(target.Name));
     }
 
     /// <summary>
@@ -1005,7 +967,7 @@ public class ExcelWorkbookInitialiser(
     /// <param name="columnCount">The header column count.</param>
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
-        => target.Cells[1, 1].Resize[1, columnCount];
+        => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM

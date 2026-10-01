@@ -66,7 +66,7 @@ public class ExcelConfigIntegrityChecker(
             && ganttTable is not null;
         if (ganttFound)
         {
-            var expectedAnchor = BuildPlotAnchorRefersTo(gantt!.Name, ganttTable!);
+            var expectedAnchor = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt!.Name);
             Excel.Names sheetNames = gantt.Names;
             Excel.Name? anchor = FindName(sheetNames, GanttWorkbookContract.PlotAnchorDefinedName);
             if (anchor is null || !string.Equals(anchor.RefersTo, expectedAnchor, StringComparison.Ordinal))
@@ -163,27 +163,6 @@ public class ExcelConfigIntegrityChecker(
         }
 
         return false;
-    }
-
-    private static string BuildPlotAnchorRefersTo(string sheetName, Excel.ListObject table)
-    {
-        var columnIndex = table.ListColumns.Count + 1;
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
-        return $"='{escaped}'!${ToA1Column(columnIndex)}$1";
-    }
-
-    private static string ToA1Column(int columnIndex)
-    {
-        var builder = new System.Text.StringBuilder();
-        var remaining = columnIndex;
-        while (remaining > 0)
-        {
-            var digit = (remaining - 1) % 26;
-            _ = builder.Insert(0, (char)('A' + digit));
-            remaining = (remaining - 1) / 26;
-        }
-
-        return builder.ToString();
     }
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)

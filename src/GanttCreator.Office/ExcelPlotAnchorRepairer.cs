@@ -37,7 +37,7 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
         try
         {
             Excel.Names names = gantt.Names;
-            var refersTo = BuildRefersTo(gantt.Name, table.ListColumns.Count + 1);
+            var refersTo = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt.Name);
             Excel.Name? existing = FindName(names, GanttWorkbookContract.PlotAnchorDefinedName);
             if (existing is null)
             {
@@ -101,26 +101,6 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
         }
 
         return null;
-    }
-
-    private static string BuildRefersTo(string sheetName, int columnIndex)
-    {
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
-        return $"='{escaped}'!${ToA1Column(columnIndex)}$1";
-    }
-
-    private static string ToA1Column(int columnIndex)
-    {
-        var builder = new System.Text.StringBuilder();
-        var remaining = columnIndex;
-        while (remaining > 0)
-        {
-            var digit = (remaining - 1) % 26;
-            _ = builder.Insert(0, (char)('A' + digit));
-            remaining = (remaining - 1) / 26;
-        }
-
-        return builder.ToString();
     }
 
     internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
