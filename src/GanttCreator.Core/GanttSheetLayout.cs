@@ -90,6 +90,62 @@ public static class GanttSheetLayout
     public static int TitleRowIndex => ReservedRowIndex;
 
     /// <summary>
+    /// Gets the one-based worksheet column the table title starts in: the first
+    /// AUTHORING column.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why the title is not in column A.</b> Columns A-C are
+    /// <see cref="GanttColumnAccess.EngineHidden"/> bookkeeping
+    /// (<c>Id</c>/<c>LaneId</c>/<c>StackIndex</c>). They are hidden but they still
+    /// occupy worksheet positions, so a title written to column A would sit above
+    /// columns the user cannot see and would appear to start over the middle of the
+    /// table. The owner asked for D2:H2, which is exactly the visible span: the first
+    /// authoring column through the last visible one.
+    /// </remarks>
+    public static int TitleStartColumnIndex
+    {
+        get
+        {
+            IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+            for (var i = 0; i < columns.Count; i++)
+            {
+                if (columns[i].Access != GanttColumnAccess.EngineHidden)
+                {
+                    return i + 1;
+                }
+            }
+
+            throw new InvalidOperationException("The table schema has no user-visible column to title.");
+        }
+    }
+
+    /// <summary>
+    /// Gets the one-based worksheet column the table title ends in: the last
+    /// user-visible column.
+    /// </summary>
+    public static int TitleEndColumnIndex
+    {
+        get
+        {
+            IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+            for (var i = columns.Count - 1; i >= 0; i--)
+            {
+                if (columns[i].Access != GanttColumnAccess.EngineHidden)
+                {
+                    return i + 1;
+                }
+            }
+
+            throw new InvalidOperationException("The table schema has no user-visible column to title.");
+        }
+    }
+
+    /// <summary>
+    /// Gets how many worksheet columns the table title spans.
+    /// </summary>
+    public static int TitleColumnSpan => TitleEndColumnIndex - TitleStartColumnIndex + 1;
+
+    /// <summary>
     /// Gets the one-based worksheet row of the bottom padding row: the row directly
     /// below the last activity row.
     /// </summary>
@@ -142,6 +198,29 @@ public static class GanttSheetLayout
         return string.Create(
             System.Globalization.CultureInfo.InvariantCulture,
             $"='{escaped}'!${ToA1Column(PlotAnchorColumnIndex)}${HeaderRowIndex}");
+    }
+
+    /// <summary>
+    /// Builds a one-based column/row pair's A1 cell reference, for example
+    /// <c>(4, 2)</c> becomes <c>D2</c>.
+    /// </summary>
+    /// <param name="columnIndex">The one-based column index.</param>
+    /// <param name="rowIndex">The one-based row index.</param>
+    /// <returns>The A1 reference.</returns>
+    /// <remarks>
+    /// <b>Why the title test needs this.</b> The owner asked for the title in
+    /// <c>D2:H2</c>. Writing that expectation as two string literals would pass even
+    /// if the layout's own column derivation were wrong, because both the code and
+    /// the test would be reading the same hand-typed letters. Deriving the reference
+    /// from the same indices the layout publishes makes the test check the derivation
+    /// instead of restating it.
+    /// </remarks>
+    public static string ToA1Cell(int columnIndex, int rowIndex)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(rowIndex, 1);
+        return string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{ToA1Column(columnIndex)}{rowIndex}");
     }
 
     /// <summary>

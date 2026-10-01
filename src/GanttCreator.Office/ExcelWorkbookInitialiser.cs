@@ -679,8 +679,12 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void RollBackTitleRow(Worksheet target)
     {
-        Excel.Range titleCell = GetTitleCell(target);
-        titleCell.ClearContents();
+        // The whole SPAN is cleared, not just its top-left cell. Clearing one cell
+        // would leave a title behind if a write had partially succeeded across the
+        // range, and the rollback exists precisely for the case where the sheet was
+        // already touched (ADR-0032 D1).
+        Excel.Range titleRange = GetTitleRange(target);
+        titleRange.ClearContents();
     }
 
     /// <summary>
@@ -975,8 +979,16 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void WriteTitleRow(Worksheet target, string chartTitle)
     {
-        Excel.Range titleCell = GetTitleCell(target);
-        titleCell.Value2 = chartTitle;
+        // The value is assigned to the RANGE, not to a sub-range's first cell. Excel
+        // resolves a range assignment to that range's top-left cell, so D2:H2 receives
+        // the title in D2 and the text reads as one heading across the visible columns
+        // because E2:H2 are empty. Reaching into the range's own one-based cell
+        // indexer would express the same intent, but it is precisely the hardcoded
+        // addressing SheetLayoutAuthorityTests forbids -- and it would need a COM
+        // indexer member on the test double that exists only to satisfy the test
+        // (ADR-0032 D1).
+        Excel.Range titleRange = GetTitleRange(target);
+        titleRange.Value2 = chartTitle;
     }
 
     /// <summary>
@@ -1042,14 +1054,26 @@ public class ExcelWorkbookInitialiser(
         => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
 
     /// <summary>
-    /// Returns the cell holding the table title, in the reserved row above the
-    /// header. Test seam over the COM parameterised <c>Range.Item</c> property,
-    /// mirroring <see cref="GetHeaderRange"/>.
+    /// Returns the range holding the table title, in the reserved row above the
+    /// header, spanning the user-visible columns (D2:H2). Test seam over the COM
+    /// parameterised <c>Range.Item</c> property, mirroring
+    /// <see cref="GetHeaderRange"/>.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    /// <returns>The single-cell range for the title.</returns>
-    internal virtual Excel.Range GetTitleCell(Worksheet target)
-        => target.Cells[GanttSheetLayout.ReservedRowIndex, 1];
+    /// <returns>The one-row range for the title.</returns>
+    /// <remarks>
+    /// <b>The span is a RANGE, not one cell (ADR-0032 D1).</b> The title used to be
+    /// written to column A, which is an engine-hidden bookkeeping column: it is
+    /// invisible, so the title appeared to float over the middle of the table rather
+    /// than to head it. Writing across D2:H2 puts it over the columns the user
+    /// actually reads. The row and the column span both come from
+    /// <see cref="GanttSheetLayout"/>, so this seam cannot disagree with the layout
+    /// authority about where the title lives.
+    /// </remarks>
+    internal virtual Excel.Range GetTitleRange(Worksheet target) =>
+        target
+            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleStartColumnIndex]
+            .Resize[1, GanttSheetLayout.TitleColumnSpan];
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM

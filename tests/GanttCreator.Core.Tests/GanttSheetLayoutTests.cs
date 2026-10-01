@@ -38,6 +38,34 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
+    /// The title spans D2:H2 - the user-VISIBLE columns, starting past the hidden
+    /// engine columns (ADR-0032 D1).
+    /// </summary>
+    /// <remarks>
+    /// <b>Why the literal letters are not used.</b> Columns A-C are
+    /// <c>EngineHidden</c> bookkeeping. They are hidden but still occupy worksheet
+    /// positions, so a title written to column A appears above columns the user
+    /// cannot see. The expectation is written as the SCHEMA's visible span and the
+    /// A1 reference is derived from it, so a schema that adds or reorders columns
+    /// moves this test rather than silently leaving the title over hidden columns.
+    /// </remarks>
+    [Fact]
+    public void The_title_spans_the_visible_columns_on_the_title_row()
+    {
+        Assert.Equal(4, GanttSheetLayout.TitleStartColumnIndex);
+        Assert.Equal(8, GanttSheetLayout.TitleEndColumnIndex);
+        Assert.Equal(5, GanttSheetLayout.TitleColumnSpan);
+
+        // The derived reference is the owner's D2:H2 exactly.
+        Assert.Equal("D2", GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleStartColumnIndex, GanttSheetLayout.TitleRowIndex));
+        Assert.Equal("H2", GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleEndColumnIndex, GanttSheetLayout.TitleRowIndex));
+
+        // It starts AFTER the engine columns, which is the whole point: a title in
+        // column A would sit over hidden bookkeeping.
+        Assert.True(GanttSheetLayout.TitleStartColumnIndex > 1);
+    }
+
+    /// <summary>
     /// The bottom padding row is the row directly below the last activity row, and
     /// it is derived from the body length rather than fixed.
     /// </summary>

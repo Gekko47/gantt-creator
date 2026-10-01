@@ -32,6 +32,26 @@ public class GanttConfigCatalogueTests
         Assert.Equal(23, GanttCatalogues.Metrics.Count);
 
     [Fact]
+    public void The_padding_row_default_matches_the_chrome_margin_it_replaced()
+    {
+        // ADR-0031 D2: the padding ROWS exist to replace the 6pt sub-row sliver of
+        // chart chrome with something the user can see. They must therefore be the
+        // SAME height as the margin they replaced -- a taller default would be a
+        // second, unrequested change to how much breathing room the chart has,
+        // wearing the costume of a structural one. The owner corrected an 18pt
+        // default to 6pt on exactly this point.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"));
+
+        // A zero is still legal, so the margin can be collapsed entirely: the token's
+        // minimum is 0 rather than some positive floor.
+        GanttMetricToken padding = GanttCatalogues.Metrics
+            .First(token => token.Name == "ChartPaddingRowHeightPt");
+        Assert.Equal(0d, padding.Minimum);
+    }
+
+    [Fact]
     public void Colours_contains_exactly_the_22_entity_guide_tokens() =>
         // R4.7C added CriticalFill (ADR-0027 D2), taking 21 to 22.
         Assert.Equal(22, GanttCatalogues.Colours.Count);
@@ -602,7 +622,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "c8a1aaeb4c38b3e0fd377ee9778d2ecf79ab76b20cbcc1c34b65a244579f890f";
+        "4976ef571985937aaa8549a04fa1de5bbda6dcda7ca0f2d0e176231833de2ab0";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

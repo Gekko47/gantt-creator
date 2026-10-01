@@ -128,12 +128,18 @@ public static class GanttCatalogues
         new("ChartOuterPaddingPt", 6, 0, 36),
 
         // ADR-0031 D2: the height of the worksheet rows that form the chart's top
-        // and bottom margins. It is a separate token from YearBandHeightPt because
-        // it is a different thing -- a band is drawn content, this is empty
-        // breathing room -- and because a user who wants a taller margin should not
-        // have to resize the year header to get it. The minimum is 0 so a user can
-        // collapse the margin entirely if they want the chart flush to the grid.
-        new("ChartPaddingRowHeightPt", 18, 0, 72),
+        // and bottom margins. It defaults to the SAME 6pt the ChartOuterPaddingPt
+        // chrome used, at the owner's request: the row exists to replace that
+        // sub-row sliver with something the user can see, not to change how much
+        // breathing room the chart has. Making it taller would be a second,
+        // unrequested change to the margin's size wearing the costume of a
+        // structural one.
+        //
+        // It is a separate token from YearBandHeightPt because it is a different
+        // thing - a band is drawn content, this is empty margin - and because a
+        // user who wants a taller margin should not have to resize the year header
+        // to get it. The minimum is 0 so the margin can be collapsed entirely.
+        new("ChartPaddingRowHeightPt", 6, 0, 72),
         new("TitleBandHeightPt", 24, 12, 72),
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),

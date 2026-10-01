@@ -420,7 +420,7 @@ public class WorkbookInitialiserTests
         internal override Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
             => HeaderRangeAt(target);
 
-        internal override Excel.Range GetTitleCell(Excel.Worksheet target)
+        internal override Excel.Range GetTitleRange(Excel.Worksheet target)
             => TitleCellAt(target);
 
         internal override string GetUsedRangeAddress(Excel.Range usedRange)
