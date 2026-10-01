@@ -27,7 +27,7 @@
 > | R4.7C | **Landed** | workbook presentation; took the schema 4 → 5 |
 > | R4.7D | **Landed** | row geometry and outline groups; Office gate 46/46; golden regenerated |
 > | R4.7E | **Complete** | critical interval as a parent-independent filled rectangle; golden regenerated (`806a632`) |
-> | R4.7F | **Implemented** | derived `Duration`; Office gate green |
+> | R4.7F | **Implemented** | derived `Duration`; Office gate **not run**, so the row is not complete |
 > | R4.7G | **Landed** | horizontal-only label positions; took the schema 5 → 6 |
 > | R4.7H | **Implemented** | `SizePreset` and the single `PlotGeometryResolver` |
 > | **R4.8A** | **Next** | Refresh orchestration — the last row before R4.9 |

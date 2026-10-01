@@ -203,8 +203,10 @@ capability flip did not move it" is.
 
 Expected golden regenerations across the whole pre-R4.9 sequence: **three** — R4.7B,
 R4.7D, and R4.7E's geometry change. Each requires human review and a stated
-reason, and each ships in the same commit as its code change, per R3.17's recorded
-D3 precedent.
+reason, and each ships **in its own dedicated commit**, per `AGENTS.md`'s golden
+policy (`4278a49`, `4c29675`, `806a632`). R3.17's recorded D3 bundled a
+regeneration with its code change instead; that wording is superseded here, and
+the roadmap's revision-10 text carries the same correction.
 
 ## 6. Roadmap rows this register drives
 

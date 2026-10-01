@@ -13,7 +13,7 @@
 > | §12 — Row Styling | Accepted; unchanged. |
 > | §15 — label positions | **Changed.** `Above`/`Below` removed (as REV6 also requires); delineator corners retained. |
 > | §16 — bounded `HostShapeKey` | **Rejected.** R4.7's L18 refusal stands. |
-> | §16 — `CriticalOverlayHeightRatio = 0.5` | Not a configurable token; derived from the parent bar's resolved height. |
+> | §16 — `CriticalOverlayHeightRatio = 0.5` | Not a configurable token. The Critical Interval's height is **half the predetermined `ActivityHeightPt`**, centred on **its own visual slot**; the parent bar determines **lane membership only** and is never read for geometry. |
 > | §17, §18 — work packages | Rebuilt as roadmap rows R4.7A-R4.7E and R4.8A; see [`03-ROADMAP.md`](03-ROADMAP.md) revision 10. |
 >
 > Everything in this document not listed above stands as written.
