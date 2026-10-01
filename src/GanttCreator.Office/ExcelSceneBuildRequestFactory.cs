@@ -55,6 +55,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the size preset.</summary>
     private const string _sizePresetKey = "SizePreset";
 
+    /// <summary>
+    /// The approved event-date display format setting key (ADR-0016).
+    /// </summary>
+    private const string _dateFormatKey = "DateDisplayFormat";
+
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
@@ -420,7 +425,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         out GanttDateDisplayFormat dateFormat)
     {
         dateFormat = GanttDateDisplayFormat.DdMMyyyy;
-        var text = ReadString(settings, "DateFormat");
+        // The catalogue key is "DateDisplayFormat" (ADR-0016). This previously read
+        // "DateFormat", which is not a key the settings table can ever contain, so the
+        // lookup always missed and every chart fell back to DdMMyyyy — the approved
+        // setting was unreachable in production while its test injected the key
+        // directly and passed.
+        var text = ReadString(settings, _dateFormatKey);
 
         // Same reason as TryParseScale: the short-circuit is the point.
 #pragma warning disable IDE0046

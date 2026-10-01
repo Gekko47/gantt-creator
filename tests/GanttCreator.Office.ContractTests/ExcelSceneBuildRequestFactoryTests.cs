@@ -140,7 +140,18 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.Contains("A4Portrait", outcome.Message!, StringComparison.Ordinal);
     }
 
-    /// <summary>A known preset key is honoured.</summary>
+    /// <summary>
+    /// A known preset key is honoured <em>when the factory is handed one</em>.
+    /// </summary>
+    /// <remarks>
+    /// The name used to read "a known preset key is honoured", which overstated it. This
+    /// test injects the key into a hand-built dictionary, so it proves the factory
+    /// parses a preset it is <em>given</em> — it does not prove the workbook can give it
+    /// one, and today it cannot: <c>SizePreset</c> is absent from
+    /// <c>GanttCatalogues.Settings</c>, so <c>ValidateSettings</c> never returns it. See
+    /// <see cref="The_size_preset_keys_are_still_absent_from_the_catalogue"/> for that
+    /// gap, which needs a schema bump and is tracked separately.
+    /// </remarks>
     [Theory]
     [InlineData("A4Portrait")]
     [InlineData("A4Landscape")]
@@ -369,6 +380,94 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.False(GanttCatalogues.IsMetricToken("NoSuchTokenPt"));
         Assert.False(GanttCatalogues.IsMetricToken(null));
         Assert.True(GanttCatalogues.IsMetricToken("TitleBandHeightPt"));
+    }
+
+    /// <summary>
+    /// Every setting key the factory reads is a key the configuration reader can
+    /// actually return.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the key-name mismatches.</b> The
+    /// factory read <c>"DateFormat"</c> while the catalogue key is
+    /// <c>DateDisplayFormat</c>, and read <c>"DelineatorStackGapPt"</c> while the
+    /// metric token is <c>StackGapPt</c>. Both lookups always missed. Their tests
+    /// passed because each injected the key straight into a hand-built dictionary,
+    /// so the suite proved the factory honours a key it was handed — never that the
+    /// workbook can hand it one.
+    /// </para>
+    /// <para>
+    /// Asserting against <see cref="GanttCatalogues.Settings"/> closes that gap: a key
+    /// that is not in the approved set is now a failing test rather than a silently
+    /// dead branch. The <c>SizePreset</c> and <c>RangePaddingDays</c> keys are
+    /// currently <em>absent</em> from that set, which is a known gap recorded in
+    /// STATUS.md and pending a schema bump — they are therefore not asserted here,
+    /// and instead named explicitly below so the gap stays visible.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_setting_key_the_factory_reads_exists_in_the_catalogue()
+    {
+        HashSet<string> approved = new(
+            GanttCatalogues.Settings.Select(static setting => setting.Key),
+            StringComparer.Ordinal);
+
+        // The keys the factory reads as *settings*. Each was read by literal string in
+        // the pre-fix code; DateFormat is listed because it is the name the factory
+        // used and the catalogue does NOT carry it, so this assertion is what turns
+        // the rename into a test failure rather than a silent behaviour change.
+        string[] read =
+        [
+            "ChartTitle",
+            "AlternateBanding",
+            "ShowMinorGrid",
+            "ShowMajorGrid",
+            "TimeScale",
+            "PeriodLabelFormat",
+            "DateDisplayFormat",
+        ];
+
+        foreach (string key in read)
+        {
+            Assert.True(
+                approved.Contains(key),
+                $"The factory reads setting '{key}', which the catalogue does not define.");
+        }
+
+        // The retired spelling must be gone, or the guard above would still pass on a
+        // rename that left the old name in place as a second, dead read.
+        Assert.DoesNotContain("DateFormat", approved);
+    }
+
+    /// <summary>
+    /// Records the two keys R4.7H introduced that the settings catalogue does not yet
+    /// carry, so the gap is asserted rather than remembered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>SizePreset</c> and <c>RangePaddingDays</c> are read by the factory but are
+    /// not in <c>GanttCatalogues.Settings</c>, so <c>ValidateSettings</c> cannot return
+    /// them and both always fall back. R4.7H's size presets are therefore unreachable
+    /// in production while <c>A_known_preset_key_is_honoured</c> passes on an injected
+    /// dictionary.
+    /// </para>
+    /// <para>
+    /// Adding either key changes the <c>tblGanttSettings</c> key/value contract, which
+    /// <see cref="GanttSchemaVersion"/> requires a version bump for — so this is
+    /// deliberately <b>not</b> fixed in the same change as the renames. The test
+    /// asserts the gap still exists, and its failure message names the consequence,
+    /// so closing it cannot be forgotten and cannot happen silently.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_size_preset_keys_are_still_absent_from_the_catalogue()
+    {
+        HashSet<string> approved = new(
+            GanttCatalogues.Settings.Select(static setting => setting.Key),
+            StringComparer.Ordinal);
+
+        Assert.DoesNotContain("SizePreset", approved);
+        Assert.DoesNotContain("RangePaddingDays", approved);
     }
 
     /// <summary>A null collaborator is refused rather than dereferenced.</summary>
