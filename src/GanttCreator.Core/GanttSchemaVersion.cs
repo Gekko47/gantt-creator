@@ -22,14 +22,25 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 7 for the two settings keys added by the R4
-    /// QA review (owner ruling 2026-10-01).
+    /// monotonically, and is currently 8 for the reserved title row and the
+    /// header-row move (owner ruling 2026-10-01, ADR-0030 D4/D5).
     /// </summary>
     /// <remarks>
     /// <para>
     /// ADR-0029 D5 requires the bump to be the <em>last</em> change in the row's
     /// commit sequence: every other change lands first, so the integrity checker
     /// — not a manual review — is what notices a partial landing.
+    /// </para>
+    /// <para>
+    /// <b>Version 8 moves the table down one row.</b> The reserved row above
+    /// <c>tblGanttData</c> carries the table title and the year band, so the header
+    /// row moves from worksheet row 1 to row 2 and the plot anchor moves with it.
+    /// A version-7 workbook reports a mismatch rather than being adjusted, because
+    /// the anchor repair writes the <em>expected</em> address — on a version-7
+    /// workbook that would point the anchor at row 2 while the header is still on
+    /// row 1, producing a workbook that passes its own integrity check and is
+    /// wrong. There is no migration (ADR-0029 D6); the remedy is Initialise, which
+    /// <c>SchemaVersionMismatchMessage</c> already tells the user to run.
     /// </para>
     /// <para>
     /// Version 5 was R4.7C (the <c>Duration</c> column, column classification,
@@ -50,5 +61,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
 }

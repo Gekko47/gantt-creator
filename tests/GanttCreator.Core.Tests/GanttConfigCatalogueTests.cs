@@ -578,10 +578,19 @@ public class GanttConfigCatalogueTests
     /// carries the older hash, which <c>ExcelConfigCatalogueReader</c> reports
     /// as an actionable mismatch rather than silently rendering a Critical
     /// Interval the validator would now accept a fill for.
+    /// Advanced again to 8 by R4.7I: the reserved title row moves
+    /// <c>tblGanttData</c>'s header from worksheet row 1 to row 2 and moves the
+    /// plot anchor with it (ADR-0030 D4/D5). The hash includes the schema
+    /// version by design (<c>ComputeCatalogueHash</c> seeds its canonical
+    /// serialisation with it), so a version bump MUST move this pin. That is the
+    /// pin doing its job rather than drifting: a workbook written at version 7
+    /// carries the old hash and is reported as a mismatch, which is what stops
+    /// the anchor repair from "fixing" a version-7 anchor onto row 2 while its
+    /// header is still on row 1.
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "bcc3f102370ee56dd01080ff8a6ba04c00714ddc7e0f8186e7ee77066ed55fac";
+        "58f41362026fc8c7be4298ce80f7bc332a7bb9209c32c6a9ae9451116f6b20b1";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

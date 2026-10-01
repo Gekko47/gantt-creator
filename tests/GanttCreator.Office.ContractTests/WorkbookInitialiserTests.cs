@@ -55,6 +55,9 @@ public class WorkbookInitialiserTests
     {
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
         public Mock<Excel.Range> HeaderRange { get; } = new();
+
+        /// <summary>The reserved title cell, captured separately (ADR-0030 D4).</summary>
+        public Mock<Excel.Range> TitleCell { get; } = new();
         public Mock<Excel.Range> UsedRange { get; } = new();
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
@@ -118,6 +121,9 @@ public class WorkbookInitialiserTests
         public Mock<Excel.QueryTables> QueryTables { get; } = new();
         public Mock<Excel.Hyperlinks> Hyperlinks { get; } = new();
         public List<object> WrittenValues { get; } = new();
+
+        /// <summary>Values written to the reserved title cell, in write order.</summary>
+        public List<object> TitleWrites { get; } = [];
         public List<string> AssignedTableNames { get; } = new();
         public List<Excel.XlSheetVisibility> VisibleValues { get; } = new();
         public List<bool> AutoFilterSettings { get; } = new();
@@ -170,6 +176,12 @@ public class WorkbookInitialiserTests
 
             _ = HeaderRange.SetupSet(r => r.Value2 = It.IsAny<object>())
                 .Callback<object>(value => WrittenValues.Add(value));
+
+            // The title is a CELL, not a shape (ADR-0030 D6), so it is asserted on its
+            // own range rather than through the header's capture list. Sharing the
+            // header range here would let a title write pass as a header write.
+            _ = TitleCell.SetupSet(c => c.Value2 = It.IsAny<object>())
+                .Callback<object>(value => TitleWrites.Add(value));
 
             _ = Worksheet.SetupSet(w => w.Visible = It.IsAny<Excel.XlSheetVisibility>())
                 .Callback<Excel.XlSheetVisibility>(value => VisibleValues.Add(value));
@@ -349,6 +361,7 @@ public class WorkbookInitialiserTests
             Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
             Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
             Func<Excel.Worksheet, Excel.Range> headerRangeAt,
+            Func<Excel.Worksheet, Excel.Range> titleCellAt,
             Func<Excel.Range, string> usedRangeAddressAt,
             Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter,
@@ -358,6 +371,7 @@ public class WorkbookInitialiserTests
             SheetAt = sheetAt;
             TableAt = tableAt;
             HeaderRangeAt = headerRangeAt;
+            TitleCellAt = titleCellAt;
             UsedRangeAddressAt = usedRangeAddressAt;
             PivotTableCountAt = pivotTableCountAt;
         }
@@ -390,6 +404,10 @@ public class WorkbookInitialiserTests
         private Func<Excel.ListObject, Excel.ListColumns> ListColumnsAt { get; set; } =
             _ => throw new InvalidOperationException("ListColumns seam was not wired.");
 
+        /// <summary>Seam over the reserved title cell (ADR-0030 D4).</summary>
+        private Func<Excel.Worksheet, Excel.Range> TitleCellAt { get; set; } =
+            _ => throw new InvalidOperationException("GetTitleCell seam was not wired.");
+
         private Func<Excel.ListColumns, int, Excel.ListColumn> ColumnAt { get; set; } =
             (_, _) => throw new InvalidOperationException("GetColumnAt seam was not wired.");
 
@@ -401,6 +419,9 @@ public class WorkbookInitialiserTests
 
         internal override Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
             => HeaderRangeAt(target);
+
+        internal override Excel.Range GetTitleCell(Excel.Worksheet target)
+            => TitleCellAt(target);
 
         internal override string GetUsedRangeAddress(Excel.Range usedRange)
             => UsedRangeAddressAt(usedRange);
@@ -522,6 +543,9 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                titleCellAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -579,6 +603,9 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                titleCellAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -862,6 +889,90 @@ public class WorkbookInitialiserTests
             WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
             outcome);
         active.VerifyAnchorName(null, Times.Never());
+    }
+
+    /// <summary>
+    /// The table title is written into the reserved row ABOVE the header, as a cell
+    /// value rather than a drawn shape (ADR-0030 D4/D6).
+    /// </summary>
+    /// <remarks>
+    /// The title comes from the <c>ChartTitle</c> setting rather than a local
+    /// literal, so the cell and the export composition's title entity cannot name
+    /// different charts. The assertion is against the settings catalogue, not the
+    /// literal <c>"Gantt Chart"</c>, so retuning the default does not require editing
+    /// this test.
+    /// </remarks>
+    [Fact]
+    public void Initialise_writes_the_title_into_the_reserved_row()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        var outcome = graph.Build(active).Initialise();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(
+            GanttCatalogues.SettingDefault("ChartTitle"),
+            Assert.Single(active.TitleWrites));
+    }
+
+    /// <summary>
+    /// The title write is a CELL, not part of the header's value assignment.
+    /// </summary>
+    /// <remarks>
+    /// <b>The counterweight for the test above.</b> If both wrote through the same
+    /// range, a title write could pass as a header write and this suite would assert
+    /// the header twice while never proving the title cell is distinct. It also pins
+    /// that the title does not disturb the header's single <c>object[,]</c> payload.
+    /// </remarks>
+    [Fact]
+    public void The_title_write_does_not_contaminate_the_header_payload()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        // The header still carries exactly one rectangular payload, and the title is
+        // not among the header's writes.
+        Assert.Single(active.WrittenValues);
+        Assert.Single(active.TitleWrites);
+        Assert.DoesNotContain(active.WrittenValues, value => value is string);
+    }
+
+    /// <summary>
+    /// A refused Initialise clears the title cell it had written, so the sheet is
+    /// left as it was found.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the rollback path.</b> The reserved row is written to,
+    /// never structurally inserted, so the only thing a refusal can leave behind is
+    /// the title cell. Leaving it would mean a command that reported "refused" had
+    /// still authored content on the user's sheet — the zero-mutation guarantee the
+    /// refusals promise.
+    /// </remarks>
+    [Fact]
+    public void A_catalogue_refusal_clears_the_title_cell_it_wrote()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.Write())
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.False(outcome.Succeeded);
+
+        // The title WAS written, and the rollback cleared it.
+        Assert.Single(active.TitleWrites);
+        active.TitleCell.Verify(c => c.ClearContents(), Times.Once);
     }
 
     [Fact]

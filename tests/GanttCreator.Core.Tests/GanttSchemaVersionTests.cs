@@ -4,8 +4,18 @@ namespace GanttCreator.Core.Tests;
 
 public class GanttSchemaVersionTests
 {
+    /// <summary>
+    /// The schema version is the current one, and each bump is named with the row
+    /// that took it.
+    /// </summary>
+    /// <remarks>
+    /// The name of this test used to say "version six" while asserting 7, which is
+    /// the kind of stale title that survives because nothing checks it. It now
+    /// describes what it pins rather than repeating a number that lives in the
+    /// comment below.
+    /// </remarks>
     [Fact]
-    public void Current_schema_version_is_the_current_version_six()
+    public void Current_schema_version_is_the_current_version()
     {
         // Schema v2 added the nonblank title/default and PeriodLabelFormat contract (ADR-0014).
         // Schema v3 adds the DateDisplayFormat contract (ADR-0016).
@@ -16,7 +26,9 @@ public class GanttSchemaVersionTests
         // is the signal it compares against.
         // Schema v5 adds the Duration column, the column classification, the
         // GanttRowHeightPt rename, the retired CriticalLinePt, and CriticalFill.
-        Assert.Equal(7, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v8 is R4.7I: the reserved title row moves the header from row 1 to
+        // row 2 and the plot anchor with it (ADR-0030 D4/D5).
+        Assert.Equal(8, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

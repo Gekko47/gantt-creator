@@ -436,6 +436,40 @@ public static class GanttCatalogues
     }
 
     /// <summary>
+    /// Returns the code-owned default for a settings key, or <see langword="null"/>
+    /// when the key is not in the approved set.
+    /// </summary>
+    /// <param name="key">The settings key, for example <c>ChartTitle</c>.</param>
+    /// <returns>The key's default value, or <see langword="null"/> when unknown.</returns>
+    /// <remarks>
+    /// <b>Why this exists (ADR-0030 D6).</b> Initialise writes the table title cell
+    /// from the stored <c>ChartTitle</c> setting. Restating the title as a literal at
+    /// the write site would make it a second authority that could disagree with the
+    /// settings table and with the export composition's title entity — the same defect
+    /// class as the three plot-anchor copies slice 1 just removed.
+    /// <para>
+    /// It returns <see langword="null"/> rather than throwing, because
+    /// the Office initialiser needs a <em>fallback</em>: a workbook whose
+    /// settings table has not been read yet still gets a sensible title. A caller
+    /// that requires the key to exist should say so at its own call site rather than
+    /// have this accessor decide by throwing.
+    /// </para>
+    /// </remarks>
+    public static string? SettingDefault(string key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        foreach (GanttSettingDefinition setting in Settings)
+        {
+            if (string.Equals(setting.Key, key, StringComparison.Ordinal))
+            {
+                return setting.DefaultValue;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Reports whether a name is a metric token, without throwing.
     /// </summary>
     /// <param name="tokenName">The candidate token name.</param>
