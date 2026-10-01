@@ -50,7 +50,8 @@ public sealed class GanttRefreshOrchestrator(
     IRowHeightNormalisationPort rowHeightNormaliser,
     IOutlineGroupPort outlineWriter,
     ISceneBuildRequestFactory requestFactory,
-    IShapeWritePort shapeWriter)
+    IShapeWritePort shapeWriter,
+    IApplicationStateScope? stateScope = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -63,12 +64,47 @@ public sealed class GanttRefreshOrchestrator(
     private readonly ISceneBuildRequestFactory _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
     private readonly IShapeWritePort _shapeWriter = shapeWriter ?? throw new ArgumentNullException(nameof(shapeWriter));
 
+    /// <summary>
+    /// The application-state scope, or <see langword="null"/> for the no-op scope.
+    /// </summary>
+    /// <remarks>
+    /// Optional rather than required, so a caller with no Excel application — and a
+    /// test that is not about restoration — does not have to construct one.
+    /// </remarks>
+    private readonly IApplicationStateScope? _stateScope = stateScope;
+
     /// <summary>The scene-to-shape renderer, held as a field so a test can observe
     /// that the orchestrator owns the translation step rather than a caller.</summary>
     private readonly SceneShapeRenderer _renderer = new(ChartOriginDelta.Identity);
 
     /// <inheritdoc />
     public GanttRefreshOutcome Refresh()
+    {
+        // D8: the five application settings and the selection are captured and
+        // restored on EVERY path, success or failure, by the ADR-0020 scope. A
+        // refresh turns off screen updating and events for speed and then adds
+        // hundreds of shapes; if it refused half way, the user would be left with
+        // events disabled and a status bar still carrying our text, with no way to
+        // tell that anything is wrong. The `using` is what makes that guarantee
+        // total: every return below runs Dispose, so there is no path that can
+        // skip the restore.
+        using IApplicationStateScope scope = _stateScope ?? NullApplicationStateScope.Instance;
+
+        scope.SuppressScreenUpdating();
+        scope.SuppressEvents();
+        scope.SuppressAlerts();
+        scope.SuppressStatusBar();
+        scope.SetStatusBarText("Rendering the Gantt chart…");
+        scope.CaptureSelection();
+
+        return RunRefresh();
+    }
+
+    /// <summary>
+    /// The pipeline itself, with the application state already suppressed.
+    /// </summary>
+    /// <returns>The typed outcome.</returns>
+    private GanttRefreshOutcome RunRefresh()
     {
         // Step 1-2. Read the user's rows and the engine's configuration. Both are
         // read-only, so a refusal here has mutated nothing at all.

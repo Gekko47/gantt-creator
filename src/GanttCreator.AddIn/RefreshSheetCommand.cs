@@ -1,3 +1,4 @@
+using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
@@ -82,6 +83,12 @@ internal static class RefreshSheetCommand
     /// Ribbon, and a static initialiser. Each adapter is the one already landed for
     /// its own row; this method invents no behaviour.
     /// </remarks>
+    // CA2000: the scope is handed to the orchestrator, which OWNS it and disposes it
+    // in a `using` on every path (R4.8A D8). The analyzer cannot see ownership
+    // transfer through a constructor, so the disposal it asks for here would be a
+    // second, redundant one - and a scope disposed before the refresh ran would
+    // restore nothing, which is the opposite of what is wanted.
+#pragma warning disable CA2000
     private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application) =>
         new(
             new ExcelGanttTableReader(application),
@@ -91,6 +98,19 @@ internal static class RefreshSheetCommand
             new ExcelDurationWriter(application),
             new ExcelRowHeightNormaliser(application),
             new ExcelOutlineGroupWriter(application),
-            new ExcelSceneBuildRequestFactory(),
-            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)));
+
+            // The text-metrics seam is a real host dependency: Core never measures,
+            // so something must. Until the host supplies a font-backed implementation
+            // this is Core's deterministic one, which makes the composed chart
+            // identical on every run rather than dependent on the machine's installed
+            // fonts. R5.6a owns replacing it.
+            new ExcelSceneBuildRequestFactory(new FakeTextMetrics()),
+            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
+
+            // ADR-0020's five-setting scope. It is a single object owned by the
+            // orchestrator, which disposes it on every path; constructing one per
+            // operation would capture-and-restore the same setting several times and
+            // restore the wrong value.
+            new ExcelApplicationStateScope(application));
+#pragma warning restore CA2000
 }

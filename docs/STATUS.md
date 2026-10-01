@@ -44,6 +44,18 @@
 
   Observed: Core **1269/1269**, Office.ContractTests **598/598** (567 + 31), AddIn **210/210** (203 + 7), Architecture **100/100** (95 + 5), Release `/warnaserror` **0 warnings / 0 errors**, `dotnet format` at the **63-issue pre-existing baseline** (53 `WHITESPACE` + 10 `FINALNEWLINE`) with **none in any file added or changed here**, `git diff --check` clean. **No golden or fixture changed.** Checklist: B, I, J, K. **Office integration gate: Not run** — the row's required live Refresh on a representative construction-delay workbook is outstanding, and no Office-hosted behaviour is claimed here.
 
+- **R4.9 is wired, and it exposed a gap in my own R4.8A work: D8 was never implemented** — the row is now complete except for its live Office gate, and the honest finding is the one in the middle of it.
+
+  **D8 (the ADR-0020 application-state scope) was missing from the orchestrator I had just committed.** A refresh suppresses screen updating and events for speed and then adds hundreds of shapes; a refusal part-way would have left the user with events disabled and a status bar still carrying our text, with nothing on screen to say so. `IApplicationStateScope` is now a port so the guarantee stays testable without a host, `ExcelApplicationStateScope` implements it, and the orchestrator opens and disposes it in a `using` — so **every** return path restores, and the restore is asserted on the success path *and* on two refusal paths.
+
+  **The `Refresh chart` button is pinned in four places, because that is what the contract requires.** `RibbonControlIds`, the enabled-state truth table, the shipped `Ribbon.xml`, and the RibbonX tests. **The guard did its job**: adding the button to the XML immediately failed the RibbonX pin, which is exactly the failure a new control should produce. `OnRefreshSheetClick` routes across the single `CommandBoundary` and refreshes the ribbon state, mirroring Validate rather than inventing a second path.
+
+  **The button lives in the "Gantt Creator" group, not the "Data" group.** Rendering the chart is not a data operation, and the empty group was already there waiting for it.
+
+  **A gate note worth carrying forward, second time this session:** `dotnet build -c Release -warnaserror` passed while `verify-quick`'s production-only format gate found IDE0022 findings. A green compiler gate is still not sufficient evidence.
+
+  Observed: AddIn **212/212** (210 + 2), Office.ContractTests **601/601**, Core **1269/1269**, Architecture **100/100**, Release `/warnaserror` **0 warnings / 0 errors**, production `dotnet format --exclude tests` **clean**, `check-status.ps1` OK, `git diff --check` clean. Checklist: E, G, I, J. **Office integration gate: Not run** — Validate and Refresh have not been exercised on a live valid and invalid workbook, and no Office-hosted behaviour is claimed.
+
 - **Review pass: six defects fixed across the R4.7 area, with the documentation brought back in line (previous commit `2f27cc8`)** — every finding below was verified against the source before acting, and each fix ships the regression test that proves it.
 
   **Three were real behavioural defects, not documentation drift.**

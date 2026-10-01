@@ -67,7 +67,7 @@ internal sealed record ApplicationStateCapture<T>(T OriginalValue, Action<T> Res
 /// a logging failure must never mask the restore.
 /// </param>
 public class ExcelApplicationStateScope(object? application, Action<string>? technicalRecord = null)
-    : IDisposable
+    : IApplicationStateScope
 {
     private readonly List<Action> _restores = [];
     private readonly Excel.Application? _application = application as Excel.Application;

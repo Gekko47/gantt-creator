@@ -309,6 +309,86 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttRefreshRefusal.NoActiveWorkbook, outcome.Refusal);
     }
 
+    /// <summary>A scope that records the calls a refresh makes against it.</summary>
+    private sealed class RecordingScope : IApplicationStateScope
+    {
+        /// <summary>The operations performed, in order.</summary>
+        public List<string> Calls { get; } = [];
+
+        public void SuppressScreenUpdating() => Calls.Add("Screen");
+
+        public void SuppressEvents() => Calls.Add("Events");
+
+        public void SuppressAlerts() => Calls.Add("Alerts");
+
+        public void SuppressStatusBar() => Calls.Add("StatusBar");
+
+        public void SetStatusBarText(string? text) => Calls.Add("Text:" + text);
+
+        public void CaptureSelection() => Calls.Add("Capture");
+
+        public void Dispose() => Calls.Add("Dispose");
+    }
+
+    /// <summary>
+    /// D8: the application state is suppressed and restored on the success path.
+    /// </summary>
+    [Fact]
+    public void The_application_state_is_suppressed_and_restored_on_success()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        // The orchestrator disposes the scope; the test owns it only to inspect the
+        // recorded calls, so it is disposed here too rather than left to the analyzer.
+        using RecordingScope scope = new();
+        GanttRefreshOrchestrator withScope = fakes.BuildOrchestrator(scope);
+
+        GanttRefreshOutcome outcome = withScope.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        // Every setting suppressed, the selection captured, and the scope disposed —
+        // which is what restores. `using` is the guarantee: there is no return path
+        // in the pipeline that can skip it.
+        Assert.Equal("Screen", scope.Calls[0]);
+        Assert.Contains("Events", scope.Calls);
+        Assert.Contains("Alerts", scope.Calls);
+        Assert.Contains("StatusBar", scope.Calls);
+        Assert.Contains("Capture", scope.Calls);
+        Assert.Equal("Dispose", scope.Calls[^1]);
+    }
+
+    /// <summary>
+    /// D8 again, on the failure path: a refusal must still restore the state.
+    /// </summary>
+    /// <remarks>
+    /// This is the row that matters. A refresh that refused with events left disabled
+    /// and the status bar still carrying our text would leave the user's Excel in a
+    /// subtly broken state with nothing on screen to explain it.
+    /// </remarks>
+    [Theory]
+    [InlineData("table", GanttRefreshRefusal.TableMissing)]
+    [InlineData("factory", GanttRefreshRefusal.SceneRequestRefused)]
+    public void The_application_state_is_restored_on_a_refusal_too(string failure, GanttRefreshRefusal expected)
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        // The orchestrator disposes the scope; the test owns it only to inspect the
+        // recorded calls, so it is disposed here too rather than left to the analyzer.
+        using RecordingScope scope = new();
+        if (failure == "table")
+        {
+            fakes.TableReadRefused = true;
+        }
+        else
+        {
+            fakes.FactoryRefused = true;
+        }
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator(scope).Refresh();
+
+        Assert.Equal(expected, outcome.Refusal);
+        Assert.Equal("Dispose", scope.Calls[^1]);
+    }
+
     /// <summary>Null collaborators are refused at construction, not at first use.</summary>
     [Fact]
     public void A_null_collaborator_is_refused_at_construction()

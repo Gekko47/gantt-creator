@@ -190,6 +190,13 @@ public sealed class ProtectionGuardFirstTests
         // through - and that behaviour is pinned by
         // GanttRefreshOrchestratorTests.The_protection_guard_is_consulted_before_any_write.
         "src/GanttCreator.Office/GanttRefreshOrchestrator.cs",
+        // R4.8A D8: the application-state scope port. An interface declaration plus
+        // its no-op implementation - no COM proxy, no statement that mutates
+        // anything, and no host call. The SETTING it manipulates is restored, not
+        // changed on the user's behalf: the scope exists precisely so a command
+        // cannot leave a setting altered, which is the opposite of a data mutation
+        // and therefore not a guard candidate.
+        "src/GanttCreator.Office/IApplicationStateScope.cs",
     ];
 
     /// <summary>

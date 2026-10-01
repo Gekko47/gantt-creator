@@ -98,6 +98,22 @@ internal sealed class RefreshFakes
             Factory,
             Shapes);
 
+    /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
+    /// <param name="scope">The scope to record against.</param>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestrator(IApplicationStateScope scope) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            scope);
+
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
         public GanttTableReadOutcome Read()
