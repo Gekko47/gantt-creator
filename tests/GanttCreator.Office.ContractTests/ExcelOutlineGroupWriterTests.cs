@@ -139,6 +139,69 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// The span is resolved through <c>Worksheet.Rows</c>, never through
+    /// <c>Worksheet.Range</c>. This is the regression guard for the live
+    /// <c>0x800A03EC</c> "Unable to set the OutlineLevel property of the Range
+    /// class" failure that aborted every Refresh.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two accessors return ranges of identical shape — a live Excel 16.0
+    /// probe reports both <c>Range["5:7"]</c> and <c>Rows["5:7"]</c> as
+    /// <c>$5:$7</c>, 3 rows by 16384 columns — so a shape assertion cannot tell
+    /// them apart and would have passed against the broken accessor. The
+    /// discriminator is which collection the range came from, which is what this
+    /// test pins: <c>Range</c> is configured to throw, so any regression to that
+    /// accessor fails here instead of in the field.
+    /// </para>
+    /// <para>
+    /// <c>OutlineLevel</c> on a <c>Worksheet.Range</c>-sourced range was measured
+    /// failing with <c>COMException 0x800A03EC</c> on an unprotected sheet, both
+    /// inside and outside a <c>ListObject</c>, for one row and for many, in the
+    /// group and ungroup directions; the same range with <c>.EntireRow</c> applied
+    /// succeeded. <c>Worksheet.Rows</c> accepted every one of those writes.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_span_is_resolved_through_Rows_and_never_through_Range()
+    {
+        var worksheet = new Mock<Excel.Worksheet>(MockBehavior.Strict);
+        var expected = new Mock<Excel.Range>().Object;
+
+        // Only Rows[...] is permitted. A strict mock makes any other COM call --
+        // including Worksheet.Range[...] -- fail the test rather than pass silently.
+        _ = worksheet
+            .Setup(w => w.Rows[ExcelOutlineGroupWriter.RowSpanAddress(5, 7)])
+            .Returns(expected);
+
+        var writer = new ExcelOutlineGroupWriter(null);
+
+        Excel.Range? resolved = writer.GetRowsRange(worksheet.Object, 5, 7);
+
+        Assert.Same(expected, resolved);
+        worksheet.VerifyAll();
+    }
+
+    /// <summary>
+    /// The resolved span names the requested rows, so switching accessor did not
+    /// quietly change which rows are written.
+    /// </summary>
+    [Fact]
+    public void The_resolved_row_span_passes_the_requested_bounds_through()
+    {
+        var worksheet = new Mock<Excel.Worksheet>(MockBehavior.Strict);
+        var expected = new Mock<Excel.Range>().Object;
+        _ = worksheet
+            .Setup(w => w.Rows[ExcelOutlineGroupWriter.RowSpanAddress(12, 14)])
+            .Returns(expected);
+
+        var writer = new ExcelOutlineGroupWriter(null);
+
+        Assert.Same(expected, writer.GetRowsRange(worksheet.Object, 12, 14));
+        worksheet.VerifyAll();
+    }
+
+    /// <summary>
     /// A parent with two contiguous children writes exactly one range at the child
     /// outline level. The parent row is excluded, which is what keeps the
     /// <c>-</c>/<c>+</c> control on the parent rather than consuming it.

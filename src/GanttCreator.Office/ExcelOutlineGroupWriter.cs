@@ -213,21 +213,22 @@ public class ExcelOutlineGroupWriter(
     /// <returns>Whether the host accepted the write.</returns>
     /// <remarks>
     /// <b>Why the outline level is written rather than <c>Group</c> being
-    /// called.</b> The row-outlining form of <c>Group</c> is reached through the
-    /// <c>Rows</c> collection, which this PIA surfaces as a plain
-    /// <see cref="Excel.Range"/>; the only <c>Group</c> on that type is the
-    /// PivotTable signature <c>(Start, End, By, Periods)</c>, verified by
-    /// reflection over the installed <c>Microsoft.Office.Interop.Excel</c>
-    /// 14.0.1 assembly. Calling it positionally would send the level as a
-    /// PivotTable start value rather than as an outline level.
-    /// <c>Range.OutlineLevel</c> is a read/write <c>Object</c> on the same type
-    /// (also verified by reflection), and setting it to 2 on a contiguous row
-    /// range is the same operation the row-outlining <c>Group</c> performs, with no
-    /// overload ambiguity. If a future interop package restores the row-outlining
-    /// overload, this is the one place to revisit.
+    /// called.</b> Reflection over the installed
+    /// <c>Microsoft.Office.Interop.Excel</c> 16.0.0 (<c>ExcelDna.Interop</c>
+    /// 16.0.0) shows <see cref="Excel.Range"/> exposing <c>OutlineLevel</c> as a
+    /// read/write <see cref="object"/> property with no index parameters, and
+    /// carrying exactly one <c>Group</c>: the four-argument
+    /// <c>(Object, Object, Object, Object)</c> form, which is the PivotTable
+    /// signature rather than a row-outlining one. Calling it positionally would
+    /// send the outline level as a PivotTable start value, so the level is written
+    /// directly instead — the available row-outlining operation, with no overload
+    /// ambiguity to risk. If a future interop package restores the row-outlining
+    /// <c>Group</c> overload, this is the one place to revisit.
     /// <para>
     /// Only the child rows are touched, so the parent's own level and the group's
-    /// collapsed/expanded state are preserved.
+    /// collapsed/expanded state are preserved. A live probe confirmed a group
+    /// written this way collapses under <c>Outline.ShowLevels(1, 1)</c> and that a
+    /// collapsed group can still be reset to level 1.
     /// </para>
     /// </remarks>
     private bool Group(Excel.Worksheet worksheet, int firstWorksheetRow, int firstChildBodyRow, int lastChildBodyRow) =>
@@ -332,29 +333,37 @@ public class ExcelOutlineGroupWriter(
     /// <returns>The range, or <see langword="null"/> when the host does not resolve it.</returns>
     /// <remarks>
     /// <para>
-    /// The span is selected by its whole-row A1 address (<c>"5:7"</c>), which spans
-    /// every column of those rows. The previous form used the two-argument
-    /// <c>Rows</c> indexer, and reflection over the installed
-    /// <c>Microsoft.Office.Interop.Excel</c> 14.0.1 shows that indexer is
-    /// <c>Item(RowIndex, ColumnIndex)</c> -- a single cell at
-    /// <c>(firstRow, lastRow)</c>, not the rows between them. Every
-    /// <c>WriteOutlineLevel</c> therefore reached exactly one cell, so a group of
-    /// several children outlined a single cell and every other row in the group kept
-    /// whatever level it already had.
+    /// The span is named by its whole-row A1 address (<c>"5:7"</c>), which spans
+    /// every column of those rows, and it is resolved through the <c>Rows</c>
+    /// collection rather than through <c>Worksheet.Range</c>. Both were measured
+    /// against a live Excel 16.0 host; see <c>GetRowsRange</c>'s accessor note.
     /// </para>
     /// <para>
-    /// The whole row span is written rather than one cell per row because
-    /// <c>OutlineLevel</c> is a row property: one write across the span is both
-    /// correct and cheaper than N row writes. This PIA exposes no four-argument
-    /// <c>Cells</c> indexer (verified by reflection: <c>Range</c> carries only the
-    /// two-argument <c>Item</c>), so the address form is the way to name the span.
+    /// <b>Why not <c>Worksheet.Range</c>.</b> Both accessors return a range of
+    /// identical shape — a live probe reports <c>Range["5:7"]</c> and
+    /// <c>Rows["5:7"]</c> as <c>$5:$7</c>, 3 rows by 16384 columns — yet only the
+    /// <c>Rows</c>-sourced range accepts an <c>OutlineLevel</c> write. Setting
+    /// <c>OutlineLevel</c> on the <c>Worksheet.Range</c>-sourced range raises
+    /// <c>COMException</c> <c>0x800A03EC</c> ("Unable to set the OutlineLevel
+    /// property of the Range class") on an unprotected sheet, inside and outside a
+    /// <c>ListObject</c>, for a single row and for a multi-row span, in both the
+    /// group and ungroup directions. The same range with <c>.EntireRow</c>
+    /// applied succeeds, which is why the failure is specific to the accessor
+    /// rather than to the span. <c>Worksheet.Rows</c> was therefore the accessor
+    /// that both names the intended span and survives the write.
+    /// </para>
+    /// <para>
+    /// The earlier two-integer <c>Rows[first, last]</c> form was a different bug:
+    /// that indexer is <c>Item(RowIndex, ColumnIndex)</c>, a single cell at
+    /// <c>(first, last)</c>, so a group of several children outlined one cell. The
+    /// whole-row address form is what fixes that, and it is retained here.
     /// </para>
     /// </remarks>
     internal virtual Excel.Range? GetRowsRange(Excel.Worksheet worksheet, int firstRow, int lastRow)
     {
         ArgumentNullException.ThrowIfNull(worksheet);
 
-        return worksheet.Range[RowSpanAddress(firstRow, lastRow)];
+        return worksheet.Rows[RowSpanAddress(firstRow, lastRow)];
     }
 
     /// <summary>
