@@ -251,6 +251,16 @@ public class ExcelOutlineGroupWriter(
     /// <param name="worksheet">The resolved worksheet.</param>
     /// <param name="table">The resolved table.</param>
     /// <returns>Whether both were found.</returns>
+    /// <remarks>
+    /// Iterating <c>Sheets</c> with a <see cref="Excel.Worksheet"/> loop variable would
+    /// throw on a workbook carrying a chart sheet: this PIA exposes no <c>Sheet</c>
+    /// type, so the collection enumerates as <see cref="object"/> and a chart sheet
+    /// cannot be cast. The cast is therefore done per entry and a non-worksheet is
+    /// skipped, which is what <c>ExcelGanttTableReader</c> already does. The name
+    /// comparison reads <see cref="GanttTableSchema.TableName"/> and is
+    /// case-insensitive, because Excel preserves whatever case a table was created
+    /// with.
+    /// </remarks>
     internal virtual bool TryFindTable(
         Excel.Sheets sheets,
         out Excel.Worksheet? worksheet,
@@ -258,11 +268,19 @@ public class ExcelOutlineGroupWriter(
     {
         worksheet = null;
         table = null;
-        foreach (Excel.Worksheet candidate in sheets)
+        foreach (var entry in sheets)
         {
+            if (entry is not Excel.Worksheet candidate)
+            {
+                continue;
+            }
+
             foreach (Excel.ListObject candidateTable in candidate.ListObjects)
             {
-                if (string.Equals(candidateTable.Name, "tblGanttData", StringComparison.Ordinal))
+                if (string.Equals(
+                    candidateTable.Name,
+                    GanttTableSchema.TableName,
+                    StringComparison.OrdinalIgnoreCase))
                 {
                     worksheet = candidate;
                     table = candidateTable;

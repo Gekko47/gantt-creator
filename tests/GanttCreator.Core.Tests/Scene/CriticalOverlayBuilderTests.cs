@@ -239,8 +239,11 @@ public sealed class CriticalOverlayBuilderTests
         // The old builder refused an orphan with UnresolvedParent because it needed
         // the parent's bar to clip against. With no parent in the request there is
         // nothing left to refuse on, so the entity draws from its dates alone.
-        // R2.5 still blocks a parentless critical interval at VALIDATION time; this
-        // is defence in depth no longer being needed, not a relaxation of it.
+        // This path is REACHABLE, not defence in depth: a top-level Critical
+        // Interval with a blank ParentId is valid since R4.7A made the parent
+        // optional for every child-capable type, and the owner ruling then made the
+        // overlay's geometry parent-independent. Such a row is the ordinary
+        // top-level case, not a damaged one.
         CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
             new CriticalOverlayRequest(
                 new GanttEvent(

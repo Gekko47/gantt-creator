@@ -14,28 +14,39 @@ namespace GanttCreator.Core;
 /// R4.7A D3 names. There is now one rule and both layers reach it.
 /// </para>
 /// <para>
-/// <b>What "semantically empty" means.</b> Every cell the <em>user</em> authors
-/// must be absent. A row carrying a Type, a description, dates, an Id, a
-/// ParentId, a StyleKey, colours, a label position or a SortOrder is
-/// <b>meaningful</b>, whatever the rest of the row looks like.
+/// <see cref="Test"/> and <see cref="TestStrict"/> check exactly four cells: the
+/// <c>Type</c> and <c>Description</c> texts and the <c>Start</c> and <c>Finish</c>
+/// dates. Every other cell — <c>Id</c>, <c>ParentId</c>, <c>StyleKey</c>, the
+/// colour overrides, <c>LabelPosition</c>, <c>SortOrder</c>, and the engine's own
+/// <c>LaneId</c>/<c>StackIndex</c>/<c>SiblingOrder</c>/<c>Visible</c> — is
+/// deliberately outside the rule, so a row carrying only such a value is
+/// <b>blank</b>.
 /// </para>
 /// <para>
-/// <b>Why engine-maintained cells are excluded.</b> Treating a non-empty
-/// <c>LaneId</c> or <c>StackIndex</c> as meaningful would mean a freshly
-/// scaffolded blank row is never blank. Blank-row detection would then fail on
-/// every new row and the "exactly one blank entry row" invariant would be
-/// unsatisfiable. Engine columns are written <em>because</em> a row is an
-/// entity, not before it is one.
+/// <b>Why those four, and why engine-maintained cells are excluded.</b> Type,
+/// Description, Start and Finish are the user's authoring columns, so those are
+/// the ones whose absence means the user has not entered anything. Engine columns
+/// are the opposite: they are written <em>because</em> a row is an entity, or
+/// scaffolded in advance of one. Treating a non-empty <c>LaneId</c> or
+/// <c>StackIndex</c> as meaningful would mean a freshly scaffolded blank row is
+/// never blank; blank-row detection would then fail on every new row and the
+/// "exactly one blank entry row" invariant would be unsatisfiable. The Id,
+/// ParentId, StyleKey, colour, label-position and SortOrder cells sit in the same
+/// group for the same reason — the add-in populates them for a row it has already
+/// decided is an entity, so their presence is not independent evidence that the
+/// user did anything.
 /// </para>
 /// </remarks>
 public static class IsSemanticallyEmptyRow
 {
     /// <summary>
-    /// Whether the row holds no user-authored value. Judge on the normalized
+    /// Whether the row holds no value in any of the four authoring cells —
+    /// <c>Type</c>, <c>Description</c>, <c>Start</c> or <c>Finish</c>. Every other
+    /// cell is outside the rule; see the type remarks. Judge on the normalized
     /// views, where a whitespace-only string is already absent.
     /// </summary>
     /// <param name="row">The row to test. A <see langword="null"/> row is blank.</param>
-    /// <returns><see langword="true"/> when no user-authored value is present.</returns>
+    /// <returns><see langword="true"/> when all four authoring cells are absent.</returns>
     public static bool Test(GanttRowDto? row) =>
         row is null
         || (IsBlank(row.TypeText)
@@ -44,14 +55,14 @@ public static class IsSemanticallyEmptyRow
             && row.Finish is null);
 
     /// <summary>
-    /// The stricter form, judged on raw cell state so an Excel error value in a
-    /// user-authored cell is not mistaken for absence. This is the one the
+    /// The stricter form, judged on raw cell state so an Excel error value in one
+    /// of the four authoring cells is not mistaken for absence. This is the one the
     /// validator uses: a cell holding <c>#N/A</c> is not blank, because the user
     /// put something there and must be told about it rather than have the row
     /// silently skipped.
     /// </summary>
     /// <param name="row">The row to test. A <see langword="null"/> row is blank.</param>
-    /// <returns><see langword="true"/> when every user-authored cell is genuinely empty.</returns>
+    /// <returns><see langword="true"/> when all four authoring cells are genuinely empty.</returns>
     public static bool TestStrict(GanttRowDto? row) =>
         row is null
         || (IsBlankText(row.TypeCell)

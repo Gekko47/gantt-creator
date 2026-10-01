@@ -63,8 +63,9 @@ public enum CriticalOverlayRefusal
     InvalidTimeScale = 2,
 
     /// <summary>
-    /// The predetermined height, or the parent's bounds, was not finite, or the
-    /// predetermined height was not positive.
+    /// The predetermined height, or the visual slot's centre Y, was not finite, or
+    /// the predetermined height was not positive. Nothing about a parent is
+    /// validated here because nothing about a parent is used.
     /// </summary>
     InvalidGeometry = 3,
 

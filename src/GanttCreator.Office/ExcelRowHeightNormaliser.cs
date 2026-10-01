@@ -137,6 +137,17 @@ public class ExcelRowHeightNormaliser(
         // height on the very Refresh that was supposed to restore the sheet, so the
         // section header and the blank separator were permanently the wrong height and
         // no lane could line up with its row.
+        //
+        // The Type column is resolved ONCE, before the row loop. KindOfRow used to
+        // re-run TryGetTypeColumn for every row, so a body of N rows walked the
+        // ListColumns collection N times over COM before any cell was even read, on
+        // the exact path that already walks N rows of heights.
+        //
+        // The boolean is deliberately discarded: a false here means the Type column
+        // could not be located, and `typeColumn` is then null, which KindOfRow
+        // already treats as "every row is Managed". Branching here would need a
+        // second outcome for a condition that has no different handling.
+        _ = TryGetTypeColumn(table, out Excel.Range? typeColumn);
         List<MeasuredRowHeight> measured = [];
         for (var index = 1; index <= rowCount; index++)
         {
@@ -146,7 +157,7 @@ public class ExcelRowHeightNormaliser(
                     RowHeightNormalisationRefusalReason.InvalidMeasurement);
             }
 
-            measured.Add(new MeasuredRowHeight(index, height, KindOfRow(table, index)));
+            measured.Add(new MeasuredRowHeight(index, height, KindOfRow(typeColumn, index)));
         }
 
         RowHeightNormalisationPlan? plan = RowHeightNormaliser.Plan(
@@ -178,7 +189,12 @@ public class ExcelRowHeightNormaliser(
     /// <summary>
     /// Maps one body row's <c>Type</c> cell to the height policy its row follows.
     /// </summary>
-    /// <param name="table">The Gantt data table.</param>
+    /// <param name="typeColumn">
+    /// The already-resolved <c>Type</c> column's body range, or
+    /// <see langword="null"/> when the column could not be located. Resolving it
+    /// once per normalisation, rather than once per row, is what keeps the column
+    /// lookup off the per-row path.
+    /// </param>
     /// <param name="index">The one-based body-row index.</param>
     /// <returns>The row kind; <see cref="MeasuredRowKind.Managed"/> for anything else.</returns>
     /// <remarks>
@@ -189,9 +205,8 @@ public class ExcelRowHeightNormaliser(
     /// structural kind for a row whose Type could not be read would write a height the
     /// row's own type never asked for.
     /// </remarks>
-    private MeasuredRowKind KindOfRow(Excel.ListObject table, int index) =>
-        TryGetTypeColumn(table, out Excel.Range? typeColumn)
-        && typeColumn is not null
+    private MeasuredRowKind KindOfRow(Excel.Range? typeColumn, int index) =>
+        typeColumn is not null
         && ReadTypeCellText(typeColumn, index) is { } text
         && EntityTypeCatalog.TryParse(text, out GanttEntityType parsed)
             ? parsed switch
@@ -288,6 +303,16 @@ public class ExcelRowHeightNormaliser(
     /// <param name="worksheet">The resolved worksheet.</param>
     /// <param name="table">The resolved table.</param>
     /// <returns>Whether both were found.</returns>
+    /// <remarks>
+    /// Iterating <c>Sheets</c> with a <see cref="Excel.Worksheet"/> loop variable would
+    /// throw on a workbook carrying a chart sheet: this PIA exposes no <c>Sheet</c>
+    /// type, so the collection enumerates as <see cref="object"/> and a chart sheet
+    /// cannot be cast. The cast is therefore done per entry and a non-worksheet is
+    /// skipped, which is what <c>ExcelGanttTableReader</c> already does. The name
+    /// comparison reads <see cref="GanttTableSchema.TableName"/> and is
+    /// case-insensitive, because Excel preserves whatever case a table was created
+    /// with.
+    /// </remarks>
     internal virtual bool TryFindTable(
         Excel.Sheets sheets,
         out Excel.Worksheet? worksheet,
@@ -295,11 +320,19 @@ public class ExcelRowHeightNormaliser(
     {
         worksheet = null;
         table = null;
-        foreach (Excel.Worksheet candidate in sheets)
+        foreach (var entry in sheets)
         {
+            if (entry is not Excel.Worksheet candidate)
+            {
+                continue;
+            }
+
             foreach (Excel.ListObject candidateTable in candidate.ListObjects)
             {
-                if (string.Equals(candidateTable.Name, "tblGanttData", StringComparison.Ordinal))
+                if (string.Equals(
+                    candidateTable.Name,
+                    GanttTableSchema.TableName,
+                    StringComparison.OrdinalIgnoreCase))
                 {
                     worksheet = candidate;
                     table = candidateTable;

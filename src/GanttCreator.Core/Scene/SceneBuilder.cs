@@ -372,9 +372,10 @@ public static class SceneBuilder
         // Resolution runs over the WHOLE batch, not just the render-visible rows. A
         // child whose parent is present but not rendered is still a valid hierarchy,
         // and resolving over the visible set alone reports it as an unresolvable
-        // parent and refuses the whole scene. Only visible parents are mapped below,
-        // so such a child keeps its own row-scoped lane and the overlay pass declines
-        // to draw it -- there is no parent bar to clip against.
+        // parent and refuses the whole scene. Only visible parents are mapped into
+        // `laneOwnerByEntity` below, so such a child keeps its own row-scoped lane
+        // and draws there -- the parent determines lane membership only, and an
+        // invisible parent contributes no lane.
         ProjectionResolution projection = ProjectionResolver.Resolve(request.Events);
         if (!projection.Succeeded)
         {

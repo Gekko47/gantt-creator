@@ -150,10 +150,11 @@ public static class LabelPlanner
     private static readonly GanttLabelPosition[] _delayAutoOrder = [GanttLabelPosition.Right, GanttLabelPosition.Left];
 
     /// <summary>
-    /// The milestone <c>Auto</c> order (ADR-0015 D2): <c>Right → Left → Above →
-    /// Below</c>. <c>Inside</c> is excluded because it is invalid for a milestone
-    /// at the initial minimum size, so trying it would be a position the entity
-    /// may not use.
+    /// The milestone <c>Auto</c> order (ADR-0015 D2): <c>Right → Left</c>.
+    /// <c>Inside</c> is excluded because it is invalid for a milestone at the
+    /// initial minimum size, so trying it would be a position the entity may not
+    /// use; <c>Above</c>/<c>Below</c> were removed outright by ADR-0028, so the
+    /// two-member list is the complete cascade rather than a truncated one.
     /// </summary>
     private static readonly GanttLabelPosition[] _milestoneAutoOrder =
     [
@@ -379,9 +380,11 @@ public static class LabelPlanner
 
             // The text fits, so the box hugs the measured text rather than
             // stretching across the whole free gap. Left stays anchored at the
-            // shape's near edge and Right at its far edge; the three positions
-            // §22 describes as centred (Inside) centre the fitted
-            // text inside the shape's own horizontal extent.
+            // shape's near edge and Right at its far edge; Inside is the one
+            // position §22 describes as centred, and it centres the fitted text
+            // inside the shape's own horizontal extent. Above and Below are no
+            // longer positions (ADR-0028), so the three-way anchor rule is the
+            // whole rule.
             var textWidth = Math.Min(measured.WidthPt, width);
             var left = geometry.X;
             if (position == GanttLabelPosition.Left)
@@ -513,8 +516,9 @@ public static class LabelPlanner
     /// aligned so that it ends against the shape it belongs to. A label placed
     /// to the shape's <c>Left</c> is right-aligned so it terminates at the
     /// shape's edge; a label placed to the <c>Right</c> starts at that edge.
-    /// <c>Inside</c>, <c>Above</c>, and <c>Below</c> are all centred placements
-    /// per §22, so their text is centred.
+    /// <c>Inside</c> is §22's centred placement, so its text is centred.
+    /// <c>Above</c> and <c>Below</c> no longer exist (ADR-0028), so this is a
+    /// three-value rule, not a five-value one.
     /// </para>
     /// <para>
     /// Every member is listed, following the repository's exhaustive-switch

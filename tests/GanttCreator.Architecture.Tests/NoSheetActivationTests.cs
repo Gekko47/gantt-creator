@@ -226,33 +226,90 @@ public sealed class NoSheetActivationTests
         || receiver.EndsWith("Sheets", StringComparison.Ordinal);
 
     /// <summary>
-    /// Determines whether the file adds or deletes a worksheet through
-    /// <c>Worksheets.Add</c> or <c>Worksheets.Delete</c>.
+    /// Determines whether the file adds or deletes a worksheet.
     /// </summary>
     /// <param name="file">The file to inspect.</param>
     /// <returns><see langword="true"/> when a worksheet is added or removed.</returns>
+    /// <remarks>
+    /// Both invocation shapes are matched, for the reason recorded on
+    /// <see cref="InvokesActivate"/>: <c>sheets.Delete(i)</c> is a
+    /// <c>MemberAccessExpression</c> and <c>sheets?.Delete(i)</c> is a
+    /// <c>ConditionalAccessExpression</c> wrapping a <c>MemberBindingExpression</c>.
+    /// Matching only the first leaves a one-character evasion, which is the same
+    /// defect the Activate guard already had and already fixed.
+    /// <para>
+    /// The two members are deliberately judged differently. <c>Add</c> is only
+    /// meaningful on a collection, so it is flagged only on a
+    /// worksheets-shaped receiver — there is no other <c>Add</c> that creates one.
+    /// <c>Delete</c> is overloaded across the object model (a shape, a row, a named
+    /// range), so the receiver must actually look like a worksheet or a sheet
+    /// collection; a plain <c>Delete</c> on a shape or a row is ordinary mutation
+    /// and must not be flagged, or this guard would fire on the entire renderer.
+    /// </para>
+    /// </remarks>
     private static bool InvokesWorksheetAdditionOrRemoval(string file)
     {
-        foreach (var node in Descendants(file))
+        foreach (SyntaxNode node in Descendants(file))
         {
-            if (node is InvocationExpressionSyntax invocation
-                && invocation.Expression is MemberAccessExpressionSyntax access
-                && access.Name.Identifier.ValueText is "Add" or "Delete")
+            switch (node)
             {
-                // Only on a receiver that is recognisably a Worksheets collection.
-                // A plain "Delete" on a shape or a row is ordinary mutation and must
-                // not be flagged, or this guard would fire on the entire renderer.
-                var receiver = access.Expression.ToString();
-                if (receiver.EndsWith("Worksheets", StringComparison.Ordinal)
-                    || receiver.EndsWith("Sheets", StringComparison.Ordinal))
+                case InvocationExpressionSyntax
                 {
-                    return true;
-                }
+                    Expression: MemberAccessExpressionSyntax access
+                }:
+                    if (IsSheetOperation(access.Name.Identifier.ValueText, access.Expression.ToString()))
+                    {
+                        return true;
+                    }
+
+                    break;
+
+                case ConditionalAccessExpressionSyntax conditional
+                    when conditional.WhenNotNull is InvocationExpressionSyntax
+                    {
+                        Expression: MemberBindingExpressionSyntax binding
+                    }:
+                    if (IsSheetOperation(binding.Name.Identifier.ValueText, conditional.Expression.ToString()))
+                    {
+                        return true;
+                    }
+
+                    break;
+
+                default:
+                    break;
             }
         }
 
         return false;
     }
+
+    /// <summary>
+    /// Whether a named invocation against the given receiver adds or removes a
+    /// worksheet.
+    /// </summary>
+    /// <param name="memberName">The invoked member's name.</param>
+    /// <param name="receiver">The receiver expression's text.</param>
+    /// <returns><see langword="true"/> when the call is a worksheet add or delete.</returns>
+    private static bool IsSheetOperation(string memberName, string receiver) =>
+        memberName switch
+        {
+            // Only a collection can be added to, so the collection shape is required.
+            "Add" => IsWorksheetCollectionReceiver(receiver),
+
+            // Delete is only a worksheet removal on a worksheet or a sheet collection.
+            "Delete" => IsWorksheetReceiver(receiver),
+            _ => false,
+        };
+
+    /// <summary>
+    /// Determines whether the receiver of the call names a worksheets collection.
+    /// </summary>
+    /// <param name="receiver">The receiver expression's text.</param>
+    /// <returns><see langword="true"/> when the receiver is a sheet collection.</returns>
+    private static bool IsWorksheetCollectionReceiver(string receiver) =>
+        receiver.EndsWith("Worksheets", StringComparison.Ordinal)
+        || receiver.EndsWith("Sheets", StringComparison.Ordinal);
 
     /// <summary>Parses the file and yields its descendant syntax nodes.</summary>
     /// <param name="file">The file to parse.</param>

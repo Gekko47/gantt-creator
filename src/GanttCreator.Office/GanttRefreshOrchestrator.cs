@@ -147,7 +147,15 @@ public sealed class GanttRefreshOrchestrator(
         GanttTableReadOutcome rows = _tableReader.Read();
         if (!rows.Succeeded)
         {
-            return Refuse(GanttRefreshRefusal.TableMissing, Describe(rows.Refusal!.Value));
+            // No active workbook is its own refusal, not a table problem: telling a
+            // user with no open workbook that "the Gantt table was not found on the
+            // active sheet" describes a workbook they do not have. Every other read
+            // refusal does mean the table could not be read, and keeps that mapping.
+            GanttTableReadRefusalReason readRefusal =
+                rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+            return readRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(readRefusal))
+                : Refuse(GanttRefreshRefusal.TableMissing, Describe(readRefusal));
         }
 
         ConfigReadOutcome config = _configReader.Read();

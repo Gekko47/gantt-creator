@@ -113,6 +113,59 @@ public sealed class CloneReseedPlannerTests
     }
 
     /// <summary>
+    /// The positive test for the bounded retry. A factory that only ever returns an
+    /// identifier already in the table cannot make progress, so the planner must
+    /// refuse once the attempt cap is reached rather than spin forever inside a
+    /// Refresh. Without the cap this call never returns.
+    /// </summary>
+    [Fact]
+    public void A_factory_that_never_yields_a_fresh_id_refuses_rather_than_looping_forever()
+    {
+        GanttRowId duplicated = NewId();
+        GanttRowId alsoUsed = NewId();
+        var attempts = 0;
+
+        CloneReseedOutcome outcome = CloneReseedPlanner.Plan(
+            [duplicated, alsoUsed, duplicated],
+            () =>
+            {
+                attempts++;
+                return alsoUsed;
+            });
+
+        Assert.False(outcome.Succeeded);
+        Assert.Null(outcome.Plan);
+        Assert.Equal(CloneReseedRefusal.IdentifierFactoryExhausted, outcome.Refusal);
+        Assert.Equal(CloneReseedPlanner.MaxIdGenerationAttempts, attempts);
+    }
+
+    /// <summary>
+    /// The cap is a ceiling, not a quota: a factory that produces a fresh identifier
+    /// after many collisions still succeeds. This is what separates a bounded retry
+    /// from an arbitrary limit that refuses legitimate work.
+    /// </summary>
+    [Fact]
+    public void A_fresh_id_after_many_collisions_still_succeeds()
+    {
+        GanttRowId duplicated = NewId();
+        GanttRowId alsoUsed = NewId();
+        GanttRowId replacement = NewId();
+        var attempts = 0;
+
+        CloneReseedOutcome outcome = CloneReseedPlanner.Plan(
+            [duplicated, alsoUsed, duplicated],
+            () =>
+            {
+                attempts++;
+                return attempts < 5 ? alsoUsed : replacement;
+            });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(replacement, outcome.Plan!.NewIdsByOldId[duplicated]);
+        Assert.Equal(5, attempts);
+    }
+
+    /// <summary>
     /// Refusal is all-or-nothing even when other identifiers in the same table are
     /// cleanly reseedable. The atomicity D7 requires is that one unresolvable id
     /// stops the entire plan.

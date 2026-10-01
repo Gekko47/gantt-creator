@@ -1001,7 +1001,25 @@ public static class GanttRowValidator
             // the depth rule now matches MaxDepth, EntityProjection, and the
             // EntityHierarchyCatalog contract comment, which all already said a
             // critical interval's own parent must be top-level.
+            //
+            // A parent that is itself BLOCKED is skipped. Its children are already
+            // refused by PropagateBlockedParents with ParentInvalid -- the accurate
+            // finding, because the parent is not in Events -- so adding
+            // HierarchyTooDeep on top would tell the user their row is too deeply
+            // nested when the real problem is a bad date or an unresolvable StyleKey
+            // one level up. One fault, one finding.
+            //
+            // The only way a parent becomes blocked while this loop is still
+            // running is the depth rule itself, so the reachable shape is a
+            // four-level chain: row 4 is refused for depth, and row 5 -- whose
+            // parent is row 4 -- is then refused for the blocked parent alone.
             ValidatedRow? parent = perRow[parentIndex];
+            if (parent is { HasBlockingError: true })
+            {
+                siblings.RemoveAt(siblings.Count - 1);
+                continue;
+            }
+
             if (parent?.Event?.ParentId is not null)
             {
                 issues.Add(

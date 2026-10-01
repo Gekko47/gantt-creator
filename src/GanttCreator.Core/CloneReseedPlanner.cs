@@ -23,6 +23,14 @@ public enum CloneReseedRefusal
 
     /// <summary>Too many rows carry the same identifier to attribute them to one structure.</summary>
     TooManyDuplicates = 2,
+
+    /// <summary>
+    /// The identifier factory kept returning an identifier that was already in use
+    /// for longer than <see cref="CloneReseedPlanner.MaxIdGenerationAttempts"/>, so
+    /// no fresh identifier could be found. Refused rather than looped, because an
+    /// unbounded retry here hangs a Refresh with no output and no refusal.
+    /// </summary>
+    IdentifierFactoryExhausted = 3,
 }
 
 /// <summary>
@@ -84,6 +92,19 @@ public static class CloneReseedPlanner
 {
     /// <summary>The largest number of rows that may carry one identifier and still be attributable to a clone.</summary>
     public const int MaxOccurrencesPerId = 2;
+
+    /// <summary>
+    /// How many candidates the identifier factory may be asked for before the
+    /// reseed is refused.
+    /// </summary>
+    /// <remarks>
+    /// A factory that only ever returns identifiers already present in the table
+    /// would otherwise loop forever. The cap is a multiple of
+    /// <see cref="MaxOccurrencesPerId"/> so a well-behaved factory returning a
+    /// small pool of candidates still has room, while a factory that never
+    /// produces a fresh identifier is refused rather than hanging the Refresh.
+    /// </remarks>
+    public const int MaxIdGenerationAttempts = MaxOccurrencesPerId * 1000;
 
     /// <summary>
     /// Plans a reseed of every duplicated identifier in the supplied rows.
@@ -149,7 +170,11 @@ public static class CloneReseedPlanner
                 continue;
             }
 
-            GanttRowId replacement = NextUniqueId(newId, issued);
+            if (!NextUniqueId(newId, issued, out GanttRowId? replacement) || replacement is null)
+            {
+                return new CloneReseedOutcome(null, CloneReseedRefusal.IdentifierFactoryExhausted);
+            }
+
             _ = issued.Add(replacement);
             map[id] = replacement;
         }
@@ -157,15 +182,37 @@ public static class CloneReseedPlanner
         return new CloneReseedOutcome(new CloneReseedPlan(map, map.Count), null);
     }
 
-    private static GanttRowId NextUniqueId(Func<GanttRowId> factory, HashSet<GanttRowId> used)
+    /// <summary>
+    /// Asks the factory for an identifier that is not already in use, up to
+    /// <see cref="MaxIdGenerationAttempts"/> candidates.
+    /// </summary>
+    /// <param name="factory">The caller-supplied identifier factory.</param>
+    /// <param name="used">The identifiers already in use; a fresh one is added to it.</param>
+    /// <param name="id">The unused identifier, or <see langword="null"/> when the cap was reached.</param>
+    /// <returns>
+    /// <see langword="true"/> when an unused identifier was produced;
+    /// <see langword="false"/> when the attempt cap was reached first.
+    /// </returns>
+    /// <remarks>
+    /// The loop is bounded rather than <c>while (true)</c>. A factory that
+    /// repeatedly returns an identifier already in the table — a broken generator,
+    /// or a fixed seed colliding with the rows being reseeded — would otherwise
+    /// spin forever inside a Refresh, with no scene, no warning and no refusal. The
+    /// cap converts that into the same typed refusal every other failure here uses.
+    /// </remarks>
+    private static bool NextUniqueId(Func<GanttRowId> factory, HashSet<GanttRowId> used, out GanttRowId? id)
     {
-        while (true)
+        for (var attempt = 0; attempt < MaxIdGenerationAttempts; attempt++)
         {
             GanttRowId candidate = factory();
             if (used.Add(candidate))
             {
-                return candidate;
+                id = candidate;
+                return true;
             }
         }
+
+        id = null;
+        return false;
     }
 }

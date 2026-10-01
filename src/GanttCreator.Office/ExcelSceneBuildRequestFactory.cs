@@ -308,9 +308,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        // Only span-dated entities can define a range. A milestone or delineator
-        // contributes its single date, and including one would be a different claim
-        // about what the chart must cover.
+        // Every entity contributes its Start, and ONLY a span-dated one contributes its
+        // Finish. A milestone, a delineator, a Splitter and a Spacer read Start as
+        // their single date per the entity guide's date-mode classification; letting
+        // their Finish widen the range would be a claim the guide does not make. In
+        // practice the validator clears Finish for those types, but this method
+        // consumes GanttEvent values and must not depend on that having happened.
         var starts = new List<DateOnly>();
         var finishes = new List<DateOnly>();
         foreach (GanttEvent @event in events)
@@ -320,7 +323,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 starts.Add(start);
             }
 
-            if (@event.Finish is { } finish)
+            if (EntityTypeCatalog.GetDefinition(@event.Type)?.DateMode == EntityDateMode.StartFinish
+                && @event.Finish is { } finish)
             {
                 finishes.Add(finish);
             }
@@ -340,7 +344,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         }
 
         DateOnly earliest = starts.Min();
-        DateOnly latest = finishes.Count == 0 ? starts.Max() : finishes.Max();
+
+        // The later of the two maxima, NOT the finish maximum alone. A single-date
+        // event therefore always lands inside the range: taking finishes.Max()
+        // whenever any finish existed could place the plot's right edge before a
+        // milestone's own date, clipping the very event that set the range.
+        DateOnly latest = starts.Max();
+        if (finishes.Count > 0 && finishes.Max() > latest)
+        {
+            latest = finishes.Max();
+        }
 
         plotStart = earliest.AddDays(-padding);
         plotFinish = latest.AddDays(padding);
