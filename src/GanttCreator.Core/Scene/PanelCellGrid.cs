@@ -45,6 +45,16 @@ public enum PanelCellGridRefusal
 
     /// <summary>A required schema column was absent from the grid.</summary>
     MissingRequiredColumn = 9,
+
+    /// <summary>
+    /// The measured absolute origin was absent, non-finite, or negative.
+    /// </summary>
+    /// <remarks>
+    /// <b>Refused rather than defaulted.</b> A guessed origin is precisely the silent
+    /// misalignment ADR-0030 exists to remove: the scene would place lanes at a
+    /// plausible but wrong vertical position, and nothing would report it.
+    /// </remarks>
+    InvalidOrigin = 10,
 }
 
 /// <summary>The typed result of validating a measured cell grid.</summary>
@@ -81,12 +91,16 @@ public sealed record PanelCellGrid
         IReadOnlyList<PanelColumn> columns,
         IReadOnlyList<double> rowHeightsPt,
         double headerHeightPt,
-        IReadOnlyList<string> requiredColumns)
+        IReadOnlyList<string> requiredColumns,
+        double originTopPt,
+        double originLeftPt)
     {
         Columns = columns;
         RowHeightsPt = rowHeightsPt;
         HeaderHeightPt = headerHeightPt;
         RequiredColumns = requiredColumns;
+        OriginTopPt = originTopPt;
+        OriginLeftPt = originLeftPt;
     }
 
     /// <summary>The included columns, in caller order.</summary>
@@ -120,6 +134,38 @@ public sealed record PanelCellGrid
     /// required columns to exist once, and §4 requires unique header names.
     /// </summary>
     public IReadOnlyList<string> RequiredColumns { get; }
+
+    /// <summary>
+    /// The absolute worksheet Y of the <em>first body row's top edge</em>, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is the input the live chart's vertical origin was missing.</b>
+    /// Until ADR-0030 the scene had no idea where the body began on the sheet: the
+    /// plot's top came from the size preset's page coordinates (a token sum of
+    /// 58pt), and <c>LaneLayoutBuilder</c> stacked lanes down from that. A lane
+    /// therefore could not coincide with its own row, because nothing in the model
+    /// said where the row was. This is the measurement that makes ADR-0026 D3's
+    /// <c>Excel Top == Scene lane Top</c> representable rather than merely unmet.
+    /// </para>
+    /// <para>
+    /// It is the first <em>body</em> row, so the header row's height is already
+    /// accounted for and this value is directly the plot's top (D1). It is not the
+    /// header's top and not the reserved row's.
+    /// </para>
+    /// </remarks>
+    public double OriginTopPt { get; }
+
+    /// <summary>
+    /// The absolute worksheet X of the panel's left edge, in points.
+    /// </summary>
+    /// <remarks>
+    /// The table does not start at column A — the engine columns preceding
+    /// <c>Type</c> are hidden but still occupy worksheet positions — so the panel's
+    /// left edge is a measurement, not a constant. It is what lets the plot's left
+    /// edge be placed against the panel's right edge in real sheet coordinates.
+    /// </remarks>
+    public double OriginLeftPt { get; }
 
     /// <summary>The total body height in points, the sum of the row heights.</summary>
     public double TotalRowHeightPt
@@ -156,12 +202,25 @@ public sealed record PanelCellGrid
     /// <param name="rowHeightsPt">The measured body row heights, in worksheet order.</param>
     /// <param name="headerHeightPt">The measured header row height.</param>
     /// <param name="requiredColumns">The schema names that must appear exactly once.</param>
+    /// <param name="originTopPt">
+    /// The absolute worksheet Y of the first body row's top edge, in points
+    /// (ADR-0030 D3). Defaults to zero, which is correct for an EXPORT composition
+    /// that builds its own origin from zero; a LIVE composition must pass the real
+    /// measurement, because a default of zero is exactly the page-origin assumption
+    /// ADR-0030 removed.
+    /// </param>
+    /// <param name="originLeftPt">
+    /// The absolute worksheet X of the panel's left edge, in points
+    /// (ADR-0030 D3).
+    /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
         IReadOnlyList<double>? rowHeightsPt,
         double headerHeightPt,
-        IReadOnlyList<string>? requiredColumns)
+        IReadOnlyList<string>? requiredColumns,
+        double originTopPt = 0d,
+        double originLeftPt = 0d)
     {
         if (columns is null)
         {
@@ -226,10 +285,30 @@ public sealed record PanelCellGrid
             }
         }
 
-        return new PanelCellGridCreationOutcome(
-            new PanelCellGrid([.. columns], [.. rowHeightsPt], headerHeightPt, [.. requiredColumns ?? []]),
-            null);
+        return IsValidOrigin(originTopPt) && IsValidOrigin(originLeftPt)
+            ? new PanelCellGridCreationOutcome(
+                new PanelCellGrid(
+                    [.. columns],
+                    [.. rowHeightsPt],
+                    headerHeightPt,
+                    [.. requiredColumns ?? []],
+                    originTopPt,
+                    originLeftPt),
+                null)
+            : Refused(PanelCellGridRefusal.InvalidOrigin);
     }
+
+    /// <summary>
+    /// Whether a measured origin is usable: finite and non-negative.
+    /// </summary>
+    /// <param name="value">The measured coordinate in points.</param>
+    /// <returns><see langword="true"/> when the value can be trusted as a position.</returns>
+    /// <remarks>
+    /// Zero is <b>valid</b>: it is a real position — the sheet's own origin — and an
+    /// export composition legitimately starts there. Only a negative or non-finite
+    /// measurement is refused.
+    /// </remarks>
+    private static bool IsValidOrigin(double value) => double.IsFinite(value) && value >= 0;
 
     private static PanelCellGridCreationOutcome Refused(PanelCellGridRefusal refusal) => new(null, refusal);
 }

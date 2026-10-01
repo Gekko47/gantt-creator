@@ -151,17 +151,73 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
 
+        // ADR-0030 D3: the sheet's absolute origin is measured, not assumed. It is the
+        // first BODY row's top edge, so the header row's height is already included
+        // and this value IS the plot's top (D1). Refused rather than defaulted when
+        // the host reports no figure: a zero origin is exactly the page-coordinate
+        // assumption this change removes, and it would reintroduce the misalignment
+        // silently.
+        if (ReadOriginTop(table) is not { } originTop
+            || ReadOriginLeft(table) is not { } originLeft)
+        {
+            return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+        }
+
         // Core validates the grid: a non-positive or non-finite width or height, a
-        // blank or duplicated column name, and a missing required column are all
-        // refused there with their own typed reasons rather than duplicated here.
+        // blank or duplicated column name, a missing required column, and a negative
+        // or non-finite origin are all refused there with their own typed reasons
+        // rather than duplicated here.
         PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
             columns,
             rowHeights,
             headerHeight,
-            includedColumns);
+            includedColumns,
+            originTop,
+            originLeft);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+    }
+
+    /// <summary>
+    /// Reads the absolute worksheet Y of the first body row's top edge, in points
+    /// (ADR-0030 D3).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The origin, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// Read from <c>DataBodyRange</c>, not from the header range: the plot's top is
+    /// the first BODY row's top, which is the header's bottom. Reading the header's
+    /// top instead would put the plot a whole header-row too high — the same class of
+    /// off-by-one-row error ADR-0030 corrects elsewhere.
+    /// </remarks>
+    internal virtual double? ReadOriginTop(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.Range? body = table.DataBodyRange;
+        return body is null ? null : ToPoints(body.Top);
+    }
+
+    /// <summary>
+    /// Reads the absolute worksheet X of the panel's left edge, in points
+    /// (ADR-0030 D3).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The origin, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// The table does not begin at column A: the engine columns before
+    /// <c>Type</c> are hidden but still occupy worksheet positions, so this is a
+    /// measurement. Reading the header row's left would give the same X — the panel's
+    /// left edge is the table's left edge — and the header range is the member this
+    /// adapter already measures through.
+    /// </remarks>
+    internal virtual double? ReadOriginLeft(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.Range? body = table.DataBodyRange;
+        return body is null ? null : ToPoints(body.Left);
     }
 
     /// <summary>

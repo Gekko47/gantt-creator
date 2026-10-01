@@ -22,6 +22,69 @@ public sealed class PanelCellGridTests
 
     private static PanelColumn Col(string name, double width = 40.0) => new(name, width);
 
+    /// <summary>
+    /// The measured absolute origin is carried on the grid (ADR-0030 D3).
+    /// </summary>
+    /// <remarks>
+    /// This is the input the live chart's vertical origin was missing. Before it, the
+    /// plot's top came from the size preset's page coordinates and
+    /// <c>LaneLayoutBuilder</c> stacked lanes from there, so a lane could not coincide
+    /// with its own row — ADR-0026 D3's <c>Excel Top == Scene lane Top</c> was not
+    /// merely unmet but unrepresentable.
+    /// </remarks>
+    [Fact]
+    public void The_measured_origin_is_carried_on_the_grid()
+    {
+        PanelCellGrid grid =
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [], originTopPt: 64.5, originLeftPt: 8.25).Grid
+            ?? throw new InvalidOperationException("Fixture grid should be valid.");
+
+        Assert.Equal(64.5, grid.OriginTopPt);
+        Assert.Equal(8.25, grid.OriginLeftPt);
+    }
+
+    /// <summary>
+    /// A zero origin is accepted: it is the sheet's own top-left, a real position.
+    /// </summary>
+    /// <remarks>
+    /// Stated because the opposite assumption is the defect this slice removes — a
+    /// zero origin is only wrong when it is a <em>default</em> standing in for an
+    /// unmeasured live sheet, which the adapter now prevents by refusing when the
+    /// host reports no figure. An export composition legitimately starts at zero.
+    /// </remarks>
+    [Fact]
+    public void A_zero_origin_is_accepted_as_a_real_position()
+    {
+        PanelCellGrid grid =
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [], originTopPt: 0, originLeftPt: 0).Grid
+            ?? throw new InvalidOperationException("Fixture grid should be valid.");
+
+        Assert.Equal(0d, grid.OriginTopPt);
+        Assert.Equal(0d, grid.OriginLeftPt);
+    }
+
+    /// <summary>
+    /// A negative or non-finite origin is refused as <c>InvalidOrigin</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator added with ADR-0030 D3.</b> A guessed
+    /// origin would place lanes at a plausible but wrong vertical position with
+    /// nothing to report it, which is the silence this refusal exists to prevent.
+    /// </remarks>
+    [Theory]
+    [InlineData(-1d, 0d)]
+    [InlineData(0d, -0.5d)]
+    [InlineData(double.NaN, 0d)]
+    [InlineData(0d, double.PositiveInfinity)]
+    public void An_unusable_origin_is_refused(double originTopPt, double originLeftPt)
+    {
+        PanelCellGridCreationOutcome outcome =
+            PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, [], originTopPt, originLeftPt);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelCellGridRefusal.InvalidOrigin, outcome.Refusal);
+    }
+
     [Fact]
     public void A_valid_grid_keeps_column_order_widths_and_height()
     {

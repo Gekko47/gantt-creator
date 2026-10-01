@@ -33,7 +33,9 @@ public class ExcelPanelGridMeasurementTests
         Excel.ListObject table,
         Excel.ListColumn column,
         IReadOnlyList<object?> bodyRowHeights,
-        object? headerRowHeight)
+        object? headerRowHeight,
+        double originTopPt,
+        double originLeftPt)
         : ExcelPanelGridMeasurement(application)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
@@ -75,6 +77,14 @@ public class ExcelPanelGridMeasurementTests
             _ = withHeader.SetupGet(t => t.HeaderRowRange).Returns(header.Object);
             return base.ReadHeaderRowHeight(withHeader.Object);
         }
+
+        // ADR-0030 D3: the absolute origin is substituted here too, because it is
+        // read from the body's Top/Left. The VALUES are still asserted on, so a test
+        // proves the adapter passed the measurement through rather than defaulting
+        // it to zero.
+        internal override double? ReadOriginTop(Excel.ListObject candidate) => originTopPt;
+
+        internal override double? ReadOriginLeft(Excel.ListObject candidate) => originLeftPt;
     }
 
     /// <summary>The table, its single column, and what each body row reports.</summary>
@@ -82,7 +92,9 @@ public class ExcelPanelGridMeasurementTests
         Excel.ListObject Table,
         Excel.ListColumn Column,
         IReadOnlyList<object?> BodyRowHeights,
-        object? HeaderRowHeight);
+        object? HeaderRowHeight,
+        double OriginTopPt,
+        double OriginLeftPt);
 
     /// <summary>
     /// Builds a table whose column range, header row, and each body row report the
@@ -100,7 +112,9 @@ public class ExcelPanelGridMeasurementTests
         object? width,
         object? rowHeight,
         IReadOnlyList<object?>? bodyRowHeights = null,
-        object? headerRowHeight = null)
+        object? headerRowHeight = null,
+        double originTopPt = 0d,
+        double originLeftPt = 0d)
     {
         var columnRange = new Mock<Excel.Range>();
         // The PIA types Width/RowHeight as non-nullable object even though the host
@@ -124,7 +138,9 @@ public class ExcelPanelGridMeasurementTests
             table.Object,
             column.Object,
             bodyRowHeights ?? [rowHeight],
-            headerRowHeight ?? rowHeight);
+            headerRowHeight ?? rowHeight,
+            originTopPt,
+            originLeftPt);
     }
 
     private static Mock<Excel.Application> ActiveApplication()
@@ -136,6 +152,50 @@ public class ExcelPanelGridMeasurementTests
         return application;
     }
 
+    /// <summary>
+    /// The measured absolute origin reaches the grid (ADR-0030 D3).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the assertion that matters for the live chart.</b> Before ADR-0030
+    /// the plot's top came from the size preset's page coordinates, so the scene had
+    /// no idea where the body began and a lane could not land on its own row. The
+    /// values are deliberately non-zero and asymmetric, so a grid that defaulted to
+    /// zero - the page-origin assumption - cannot pass.
+    /// </remarks>
+    [Fact]
+    public void The_measured_origin_reaches_the_grid()
+    {
+        FakeTable table = TableReporting(64d, 15d, originTopPt: 64.5, originLeftPt: 8.25);
+
+        PanelGridOutcome outcome = MeasureTable(table);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(64.5, outcome.Grid!.OriginTopPt);
+        Assert.Equal(8.25, outcome.Grid.OriginLeftPt);
+    }
+
+    /// <summary>
+    /// The origin is the first BODY row's top, not the header row's.
+    /// </summary>
+    /// <remarks>
+    /// Reading the header's top would place the plot a whole header-row too high -
+    /// the same off-by-one-row class ADR-0030 corrects elsewhere. Stated because the
+    /// value is what D1 hands the plot, and a header-row-high plot looks plausible
+    /// rather than obviously broken.
+    /// </remarks>
+    [Fact]
+    public void The_origin_is_measured_from_the_body_not_the_header()
+    {
+        FakeTable table = TableReporting(64d, 15d, headerRowHeight: 40d, originTopPt: 58d);
+
+        PanelGridOutcome outcome = MeasureTable(table);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // The header is 40pt tall, so a header-derived origin would be 40, not 58.
+        Assert.Equal(58d, outcome.Grid!.OriginTopPt);
+    }
+
     private static PanelGridOutcome MeasureTable(FakeTable table)
     {
         var measurement = new TestableMeasurement(
@@ -143,7 +203,9 @@ public class ExcelPanelGridMeasurementTests
             table.Table,
             table.Column,
             table.BodyRowHeights,
-            table.HeaderRowHeight);
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt);
 
         return measurement.Measure([ColumnName]);
     }
@@ -286,7 +348,9 @@ public class ExcelPanelGridMeasurementTests
             table.Table,
             table.Column,
             table.BodyRowHeights,
-            table.HeaderRowHeight);
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt);
 
         PanelGridOutcome outcome = measurement.Measure([]);
 
@@ -334,7 +398,9 @@ public class ExcelPanelGridMeasurementTests
             table.Table,
             table.Column,
             table.BodyRowHeights,
-            table.HeaderRowHeight);
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt);
 
         PanelGridOutcome outcome = measurement.Measure([ColumnName]);
 
