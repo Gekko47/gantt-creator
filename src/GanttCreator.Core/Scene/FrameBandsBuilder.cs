@@ -165,11 +165,17 @@ public static class FrameBandsBuilder
             ? new RectD(contentBounds.X, contentBounds.Y - request.TitleBandHeightPt, contentBounds.Width, request.TitleBandHeightPt)
             : null;
         RectD unionBounds = titleBounds is { } title ? Union(contentBounds, title) : contentBounds;
+        // Each side is padded independently (ADR-0031 D1). A live chart's top and
+        // bottom margins are whole measured rows while its left margin is zero, so
+        // the plot sits flush against the data table instead of being pushed one
+        // margin-width away from it. Export passes ChartPaddingPt.Uniform and is
+        // unaffected.
+        ChartPaddingPt padding = request.Padding;
         RectD chartBounds = new(
-            unionBounds.X - request.ChartOuterPaddingPt,
-            unionBounds.Y - request.ChartOuterPaddingPt,
-            unionBounds.Width + (request.ChartOuterPaddingPt * 2),
-            unionBounds.Height + (request.ChartOuterPaddingPt * 2)
+            unionBounds.X - padding.LeftPt,
+            unionBounds.Y - padding.TopPt,
+            unionBounds.Width + padding.LeftPt + padding.RightPt,
+            unionBounds.Height + padding.TopPt + padding.BottomPt
         );
         ChartFrameGeometry geometry = new(chartBounds, contentBounds, titleBounds, yearBounds, periodBounds);
         List<ScenePrimitive> primitives =
@@ -402,13 +408,29 @@ public static class FrameBandsBuilder
         && request.PlotBounds.Height > 0
         && GeometryMath.ApproximatelyEqual(request.TimeScale.PlotLeftPt, request.PlotBounds.Left)
         && GeometryMath.ApproximatelyEqual(request.TimeScale.PlotRightPt, request.PlotBounds.Right)
-        && IsFiniteNonNegative(request.ChartOuterPaddingPt)
+        && IsValidPadding(request.Padding)
         && IsFinitePositive(request.TitleBandHeightPt)
         && IsFinitePositive(request.YearBandHeightPt)
         && IsFinitePositive(request.PeriodBandHeightPt)
         && IsFiniteNonNegative(request.MinimumHeaderLabelWidthPt)
         && IsFinitePositive(request.GridLinePt)
         && IsFinitePositive(request.MajorBoundaryPt);
+
+    /// <summary>
+    /// Every side of the padding must be a finite, non-negative number.
+    /// </summary>
+    /// <remarks>
+    /// <b>All four sides are checked, not the maximum.</b> ADR-0031 D1 made the
+    /// padding per-side, and a check that only looked at one member would accept a
+    /// request whose <c>BottomPt</c> was negative while its other three were sound -
+    /// producing chart bounds that extended <em>above</em> their own content, a
+    /// rectangle no caller asked for and nothing downstream would report.
+    /// </remarks>
+    private static bool IsValidPadding(ChartPaddingPt padding) =>
+        IsFiniteNonNegative(padding.LeftPt)
+        && IsFiniteNonNegative(padding.TopPt)
+        && IsFiniteNonNegative(padding.RightPt)
+        && IsFiniteNonNegative(padding.BottomPt);
 
     private static bool ValidTheme(FrameBandsTheme theme) =>
         theme.Background is not null

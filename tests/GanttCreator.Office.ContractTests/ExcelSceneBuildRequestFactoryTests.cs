@@ -112,15 +112,34 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <summary>
     /// The measured panel width is the sum of the visible columns, so entity guide
     /// section 3's "the panel right edge touches the plot left edge" holds. The plot's
-    /// left edge is <c>textPanelWidthPt + chrome</c>.
+    /// left edge is <c>textPanelWidthPt</c> — the panel's right edge exactly, with no
+    /// chrome between them (ADR-0031 D2).
     /// </summary>
     /// <remarks>
     /// Measuring only the label columns would leave the plot drawn on top of the
     /// still-visible <c>Start</c>, <c>Finish</c>, and <c>Duration</c> columns, so this
     /// asserts the placement rather than merely the list.
     /// </remarks>
+    /// <summary>
+    /// The plot's left edge starts exactly where the measured panel ends, with NO
+    /// left chrome (ADR-0031 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measuring only the label columns would leave the plot drawn on top of the
+    /// still-visible <c>Start</c>, <c>Finish</c>, and <c>Duration</c> columns, so this
+    /// asserts the placement rather than merely the list.
+    /// </para>
+    /// <para>
+    /// <b>This assertion was inverted, deliberately.</b> It previously required
+    /// <c>panel + ChartOuterPaddingPt</c>, which is the behaviour the owner asked to
+    /// change: the plot sat one margin-width away from the table it belongs to. The
+    /// margin is now exactly zero, and the test is the one place that will fail if a
+    /// later change reintroduces a gap.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void The_plot_left_edge_starts_after_the_whole_measured_panel_plus_chrome()
+    public void The_plot_left_edge_starts_flush_where_the_measured_panel_ends()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -133,13 +152,19 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
 
         SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
-        double chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
 
         // Both `Grid` and `PlotBounds` are nullable on the request and are unwrapped
         // with the `!.Value`/`!` form the rest of this file already uses. The factory
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
-        Assert.Equal(request.Grid!.TotalWidthPt + chrome, request.PlotBounds!.Value.X, precision: 6);
+        Assert.Equal(request.Grid!.TotalWidthPt, request.PlotBounds!.Value.X, precision: 6);
+
+        // The right margin is NOT removed: the plot's right edge is the sheet's own
+        // edge, and the chrome there is what keeps the last period label off it.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+            request.ChartPadding.RightPt,
+            precision: 6);
     }
 
     /// <summary>
@@ -615,7 +640,6 @@ public class ExcelSceneBuildRequestFactoryTests
 
         (string Token, double Actual)[] emitted =
         [
-            ("ChartOuterPaddingPt", request.ChartOuterPaddingPt),
             ("TitleBandHeightPt", request.TitleBandHeightPt),
             ("YearBandHeightPt", request.YearBandHeightPt),
             ("PeriodBandHeightPt", request.PeriodBandHeightPt),
@@ -640,6 +664,14 @@ public class ExcelSceneBuildRequestFactoryTests
                 Math.Abs(expected - actual) < 1e-9,
                 $"Metric '{token}' was emitted as {actual} but the catalogue default is {expected}.");
         }
+
+        // ADR-0031 D1: the padding is per-side, so it cannot ride in the sweep above.
+        // Its right side is the chrome token and is still a catalogue value; its top
+        // and bottom are MEASURED padding rows and its left is deliberately zero, so
+        // asserting a single number against a single token would assert something
+        // that is no longer true of any side.
+        Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), request.ChartPadding.RightPt);
+        Assert.Equal(0, request.ChartPadding.LeftPt);
     }
 
     /// <summary>
@@ -664,14 +696,20 @@ public class ExcelSceneBuildRequestFactoryTests
             new Dictionary<string, string>
             {
                 ["TitleBandHeightPt"] = "999",
-                ["ChartOuterPaddingPt"] = "999",
+                ["ChartPadding"] = "999",
             },
             StyleRegistry(),
             Grid());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
         Assert.Equal(GanttCatalogues.MetricDefault("TitleBandHeightPt"), outcome.Request!.TitleBandHeightPt);
-        Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), outcome.Request.ChartOuterPaddingPt);
+
+        // ADR-0031 D1: this used to assert one ChartOuterPaddingPt figure on every
+        // side. The live profile now pads per side -- measured rows top and bottom,
+        // nothing on the left -- so the token survives only on the right, and the left
+        // is asserted as the deliberate zero the owner asked for.
+        Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), outcome.Request.ChartPadding.RightPt);
+        Assert.Equal(0, outcome.Request.ChartPadding.LeftPt);
     }
 
     /// <summary>

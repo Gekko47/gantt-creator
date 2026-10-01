@@ -97,7 +97,8 @@ public class ExcelRowHeightNormaliser(
         double splitterHeightPt,
         double spacerHeightPt,
         double headerHeightPt,
-        double reservedRowHeightPt)
+        double reservedRowHeightPt,
+        double paddingRowHeightPt)
     {
         Excel.Application? application = _application;
         Excel.Workbook? workbook = application?.ActiveWorkbook;
@@ -123,13 +124,19 @@ public class ExcelRowHeightNormaliser(
                     : RowHeightNormalisationRefusalReason.TargetProtected);
         }
 
-        // The two layout rows are normalised FIRST, and before the body's
-        // zero-row early return, because they exist independently of whether the
-        // table has any data yet: the header row is the period band's row (D5) and the
-        // reserved row carries the title and year band (D4). A freshly initialised
-        // table has a header and no body, and returning early on the body would leave
-        // both layout rows at Excel's default and the first lane misaligned again.
+        // The layout rows are normalised FIRST, and before the body's zero-row early
+        // return, because they exist independently of whether the table has any data
+        // yet: the header row is the period band's row (D5), the reserved row carries
+        // the title and year band (D4), and the top padding row is the chart's top
+        // margin (ADR-0031 D2). A freshly initialised table has a header and no body,
+        // and returning early on the body would leave them all at Excel's default and
+        // the first lane misaligned again.
         var written = 0;
+        written += NormaliseLayoutRow(
+            worksheet,
+            GanttSheetLayout.TopPaddingRowIndex,
+            paddingRowHeightPt);
+
         written += NormaliseLayoutRow(
             worksheet,
             GanttSheetLayout.ReservedRowIndex,
@@ -148,6 +155,16 @@ public class ExcelRowHeightNormaliser(
         {
             return RowHeightNormalisationOutcome.Ok(written);
         }
+
+        // The bottom padding row is derived from the body length, so it can only be
+        // addressed once the row count is known - which is why it is normalised here
+        // and not alongside the rows above. It is normalised BEFORE the body rows
+        // themselves for the same reason they are: a user who drags it is asking for
+        // a different margin, and restoring it is the whole point of this adapter.
+        written += NormaliseLayoutRow(
+            worksheet,
+            GanttSheetLayout.BottomPaddingRowIndex(rowCount),
+            paddingRowHeightPt);
 
         // Each row's KIND is read from its own Type cell, because the height policy
         // differs by kind: a Splitter follows `SplitterPt` and a Spacer `SpacerPt`,

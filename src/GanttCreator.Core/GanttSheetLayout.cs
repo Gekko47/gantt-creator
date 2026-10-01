@@ -38,21 +38,40 @@ public static class GanttSheetLayout
     /// How many rows are reserved above the table's header row.
     /// </summary>
     /// <remarks>
-    /// <b>One</b>, per ADR-0030 D4: the row carrying the table title and the year
-    /// band. The period band needs no row of its own (D5).
+    /// <b>Two</b>, per ADR-0031 D1: a top padding row and the row carrying the table
+    /// title and the year band. The period band still needs no row of its own
+    /// (ADR-0030 D5) because it shares the header row.
     /// </remarks>
-    public const int ReservedRowCount = 1;
+    public const int ReservedRowCount = 2;
+
+    /// <summary>
+    /// The top padding row: worksheet row 1, above everything the add-in draws. It
+    /// exists so the chart's top margin is a real row the user can see and align
+    /// with, rather than a sub-row sliver of chart chrome.
+    /// </summary>
+    public const int TopPaddingRowIndex = 1;
 
     /// <summary>
     /// The reserved row directly above the header: it carries the table title across
     /// the panel columns and the year band across the plot columns.
     /// </summary>
-    public const int ReservedRowIndex = 1;
+    public const int ReservedRowIndex = TopPaddingRowIndex + 1;
 
     /// <summary>
     /// The table's header row, and therefore the row the period band sits on.
     /// </summary>
-    public const int HeaderRowIndex = ReservedRowIndex + ReservedRowCount;
+    /// <remarks>
+    /// <b>Counted from the block's start, not from its last member.</b> This read
+    /// <c>ReservedRowIndex + ReservedRowCount</c>, which was correct only while
+    /// <see cref="ReservedRowIndex"/> sat at the <em>first</em> row of the reserved
+    /// block. Adding the top padding row inside that block made the two overlap, and
+    /// the sum then skipped a row: the header landed on 4 while the reserved rows
+    /// were 1 and 2, stranding an empty row between the title row and the header.
+    /// The block is contiguous by definition, so the header is simply the row after
+    /// the block's last row — which is <see cref="ReservedRowIndex"/> itself now
+    /// that it is the last member.
+    /// </remarks>
+    public const int HeaderRowIndex = ReservedRowIndex + 1;
 
     /// <summary>
     /// The worksheet row the first body row of the table occupies.
@@ -69,6 +88,31 @@ public static class GanttSheetLayout
     /// Gets the one-based worksheet row of the reserved title row.
     /// </summary>
     public static int TitleRowIndex => ReservedRowIndex;
+
+    /// <summary>
+    /// Gets the one-based worksheet row of the bottom padding row: the row directly
+    /// below the last activity row.
+    /// </summary>
+    /// <param name="bodyRowCount">The number of body rows in the table.</param>
+    /// <returns>The bottom padding row's one-based worksheet index.</returns>
+    /// <remarks>
+    /// <b>Derived, not a constant.</b> The top padding row is a fixed index because
+    /// it sits above the table, but this one sits below a body whose length the user
+    /// controls. Publishing it as a constant would be a second source of truth that
+    /// is wrong for every table except one particular length - the same defect
+    /// <see cref="FirstBodyRowIndex"/> is derived to avoid.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="bodyRowCount"/> is not positive. A table with no
+    /// body has no last activity row, so there is no row for this to name, and
+    /// returning a plausible index would place the chart's bottom margin inside the
+    /// table.
+    /// </exception>
+    public static int BottomPaddingRowIndex(int bodyRowCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(bodyRowCount, 1);
+        return FirstBodyRowIndex + bodyRowCount;
+    }
 
     /// <summary>
     /// Gets the one-based worksheet column of the plot anchor: the column one to the

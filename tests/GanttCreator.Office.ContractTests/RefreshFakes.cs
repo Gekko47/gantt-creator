@@ -87,6 +87,13 @@ internal sealed class RefreshFakes
     /// </summary>
     public double? LastReservedRowHeightPt { get; set; }
 
+    /// <summary>
+    /// The chart-padding-row target the orchestrator last passed (ADR-0031 D2), or
+    /// null if never called. These rows are the chart's top and bottom margin, so
+    /// this figure is the height the user's chart frame ends up with.
+    /// </summary>
+    public double? LastPaddingRowHeightPt { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -332,23 +339,26 @@ internal sealed class RefreshFakes
             double splitter,
             double spacer,
             double header,
-            double reservedRow)
+            double reservedRow,
+            double paddingRow)
         {
             owner.Steps.Add("RowHeights");
 
-            // The five targets are recorded, not discarded. This fake previously
+            // The targets are recorded, not discarded. This fake previously
             // ignored all three arguments and returned Ok(0), so it could not fail on
             // a wrong value: the orchestrator's hardcoded (15, 6, 6) passed every
             // refresh test while contradicting the catalogue's 18 / 18 / 9. A fake
             // that discards the value under test is not a test double, it is a
-            // rubber stamp. The two layout-row targets are recorded for the same
+            // rubber stamp. The layout-row targets are recorded for the same
             // reason: the header height is what makes the period band's bottom meet
-            // the first body row's top (ADR-0030 D5).
+            // the first body row's top (ADR-0030 D5), and the padding-row height is
+            // the chart's top and bottom margin (ADR-0031 D2).
             owner.LastManagedHeightPt = managed;
             owner.LastSplitterHeightPt = splitter;
             owner.LastSpacerHeightPt = spacer;
             owner.LastHeaderHeightPt = header;
             owner.LastReservedRowHeightPt = reservedRow;
+            owner.LastPaddingRowHeightPt = paddingRow;
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)

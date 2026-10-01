@@ -159,6 +159,22 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         var textPanelWidthPt = measuredGrid.TotalWidthPt;
         var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
 
+        // ADR-0031 D1/D2: the chart's frame margin is per side. Top and bottom are
+        // the measured padding rows, so the chart's outer edge lands on a row
+        // boundary the user can see; the left is ZERO so the plot sits flush against
+        // the data table instead of one margin-width away from it.
+        //
+        // The left margin is not a tuning value. It is the gap between the table's
+        // right edge and the plot's left edge, and a user reading the sheet sees a
+        // visible channel of nothing between two things that are one object. The
+        // right margin is untouched: the plot's right edge abuts the sheet edge and
+        // the frame's right padding is what stops the last period label touching it.
+        var padding = new ChartPaddingPt(
+            LeftPt: 0,
+            TopPt: measuredGrid.TopPaddingHeightPt,
+            RightPt: chrome,
+            BottomPt: measuredGrid.BottomPaddingHeightPt);
+
         // The header band heights are NOT read here any more. They used to be summed into
         // the plot's top offset; that sum was the page-coordinate origin ADR-0030
         // removes. The bands are now positioned by the scene from the reserved and
@@ -187,7 +203,13 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         PlotGeometryOutcome geometry = PlotGeometryResolver.TryResolve(
             preset,
             textPanelWidthPt,
-            leftChromePt: chrome,
+
+            // ADR-0031 D2: no left chrome. The plot begins exactly where the data
+            // table ends, so the two read as one object. The RIGHT chrome is
+            // unchanged and still earns its place: the plot's right edge is the
+            // sheet's own edge, and without that margin the final period label would
+            // sit flush against it.
+            leftChromePt: 0,
             rightChromePt: chrome,
             topPt: topPt,
             heightPt: heightPt,
@@ -233,7 +255,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 periodFormat,
                 dateFormat,
                 settings,
-                chrome,
+                padding,
                 metrics,
                 laneMetrics);
 
@@ -260,7 +282,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         GanttPeriodLabelFormat periodFormat,
         GanttDateDisplayFormat dateFormat,
         IReadOnlyDictionary<string, string> settings,
-        double chrome,
+        ChartPaddingPt padding,
         ITextMetrics metrics,
         LaneLayoutMetrics laneMetrics) =>
         new()
@@ -293,7 +315,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             YearBandHeightPt = GanttCatalogues.MetricDefault(_yearBandToken),
             PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
             TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
-            ChartOuterPaddingPt = chrome,
+            ChartPadding = padding,
             MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
             GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
             MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),

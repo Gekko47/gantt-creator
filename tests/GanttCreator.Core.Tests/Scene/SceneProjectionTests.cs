@@ -127,7 +127,7 @@ public sealed class SceneProjectionTests
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
             LabelHeightPt = 8,
-            ChartOuterPaddingPt = 0,
+            ChartPadding = ChartPaddingPt.Uniform(0),
             MinimumHeaderLabelWidthPt = 0,
         };
 

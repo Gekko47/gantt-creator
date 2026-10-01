@@ -28,7 +28,10 @@ public class GanttSchemaVersionTests
         // GanttRowHeightPt rename, the retired CriticalLinePt, and CriticalFill.
         // Schema v8 is R4.7I: the reserved title row moves the header from row 1 to
         // row 2 and the plot anchor with it (ADR-0030 D4/D5).
-        Assert.Equal(8, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v9 is ADR-0031 D1: the chart's top and bottom padding become real
+        // worksheet rows, so the header moves from row 2 to row 3 and the plot anchor
+        // moves again. It also adds the ChartPaddingRowHeightPt token.
+        Assert.Equal(9, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

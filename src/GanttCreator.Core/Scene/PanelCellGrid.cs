@@ -55,6 +55,17 @@ public enum PanelCellGridRefusal
     /// plausible but wrong vertical position, and nothing would report it.
     /// </remarks>
     InvalidOrigin = 10,
+
+    /// <summary>
+    /// A padding row height was not finite, or was negative.
+    /// </summary>
+    /// <remarks>
+    /// Zero is allowed and means "no padding row", which is the export case. A
+    /// negative height is refused because it would place the chart frame's edge
+    /// inside its own content, producing an inverted chart that no later stage
+    /// would catch.
+    /// </remarks>
+    InvalidPaddingHeight = 11,
 }
 
 /// <summary>The typed result of validating a measured cell grid.</summary>
@@ -93,7 +104,9 @@ public sealed record PanelCellGrid
         double headerHeightPt,
         IReadOnlyList<string> requiredColumns,
         double originTopPt,
-        double originLeftPt)
+        double originLeftPt,
+        double topPaddingHeightPt,
+        double bottomPaddingHeightPt)
     {
         Columns = columns;
         RowHeightsPt = rowHeightsPt;
@@ -101,6 +114,8 @@ public sealed record PanelCellGrid
         RequiredColumns = requiredColumns;
         OriginTopPt = originTopPt;
         OriginLeftPt = originLeftPt;
+        TopPaddingHeightPt = topPaddingHeightPt;
+        BottomPaddingHeightPt = bottomPaddingHeightPt;
     }
 
     /// <summary>The included columns, in caller order.</summary>
@@ -167,6 +182,29 @@ public sealed record PanelCellGrid
     /// </remarks>
     public double OriginLeftPt { get; }
 
+    /// <summary>
+    /// The measured height of the top padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <remarks>
+    /// <b>Measured, not assumed.</b> This is the chart frame's top margin. Reading it
+    /// from the sheet is what makes the chart's top edge land on a row boundary the
+    /// user can see and drag; substituting the band token would put the frame's edge
+    /// at a number that does not correspond to any row and would drift the moment
+    /// the user changed the row.
+    /// </remarks>
+    public double TopPaddingHeightPt { get; }
+
+    /// <summary>
+    /// The measured height of the bottom padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <remarks>
+    /// The bottom counterpart to <see cref="TopPaddingHeightPt"/>, and measured from
+    /// the row after the last activity row rather than assumed to match the top one.
+    /// The two rows are independent: a user can resize either, and assuming they are
+    /// equal would silently disagree with the sheet on whichever one they changed.
+    /// </remarks>
+    public double BottomPaddingHeightPt { get; }
+
     /// <summary>The total body height in points, the sum of the row heights.</summary>
     public double TotalRowHeightPt
     {
@@ -213,6 +251,15 @@ public sealed record PanelCellGrid
     /// The absolute worksheet X of the panel's left edge, in points
     /// (ADR-0030 D3).
     /// </param>
+    /// <param name="topPaddingHeightPt">
+    /// The measured top padding row height, in points (ADR-0031 D2). Defaults to
+    /// zero, which is correct for an EXPORT composition: there are no worksheet rows
+    /// there, so a zero margin is the honest figure rather than a missing one.
+    /// </param>
+    /// <param name="bottomPaddingHeightPt">
+    /// The measured bottom padding row height, in points (ADR-0031 D2). Defaults to
+    /// zero on the same reasoning as <paramref name="topPaddingHeightPt"/>.
+    /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
@@ -220,8 +267,25 @@ public sealed record PanelCellGrid
         double headerHeightPt,
         IReadOnlyList<string>? requiredColumns,
         double originTopPt = 0d,
-        double originLeftPt = 0d)
+        double originLeftPt = 0d,
+        double topPaddingHeightPt = 0d,
+        double bottomPaddingHeightPt = 0d)
     {
+        // A padding height is a MEASUREMENT, so it is validated like every other
+        // measurement here rather than defaulted when absent. Zero is a legitimate
+        // value (the export case) and is therefore allowed; a negative or
+        // non-finite one is not, because it would build a chart whose frame extends
+        // past its own content on that side and nothing downstream would report it.
+        if (!double.IsFinite(topPaddingHeightPt) || topPaddingHeightPt < 0)
+        {
+            return Refused(PanelCellGridRefusal.InvalidPaddingHeight);
+        }
+
+        if (!double.IsFinite(bottomPaddingHeightPt) || bottomPaddingHeightPt < 0)
+        {
+            return Refused(PanelCellGridRefusal.InvalidPaddingHeight);
+        }
+
         if (columns is null)
         {
             return Refused(PanelCellGridRefusal.NullRequest);
@@ -293,7 +357,9 @@ public sealed record PanelCellGrid
                     headerHeightPt,
                     [.. requiredColumns ?? []],
                     originTopPt,
-                    originLeftPt),
+                    originLeftPt,
+                    topPaddingHeightPt,
+                    bottomPaddingHeightPt),
                 null)
             : Refused(PanelCellGridRefusal.InvalidOrigin);
     }

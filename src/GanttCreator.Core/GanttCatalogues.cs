@@ -126,6 +126,14 @@ public static class GanttCatalogues
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
         new("ChartOuterPaddingPt", 6, 0, 36),
+
+        // ADR-0031 D2: the height of the worksheet rows that form the chart's top
+        // and bottom margins. It is a separate token from YearBandHeightPt because
+        // it is a different thing -- a band is drawn content, this is empty
+        // breathing room -- and because a user who wants a taller margin should not
+        // have to resize the year header to get it. The minimum is 0 so a user can
+        // collapse the margin entirely if they want the chart flush to the grid.
+        new("ChartPaddingRowHeightPt", 18, 0, 72),
         new("TitleBandHeightPt", 24, 12, 72),
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),

@@ -152,8 +152,16 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the title strip height.</summary>
     public double TitleBandHeightPt { get; init; }
 
-    /// <summary>Gets the padding applied once around the panel/plot union.</summary>
-    public double ChartOuterPaddingPt { get; init; }
+    /// <summary>
+    /// Gets the margin between the panel/plot union and the chart frame, per side.
+    /// </summary>
+    /// <remarks>
+    /// Per side rather than one scalar (ADR-0031 D1). A live chart passes zero on
+    /// the left so the plot sits flush against the data table, and the measured
+    /// padding row heights top and bottom. An export request passes
+    /// <see cref="ChartPaddingPt.Uniform"/> and behaves exactly as before.
+    /// </remarks>
+    public ChartPaddingPt ChartPadding { get; init; }
 
     /// <summary>Gets the minimum visible period-label width.</summary>
     public double MinimumHeaderLabelWidthPt { get; init; }
@@ -789,7 +797,7 @@ public static class SceneBuilder
                 request.PeriodLabelFormat,
                 framePanelBounds,
                 plotBounds,
-                request.ChartOuterPaddingPt,
+                request.ChartPadding,
                 request.TitleBandHeightPt,
                 request.YearBandHeightPt,
                 request.PeriodBandHeightPt,

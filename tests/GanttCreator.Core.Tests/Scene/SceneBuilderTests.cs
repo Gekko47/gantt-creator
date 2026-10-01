@@ -178,7 +178,7 @@ public sealed class SceneBuilderTests
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
             LabelHeightPt = 8,
-            ChartOuterPaddingPt = 0,
+            ChartPadding = ChartPaddingPt.Uniform(0),
             MinimumHeaderLabelWidthPt = 0,
         };
 
@@ -305,7 +305,7 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with
             {
-                ChartOuterPaddingPt = 6,
+                ChartPadding = ChartPaddingPt.Uniform(6),
                 Panel = new PanelTheme(
                     new SceneStyle("BodyFill"),
                     new SceneStyle("BodyText"),

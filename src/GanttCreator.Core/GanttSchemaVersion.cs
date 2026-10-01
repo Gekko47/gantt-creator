@@ -22,14 +22,25 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 8 for the reserved title row and the
-    /// header-row move (owner ruling 2026-10-01, ADR-0030 D4/D5).
+    /// monotonically, and is currently 9 for the top and bottom chart padding rows
+    /// and the header row's second move (owner ruling 2026-10-01, ADR-0031 D1).
     /// </summary>
     /// <remarks>
     /// <para>
     /// ADR-0029 D5 requires the bump to be the <em>last</em> change in the row's
     /// commit sequence: every other change lands first, so the integrity checker
     /// — not a manual review — is what notices a partial landing.
+    /// </para>
+    /// <para>
+    /// <b>Version 9 adds the chart padding rows.</b> A row is reserved above the
+    /// title row so the chart's top margin is a real worksheet row, and the row
+    /// below the last activity row is its bottom counterpart (ADR-0031 D1). The
+    /// header therefore moves from row 2 to row 3 and the plot anchor moves with it,
+    /// which is the same class of change as version 8 and carries the same
+    /// consequence: a version-8 workbook's header is still on row 2, so the anchor
+    /// repair would write an address that points at the wrong row. There is no
+    /// migration (ADR-0029 D6); the remedy is Initialise, which
+    /// <c>SchemaVersionMismatchMessage</c> already tells the user to run.
     /// </para>
     /// <para>
     /// <b>Version 8 moves the table down one row.</b> The reserved row above
@@ -61,5 +72,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
 }

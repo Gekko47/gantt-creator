@@ -270,7 +270,13 @@ public sealed class GanttRefreshOrchestrator(
             // the three above do -- a literal here is a second authority that can
             // drift from the token the user retunes.
             GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
-            GanttCatalogues.MetricDefault("YearBandHeightPt"));
+            GanttCatalogues.MetricDefault("YearBandHeightPt"),
+
+            // ADR-0031 D2: the chart's top and bottom margins are worksheet rows, so
+            // they are normalised to their own token rather than borrowing a band's
+            // height. It is the LAST argument because it is the newest row, and the
+            // catalogue -- not a literal -- is the authority for how tall it is.
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"));
         if (!heights.Succeeded)
         {
             // The Duration column has already been written at this point, so the

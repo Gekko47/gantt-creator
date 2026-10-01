@@ -143,7 +143,7 @@ public sealed class RepresentativeAcceptanceFixtureTests
                 DelineatorStackGapPt = 10,
                 LabelGapPt = 2,
                 LabelHeightPt = 8,
-                ChartOuterPaddingPt = 0,
+                ChartPadding = ChartPaddingPt.Uniform(0),
                 MinimumHeaderLabelWidthPt = 0,
             });
     }
@@ -446,7 +446,7 @@ public sealed class RepresentativeAcceptanceFixtureTests
                 DelineatorStackGapPt = 10,
                 LabelGapPt = 2,
                 LabelHeightPt = 8,
-                ChartOuterPaddingPt = 0,
+                ChartPadding = ChartPaddingPt.Uniform(0),
                 MinimumHeaderLabelWidthPt = 0,
             });
         Assert.True(parentOnly.Succeeded, "Parent-only build refused: " + parentOnly.Refusal);

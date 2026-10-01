@@ -35,7 +35,9 @@ public class ExcelPanelGridMeasurementTests
         IReadOnlyList<object?> bodyRowHeights,
         object? headerRowHeight,
         double originTopPt,
-        double originLeftPt)
+        double originLeftPt,
+        double topPaddingHeightPt = 18.0,
+        double bottomPaddingHeightPt = 27.5)
         : ExcelPanelGridMeasurement(application)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
@@ -85,6 +87,16 @@ public class ExcelPanelGridMeasurementTests
         internal override double? ReadOriginTop(Excel.ListObject candidate) => originTopPt;
 
         internal override double? ReadOriginLeft(Excel.ListObject candidate) => originLeftPt;
+
+        // ADR-0031 D2: the padding-row heights are substituted for the same reason the
+        // origin is — they are read through COM, not computed. Distinct sentinel
+        // values rather than one number, because "the bottom row matches the top row"
+        // is exactly the assumption a shared fixture value could not detect.
+        internal override double? ReadTopPaddingHeight(Excel.ListObject candidate) =>
+            topPaddingHeightPt;
+
+        internal override double? ReadBottomPaddingHeight(Excel.ListObject candidate) =>
+            bottomPaddingHeightPt;
     }
 
     /// <summary>The table, its single column, and what each body row reports.</summary>

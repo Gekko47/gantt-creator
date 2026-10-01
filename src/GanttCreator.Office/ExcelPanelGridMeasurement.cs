@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -158,7 +159,9 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // assumption this change removes, and it would reintroduce the misalignment
         // silently.
         if (ReadOriginTop(table) is not { } originTop
-            || ReadOriginLeft(table) is not { } originLeft)
+            || ReadOriginLeft(table) is not { } originLeft
+            || ReadTopPaddingHeight(table) is not { } topPaddingHeight
+            || ReadBottomPaddingHeight(table) is not { } bottomPaddingHeight)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
@@ -173,7 +176,9 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             headerHeight,
             includedColumns,
             originTop,
-            originLeft);
+            originLeft,
+            topPaddingHeight,
+            bottomPaddingHeight);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -197,6 +202,79 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
 
         Excel.Range? body = table.DataBodyRange;
         return body is null ? null : ToPoints(body.Top);
+    }
+
+    /// <summary>
+    /// Reads the height of the top padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// The row index comes from <see cref="GanttSheetLayout.TopPaddingRowIndex"/>
+    /// rather than a literal, so this adapter cannot disagree with the layout
+    /// authority about which row the chart's top margin is.
+    /// </remarks>
+    internal virtual double? ReadTopPaddingHeight(Excel.ListObject table) =>
+        ReadRowHeightAt(table, GanttSheetLayout.TopPaddingRowIndex);
+
+    /// <summary>
+    /// Reads the height of the bottom padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// This row sits below a body whose length the user controls, so its index is
+    /// derived from the measured body row count through
+    /// <see cref="GanttSheetLayout.BottomPaddingRowIndex"/>. A literal here would be
+    /// correct for exactly one table length and wrong for every other.
+    /// </remarks>
+    internal virtual double? ReadBottomPaddingHeight(Excel.ListObject table) =>
+        table.DataBodyRange is not { } body
+            ? null
+            : ReadRowHeightAt(table, GanttSheetLayout.BottomPaddingRowIndex(GetBodyRowCount(body)));
+
+    /// <summary>
+    /// Reads one absolute worksheet row's height by its 1-based index.
+    /// </summary>
+    /// <param name="table">The Gantt table, used only to reach its worksheet.</param>
+    /// <param name="rowIndex">The 1-based worksheet row index.</param>
+    /// <returns>The height, or <see langword="null"/> when it cannot be read.</returns>
+    /// <remarks>
+    /// <b>Whole-worksheet rows, not table rows.</b> Both padding rows lie outside
+    /// <c>tblGanttData</c>, so neither is reachable through
+    /// <c>DataBodyRange</c> or <c>HeaderRowRange</c>; they are addressed through the
+    /// worksheet's own <c>Rows</c> collection by absolute index.
+    /// </remarks>
+    private double? ReadRowHeightAt(Excel.ListObject table, int rowIndex)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        // `ListObject` exposes no `Worksheet` member in this PIA, so the parent is
+        // unwrapped explicitly. `Parent` is typed `object`, so a non-worksheet parent
+        // arrives as something that will not cast; that degrades to the absent case
+        // below rather than throwing.
+        if (table.Parent is not Excel.Worksheet worksheet || worksheet.Rows is not { } rows)
+        {
+            return null;
+        }
+
+        Excel.Range? row = null;
+        try
+        {
+            row = rows[rowIndex];
+            return row is null ? null : ToPoints(row.RowHeight);
+        }
+        finally
+        {
+            // This adapter OWNS the Range it created and no caller can release it: the
+            // proxy is never returned. Without this it would survive to the finaliser
+            // and land in the Office leak ratchet, which is exactly the signal the
+            // ratchet exists to keep meaningful.
+            if (row is not null && Marshal.IsComObject(row))
+            {
+                _ = Marshal.FinalReleaseComObject(row);
+            }
+        }
     }
 
     /// <summary>

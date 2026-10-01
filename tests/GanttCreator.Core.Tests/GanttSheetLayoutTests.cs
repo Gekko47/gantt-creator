@@ -7,22 +7,58 @@ namespace GanttCreator.Core.Tests;
 public sealed class GanttSheetLayoutTests
 {
     /// <summary>
-    /// One row is reserved above the table, and the header sits directly beneath it.
+    /// <summary>
+    /// Two rows are reserved above the table: a top padding row, then the title/year
+    /// row, with the header directly beneath.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The owner's original request was two reserved rows — one for the year band and
-    /// one for the period band. ADR-0030 D4/D5 implements <b>one</b>, because entity
-    /// guide §4 already requires the header's height to align with the period header's
-    /// bottom, so the header row <em>is</em> the period band's row. This test pins
-    /// the one-row decision so a later "add the second band row" change has to amend
-    /// ADR-0030 D5 and the guide rather than drift in quietly.
+    /// one for the period band. ADR-0030 D4/D5 implements <b>one band row</b>, because
+    /// entity guide §4 already requires the header's height to align with the period
+    /// header's bottom, so the header row <em>is</em> the period band's row. That
+    /// decision still stands and is why the header is directly beneath the title row.
+    /// </para>
+    /// <para>
+    /// ADR-0031 D1 adds a <b>second</b> row above the title row, for a different
+    /// reason: it is the chart's top margin, not a band. The owner asked for the
+    /// chart's top and bottom padding to be real worksheet rows so its edges line up
+    /// with the sheet's grid, rather than a sub-row sliver of chart chrome. This test
+    /// pins the two-row arrangement so a later change to either the band decision or
+    /// the padding rows has to amend the ADR and the guide rather than drift quietly.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void Exactly_one_row_is_reserved_above_the_header()
+    public void Exactly_two_rows_are_reserved_above_the_header()
     {
-        Assert.Equal(1, GanttSheetLayout.ReservedRowCount);
-        Assert.Equal(1, GanttSheetLayout.ReservedRowIndex);
-        Assert.Equal(2, GanttSheetLayout.HeaderRowIndex);
+        Assert.Equal(2, GanttSheetLayout.ReservedRowCount);
+        Assert.Equal(1, GanttSheetLayout.TopPaddingRowIndex);
+        Assert.Equal(2, GanttSheetLayout.ReservedRowIndex);
+        Assert.Equal(3, GanttSheetLayout.HeaderRowIndex);
+    }
+
+    /// <summary>
+    /// The bottom padding row is the row directly below the last activity row, and
+    /// it is derived from the body length rather than fixed.
+    /// </summary>
+    /// <remarks>
+    /// A fixed index would be correct for exactly one table length. This also proves
+    /// the derived value is not simply the header row: a body that starts and ends
+    /// where it should is what makes the chart's bottom margin land below the chart
+    /// rather than inside the table.
+    /// </remarks>
+    [Fact]
+    public void The_bottom_padding_row_is_the_row_after_the_last_activity_row()
+    {
+        // Body starts at row 4, so seven activity rows occupy 4..10 and the bottom
+        // padding row is 11: the row directly below the last activity row.
+        Assert.Equal(11, GanttSheetLayout.BottomPaddingRowIndex(7));
+        Assert.Equal(5, GanttSheetLayout.BottomPaddingRowIndex(1));
+
+        // A table with no body has no last activity row, so there is no row to name.
+        // Returning a plausible index would place the chart's bottom margin inside
+        // the table, so this is refused rather than guessed.
+        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.BottomPaddingRowIndex(0));
     }
 
     /// <summary>
@@ -48,6 +84,9 @@ public sealed class GanttSheetLayoutTests
     [Fact]
     public void The_reserved_header_and_body_rows_are_contiguous()
     {
+        Assert.Equal(
+            GanttSheetLayout.TopPaddingRowIndex + 1,
+            GanttSheetLayout.ReservedRowIndex);
         Assert.Equal(
             GanttSheetLayout.ReservedRowIndex + 1,
             GanttSheetLayout.HeaderRowIndex);

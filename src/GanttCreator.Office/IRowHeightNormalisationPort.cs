@@ -36,6 +36,12 @@ public interface IRowHeightNormalisationPort
     /// The target height for the reserved row above the table, which carries the
     /// table title and the year band (ADR-0030 D4).
     /// </param>
+    /// <param name="paddingRowHeightPt">
+    /// The target height for the chart's top and bottom padding rows (ADR-0031 D2).
+    /// These are empty rows rather than drawn content, so they take their own token
+    /// instead of borrowing the year band's: a user who wants a taller margin
+    /// should not have to resize a header to get it.
+    /// </param>
     /// <returns>How many rows were written, or the refusal reason.</returns>
     /// <remarks>
     /// The two layout rows are separate parameters rather than members of the body
@@ -51,5 +57,6 @@ public interface IRowHeightNormalisationPort
         double splitterHeightPt,
         double spacerHeightPt,
         double headerHeightPt,
-        double reservedRowHeightPt);
+        double reservedRowHeightPt,
+        double paddingRowHeightPt);
 }

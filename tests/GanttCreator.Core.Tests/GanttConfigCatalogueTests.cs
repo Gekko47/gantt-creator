@@ -20,11 +20,16 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Metrics_contains_exactly_the_22_entity_guide_tokens() =>
+    public void Metrics_contains_exactly_the_23_entity_guide_tokens() =>
         // R4.7C retired CriticalLinePt (ADR-0027 D4) and renamed LaneHeightPt to
         // GanttRowHeightPt (ADR-0026 D1). A rename keeps the count; the retirement
         // is what took it from 23 to 22.
-        Assert.Equal(22, GanttCatalogues.Metrics.Count);
+        // ADR-0031 D2 added ChartPaddingRowHeightPt -- the height of the worksheet
+        // rows that form the chart's top and bottom margins -- taking 22 to 23. It
+        // is a NEW token rather than a reuse of YearBandHeightPt because a padding
+        // row is empty breathing room and a band is drawn content; a user who wants
+        // a taller margin should not have to resize the year header to get it.
+        Assert.Equal(23, GanttCatalogues.Metrics.Count);
 
     [Fact]
     public void Colours_contains_exactly_the_22_entity_guide_tokens() =>
@@ -587,10 +592,17 @@ public class GanttConfigCatalogueTests
     /// carries the old hash and is reported as a mismatch, which is what stops
     /// the anchor repair from "fixing" a version-7 anchor onto row 2 while its
     /// header is still on row 1.
+    /// Advanced again to 9 by ADR-0031 D1: the chart's top and bottom padding
+    /// become real worksheet rows, so the header moves from row 2 to row 3 and the
+    /// plot anchor moves with it, and <c>ChartPaddingRowHeightPt</c> joins the
+    /// metric catalogue. The same mechanism applies: a version-8 workbook carries
+    /// the older hash and is reported as a mismatch, which is what stops the anchor
+    /// repair from writing a version-9 anchor onto a version-8 sheet whose header
+    /// is still on row 2.
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "58f41362026fc8c7be4298ce80f7bc332a7bb9209c32c6a9ae9451116f6b20b1";
+        "c8a1aaeb4c38b3e0fd377ee9778d2ecf79ab76b20cbcc1c34b65a244579f890f";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

@@ -85,6 +85,80 @@ public sealed class PanelCellGridTests
         Assert.Equal(PanelCellGridRefusal.InvalidOrigin, outcome.Refusal);
     }
 
+    /// <summary>
+    /// The measured padding-row heights are carried on the grid (ADR-0031 D2).
+    /// </summary>
+    /// <remarks>
+    /// They are the chart frame's top and bottom margin, so they are part of the
+    /// measured input rather than a constant the factory could substitute. The two
+    /// are asserted with DIFFERENT values on purpose: assuming the bottom row
+    /// matches the top one is the bug this guards, and a fixture that used one
+    /// number for both could not tell the two apart.
+    /// </remarks>
+    [Fact]
+    public void The_measured_padding_heights_are_carried_on_the_grid()
+    {
+        PanelCellGrid grid =
+            PanelCellGrid.TryCreate(
+                [Col("Id")],
+                [12.0],
+                12.0,
+                [],
+                topPaddingHeightPt: 18.0,
+                bottomPaddingHeightPt: 27.5).Grid
+            ?? throw new InvalidOperationException("Fixture grid should be valid.");
+
+        Assert.Equal(18.0, grid.TopPaddingHeightPt);
+        Assert.Equal(27.5, grid.BottomPaddingHeightPt);
+    }
+
+    /// <summary>
+    /// A padding height that is not finite, or is negative, is refused.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator added with ADR-0031 D2.</b> A negative
+    /// height would place the chart frame's edge inside its own content, producing
+    /// an inverted chart that no later stage would catch. Each row is a separate
+    /// case because a check that only read the top one would accept a bad bottom.
+    /// </remarks>
+    [Theory]
+    [InlineData(-1d, 0d)]
+    [InlineData(0d, -0.5d)]
+    [InlineData(double.NaN, 0d)]
+    [InlineData(0d, double.PositiveInfinity)]
+    public void An_unusable_padding_height_is_refused(double top, double bottom)
+    {
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate(
+            [Col("Id")],
+            [12.0],
+            12.0,
+            [],
+            topPaddingHeightPt: top,
+            bottomPaddingHeightPt: bottom);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelCellGridRefusal.InvalidPaddingHeight, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// Zero padding on both rows is accepted: the export case, where there are no
+    /// padding rows at all.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the refusal theory above. A strictly-positive check would
+    /// refuse the legitimate zero that <c>TryCreate</c>'s own defaults supply, so the
+    /// whole export path would break.
+    /// </remarks>
+    [Fact]
+    public void Zero_padding_is_accepted()
+    {
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate([Col("Id")], [12.0], 12.0, []);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0d, outcome.Grid!.TopPaddingHeightPt);
+        Assert.Equal(0d, outcome.Grid.BottomPaddingHeightPt);
+    }
+
     [Fact]
     public void A_valid_grid_keeps_column_order_widths_and_height()
     {

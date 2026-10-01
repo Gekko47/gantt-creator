@@ -16,6 +16,142 @@ public sealed class FrameBandsBuilderTests
     );
 
     /// <summary>
+    /// Each side of the frame margin is applied independently (ADR-0031 D1).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the test the single scalar could not have.</b> The old request
+    /// carried one <c>ChartOuterPaddingPt</c> for all four sides, so there was no way
+    /// to express — let alone assert — a live chart with no left margin and row-sized
+    /// top and bottom margins. Checking only that "the bounds are the content plus
+    /// 6pt all round" would pass against a builder that ignored the per-side values
+    /// entirely and applied a constant.
+    /// </remarks>
+    [Fact]
+    public void Each_side_of_the_padding_is_applied_to_its_own_edge()
+    {
+        FrameBandsCreationOutcome outcome = Build(
+            CreateRequest() with
+            {
+                // The live arrangement: no left margin, tall top and bottom rows, and
+                // the chrome token on the right.
+                Padding = new ChartPaddingPt(LeftPt: 0, TopPt: 30, RightPt: 6, BottomPt: 40),
+            });
+
+        Assert.True(outcome.Succeeded);
+        ChartFrameGeometry geometry = outcome.Result!.Geometry;
+        RectD chart = geometry.ChartBounds;
+        RectD union = UnionOf(geometry);
+
+        Assert.Equal(union.Left, chart.Left, precision: 6);
+        Assert.Equal(union.Top - 30, chart.Top, precision: 6);
+        Assert.Equal(union.Right + 6, chart.Right, precision: 6);
+        Assert.Equal(union.Bottom + 40, chart.Bottom, precision: 6);
+    }
+
+    /// <summary>
+    /// A uniform padding reproduces the old single-scalar behaviour exactly, which is
+    /// what every export profile passes.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the per-side test: without it, a "simplification" back to
+    /// one scalar would still pass the live assertion and silently reintroduce the
+    /// left margin on every exported chart.
+    /// </remarks>
+    [Fact]
+    public void A_uniform_padding_matches_the_content_plus_that_margin_on_all_sides()
+    {
+        const double padding = 6;
+        FrameBandsCreationOutcome outcome = Build(
+            CreateRequest() with { Padding = ChartPaddingPt.Uniform(padding) });
+
+        Assert.True(outcome.Succeeded);
+        ChartFrameGeometry geometry = outcome.Result!.Geometry;
+        RectD chart = geometry.ChartBounds;
+        RectD union = UnionOf(geometry);
+
+        Assert.Equal(union.Left - padding, chart.Left, precision: 6);
+        Assert.Equal(union.Top - padding, chart.Top, precision: 6);
+        Assert.Equal(union.Right + padding, chart.Right, precision: 6);
+        Assert.Equal(union.Bottom + padding, chart.Bottom, precision: 6);
+    }
+
+    /// <summary>
+    /// A negative or non-finite margin on ANY side is refused, not just the first.
+    /// </summary>
+    /// <remarks>
+    /// <b>The positive test for the per-side validator.</b> A check that only
+    /// inspected one member would accept a request whose other three sides were
+    /// sound, producing chart bounds that extended past their own content on the one
+    /// unchecked side — a rectangle no caller asked for and nothing downstream would
+    /// report. Every side is a separate case here for that reason.
+    /// </remarks>
+    [Theory]
+    [InlineData(-1d, 6d, 6d, 6d)]
+    [InlineData(6d, -1d, 6d, 6d)]
+    [InlineData(6d, 6d, -1d, 6d)]
+    [InlineData(6d, 6d, 6d, -1d)]
+    [InlineData(double.NaN, 6d, 6d, 6d)]
+    [InlineData(6d, 6d, double.PositiveInfinity, 6d)]
+    public void A_bad_margin_on_any_side_is_refused(
+        double left,
+        double top,
+        double right,
+        double bottom)
+    {
+        FrameBandsCreationOutcome outcome = Build(
+            CreateRequest() with { Padding = new ChartPaddingPt(left, top, right, bottom) });
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(FrameBandsRefusal.InvalidGeometry, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// Zero on every side is ACCEPTED: a chart that hugs its content is a legitimate
+    /// request, not a degenerate one.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the refusal theory above. Validating "non-negative" with
+    /// a strictly-positive test would refuse the live profile's own left margin, which
+    /// is exactly the value ADR-0031 D2 sets to zero.
+    /// </remarks>
+    [Fact]
+    public void A_zero_margin_on_every_side_is_accepted()
+    {
+        FrameBandsCreationOutcome outcome = Build(
+            CreateRequest() with { Padding = ChartPaddingPt.None });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(UnionOf(outcome.Result!.Geometry), outcome.Result.Geometry.ChartBounds);
+    }
+
+    /// <summary>
+    /// The rectangle the frame is derived from: the content bounds widened to include
+    /// the title band, when one is present.
+    /// </summary>
+    /// <param name="geometry">The resolved frame geometry.</param>
+    /// <returns>The union the chart bounds are padded from.</returns>
+    /// <remarks>
+    /// The frame wraps the union, not <c>ContentBounds</c> alone: entity guide §1
+    /// defines the chart as the title, panel, headers and plot plus the margin, so a
+    /// test that compared against the content rectangle would be asserting the wrong
+    /// edge and would fail for a correct builder.
+    /// </remarks>
+    private static RectD UnionOf(ChartFrameGeometry geometry)
+    {
+        RectD content = Assert.IsType<RectD>(geometry.ContentBounds);
+        if (geometry.TitleBounds is not { } title)
+        {
+            return content;
+        }
+
+        double left = Math.Min(content.Left, title.Left);
+        double top = Math.Min(content.Top, title.Top);
+        double right = Math.Max(content.Right, title.Right);
+        double bottom = Math.Max(content.Bottom, title.Bottom);
+        return new RectD(left, top, right - left, bottom - top);
+    }
+
+    /// <summary>
     /// The period band sits BELOW the year band, directly above the plot
     /// (entity guide §5/§6).
     /// </summary>
@@ -75,7 +211,7 @@ public sealed class FrameBandsBuilderTests
         // against a restatement of its own arithmetic, so this is a real cross-check
         // of the derived bounds rather than a tautology.
         const double padding = 6;
-        ChartFrameGeometry geometry = Build(CreateRequest() with { ChartOuterPaddingPt = padding }).Result!.Geometry;
+        ChartFrameGeometry geometry = Build(CreateRequest() with { Padding = ChartPaddingPt.Uniform(padding) }).Result!.Geometry;
 
         RectD content = Assert.IsType<RectD>(geometry.ContentBounds);
         RectD title = Assert.IsType<RectD>(geometry.TitleBounds);
@@ -335,7 +471,7 @@ public sealed class FrameBandsBuilderTests
             GanttPeriodLabelFormat.MMM,
             new RectD(0, 100, 100, 100),
             new RectD(100, 100, 300, 100),
-            6,
+            ChartPaddingPt.Uniform(6),
             24,
             18,
             16,
