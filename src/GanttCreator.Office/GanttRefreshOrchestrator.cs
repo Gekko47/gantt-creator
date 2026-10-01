@@ -168,7 +168,18 @@ public sealed class GanttRefreshOrchestrator(
         }
 
         // Step 8. Row heights, so the measured lane geometry is meaningful.
-        RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(15, 6, 6);
+        //
+        // The three targets come from the token catalogue rather than from literals
+        // written here. This call previously passed (15, 6, 6) against catalogue
+        // defaults of 18 / 18 / 9, so the sheet was normalised to a height the tokens
+        // do not describe — and because R4.7D removed lane auto-growth and derives the
+        // lane height from the measured row, the worksheet and the chart were being
+        // driven to disagree by the row that exists to stop them disagreeing
+        // (ADR-0026 D2/D3).
+        RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
+            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            GanttCatalogues.MetricDefault("SplitterHeightPt"),
+            GanttCatalogues.MetricDefault("SpacerHeightPt"));
         if (!heights.Succeeded)
         {
             return Refuse(GanttRefreshRefusal.RowHeightRefused, "The row heights could not be normalised.");

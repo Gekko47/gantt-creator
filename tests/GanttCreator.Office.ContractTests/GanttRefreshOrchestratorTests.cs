@@ -81,6 +81,56 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// The row heights written on Refresh are the catalogue's tokens, not literals
+    /// invented by the orchestrator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the hardcoded-height defect.</b> The
+    /// orchestrator called <c>Normalise(15, 6, 6)</c> against catalogue defaults of
+    /// 18 / 18 / 9, and every refresh test stayed green because
+    /// <c>FakeRowHeightNormaliser</c> discarded all three arguments and returned
+    /// <c>Ok(0)</c>. The fake is now recording, so a wrong value is observable.
+    /// </para>
+    /// <para>
+    /// The assertion is against <c>GanttCatalogues.MetricDefault</c> rather than three
+    /// literals, so retuning a token does not require editing this test and cannot
+    /// leave it asserting a stale number.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_heights_written_are_the_catalogue_tokens()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(GanttCatalogues.MetricDefault("GanttRowHeightPt"), fakes.LastManagedHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// The three targets are each positive, so no row is normalised to a height that
+    /// Excel cannot store.
+    /// </summary>
+    /// <remarks>
+    /// The positive test for the values, guarding the failure the defect could also
+    /// have produced: a zero or negative height writes an unusable row. Stated against
+    /// the catalogue range rather than a literal, so a retune cannot invalidate it.
+    /// </remarks>
+    [Fact]
+    public void Every_row_height_token_is_a_positive_finite_value()
+    {
+        foreach (string token in new[] { "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt" })
+        {
+            double value = GanttCatalogues.MetricDefault(token);
+            Assert.True(double.IsFinite(value) && value > 0, $"'{token}' resolved to {value}.");
+        }
+    }
+
+    /// <summary>
     /// D2: the steps run in the fixed order the work item names, with the shape
     /// reconciliation last.
     /// </summary>

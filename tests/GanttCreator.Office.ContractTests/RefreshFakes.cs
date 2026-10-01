@@ -54,6 +54,15 @@ internal sealed class RefreshFakes
     /// <summary>Whether the row-height normalisation refuses.</summary>
     public bool RowHeightRefused { get; set; }
 
+    /// <summary>The managed-row target the orchestrator last passed, or null if never called.</summary>
+    public double? LastManagedHeightPt { get; set; }
+
+    /// <summary>The splitter-row target the orchestrator last passed, or null if never called.</summary>
+    public double? LastSplitterHeightPt { get; set; }
+
+    /// <summary>The spacer-row target the orchestrator last passed, or null if never called.</summary>
+    public double? LastSpacerHeightPt { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -216,6 +225,17 @@ internal sealed class RefreshFakes
         public RowHeightNormalisationOutcome Normalise(double managed, double splitter, double spacer)
         {
             owner.Steps.Add("RowHeights");
+
+            // The three targets are recorded, not discarded. This fake previously
+            // ignored all three arguments and returned Ok(0), so it could not fail on
+            // a wrong value: the orchestrator's hardcoded (15, 6, 6) passed every
+            // refresh test while contradicting the catalogue's 18 / 18 / 9. A fake
+            // that discards the value under test is not a test double, it is a
+            // rubber stamp.
+            owner.LastManagedHeightPt = managed;
+            owner.LastSplitterHeightPt = splitter;
+            owner.LastSpacerHeightPt = spacer;
+
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
                 : RowHeightNormalisationOutcome.Ok(0);
