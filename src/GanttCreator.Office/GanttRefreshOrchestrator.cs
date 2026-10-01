@@ -116,7 +116,7 @@ public sealed class GanttRefreshOrchestrator(
     /// <inheritdoc />
     public GanttRefreshOutcome Refresh()
     {
-        // D8: the five application settings and the selection are captured and
+        // D8: the application settings and the selection are captured and
         // restored on EVERY path, success or failure, by the ADR-0020 scope. A
         // refresh turns off screen updating and events for speed and then adds
         // hundreds of shapes; if it refused half way, the user would be left with
@@ -124,12 +124,20 @@ public sealed class GanttRefreshOrchestrator(
         // tell that anything is wrong. The `using` is what makes that guarantee
         // total: every return below runs Dispose, so there is no path that can
         // skip the restore.
+        //
+        // `DisplayStatusBar` is deliberately NOT suppressed (owner decision,
+        // 2026-10-01). It used to be hidden here and the progress text written
+        // immediately afterwards, which meant the message was set and restored
+        // correctly but never seen -- the two are different Excel properties, and
+        // hiding the bar hides the text inside it. Leaving visibility alone also
+        // means the user's own setting decides: a user who keeps the status bar
+        // hidden is not shown one for the duration of a refresh, which is their
+        // preference and not ours to override.
         using IApplicationStateScope scope = _stateScope ?? NullApplicationStateScope.Instance;
 
         scope.SuppressScreenUpdating();
         scope.SuppressEvents();
         scope.SuppressAlerts();
-        scope.SuppressStatusBar();
         scope.SetStatusBarText("Rendering the Gantt chart…");
         scope.CaptureSelection();
 

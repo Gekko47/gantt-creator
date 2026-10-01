@@ -15,11 +15,19 @@ namespace GanttCreator.Office;
 /// </para>
 /// <para>
 /// <b>Why the operations are separate rather than one <c>Begin</c>/<c>End</c> pair.</b>
-/// The orchestrator needs to suppress four settings, write a status message, and
+/// The orchestrator needs to suppress three settings, write a status message, and
 /// capture the selection, and a caller that forgot one of those would silently skip
 /// a restore. Named operations make an omission visible at the call site, and each
 /// is independently assertable — a test can prove the status bar was restored
 /// without reasoning about the others.
+/// </para>
+/// <para>
+/// <b>Not every member is invoked by every caller.</b> The scope supports five
+/// settings; which of them a command uses is its own decision. Refresh, for example,
+/// writes status-bar text without calling <see cref="SuppressStatusBar"/>, because
+/// bar visibility is the user's Excel setting rather than the add-in's (ADR-0020 D4).
+/// The members stay here so a caller that does want the bar hidden can ask, and so
+/// the capture/restore of <c>DisplayStatusBar</c> remains tested.
 /// </para>
 /// <para>
 /// Every member is best-effort by contract: a host that refuses one of them must

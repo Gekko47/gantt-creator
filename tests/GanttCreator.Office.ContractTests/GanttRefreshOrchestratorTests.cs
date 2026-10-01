@@ -506,9 +506,21 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal("Screen", scope.Calls[0]);
         Assert.Contains("Events", scope.Calls);
         Assert.Contains("Alerts", scope.Calls);
-        Assert.Contains("StatusBar", scope.Calls);
+        // The exact recorded call, not a prefix: `Assert.Contains` over a collection is
+        // exact-element equality, so "Text:" alone would not match
+        // "Text:Rendering the Gantt chart…" and the assertion would pass vacuously.
+        Assert.Contains("Text:Rendering the Gantt chart…", scope.Calls);
         Assert.Contains("Capture", scope.Calls);
         Assert.Equal("Dispose", scope.Calls[^1]);
+
+        // The progress text is written, but the bar's VISIBILITY is left alone so
+        // the user's own Excel setting decides. This is the assertion that pins the
+        // owner decision of 2026-10-01, and it is deliberately a negative one:
+        // `SuppressStatusBar` used to be called here and the text set immediately
+        // after, so the message was written into a bar we had just hidden and the
+        // user never saw it. A test that only checked the text was set would have
+        // passed against that version too.
+        Assert.DoesNotContain("StatusBar", scope.Calls);
     }
 
     /// <summary>
