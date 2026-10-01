@@ -106,9 +106,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_13_approved_keys()
+    public void Settings_contains_exactly_the_15_approved_keys()
     {
-        Assert.Equal(13, GanttCatalogues.Settings.Count);
+        Assert.Equal(15, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -130,6 +130,8 @@ public class GanttConfigCatalogueTests
         "ShowMinorGrid",
         "ShowMajorGrid",
         "DateDisplayFormat",
+        "SizePreset",
+        "RangePaddingDays",
     ];
 
     [Fact]
@@ -579,7 +581,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "b18599b369df56467192774f98c2da8f117b2f06343148f0f81f44e50042f9f8";
+        "bcc3f102370ee56dd01080ff8a6ba04c00714ddc7e0f8186e7ee77066ed55fac";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

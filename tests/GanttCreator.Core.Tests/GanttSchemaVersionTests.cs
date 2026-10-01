@@ -16,7 +16,7 @@ public class GanttSchemaVersionTests
         // is the signal it compares against.
         // Schema v5 adds the Duration column, the column classification, the
         // GanttRowHeightPt rename, the retired CriticalLinePt, and CriticalFill.
-        Assert.Equal(6, GanttSchemaVersion.CurrentSchemaVersion);
+        Assert.Equal(7, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

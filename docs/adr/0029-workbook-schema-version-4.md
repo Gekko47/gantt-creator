@@ -50,8 +50,8 @@ two of them change the visible column set.
   Earlier drafts of this ADR listed the label set among R4.7C's changes and put
   it in step 2 of the table below; that is corrected to a step of its own, taken
   by R4.7G at **5 → 6**.
-- **D5 — The schema advances in three steps, one per row that changes it, and
-  never two rows for one version number.** This ADR originally said "3 → 4" for
+- **D5 — The schema advances in four steps, one per change that requires it, and
+  never two changes for one version number.** This ADR originally said "3 → 4" for
   all of D1-D4, which was **wrong**: `R4.7A` adds the `SiblingOrder` column,
   `R4.7C` adds `Duration` and the metric-token changes, and `R4.7G` changes the
   permitted label-position set. Three rows each claiming one bump would either
@@ -65,6 +65,17 @@ two of them change the visible column set.
   | 1 | R4.7A | `SiblingOrder` column | **3 → 4** |
   | 2 | R4.7C | `Duration` column, `GanttRowHeightPt`, `CriticalLinePt` retired, `CriticalFill` | **4 → 5** |
   | 3 | R4.7G | permitted label-position set (`Above`/`Below` removed, ADR-0028 D1) | **5 → 6** |
+  | 4 | R4 QA review | `SizePreset` and `RangePaddingDays` settings keys added (owner ruling 2026-10-01) | **6 → 7** |
+
+  Step 4 was added by the senior QA review of R4 and is **not** a roadmap row. Both
+  keys were read by the scene-request factory from the first version of R4.8A but
+  were never part of the approved key set, so `ValidateSettings` could not return
+  them: every live chart was permanently A4-portrait with a 7-day plot-range pad,
+  while `A_known_preset_key_is_honoured` stayed green because it injected the key into
+  a hand-built dictionary. Adding a key is a change to the exact key set the bump rule
+  names, so it takes its own version rather than riding on 6 — the same reasoning D5
+  applies to steps 1-3. There is no migration: a version-6 workbook reports a version
+  mismatch and is reported, never coerced (D6).
 
   **No row is excluded from the progression**; each schema change lands in the
   row whose change requires it, and each row bumps exactly once.

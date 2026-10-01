@@ -38,8 +38,9 @@
 > still open. `scripts/check-status.ps1` requires a letter-suffixed roadmap ID to
 > have a guide here, so a row cannot ship without one.
 >
-> **The schema version is now 6**, three bumps past the 3 this header predates
-> (3→4 R4.7A, 4→5 R4.7C, 5→6 R4.7G); ADR-0029 D5 holds the full progression.
+> **The schema version is now 7**, four bumps past the 3 this header predates
+> (3→4 R4.7A, 4→5 R4.7C, 5→6 R4.7G, 6→7 the R4 QA review's `SizePreset` and
+> `RangePaddingDays` settings keys); ADR-0029 D5 holds the full progression.
 > The standing risk into R4.8A is the Office COM leak ratchet, at **26 forced
 > kills against a ceiling of 26** (`KNOWN-LIMITATIONS.md` L19) — R4.8A's new
 > adapter surface is the first thing that could push it over.

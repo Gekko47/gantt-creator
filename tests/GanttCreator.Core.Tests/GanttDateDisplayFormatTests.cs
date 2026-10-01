@@ -25,11 +25,22 @@ public class GanttDateDisplayFormatTests
     }
 
     [Fact]
-    public void The_date_display_format_key_is_last_in_contract_order()
+    public void The_date_display_format_key_keeps_its_contract_position()
     {
         // The key order is part of the schema contract, so a key inserted in any
         // other position must fail this rather than silently renumber the table.
-        Assert.Equal("DateDisplayFormat", GanttCatalogues.Settings[^1].Key);
+        //
+        // This previously asserted the key was the LAST entry, which was true when it
+        // was the only key added after schema v3. The R4 QA review's schema bump
+        // appended `SizePreset` and `RangePaddingDays` after it, so "last" now means
+        // "a key inserted before it renumbered the table" — which is the property the
+        // original test actually protected. Asserting the absolute index instead
+        // preserves that intent across future appends: `DateDisplayFormat` must still
+        // sit at index 12, with the two v7 keys following it.
+        Assert.Equal(12, GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "DateDisplayFormat"));
+        Assert.Equal(
+            ["SizePreset", "RangePaddingDays"],
+            GanttCatalogues.Settings.Skip(13).Select(s => s.Key).ToArray());
     }
 
     [Theory]

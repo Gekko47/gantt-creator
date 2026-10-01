@@ -22,8 +22,8 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 6 for the removal of the <c>Above</c> and
-    /// <c>Below</c> label positions (owner ruling 2026-09-30, ADR-0028 D1).
+    /// monotonically, and is currently 7 for the two settings keys added by the R4
+    /// QA review (owner ruling 2026-10-01).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -38,6 +38,17 @@ public static class GanttSchemaVersion
     /// bump rule, so retiring two of them is a contract change and takes its own
     /// number rather than riding on 5.
     /// </para>
+    /// <para>
+    /// <b>Version 7 adds <c>SizePreset</c> and <c>RangePaddingDays</c> to
+    /// <c>tblGanttSettings</c>.</b> Both were read by the scene-request factory from
+    /// the first version of R4.8A but were never part of the approved key set, so
+    /// <c>ValidateSettings</c> could not return them and both permanently fell back
+    /// — the R4.7H size presets were unreachable in production while their own test
+    /// passed on an injected dictionary. The exact key set is named in the bump rule
+    /// above, which is why adding one is a schema change rather than a code detail.
+    /// There is no migration: a workbook written against version 6 reports a version
+    /// mismatch and is reported, never coerced (ADR-0029 D6).
+    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
 }

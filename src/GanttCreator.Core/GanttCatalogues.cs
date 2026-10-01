@@ -198,9 +198,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 13 schema-v3 setting definitions approved by ADR-0007, ADR-0014, and
-    /// ADR-0016. The <c>DateDisplayFormat</c> key is appended last so the
-    /// existing contract order is preserved; the order is part of the schema
+    /// The 15 schema-v7 setting definitions approved by ADR-0007, ADR-0014, and
+    /// ADR-0016, plus the two added by the R4 QA review's schema bump (owner
+    /// permitted). <c>DateDisplayFormat</c> is appended before the two new keys so
+    /// the pre-existing contract order is preserved; the order is part of the schema
     /// contract, not an incidental listing detail.
     /// </summary>
     public static IReadOnlyList<GanttSettingDefinition> Settings { get; } =
@@ -218,6 +219,23 @@ public static class GanttCatalogues
         new("ShowMinorGrid", "TRUE"),
         new("ShowMajorGrid", "TRUE"),
         new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMyyyy)),
+
+        // Schema version 7. These two were read by the scene-request factory from the
+        // very first version of R4.8A but were never part of the approved key set, so
+        // `ValidateSettings` could not return them and BOTH always fell back: the
+        // output-size preset was permanently A4-portrait and the plot range padding was
+        // permanently 7 days, with the code paths reading them looking entirely live.
+        // A senior QA review of R4 found this; the owner's ruling permitted the schema
+        // bump that adding a key requires.
+        //
+        // `SizePreset` values are validated against `SizePresets.ByKey` by the
+        // factory, which refuses an unknown key and names the alternatives; this row
+        // therefore carries the default key rather than teaching the catalogue the
+        // full enum. `RangePaddingDays` is an integer the factory reads with a
+        // non-negative floor, so a stored value outside that range falls back to 7
+        // rather than producing a negative plot range.
+        new("SizePreset", "A4Portrait"),
+        new("RangePaddingDays", "7"),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

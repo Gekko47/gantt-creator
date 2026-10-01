@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 
@@ -169,6 +170,86 @@ public class ExcelSceneBuildRequestFactoryTests
 
         Assert.True(outcome.Succeeded, key + " refused: " + outcome.Message);
         Assert.Equal(key, outcome.Request!.Preset!.Key);
+    }
+
+    /// <summary>
+    /// The <c>SizePreset</c> key exists in the catalogue, and a value set against the
+    /// catalogue's own key set reaches the factory.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the reachability test the injected-dictionary version of
+    /// <c>A_known_preset_key_is_honoured</c> could never provide. That test proved the
+    /// factory parses a preset it is <em>handed</em>; this one proves the catalogue
+    /// actually hands it one, which is what schema version 7 fixed.
+    /// </para>
+    /// <para>
+    /// The settings map is built from <c>GanttCatalogues.Settings</c> and only the
+    /// <c>SizePreset</c> value is overridden per case — the rest stay at their catalogue
+    /// defaults, exactly as a live workbook would read them. Before version 7 the key
+    /// was absent, so every one of these cases was unreachable in production while the
+    /// injected-dictionary test stayed green.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("A4Portrait")]
+    [InlineData("A4Landscape")]
+    [InlineData("Presentation16x9")]
+    [InlineData("Presentation4x3")]
+    public void A_preset_selected_in_a_catalogue_shaped_map_reaches_the_factory(string key)
+    {
+        Dictionary<string, string> fromCatalogue = GanttCatalogues.Settings.ToDictionary(
+            static setting => setting.Key,
+            static setting => setting.DefaultValue,
+            StringComparer.Ordinal);
+
+        // The catalogue must actually offer this key, or the rest of the test is
+        // vacuous — this is the assertion that would have caught the original gap.
+        Assert.Contains("SizePreset", fromCatalogue.Keys);
+
+        fromCatalogue["SizePreset"] = key;
+
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            fromCatalogue,
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(outcome.Succeeded, key + " refused: " + outcome.Message);
+        Assert.Equal(key, outcome.Request!.Preset!.Key);
+    }
+
+    /// <summary>
+    /// The catalogue's own default preset is the one a freshly initialised workbook
+    /// renders with.
+    /// </summary>
+    /// <remarks>
+    /// Before schema 7 there was no such row, so every live chart was A4-portrait
+    /// regardless of anything the user did. This pins the default now that a default
+    /// exists, so retuning it is a deliberate change.
+    /// </remarks>
+    [Fact]
+    public void The_catalogue_default_preset_reaches_the_factory()
+    {
+        Dictionary<string, string> fromCatalogue = GanttCatalogues.Settings.ToDictionary(
+            static setting => setting.Key,
+            static setting => setting.DefaultValue,
+            StringComparer.Ordinal);
+
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            fromCatalogue,
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(
+            fromCatalogue["SizePreset"],
+            outcome.Request!.Preset!.Key);
     }
 
     /// <summary>A text panel too wide for the page refuses with the shortfall named.</summary>
@@ -440,34 +521,43 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// Records the two keys R4.7H introduced that the settings catalogue does not yet
-    /// carry, so the gap is asserted rather than remembered.
+    /// The two settings R4.7H and the plot-range padding need are now real catalogue
+    /// keys, so the factory's reads of them can actually be satisfied.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>SizePreset</c> and <c>RangePaddingDays</c> are read by the factory but are
-    /// not in <c>GanttCatalogues.Settings</c>, so <c>ValidateSettings</c> cannot return
-    /// them and both always fall back. R4.7H's size presets are therefore unreachable
-    /// in production while <c>A_known_preset_key_is_honoured</c> passes on an injected
-    /// dictionary.
+    /// This test previously asserted the <em>opposite</em>: that <c>SizePreset</c> and
+    /// <c>RangePaddingDays</c> were absent from the catalogue, which recorded a known
+    /// gap so it could not be closed silently. The owner's ruling permitted the schema
+    /// bump that adding a key requires, so the gap is closed and the assertion is
+    /// inverted — the keys must now be present, or the factory reads them from a map
+    /// that can never supply them and the presets fall back silently again.
     /// </para>
     /// <para>
-    /// Adding either key changes the <c>tblGanttSettings</c> key/value contract, which
-    /// <see cref="GanttSchemaVersion"/> requires a version bump for — so this is
-    /// deliberately <b>not</b> fixed in the same change as the renames. The test
-    /// asserts the gap still exists, and its failure message names the consequence,
-    /// so closing it cannot be forgotten and cannot happen silently.
+    /// Both defaults are asserted, not just membership: a present key carrying a value
+    /// the factory cannot parse would pass a membership check and still be dead.
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_size_preset_keys_are_still_absent_from_the_catalogue()
+    public void The_size_preset_keys_are_now_catalogue_settings()
     {
         HashSet<string> approved = new(
             GanttCatalogues.Settings.Select(static setting => setting.Key),
             StringComparer.Ordinal);
 
-        Assert.DoesNotContain("SizePreset", approved);
-        Assert.DoesNotContain("RangePaddingDays", approved);
+        Assert.Contains("SizePreset", approved);
+        Assert.Contains("RangePaddingDays", approved);
+
+        // The stored defaults must be values the factory accepts: a preset key that
+        // `SizePresets.ByKey` rejects would be rejected at render time on a freshly
+        // initialised workbook.
+        GanttSettingDefinition preset = GanttCatalogues.Settings.First(s => s.Key == "SizePreset");
+        Assert.NotNull(SizePresets.ByKey(preset.DefaultValue));
+
+        GanttSettingDefinition padding = GanttCatalogues.Settings.First(s => s.Key == "RangePaddingDays");
+        Assert.True(
+            int.TryParse(padding.DefaultValue, CultureInfo.InvariantCulture, out int days) && days >= 0,
+            $"RangePaddingDays default '{padding.DefaultValue}' is not a non-negative integer.");
     }
 
     /// <summary>A null collaborator is refused rather than dereferenced.</summary>
