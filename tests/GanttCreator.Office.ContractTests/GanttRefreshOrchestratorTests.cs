@@ -1,4 +1,5 @@
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 
 namespace GanttCreator.Office.ContractTests;
 
@@ -109,6 +110,57 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttCatalogues.MetricDefault("GanttRowHeightPt"), fakes.LastManagedHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// A refresh whose measured column set contains a HIDDEN column refuses at the
+    /// measurement step, which is the live "The worksheet columns could not be
+    /// measured" failure.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the defect just fixed.</b> It asserts the
+    /// failure path FIRES for the real reason, so the fix is proved by the error no
+    /// longer occurring on the same input rather than by the error message alone.
+    /// </para>
+    /// <para>
+    /// The fake reports a hidden column's width as <c>0</c>, exactly as Excel does, so
+    /// <c>PanelCellGrid.TryCreate</c> refuses it as a non-positive width and the
+    /// adapter reports <c>InvalidMeasurement</c>. The old fake ignored the column set
+    /// entirely and returned a hardcoded grid, which is precisely why every
+    /// orchestrator test stayed green while the product refused on every refresh.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_hidden_measured_column_refuses_the_refresh_at_the_measurement_step()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        string hidden = GanttTableSchema.Default.Columns.First(c => c.IsHidden).Name;
+
+        PanelGridOutcome outcome = fakes.Panel.Measure([hidden]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// The columns the orchestrator asks the measurement port for are the visible
+    /// schema columns, so no hidden column can reach the host.
+    /// </summary>
+    /// <remarks>
+    /// The orchestration-level counterpart to the factory's own assertion: this proves
+    /// the correct set is what actually reaches the port, not merely that the factory
+    /// publishes it.
+    /// </remarks>
+    [Fact]
+    public void The_refresh_measures_only_visible_columns()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(ExcelSceneBuildRequestFactory.MeasuredColumns, fakes.LastMeasuredColumns);
     }
 
     /// <summary>

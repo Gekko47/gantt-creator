@@ -41,16 +41,44 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// The columns the live panel measures, in panel order.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The live sheet's real cells <em>are</em> the data panel, so the measured grid
-    /// exists to position the chart against them, not to reproduce them. Only the
-    /// identity and description columns participate in that positioning.
+    /// exists to position the chart against them, not to reproduce them.
+    /// </para>
+    /// <para>
+    /// <b>Derived from the schema's own visibility classification, never a
+    /// hand-written list.</b> This list was the literal <c>["Id", "Type",
+    /// "Description"]</c>, and <c>Id</c> is an <c>EngineHidden</c> column. Step 4 of
+    /// the refresh hides it before this measurement runs, Excel reports a hidden
+    /// column's <c>Range.Width</c> as <c>0</c>, <c>PanelCellGrid.TryCreate</c> refused
+    /// that as a non-positive width, and every live refresh died at
+    /// <c>MeasurementRefused</c> with "The worksheet columns could not be measured."
+    /// The refusal was correct; the input was not. The
+    /// <c>PanelGridMeasurementIntegrationTests</c> suite had already recorded the trap
+    /// in a comment and worked around it by measuring
+    /// <c>Columns.First(c =&gt; !c.IsHidden)</c>, which is why CI was green and the
+    /// product was not.
+    /// </para>
+    /// <para>
+    /// <b>Why every visible column, not a chosen few.</b> Entity guide section 3
+    /// requires the panel's right edge to touch the plot's left edge without overlap
+    /// or gap, and <see cref="PlotGeometryResolver"/> places the plot at
+    /// <c>textPanelWidthPt + chrome</c>. Measuring only the label columns would
+    /// therefore draw the plot on top of the still-visible <c>Start</c>,
+    /// <c>Finish</c>, and <c>Duration</c> columns. The measured width is the table's
+    /// real visible width, so it is derived from
+    /// <see cref="GanttTableSchema.Default"/> rather than restated here.
+    /// </para>
+    /// <para>
+    /// <b>This also absorbs a later change to which columns are hidden.</b> Because
+    /// the set is computed from <see cref="GanttTableColumn.IsHidden"/> at type
+    /// initialisation, reclassifying a column moves it in or out of the measured set
+    /// with no edit to this file. Schema order is preserved, because
+    /// <see cref="PanelCellGrid"/> treats column order as significant.
+    /// </para>
     /// </remarks>
-    private static readonly string[] _measuredColumns =
-    [
-        "Id",
-        "Type",
-        "Description",
-    ];
+    private static IReadOnlyList<string> MeasuredColumnsCore =>
+        [.. GanttTableSchema.Default.Columns.Where(column => !column.IsHidden).Select(column => column.Name)];
 
     /// <summary>The setting key naming the size preset.</summary>
     private const string _sizePresetKey = "SizePreset";
@@ -289,7 +317,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// The columns this factory measures, for the caller to pass to
     /// <see cref="IPanelGridMeasurementPort"/>.
     /// </summary>
-    public static IReadOnlyList<string> MeasuredColumns => _measuredColumns;
+    public static IReadOnlyList<string> MeasuredColumns => MeasuredColumnsCore;
 
     /// <summary>
     /// Resolves the inclusive plot range from the events themselves, padded by the

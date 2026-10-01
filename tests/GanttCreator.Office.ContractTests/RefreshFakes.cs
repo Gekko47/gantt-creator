@@ -89,8 +89,29 @@ internal sealed class RefreshFakes
     /// <summary>The protection guard fake.</summary>
     public IWorksheetProtectionGuard Guard => new FakeGuard(this);
 
-    /// <summary>The panel measurement fake.</summary>
-    public IPanelGridMeasurementPort Panel => new FakePanelMeasurement(this);
+    /// <summary>
+    /// The panel measurement fake.
+    /// </summary>
+    /// <remarks>
+    /// Cached rather than constructed per access. The fake records the columns it was
+    /// asked to measure, so the orchestrator and a test asserting on that record must
+    /// share one instance; a fresh instance per property read would leave the test
+    /// looking at an object the orchestrator never called.
+    /// </remarks>
+    public IPanelGridMeasurementPort Panel => PanelFake;
+
+    /// <summary>
+    /// The columns the last measurement was asked for, so a test can assert the set
+    /// that reaches the port.
+    /// </summary>
+    public IReadOnlyList<string> LastMeasuredColumns => PanelFake.LastMeasuredColumns;
+
+    /// <summary>
+    /// The concrete panel fake, for the tests that assert on what it recorded.
+    /// </summary>
+    private FakePanelMeasurement PanelFake => _panel ??= new FakePanelMeasurement(this);
+
+    private FakePanelMeasurement? _panel;
 
     /// <summary>The duration writer fake.</summary>
     public IDurationWritePort Duration => new FakeDurationWriter(this);
@@ -216,23 +237,63 @@ internal sealed class RefreshFakes
 
     private sealed class FakePanelMeasurement(RefreshFakes owner) : IPanelGridMeasurementPort
     {
+        /// <summary>
+        /// The columns the orchestrator last asked to measure, so a test can assert
+        /// which set reaches the port rather than only that the port was reached.
+        /// </summary>
+        public IReadOnlyList<string> LastMeasuredColumns { get; private set; } = [];
+
         public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
         {
             owner.Steps.Add("Measure");
+            LastMeasuredColumns = includedColumns;
             return owner.MeasurementRefused
                 ? PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing)
-                : PanelGridOutcome.Ok(
-                    // A realistic text-panel width. The plot resolver refuses a panel
-                    // that leaves too little paper for a readable plot, so a fixture
-                    // with a toy 80pt panel would exercise the refusal path instead of
-                    // the composition this pipeline is about. Realistic here means
-                    // "narrow enough to be believable, wide enough for A4 landscape to
-                    // leave a readable plot".
-                    PanelCellGrid.TryCreate(
-                        [new PanelColumn("Id", 120)],
-                        [15.0],
-                        15,
-                        ["Id"]).Grid!);
+                : MeasureLikeExcel(includedColumns);
+        }
+
+        /// <summary>
+        /// Reproduces what the live host reports, so this fake can fail for the same
+        /// real reason production did.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A HIDDEN column measures <c>0</c> — that is Excel's behaviour, and it is the
+        /// whole defect. The old fake ignored <paramref name="includedColumns"/> and
+        /// returned a hardcoded grid containing <c>Id</c>, so it passed a column set
+        /// that the live host refuses and the bug stayed invisible to every
+        /// orchestrator test.
+        /// </para>
+        /// <para>
+        /// Hidden columns are therefore given width <c>0</c> and the grid is built
+        /// through the real <see cref="PanelCellGrid.TryCreate"/>, which refuses a
+        /// non-positive width exactly as it does in production.
+        /// </para>
+        /// </remarks>
+        private static PanelGridOutcome MeasureLikeExcel(IReadOnlyList<string> includedColumns)
+        {
+            HashSet<string> hidden = new(
+                GanttTableSchema.Default.Columns.Where(c => c.IsHidden).Select(c => c.Name),
+                StringComparer.Ordinal);
+
+            List<PanelColumn> columns =
+            [
+                .. includedColumns.Select(name =>
+                    new PanelColumn(name, hidden.Contains(name) ? 0d : 24d)),
+            ];
+
+            // Total width of 120pt across the visible columns keeps the plot resolver
+            // from refusing for insufficient width, so these tests exercise composition
+            // rather than the shortfall path.
+            PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+                columns,
+                [15.0],
+                15,
+                includedColumns);
+
+            return created.Succeeded && created.Grid is not null
+                ? PanelGridOutcome.Ok(created.Grid)
+                : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
     }
 

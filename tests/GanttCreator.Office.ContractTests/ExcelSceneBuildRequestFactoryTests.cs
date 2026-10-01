@@ -38,6 +38,97 @@ public class ExcelSceneBuildRequestFactoryTests
 
     private static FakeTextMetrics Metrics() => new();
 
+    /// <summary>
+    /// The measured set is every VISIBLE schema column, and it is derived from the
+    /// schema rather than restated in the factory.
+    /// </summary>
+    /// <remarks>
+    /// This is the regression test for the live "The worksheet columns could not be
+    /// measured" failure. <c>MeasuredColumns</c> was the literal
+    /// <c>["Id", "Type", "Description"]</c> and <c>Id</c> is an <c>EngineHidden</c>
+    /// column: step 4 of the refresh hides it, Excel reports a hidden column's
+    /// <c>Range.Width</c> as <c>0</c>, and <c>PanelCellGrid.TryCreate</c> refuses a
+    /// non-positive width. Every live refresh therefore refused at
+    /// <c>MeasurementRefused</c>.
+    /// </remarks>
+    [Fact]
+    public void Measured_columns_are_exactly_the_visible_schema_columns_in_schema_order()
+    {
+        Assert.Equal(
+            GanttTableSchema.Default.Columns
+                .Where(column => !column.IsHidden)
+                .Select(column => column.Name),
+            ExcelSceneBuildRequestFactory.MeasuredColumns);
+    }
+
+    /// <summary>
+    /// The positive assertion of the fix, and the one that would have caught it:
+    /// <b>no measured column may be a hidden column.</b>
+    /// </summary>
+    /// <remarks>
+    /// Asserting the exact list alone would still pass if the schema were changed to
+    /// hide <c>Type</c>, so the invariant is asserted directly as well. This is the
+    /// pairing the failure needed: the check that a hidden column is measured at all,
+    /// which is the condition that produces a zero width and the refusal.
+    /// </remarks>
+    [Fact]
+    public void Measured_columns_contain_no_hidden_column_because_a_hidden_one_measures_zero()
+    {
+        IReadOnlyList<string> measured = ExcelSceneBuildRequestFactory.MeasuredColumns;
+
+        List<string> hidden = [.. GanttTableSchema.Default.Columns.Where(c => c.IsHidden).Select(c => c.Name)];
+
+        Assert.DoesNotContain(measured, name => hidden.Contains(name));
+    }
+
+    /// <summary>
+    /// The measured set is not empty, so the measurement is never refused for want of
+    /// columns.
+    /// </summary>
+    /// <remarks>
+    /// <c>Measure</c> refuses an empty column list outright, so a schema change that
+    /// hid every column would otherwise surface as the same user-facing
+    /// "columns could not be measured" message with a different cause.
+    /// </remarks>
+    [Fact]
+    public void Measured_columns_are_not_empty_because_an_empty_set_is_refused_outright()
+    {
+        Assert.NotEmpty(ExcelSceneBuildRequestFactory.MeasuredColumns);
+    }
+
+    /// <summary>
+    /// The measured panel width is the sum of the visible columns, so entity guide
+    /// section 3's "the panel right edge touches the plot left edge" holds. The plot's
+    /// left edge is <c>textPanelWidthPt + chrome</c>.
+    /// </summary>
+    /// <remarks>
+    /// Measuring only the label columns would leave the plot drawn on top of the
+    /// still-visible <c>Start</c>, <c>Finish</c>, and <c>Duration</c> columns, so this
+    /// asserts the placement rather than merely the list.
+    /// </remarks>
+    [Fact]
+    public void The_plot_left_edge_starts_after_the_whole_measured_panel_plus_chrome()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(widthPt: 120));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
+        double chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+
+        // Both `Grid` and `PlotBounds` are nullable on the request and are unwrapped
+        // with the `!.Value`/`!` form the rest of this file already uses. The factory
+        // only emits a request whose grid and plot both resolved, so a null here is a
+        // defect the equality assertion reports as a mismatch rather than a null crash.
+        Assert.Equal(request.Grid!.TotalWidthPt + chrome, request.PlotBounds!.Value.X, precision: 6);
+    }
+
     [Fact]
     public void The_live_profile_is_emitted_and_no_data_panel_is_supplied()
     {
