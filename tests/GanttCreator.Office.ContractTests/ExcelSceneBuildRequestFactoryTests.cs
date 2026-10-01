@@ -827,6 +827,67 @@ public class ExcelSceneBuildRequestFactoryTests
             $"RangePaddingDays default '{padding.DefaultValue}' is not a non-negative integer.");
     }
 
+    /// <summary>
+    /// A live request carries a date-label style, so §23 start/finish dates are
+    /// actually emitted (ADR-0032 D2).
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> The factory never assigned
+    /// <c>LabelStyle</c>, and <c>SceneBuilder</c> skips the ENTIRE date-label pass
+    /// when it is null - with a bare <c>return</c>, not a warning. So every live
+    /// activity bar rendered with no start or finish date and nothing in the scene
+    /// recorded why. A delineator label kept appearing because it is built on a
+    /// different path with its own metrics, which is precisely the reported symptom:
+    /// "only delineator labels generate". Asserting the property is non-null is the
+    /// narrowest statement of the fix; the test below asserts the consequence.
+    /// </remarks>
+    [Fact]
+    public void The_live_request_carries_the_date_label_style()
+    {
+        SceneBuildRequestOutcome outcome = Create(Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.NotNull(outcome.Request!.LabelStyle);
+    }
+
+    /// <summary>
+    /// A built live scene emits the §23 start/finish date labels and reports no
+    /// <c>DateLabelRefused</c> warning.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the property assertion above. <c>LabelStyle</c> could be
+    /// non-null and still not produce labels - the builder also needs a measurable
+    /// text metric, a resolvable position, and a style that survives the Inside/Outside
+    /// split - so this asserts the OBSERVABLE outcome rather than the input. It is
+    /// what would have caught the original defect, and it fails if a future change
+    /// nulls the style again somewhere downstream of the factory.
+    /// </remarks>
+    [Fact]
+    public void A_built_live_scene_emits_date_labels_for_an_activity()
+    {
+        SceneBuildRequestOutcome outcome = Create(Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneBuildOutcome built = SceneBuilder.TryBuild(outcome.Request!);
+
+        Assert.True(built.Succeeded, "scene refused: " + built.Refusal);
+        Assert.DoesNotContain(built.Result!.Scene.Warnings, w => w.Code == "DateLabelRefused");
+
+        // Count only THIS ROW's date labels, not every text primitive in the scene.
+        // The month and year band labels are SceneText too, so a scene that emitted
+        // ZERO date labels would still satisfy ">= 2". A mutation that removed the
+        // LabelStyle assignment proved exactly that: the property test failed and
+        // this one passed. Chart-owned band labels are excluded by ownership kind.
+        int dateLabels = built.Result.Scene.Primitives
+            .OfType<SceneText>()
+            .Count(text => text.OwnerId.Kind == SceneOwnerKind.Row);
+
+        Assert.True(
+            dateLabels >= 2,
+            $"Expected a start and a finish date label, but the scene emitted {dateLabels} row-owned text primitive(s).");
+    }
+
+
     /// <summary>A null collaborator is refused rather than dereferenced.</summary>
     [Fact]
     public void Null_inputs_are_refused()

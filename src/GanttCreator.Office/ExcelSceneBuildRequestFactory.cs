@@ -316,6 +316,19 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
             TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
             ChartPadding = padding,
+
+            // ADR-0032 D2: the date-label text style. `SceneBuilder` skips the WHOLE
+            // date-label pass when this is null, and it did skip it: the factory never
+            // assigned it, so every activity bar rendered with no start or finish
+            // date while a delineator label - which is built on a different path with
+            // its own metrics - still appeared. That asymmetry is the exact shape of
+            // the report ("only delineator labels generate"), and the skip is a bare
+            // `return`, not a warning, so nothing in the scene recorded it.
+            //
+            // The style is the code-owned DefaultText token, exactly as the export
+            // composition resolves its outside-label colour: the token table stays
+            // the single authority for a colour rather than a literal here.
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
             MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
             GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
             MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
