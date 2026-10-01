@@ -30,6 +30,7 @@
 > | R4.7F | **Implemented** | derived `Duration`; Office gate **not run**, so the row is not complete |
 > | R4.7G | **Landed** | horizontal-only label positions; took the schema 5 → 6 |
 > | R4.7H | **Implemented** | `SizePreset` and the single `PlotGeometryResolver` |
+> | **R4.7I** | **Next** | live chart anchored to the worksheet, not the page ([ADR-0030](../adr/0030-live-chart-vertical-anchoring.md)); fixes the reported lane/row misalignment |
 > | **R4.8A** | **Next** | Refresh orchestration — the last row before R4.9 |
 >
 > `R4.7A` → `R4.7B` → `R4.7D` were strictly sequential and are done; `R4.7C`,
@@ -37,6 +38,14 @@
 > `R4.7C`; **`R4.8A` needs all eight R4.7 rows**, which is why it is the only one
 > still open. `scripts/check-status.ps1` requires a letter-suffixed roadmap ID to
 > have a guide here, so a row cannot ship without one.
+>
+> **`R4.7I` was added 2026-10-01** from a live defect report and is **not** part of
+> that original set of eight. It amends three of them: R4.7D's measured lane
+> geometry, R4.7H's plot-geometry authority, and R4.8A's request factory. Its ADR
+> records the finding that ADR-0026 D3's `lane Top == Excel row Top` was
+> **unrepresentable** — `PanelCellGrid` carried no absolute sheet origin, and the
+> plot's top and height came from the size preset's page coordinates — so no bar
+> could line up with its row. It is sequenced before R4.9's live Refresh gate.
 >
 > **The schema version is now 7**, four bumps past the 3 this header predates
 > (3→4 R4.7A, 4→5 R4.7C, 5→6 R4.7G, 6→7 the R4 QA review's `SizePreset` and
