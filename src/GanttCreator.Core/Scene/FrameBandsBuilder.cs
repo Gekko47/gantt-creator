@@ -138,17 +138,27 @@ public static class FrameBandsBuilder
             );
         }
 
-        RectD yearBounds = new(
-            request.PlotBounds.X,
-            request.PlotBounds.Y - request.YearBandHeightPt,
-            request.PlotBounds.Width,
-            request.YearBandHeightPt
-        );
+        // Entity guide §5/§6: the YEAR band is the upper strip and the PERIOD band sits
+        // BELOW it, immediately above the plot. Stacked upward from the plot's top
+        // edge that is: period first, then year, then (for export only) the title.
+        //
+        // These were previously built the other way round - year directly above the
+        // plot, period above that - so a live chart drew the year band over the
+        // header row and pushed the period band onto the reserved title row. It was
+        // invisible in the fixtures because the golden builds from Core with its own
+        // band heights, and it only appeared once the bands were finally positioned
+        // against real measured rows.
         RectD periodBounds = new(
             request.PlotBounds.X,
-            yearBounds.Y - request.PeriodBandHeightPt,
+            request.PlotBounds.Y - request.PeriodBandHeightPt,
             request.PlotBounds.Width,
             request.PeriodBandHeightPt
+        );
+        RectD yearBounds = new(
+            request.PlotBounds.X,
+            periodBounds.Y - request.YearBandHeightPt,
+            request.PlotBounds.Width,
+            request.YearBandHeightPt
         );
         RectD contentBounds = Union(request.PanelBounds, yearBounds, periodBounds, request.PlotBounds);
         RectD? titleBounds = request.ShowTitle

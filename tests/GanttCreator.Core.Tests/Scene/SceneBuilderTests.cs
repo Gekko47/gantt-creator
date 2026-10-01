@@ -1537,6 +1537,109 @@ public sealed class SceneBuilderTests
         return SceneSnapshot.Serialize(outcome.Result!.Scene);
     }
 
+    /// <summary>
+    /// Only the LIVE profile omits the drawn title band (ADR-0030 D6); every export
+    /// profile still draws it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// D6 removed the drawn title from the live sheet only, because the title is the
+    /// table's own title cell there — and leaving the band in place drew it straight
+    /// over the year band, which is what the live screenshot showed.
+    /// </para>
+    /// <para>
+    /// <b>This is the counterweight that makes D6 safe.</b> Without the export half,
+    /// a later "the title band is never drawn" rewrite would pass the live assertion
+    /// alone and silently delete an entity the export renderers and the entity
+    /// guide's field-contract table both depend on.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(SceneCompositionProfile.LiveExcel, false)]
+    [InlineData(SceneCompositionProfile.Raster, true)]
+    [InlineData(SceneCompositionProfile.PowerPoint, true)]
+    [InlineData(SceneCompositionProfile.EditableExport, true)]
+    public void Only_the_live_profile_omits_the_drawn_title_band(
+        SceneCompositionProfile profile,
+        bool expectTitleBand)
+    {
+        SceneBuildOutcome build = SceneBuilder.TryBuild(
+            PanelSceneRequest() with
+            {
+                Profile = profile,
+
+                // A live profile must NOT carry a data panel (R4.8A D4): the live
+                // sheet's own cells ARE the panel. The panel is supplied only for the
+                // export profiles, so this test can vary the profile without the live
+                // case being refused for an unrelated reason.
+                Panel = profile == SceneCompositionProfile.LiveExcel ? null : PanelThemeValue,
+            });
+
+        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
+
+        bool hasTitle = build.Result!.Scene.Primitives
+            .Any(primitive => primitive.PrimitiveId.Contains("title", StringComparison.Ordinal));
+
+        Assert.Equal(expectTitleBand, hasTitle);
+    }
+
+    /// <summary>The panel theme the export-profile cases supply.</summary>
+    private static PanelTheme PanelThemeValue { get; } =
+        new(
+            new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),
+            new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
+            new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
+            new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5));
+
+    /// <summary>
+    /// The panel-bearing reference request, before it is built, so a test can vary
+    /// one field (the composition profile) without duplicating the whole request.
+    /// </summary>
+    /// <returns>The request <see cref="BuildSceneWithPanel"/> builds.</returns>
+    private static SceneBuildRequest PanelSceneRequest()
+    {
+        GanttValidationOutcome outcome = ReferenceSceneFixture.LoadValidated();
+        return new SceneBuildRequest
+        {
+            Events = outcome.Events.ToList(),
+            Registry = ReferenceSceneBuilder.StyleRegistry,
+            Grid = PanelCellGrid.TryCreate(
+                [
+                    new PanelColumn("Id", 80),
+                    new PanelColumn("Type", 120),
+                    new PanelColumn("Description", 180),
+                    new PanelColumn("Start", 70),
+                    new PanelColumn("Finish", 70),
+                ],
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)],
+                10,
+                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+            Panel = PanelThemeValue,
+            PlotBounds = new RectD(520, 110, 600, 290),
+            Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
+            LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
+            FrameTheme = ReferenceSceneBuilder.FrameTheme,
+            PlotStart = ReferenceSceneFixture.PlotStart,
+            PlotFinish = ReferenceSceneFixture.PlotFinish,
+            Scale = GanttTimeScale.Month,
+            PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
+            DateFormat = GanttDateDisplayFormat.DdMMyyyy,
+            Title = ReferenceSceneFixture.Title,
+            GridLinePt = 0.5,
+            MajorBoundaryPt = 1,
+            MilestoneSizePt = 8,
+            TitleBandHeightPt = 14,
+            YearBandHeightPt = 16,
+            PeriodBandHeightPt = 20,
+            DelineatorLinePt = 1,
+            DelineatorStackGapPt = 10,
+            LabelGapPt = 2,
+            LabelHeightPt = 8,
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+        };
+    }
+
     /// <summary>Builds the representative scene from the committed neutral fixture.</summary>
     /// <param name="rows">
     /// The rows to build from, or <see langword="null"/> to load the committed
@@ -1570,6 +1673,15 @@ public sealed class SceneBuilderTests
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
             FrameTheme = ReferenceSceneBuilder.FrameTheme,
+
+            // The canonical reference scene is an EXPORT composition, not a live
+            // sheet. ADR-0030 D6 removed the drawn title band from the LIVE profile
+            // only - the title entity still exists for export - and this scene is
+            // what the entity guide's field-contract table is asserted against, so
+            // leaving it on the LiveExcel default silently dropped the title entity
+            // from every equivalence test. Stated rather than relied upon, so the
+            // choice is visible where the expectations live.
+            Profile = SceneCompositionProfile.Raster,
             PlotStart = ReferenceSceneFixture.PlotStart,
             PlotFinish = ReferenceSceneFixture.PlotFinish,
             Scale = GanttTimeScale.Month,

@@ -714,9 +714,15 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
-        // The title band is shown only when a real title exists, so a blank title
-        // never becomes a visible empty strip.
-        var showTitle = !string.IsNullOrWhiteSpace(request.Title);
+        // The title band is shown only when a real title exists AND the
+        // composition profile actually draws one. ADR-0030 D6: in the LIVE sheet the
+        // title is the table's own title cell, written into the reserved row by
+        // Initialise, so a drawn title band is not merely redundant - it is drawn
+        // over the year band and collides with it. The export profiles keep the band,
+        // which is why this is a profile check rather than removing the entity.
+        var showTitle =
+            request.Profile != SceneCompositionProfile.LiveExcel
+            && !string.IsNullOrWhiteSpace(request.Title);
 
         // The panel is built FIRST, and its derived bounds are what the frame reads.
         // This is the single-authority decision (D-B1): there is no caller-supplied

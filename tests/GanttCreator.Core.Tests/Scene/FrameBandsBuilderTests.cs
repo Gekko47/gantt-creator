@@ -15,6 +15,35 @@ public sealed class FrameBandsBuilderTests
         new SceneStyle("Title")
     );
 
+    /// <summary>
+    /// The period band sits BELOW the year band, directly above the plot
+    /// (entity guide §5/§6).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the test the inversion was missing.</b> The bands were built
+    /// year-then-period upward from the plot's top, which put the year band directly
+    /// above the plot and pushed the period band above it — the reverse of guide §6
+    /// ("one clipped cell per period below the year band"). On a live sheet that drew
+    /// the year band over the header row. No test asserted the RELATIONSHIP: each
+    /// band's own bounds were checked, never which one sat above the other, so the
+    /// suites stayed green through a live chart showing the mistake.
+    /// </remarks>
+    [Fact]
+    public void The_period_band_is_below_the_year_band_and_above_the_plot()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest());
+
+        Assert.True(outcome.Succeeded);
+        ChartFrameGeometry geometry = outcome.Result!.Geometry;
+
+        // Stacked with no gap and no overlap: the period band's top is the year's
+        // bottom, and its bottom is the plot's top.
+        Assert.Equal(geometry.YearBounds.Bottom, geometry.PeriodBounds.Y, precision: 6);
+        Assert.True(
+            geometry.YearBounds.Y < geometry.PeriodBounds.Y,
+            $"Year band ({geometry.YearBounds.Y}) must sit above the period band ({geometry.PeriodBounds.Y}).");
+    }
+
     [Fact]
     public void Builds_exact_bounds_and_chart_owned_primitive_layers()
     {
