@@ -364,15 +364,33 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Field == "Finish" && i.Code == GanttValidationCodes.NotUsedByType);
     }
 
+    /// <summary>
+    /// A blank <c>LaneId</c> is the normal state of a user-authored row and must not
+    /// be a blocking error.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite. <c>LaneId</c> is
+    /// <c>EngineHidden</c> (ADR-0029 D8) and <c>GanttRowDefaults</c> scaffolds it
+    /// blank, so requiring it made every Add-Row activity fail validation with a
+    /// blocking error on a cell the user cannot see or edit -- found during live F5
+    /// testing, where the Refresh was refused outright. ADR-0012 and R4.7B already
+    /// made the cell optional: the render lane is derived in Core by
+    /// <c>ProjectionResolver</c>, and <c>LaneOrdering.LaneKey</c> returns a
+    /// row-scoped key when it is null. A blank cell must therefore reach
+    /// <see cref="GanttValidationOutcome.Events"/> as a null <c>LaneId</c> -- not
+    /// merely stop being reported, because a silent drop would be the same class of
+    /// defect as the refusal.
+    /// </remarks>
     [Fact]
-    public void Span_missing_lane_is_a_blocking_error()
+    public void Span_missing_lane_is_valid_and_yields_a_null_lane()
     {
         GanttRowDto row = ValidSpan() with { LaneIdCell = GanttCells.Empty<string>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "LaneId");
+        Assert.Null(Assert.Single(outcome.Events).LaneId);
     }
 
     [Fact]
@@ -386,15 +404,101 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Field == "LaneId" && i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
     }
 
+    /// <summary>
+    /// A blank <c>StackIndex</c> is valid, for the same reason a blank
+    /// <c>LaneId</c> is: the cell is engine-owned compatibility data that ADR-0012
+    /// explicitly made untrusted and unrequired.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite and was the second half of the live
+    /// F5 refusal. <c>LaneLayoutBuilder</c> derives the effective stack from
+    /// deterministic row/parent-child position, so the blank cell is correct rather
+    /// than missing, and the derived value reaches the layout as
+    /// <c>LaneEventInput.EffectiveStackIndex == null</c>.
+    /// </remarks>
     [Fact]
-    public void Span_missing_stack_is_a_blocking_error()
+    public void Span_missing_stack_is_valid_and_yields_a_null_stack()
     {
         GanttRowDto row = ValidSpan(stackIndex: null);
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "StackIndex");
+        Assert.Null(Assert.Single(outcome.Events).StackIndex);
+    }
+
+    /// <summary>
+    /// A supplied NEGATIVE <c>StackIndex</c> is still a blocking error. The cell
+    /// became optional, not unvalidated, and this is the positive test that keeps
+    /// <see cref="GanttValidationCodes.StackIndexNegative"/> reachable.
+    /// </summary>
+    /// <remarks>
+    /// No test exercised this branch before. With the requirement removed,
+    /// <c>StackIndexNegative</c> is the only remaining stack-index fault, so without
+    /// this case the code would be dead and the removal above unprovable.
+    /// </remarks>
+    [Fact]
+    public void Negative_stack_is_a_blocking_error()
+    {
+        GanttRowDto row = ValidSpan(stackIndex: -1);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
         Assert.False(outcome.IsValid);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexRequired);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.Field == "StackIndex"
+                && i.Code == GanttValidationCodes.StackIndexNegative
+                && i.Severity == GanttValidationSeverity.Error);
+    }
+
+    /// <summary>
+    /// The exact live scenario: a row as <c>GanttRowDefaults.Build</c> scaffolds it --
+    /// <c>Id</c>, <c>Type</c> and <c>StyleKey</c> populated, every engine column
+    /// blank -- becomes valid once the user supplies the authoring dates.
+    /// </summary>
+    /// <remarks>
+    /// This is the F5 regression test. The refusal was only reproducible through a
+    /// real Add Row, because the defect is the interaction between two contracts:
+    /// <c>GanttRowDefaults</c> deliberately leaves <c>LaneId</c>/<c>StackIndex</c>
+    /// blank, and the validator demanded both. Constructing the DTO directly is what
+    /// makes it a fast unit test rather than an Office-only one; the values are the
+    /// ones the builder writes, placed by column name.
+    /// </remarks>
+    [Fact]
+    public void A_scaffolded_add_row_with_dates_is_valid()
+    {
+        // GanttRowDefaults.Build writes exactly these three columns for an
+        // As-Planned Activity. Every other engine column is blank.
+        GanttRowDto scaffolded = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "As-Planned Activity",
+            null,
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 5),
+            null,
+            "AsPlannedActivity",
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([scaffolded]);
+
+        Assert.True(
+            outcome.IsValid,
+            "Unexpected errors: " + string.Join(
+                " | ",
+                outcome.Issues
+                    .Where(issue => issue.Severity == GanttValidationSeverity.Error)
+                    .Select(issue => $"{issue.RowNumber} {issue.Field}/{issue.Code}")));
+        Assert.Empty(outcome.Issues);
+        Assert.Single(outcome.Events);
     }
 
     /// <summary>
@@ -1099,28 +1203,40 @@ public class GanttRowValidatorTests
         Assert.Null(Assert.Single(outcome.Events).Finish);
     }
 
+    /// <summary>
+    /// A child whose parent row does not validate as a usable event is a blocking
+    /// <c>ParentInvalid</c>, and the child never reaches <c>Events</c>.
+    /// </summary>
+    /// <remarks>
+    /// The parent is made invalid by <c>Start</c> after <c>Finish</c>, not by a blank
+    /// <c>LaneId</c>. It previously carried a blank lane for that reason, so the test
+    /// was passing because of the very requirement this change removes: once a blank
+    /// lane became legal the parent validated and the child had no reason to be
+    /// refused. The fault under test is the parent relationship, so the parent now
+    /// carries a real, unrelated date fault.
+    /// </remarks>
     [Fact]
     public void Critical_interval_with_invalid_parent_event_is_a_blocking_parent_invalid_issue()
     {
         var parentId = NewId();
-        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, laneId: null);
+        GanttRowDto parent = ValidSpan(
+            rowNumber: 2,
+            id: parentId,
+            start: new DateOnly(2026, 9, 5),
+            finish: new DateOnly(2026, 9, 1));
         GanttRowDto child = ValidSpan(
             rowNumber: 3,
             typeText: "Critical Interval",
             id: NewId(),
-            laneId: null,
-            stackIndex: 0,
             start: new DateOnly(2026, 9, 2),
             finish: new DateOnly(2026, 9, 3),
             parentId: parentId
-        ) with
-        {
-            LaneIdCell = GanttCells.Empty<string>(),
-        };
+        );
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
 
         Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.StartAfterFinish);
         Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
         Assert.DoesNotContain(outcome.Events, e => e.RowNumber == 3);
     }
@@ -1140,14 +1256,24 @@ public class GanttRowValidatorTests
         Assert.DoesNotContain(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.StyleKeyRequired);
     }
 
+    /// <summary>
+    /// Every independent fault on one row is reported, not just the first.
+    /// </summary>
+    /// <remarks>
+    /// <c>LaneId</c> and <c>StackIndex</c> are SUPPLIED as malformed/negative values
+    /// rather than left blank. Both cells are now optional -- blank is the normal
+    /// scaffolded state and is not a fault -- so blanking them here would have
+    /// quietly reduced this test's coverage of the lane/stack codes to nothing while
+    /// it still passed.
+    /// </remarks>
     [Fact]
     public void All_errors_returns_every_independent_fault()
     {
         var row = new GanttRowDto(
             7,
             "BAD",
-            null,
-            null,
+            "NOT-AN-ID",
+            -1,
             "As-Planned Activity",
             null,
             new DateOnly(2026, 9, 5),
@@ -1167,7 +1293,7 @@ public class GanttRowValidatorTests
         Assert.Empty(outcome.Events);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.IdMissingOrMalformed);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexRequired);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexNegative);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StartAfterFinish);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.UnknownLabelPosition);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.BadColourFormat);

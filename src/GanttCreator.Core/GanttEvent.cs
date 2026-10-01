@@ -7,8 +7,16 @@ namespace GanttCreator.Core;
 /// </summary>
 /// <param name="RowNumber">The one-based body-row index; an ordering aid, never identity.</param>
 /// <param name="Id">The stable row identifier.</param>
-/// <param name="LaneId">The stable visual-lane identifier, or <see langword="null"/> when the type is not lane-bound or the cell is blank and optional.</param>
-/// <param name="StackIndex">The non-negative vertical-band order, or <see langword="null"/> when the type is not lane-bound or the cell is blank and optional.</param>
+/// <param name="LaneId">
+/// The stable visual-lane identifier, or <see langword="null"/> when the engine has
+/// not assigned one. The cell is optional: it is hidden and engine-generated
+/// (ADR-0029 D8), and R4.7B derives the render lane in Core.
+/// </param>
+/// <param name="StackIndex">
+/// The non-negative vertical-band order, or <see langword="null"/> when the cell is
+/// blank. ADR-0012 makes this compatibility data that layout never trusts or
+/// requires; <c>LaneLayoutBuilder</c> derives the effective stack from row position.
+/// </param>
 /// <param name="Type">The parsed entity type.</param>
 /// <param name="Description">The trimmed description, or <see langword="null"/> when blank. Blank is permitted for every type (R2.5 U2).</param>
 /// <param name="Start">The inclusive start date, or <see langword="null"/> when the type reads no dates.</param>

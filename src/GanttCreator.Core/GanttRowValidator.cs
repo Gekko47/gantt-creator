@@ -15,9 +15,10 @@ namespace GanttCreator.Core;
 /// first-canonical duplicate policy; <c>Type</c> must be an exact catalogue
 /// display name; dates follow the type's <see cref="EntityDateMode"/>
 /// (spans require <c>Start ≤ Finish</c>, point events read <c>Start</c> only);
-/// lane/stack are required for spans and critical intervals (lane optional for
-/// critical intervals when the parent supplies it), optional for milestones,
-/// and warned-not-read for delineators, splitters, and spacers;
+/// <c>LaneId</c> and <c>StackIndex</c> are optional for every type because they
+/// are engine-generated, but a supplied value is still checked (well-formed lane
+/// id, non-negative stack) and a value on a type that never reads it is warned
+/// rather than silently dropped;
 /// <c>ParentId</c> is optional for every child-capable type and a supplied value
 /// must name a row in the same batch whose target may own children; a cycle is
 /// refused; <c>Custom Activity</c> requires a
@@ -251,19 +252,20 @@ public static class GanttRowValidator
             definition = EntityTypeCatalog.GetDefinition(parsedType);
         }
 
-        // Lane/Stack presence by kind. Splitter/Spacer are never lane-bound;
-        // delineators carry no lane geometry; milestones treat both as optional.
+        // Lane/Stack relevance by kind. Splitter/Spacer are never lane-bound;
+        // delineators carry no lane geometry. There is deliberately NO
+        // `laneRequired`/`stackRequired` counterpart: both columns are
+        // `EngineHidden` (ADR-0029 D8) and R2.8's `GanttRowDefaults` scaffolds
+        // them blank, so requiring either one made every Add-Row activity
+        // unvalidatable with a blocking error on a cell the user cannot even see.
+        // ADR-0012 already made the visible `StackIndex` untrusted and unrequired
+        // for layout, and R4.7B derives render-lane ownership in Core
+        // (`ProjectionResolver`) rather than reading the `LaneId` cell --
+        // `LaneOrdering.LaneKey` already returns a row-scoped key when it is null.
+        // A SUPPLIED value is still validated, so this is optional rather than
+        // unvalidated.
         var isSplitterOrSpacer = type is GanttEntityType.Splitter or GanttEntityType.Spacer;
         var isDelineator = type == GanttEntityType.Delineator;
-        var isCriticalInterval = type == GanttEntityType.CriticalInterval;
-        var isMilestone =
-            type
-            is GanttEntityType.AsBuiltMilestone
-                or GanttEntityType.AsPlannedMilestone
-                or GanttEntityType.BaselineMilestone
-                or GanttEntityType.CriticalMilestone;
-        var laneRequired = definition is not null && !isSplitterOrSpacer && !isDelineator && !isMilestone && !isCriticalInterval;
-        var stackRequired = laneRequired;
         var laneRelevant = !isSplitterOrSpacer && !isDelineator;
         var startRelevant = definition?.DateMode != EntityDateMode.None;
         var finishRelevant = definition?.DateMode == EntityDateMode.StartFinish;
@@ -318,15 +320,9 @@ public static class GanttRowValidator
         {
             if (row.LaneId is null)
             {
-                if (laneRequired)
-                {
-                    Add(
-                        "LaneId",
-                        GanttValidationCodes.LaneIdMissingOrMalformed,
-                        GanttValidationSeverity.Error,
-                        "LaneId is required for this Type."
-                    );
-                }
+                // Blank is the scaffolded and normal state: the column is
+                // engine-generated and hidden, and R4.7B derives the render lane in
+                // Core. `LaneOrdering.LaneKey` gives a null lane a row-scoped key.
             }
             else if (isSplitterOrSpacer || isDelineator)
             {
@@ -357,15 +353,10 @@ public static class GanttRowValidator
         {
             if (row.StackIndex is null)
             {
-                if (stackRequired)
-                {
-                    Add(
-                        "StackIndex",
-                        GanttValidationCodes.StackIndexRequired,
-                        GanttValidationSeverity.Error,
-                        "StackIndex is required for this Type."
-                    );
-                }
+                // ADR-0012: the visible cell is compatibility data that is neither
+                // trusted nor required. `LaneLayoutBuilder` derives the effective
+                // stack from row/parent-child position, so a blank cell is correct
+                // rather than missing.
             }
             else if (isSplitterOrSpacer || isDelineator)
             {

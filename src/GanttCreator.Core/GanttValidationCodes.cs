@@ -28,13 +28,14 @@ public static class GanttValidationCodes
     /// <summary>A point-event row is missing <c>Start</c>, its single date.</summary>
     public const string StartRequiredForPoint = nameof(StartRequiredForPoint);
 
-    /// <summary>A lane-bound row is missing <c>LaneId</c> or it is malformed.</summary>
+    /// <summary>
+    /// A <c>LaneId</c> value was supplied and is malformed. The cell is optional --
+    /// it is engine-generated and hidden (ADR-0012, ADR-0029 D8) -- so this fires
+    /// only on a value that is present and unusable.
+    /// </summary>
     public const string LaneIdMissingOrMalformed = nameof(LaneIdMissingOrMalformed);
 
-    /// <summary>A lane-bound row is missing <c>StackIndex</c>.</summary>
-    public const string StackIndexRequired = nameof(StackIndexRequired);
-
-    /// <summary>A <c>StackIndex</c> value is negative.</summary>
+    /// <summary>A supplied <c>StackIndex</c> value is negative.</summary>
     public const string StackIndexNegative = nameof(StackIndexNegative);
 
     /// <summary>A relevant cell contains an Excel error value.</summary>

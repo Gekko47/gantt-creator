@@ -63,7 +63,7 @@ Required columns:
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `Id` | text | Stable event identifier; generated once, never row-number based |
-| `LaneId` | text | Stable visual-lane identifier shared by events on the same line |
+| `LaneId` | text or blank | Engine-generated visual-lane identifier shared by events on the same line; blank is the normal scaffolded state, and the render lane is derived in Core (R4.7B) |
 | `StackIndex` | whole number or blank | Schema-v1 compatibility value; Core derives the effective vertical slot from deterministic row/parent-child position and never trusts or requires this cell for layout |
 | `Type` | catalogue text | In-cell dropdown from the single `EntityTypeCatalog` defined by the entity guide |
 | `Description` | text | User-facing label |
