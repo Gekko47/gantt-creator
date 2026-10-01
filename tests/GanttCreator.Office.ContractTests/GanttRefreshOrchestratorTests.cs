@@ -113,6 +113,29 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// The two layout-row heights are the catalogue tokens, not literals.
+    /// </summary>
+    /// <remarks>
+    /// The header row is the period band's row (ADR-0030 D5), so its height is what
+    /// makes the period band's bottom coincide with the first body row's top; the
+    /// reserved row above it carries the table title and the year band (D4). Both
+    /// are asserted against <see cref="GanttCatalogues.MetricDefault"/> rather than
+    /// numbers, so retuning a band token does not require editing this test and cannot
+    /// leave it asserting a stale figure.
+    /// </remarks>
+    [Fact]
+    public void The_layout_row_heights_are_the_catalogue_tokens()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(GanttCatalogues.MetricDefault("PeriodBandHeightPt"), fakes.LastHeaderHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("YearBandHeightPt"), fakes.LastReservedRowHeightPt);
+    }
+
+    /// <summary>
     /// A refresh whose measured column set contains a HIDDEN column refuses at the
     /// measurement step, which is the live "The worksheet columns could not be
     /// measured" failure.

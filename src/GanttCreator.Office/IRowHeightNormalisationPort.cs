@@ -28,6 +28,28 @@ public interface IRowHeightNormalisationPort
     /// <param name="managedHeightPt">The target height for an ordinary managed row.</param>
     /// <param name="splitterHeightPt">The target height for a <c>Splitter</c> row.</param>
     /// <param name="spacerHeightPt">The target height for a <c>Spacer</c> row.</param>
+    /// <param name="headerHeightPt">
+    /// The target height for the table's header row, which is the period band's row
+    /// (ADR-0030 D5, entity guide §4).
+    /// </param>
+    /// <param name="reservedRowHeightPt">
+    /// The target height for the reserved row above the table, which carries the
+    /// table title and the year band (ADR-0030 D4).
+    /// </param>
     /// <returns>How many rows were written, or the refusal reason.</returns>
-    RowHeightNormalisationOutcome Normalise(double managedHeightPt, double splitterHeightPt, double spacerHeightPt);
+    /// <remarks>
+    /// The two layout rows are separate parameters rather than members of the body
+    /// plan because they live <em>outside</em> <c>DataBodyRange</c>: the plan's
+    /// <c>RowNumber</c> is a body index, and mixing a worksheet row into that list
+    /// would make the number mean two different things depending on which list it is
+    /// read from. They are written by the same adapter under the same protection
+    /// check, and obey the same "already at the token, so no write" rule, so a
+    /// normalised sheet still reports zero writes.
+    /// </remarks>
+    RowHeightNormalisationOutcome Normalise(
+        double managedHeightPt,
+        double splitterHeightPt,
+        double spacerHeightPt,
+        double headerHeightPt,
+        double reservedRowHeightPt);
 }

@@ -92,7 +92,12 @@ public class ExcelRowHeightNormaliser(
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 
     /// <inheritdoc />
-    public RowHeightNormalisationOutcome Normalise(double managedHeightPt, double splitterHeightPt, double spacerHeightPt)
+    public RowHeightNormalisationOutcome Normalise(
+        double managedHeightPt,
+        double splitterHeightPt,
+        double spacerHeightPt,
+        double headerHeightPt,
+        double reservedRowHeightPt)
     {
         Excel.Application? application = _application;
         Excel.Workbook? workbook = application?.ActiveWorkbook;
@@ -118,16 +123,30 @@ public class ExcelRowHeightNormaliser(
                     : RowHeightNormalisationRefusalReason.TargetProtected);
         }
 
+        // The two layout rows are normalised FIRST, and before the body's
+        // zero-row early return, because they exist independently of whether the
+        // table has any data yet: the header row is the period band's row (D5) and the
+        // reserved row carries the title and year band (D4). A freshly initialised
+        // table has a header and no body, and returning early on the body would leave
+        // both layout rows at Excel's default and the first lane misaligned again.
+        var written = 0;
+        written += NormaliseLayoutRow(
+            worksheet,
+            GanttSheetLayout.ReservedRowIndex,
+            reservedRowHeightPt);
+
+        written += NormaliseLayoutRow(worksheet, GanttSheetLayout.HeaderRowIndex, headerHeightPt);
+
         Excel.Range? body = GetTableBody(table);
         if (body is null)
         {
-            return RowHeightNormalisationOutcome.Ok(0);
+            return RowHeightNormalisationOutcome.Ok(written);
         }
 
         var rowCount = GetBodyRowCount(body);
         if (rowCount == 0)
         {
-            return RowHeightNormalisationOutcome.Ok(0);
+            return RowHeightNormalisationOutcome.Ok(written);
         }
 
         // Each row's KIND is read from its own Type cell, because the height policy
@@ -171,7 +190,7 @@ public class ExcelRowHeightNormaliser(
                 RowHeightNormalisationRefusalReason.InvalidMeasurement);
         }
 
-        var written = 0;
+        var writtenAfterBody = 0;
         foreach (RowHeightNormalisation decision in plan.Rows)
         {
             if (decision.TargetHeightPt is not { } target || GetBodyRowAt(body, decision.RowNumber) is not { } targetRow)
@@ -180,10 +199,67 @@ public class ExcelRowHeightNormaliser(
             }
 
             targetRow.RowHeight = target;
-            written++;
+            writtenAfterBody++;
         }
 
-        return RowHeightNormalisationOutcome.Ok(written);
+        return RowHeightNormalisationOutcome.Ok(written + writtenAfterBody);
+    }
+
+    /// <summary>
+    /// Normalises one layout row — the reserved title row or the header row — to its
+    /// token, writing only when the row is not already there.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="rowIndex">The one-based worksheet row.</param>
+    /// <param name="targetHeightPt">The height the row should carry.</param>
+    /// <returns>1 when the row was written, 0 when it was already correct or unreadable.</returns>
+    /// <remarks>
+    /// The same <c>RowHeightNormaliser.EqualityTolerancePt</c> comparison the body
+    /// plan uses is applied, so a correctly normalised sheet writes nothing and the
+    /// Refresh does not mark the workbook dirty. An unreadable row is skipped rather
+    /// than refused: the body already refuses the whole normalisation when it cannot
+    /// measure a row, and a layout row the host will not report is not a reason to
+    /// abandon the managed rows that are.
+    /// <para>
+    /// The row is reached through <c>Worksheet.Rows[...]</c> rather than
+    /// <c>Worksheet.Range[...]</c> for the same reason the outline writer changed
+    /// accessor: the host's treatment of a range depends on which collection produced
+    /// it, and <c>Rows</c> is the whole-row form.
+    /// </para>
+    /// </remarks>
+    private int NormaliseLayoutRow(Excel.Worksheet worksheet, int rowIndex, double targetHeightPt)
+    {
+        if (!double.IsFinite(targetHeightPt) || targetHeightPt <= 0)
+        {
+            return 0;
+        }
+
+        Excel.Range? row = GetLayoutRow(worksheet, rowIndex);
+        if (row is null || ToPoints(row.RowHeight) is not { } current)
+        {
+            return 0;
+        }
+
+        if (Math.Abs(current - targetHeightPt) <= RowHeightNormaliser.EqualityTolerancePt)
+        {
+            return 0;
+        }
+
+        row.RowHeight = targetHeightPt;
+        return 1;
+    }
+
+    /// <summary>
+    /// Returns the whole worksheet row at a one-based index. Test seam over the COM
+    /// parameterised <c>Worksheet.Rows</c> property.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="rowIndex">The one-based worksheet row.</param>
+    /// <returns>The row's range, or <see langword="null"/> when the host resolves none.</returns>
+    internal virtual Excel.Range? GetLayoutRow(Excel.Worksheet worksheet, int rowIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+        return worksheet.Rows[rowIndex];
     }
 
     /// <summary>

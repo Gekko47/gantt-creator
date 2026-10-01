@@ -261,7 +261,16 @@ public sealed class GanttRefreshOrchestrator(
         RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
             GanttCatalogues.MetricDefault("GanttRowHeightPt"),
             GanttCatalogues.MetricDefault("SplitterHeightPt"),
-            GanttCatalogues.MetricDefault("SpacerHeightPt"));
+            GanttCatalogues.MetricDefault("SpacerHeightPt"),
+
+            // ADR-0030 D4/D5: the header row IS the period band's row, so its
+            // height is what makes the period band's bottom coincide with the first
+            // body row's top; the reserved row above it carries the table title and
+            // the year band. Both come from the token catalogue for the same reason
+            // the three above do -- a literal here is a second authority that can
+            // drift from the token the user retunes.
+            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+            GanttCatalogues.MetricDefault("YearBandHeightPt"));
         if (!heights.Succeeded)
         {
             // The Duration column has already been written at this point, so the

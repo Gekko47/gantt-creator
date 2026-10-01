@@ -17,6 +17,17 @@ public sealed class ExcelRowHeightNormaliserTests
     private const double SpacerPt = 6;
 
     /// <summary>
+    /// The header row's target: the period band's row (ADR-0030 D5).
+    /// </summary>
+    private const double HeaderPt = 16;
+
+    /// <summary>
+    /// The reserved row's target: carries the table title and year band
+    /// (ADR-0030 D4).
+    /// </summary>
+    private const double ReservedRowPt = 18;
+
+    /// <summary>
     /// Overrides the COM seams so the test can supply row heights, the per-row
     /// <c>Type</c> text, and record writes without a live Excel host.
     /// </summary>
@@ -37,7 +48,8 @@ public sealed class ExcelRowHeightNormaliserTests
         Excel.ListObject table,
         IReadOnlyList<double> heights,
         List<int> written,
-        IReadOnlyList<string>? types = null)
+        IReadOnlyList<string>? types = null,
+        Dictionary<int, double>? layoutHeights = null)
         : ExcelRowHeightNormaliser(application, guard)
     {
         internal override bool TryFindTable(
@@ -78,7 +90,184 @@ public sealed class ExcelRowHeightNormaliserTests
         internal override string? ReadTypeCellText(Excel.Range typeColumn, int index) =>
             types is null || index < 1 || index > types.Count ? null : types[index - 1];
 
+        /// <summary>The heights the layout rows start at, and receive when written.</summary>
+    internal Dictionary<int, double> LayoutHeights { get; } = layoutHeights ?? new Dictionary<int, double>
+    {
+        [GanttSheetLayout.ReservedRowIndex] = 18d,
+        [GanttSheetLayout.HeaderRowIndex] = 16d,
+    };
+
+    internal override Excel.Range? GetLayoutRow(Excel.Worksheet source, int rowIndex)
+    {
+        var row = new Mock<Excel.Range>();
+        _ = row.SetupGet(r => r.RowHeight)
+            .Returns(LayoutHeights.TryGetValue(rowIndex, out double height) ? height : 0d);
+        _ = row.SetupSet(r => r.RowHeight = It.IsAny<object>())
+            .Callback<object>(value =>
+            {
+                LayoutHeights[rowIndex] = Convert.ToDouble(
+                    value, System.Globalization.CultureInfo.InvariantCulture);
+                written.Add(rowIndex);
+            });
+        return row.Object;
+    }
+
         private Excel.Range SourceBody { get; } = new Mock<Excel.Range>().Object;
+    }
+
+    /// <summary>
+    /// A header row that was NOT at the period band height is restored to it
+    /// (ADR-0030 D5, entity guide §4).
+    /// </summary>
+    /// <remarks>
+    /// The header row's height is what makes the period band's bottom coincide with
+    /// the first body row's top. Left at Excel's default, the band sits at the wrong
+    /// vertical offset and every lane is displaced — the exact symptom this whole
+    /// sequence exists to remove.
+    /// </remarks>
+    [Fact]
+    public void A_dragged_header_row_is_restored_to_the_period_band_height()
+    {
+        var (normaliser, written, layout) = Build(layoutHeights: new()
+        {
+            [GanttSheetLayout.ReservedRowIndex] = 18d,
+            [GanttSheetLayout.HeaderRowIndex] = 40d,
+        });
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Contains(GanttSheetLayout.HeaderRowIndex, written);
+        Assert.Equal(HeaderPt, layout[GanttSheetLayout.HeaderRowIndex]);
+    }
+
+    /// <summary>
+    /// The reserved row is restored to its own token, independently of the header.
+    /// </summary>
+    [Fact]
+    public void A_dragged_reserved_row_is_restored_to_the_year_band_height()
+    {
+        var (normaliser, written, layout) = Build(layoutHeights: new()
+        {
+            [GanttSheetLayout.ReservedRowIndex] = 60d,
+            [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+        });
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Contains(GanttSheetLayout.ReservedRowIndex, written);
+        Assert.Equal(ReservedRowPt, layout[GanttSheetLayout.ReservedRowIndex]);
+    }
+
+    /// <summary>
+    /// Both layout rows are normalised even when the table has no body rows yet.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the ordering.</b> A freshly initialised table has a header
+    /// and no body, so a normaliser that returned early on the body's zero rows would
+    /// leave both layout rows at Excel's default — and the first lane would be
+    /// misaligned on the very first Refresh a user ever runs.
+    /// </remarks>
+    [Fact]
+    public void The_layout_rows_are_normalised_even_when_the_body_is_empty()
+    {
+        var (normaliser, written, _) = Build(bodyHeights: []);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // Both layout rows were already at their tokens, so nothing was written, and
+        // the outcome says zero: no body rows and no layout rows needed a change.
+        Assert.Equal(0, outcome.RowsWritten);
+        Assert.Empty(written);
+    }
+
+    /// <summary>
+    /// A layout row already at its token is not rewritten, so a normalised sheet
+    /// stays clean across Refreshes.
+    /// </summary>
+    [Fact]
+    public void Layout_rows_already_at_their_tokens_are_not_rewritten()
+    {
+        var (normaliser, written, _) = Build(
+            bodyHeights: [ManagedPt],
+            layoutHeights: new()
+            {
+                [GanttSheetLayout.ReservedRowIndex] = ReservedRowPt,
+                [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+            });
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(0, outcome.RowsWritten);
+        Assert.Empty(written);
+    }
+
+    /// <summary>
+    /// The two layout-row heights reach the rows, so retuning a band token retunes
+    /// the sheet rather than leaving a second literal behind.
+    /// </summary>
+    /// <remarks>
+    /// Asserted on what was <em>written</em>, not by comparing two constants to each
+    /// other — a test that only checks that one constant equals another proves nothing
+    /// about the adapter. The orchestrator's own test separately pins that it supplies
+    /// these tokens rather than literals.
+    /// </remarks>
+    [Fact]
+    public void The_layout_row_targets_reach_the_rows()
+    {
+        var (normaliser, _, layout) = Build(layoutHeights: new()
+        {
+            [GanttSheetLayout.ReservedRowIndex] = 1d,
+            [GanttSheetLayout.HeaderRowIndex] = 2d,
+        });
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(HeaderPt, layout[GanttSheetLayout.HeaderRowIndex]);
+        Assert.Equal(ReservedRowPt, layout[GanttSheetLayout.ReservedRowIndex]);
+    }
+
+    private static (TestableNormaliser Normaliser, List<int> Written, Dictionary<int, double> Layout) Build(
+        List<double>? bodyHeights = null,
+        Dictionary<int, double>? layoutHeights = null)
+    {
+        (Mock<Excel.Application> application, Mock<Excel.Worksheet> worksheet, Mock<Excel.ListObject> table) =
+            Graph();
+
+        List<int> written = [];
+        TestableNormaliser normaliser = new(
+            application.Object,
+            new AlwaysUnprotectedGuard(),
+            worksheet.Object,
+            table.Object,
+            bodyHeights ?? [ManagedPt],
+            written,
+            types: null,
+            layoutHeights ?? new Dictionary<int, double>
+            {
+                [GanttSheetLayout.ReservedRowIndex] = ReservedRowPt,
+                [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+            });
+
+        return (normaliser, written, normaliser.LayoutHeights);
+    }
+
+    /// <summary>A guard that reports "not protected", so writes are permitted.</summary>
+    private sealed class AlwaysUnprotectedGuard : IWorksheetProtectionGuard
+    {
+        public ProtectionGuardOutcome Query() => ProtectionGuardOutcome.NotProtected;
+
+        public ProtectionGuardOutcome QueryTarget(object? worksheet) => ProtectionGuardOutcome.NotProtected;
     }
 
     private static (Mock<Excel.Application> Application, Mock<Excel.Worksheet> Worksheet, Mock<Excel.ListObject> Table) Graph()
@@ -118,7 +307,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45, ManagedPt, 30],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(2, outcome.RowsWritten);
@@ -142,7 +331,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [ManagedPt, ManagedPt, ManagedPt],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);
@@ -167,7 +356,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45, 45],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.TargetProtected, outcome.Refusal);
@@ -190,7 +379,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.NoActiveWorkbook, outcome.Refusal);
@@ -211,7 +400,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.NoActiveWorkbook, outcome.Refusal);
@@ -234,7 +423,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(0, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(0, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.InvalidMeasurement, outcome.Refusal);
@@ -269,7 +458,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["As-Planned Activity", "Splitter"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         // Only the dragged managed row is written. If the splitter had been treated as
@@ -298,7 +487,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["Spacer"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);
@@ -325,7 +514,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["Splitter"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, outcome.RowsWritten);
@@ -348,7 +537,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);

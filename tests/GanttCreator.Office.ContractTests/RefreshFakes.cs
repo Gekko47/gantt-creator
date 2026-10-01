@@ -74,6 +74,19 @@ internal sealed class RefreshFakes
     /// <summary>The spacer-row target the orchestrator last passed, or null if never called.</summary>
     public double? LastSpacerHeightPt { get; set; }
 
+    /// <summary>
+    /// The header-row target the orchestrator last passed (ADR-0030 D5), or null if
+    /// never called. The header row is the period band's row, so this height is what
+    /// makes the period band's bottom coincide with the first body row's top.
+    /// </summary>
+    public double? LastHeaderHeightPt { get; set; }
+
+    /// <summary>
+    /// The reserved-row target the orchestrator last passed (ADR-0030 D4), or null if
+    /// never called. That row carries the table title and the year band.
+    /// </summary>
+    public double? LastReservedRowHeightPt { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -314,19 +327,28 @@ internal sealed class RefreshFakes
 
     private sealed class FakeRowHeightNormaliser(RefreshFakes owner) : IRowHeightNormalisationPort
     {
-        public RowHeightNormalisationOutcome Normalise(double managed, double splitter, double spacer)
+        public RowHeightNormalisationOutcome Normalise(
+            double managed,
+            double splitter,
+            double spacer,
+            double header,
+            double reservedRow)
         {
             owner.Steps.Add("RowHeights");
 
-            // The three targets are recorded, not discarded. This fake previously
+            // The five targets are recorded, not discarded. This fake previously
             // ignored all three arguments and returned Ok(0), so it could not fail on
             // a wrong value: the orchestrator's hardcoded (15, 6, 6) passed every
             // refresh test while contradicting the catalogue's 18 / 18 / 9. A fake
             // that discards the value under test is not a test double, it is a
-            // rubber stamp.
+            // rubber stamp. The two layout-row targets are recorded for the same
+            // reason: the header height is what makes the period band's bottom meet
+            // the first body row's top (ADR-0030 D5).
             owner.LastManagedHeightPt = managed;
             owner.LastSplitterHeightPt = splitter;
             owner.LastSpacerHeightPt = spacer;
+            owner.LastHeaderHeightPt = header;
+            owner.LastReservedRowHeightPt = reservedRow;
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
