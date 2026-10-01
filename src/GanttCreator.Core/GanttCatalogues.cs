@@ -373,11 +373,77 @@ public static class GanttCatalogues
             definition.ColourCapability);
     }
 
+    /// <summary>
+    /// Returns the effective default of a named metric token.
+    /// </summary>
+    /// <param name="tokenName">The metric token name, e.g. <c>TitleBandHeightPt</c>.</param>
+    /// <returns>The token's default value.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="tokenName"/> is not a metric token in
+    /// <see cref="Metrics"/>. Thrown rather than defaulted, because a silently
+    /// invented value is a second authority that disagrees with the catalogue
+    /// at some margin and presents as a layout bug (R4.8A D5).
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the single authority for a metric default.</b> It exists because the
+    /// scene-request factory previously carried its own numeric literals for eight
+    /// tokens, and six of them disagreed with the catalogue — a title band of 14pt
+    /// against a catalogue default of 24pt, for instance. Those literals could never
+    /// be corrected by editing <c>tblGanttMetrics</c>, because the reader validated
+    /// that table and then discarded it.
+    /// </para>
+    /// <para>
+    /// Note that the value is the token's <em>default</em>, not a user override:
+    /// <c>ExcelConfigCatalogueReader.ValidateMetrics</c> requires each stored default
+    /// to equal the code-owned default exactly, so a user cannot currently edit a
+    /// metric. Resolving from the catalogue is therefore not an approximation of the
+    /// stored value — it is provably the same value the workbook would return.
+    /// </para>
+    /// </remarks>
+    public static double MetricDefault(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttMetricToken token in Metrics)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.DefaultValue;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a metric token in the Gantt Creator catalogue.",
+            nameof(tokenName));
+    }
+
+    /// <summary>
+    /// Reports whether a name is a metric token, without throwing.
+    /// </summary>
+    /// <param name="tokenName">The candidate token name.</param>
+    /// <returns><see langword="true"/> when the name is a metric token.</returns>
+    public static bool IsMetricToken(string? tokenName)
+    {
+        if (tokenName is null)
+        {
+            return false;
+        }
+
+        foreach (GanttMetricToken token in Metrics)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string ResolveColour(string tokenName) =>
         Colours.First(token => token.Name == tokenName).HexValue;
 
-    private static double ResolveMetric(string tokenName) =>
-        Metrics.First(token => token.Name == tokenName).DefaultValue;
+    private static double ResolveMetric(string tokenName) => MetricDefault(tokenName);
 
     /// <summary>
     /// Computes the catalogue hash (ADR-0007 D6): SHA-256 over the canonical,

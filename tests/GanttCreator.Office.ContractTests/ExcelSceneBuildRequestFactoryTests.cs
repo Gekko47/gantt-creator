@@ -233,8 +233,19 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>A malformed numeric setting falls back rather than refusing the refresh.</summary>
+    /// <summary>
+    /// A metric-looking key in the settings map cannot corrupt a metric, because
+    /// metrics are resolved from the catalogue and never from the settings map.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted that a malformed <c>GridLinePt</c> setting fell
+    /// back to 0.5. That contract is withdrawn: the key was never read in the first
+    /// place, so the test was passing over dead code and gave false assurance that the
+    /// settings path was live. The behaviour now asserted is the real one — a garbage
+    /// value under a metric name is ignored, and the catalogue default survives.
+    /// </remarks>
     [Fact]
-    public void A_malformed_numeric_setting_falls_back_to_its_default()
+    public void A_malformed_metric_setting_is_ignored_rather_than_applied()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -245,7 +256,119 @@ public class ExcelSceneBuildRequestFactoryTests
             Grid());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
-        Assert.Equal(0.5, outcome.Request!.GridLinePt);
+        Assert.Equal(GanttCatalogues.MetricDefault("GridLinePt"), outcome.Request!.GridLinePt);
+    }
+
+    /// <summary>
+    /// Every metric the factory emits equals the code-owned catalogue default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the dead-metric-token defect.</b> The
+    /// factory previously read its metrics with <c>ReadDouble(settings, tokenName,
+    /// fallback)</c>, but the settings map carries only the approved setting keys and
+    /// no metric name is one of them, so every lookup missed and the divergent literal
+    /// fallback was used instead — six of eight disagreed with the catalogue. Asserting
+    /// the request against <see cref="GanttCatalogues.Metrics"/> states the contract
+    /// that matters: the rendered chart uses the tokens the workbook publishes.
+    /// </para>
+    /// <para>
+    /// It is written as a whole-catalogue sweep rather than as eight hand-picked
+    /// assertions, so a token added to the request later is covered without anyone
+    /// remembering to extend this list.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_emitted_metric_equals_the_catalogue_default()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneBuildRequest request = outcome.Request!;
+
+        (string Token, double Actual)[] emitted =
+        [
+            ("ChartOuterPaddingPt", request.ChartOuterPaddingPt),
+            ("TitleBandHeightPt", request.TitleBandHeightPt),
+            ("YearBandHeightPt", request.YearBandHeightPt),
+            ("PeriodBandHeightPt", request.PeriodBandHeightPt),
+            ("MinimumHeaderLabelWidthPt", request.MinimumHeaderLabelWidthPt),
+            ("GridLinePt", request.GridLinePt),
+            ("MajorBoundaryPt", request.MajorBoundaryPt),
+            ("MilestoneSizePt", request.MilestoneSizePt),
+            ("DelineatorLinePt", request.DelineatorLinePt),
+            ("LabelGapPt", request.LabelGapPt),
+            ("LabelHeightPt", request.LabelHeightPt),
+            ("LanePaddingTopPt", request.LaneMetrics!.LanePaddingTopPt),
+            ("LanePaddingBottomPt", request.LaneMetrics.LanePaddingBottomPt),
+            ("StackGapPt", request.LaneMetrics.StackGapPt),
+            ("SplitterHeightPt", request.LaneMetrics.SplitterHeightPt),
+            ("SpacerHeightPt", request.LaneMetrics.SpacerHeightPt),
+        ];
+
+        foreach ((string token, double actual) in emitted)
+        {
+            double expected = GanttCatalogues.MetricDefault(token);
+            Assert.True(
+                Math.Abs(expected - actual) < 1e-9,
+                $"Metric '{token}' was emitted as {actual} but the catalogue default is {expected}.");
+        }
+    }
+
+    /// <summary>
+    /// A metric name is never read from the settings map, so editing a settings cell
+    /// cannot move a metric the catalogue owns.
+    /// </summary>
+    /// <remarks>
+    /// The defect was a lookup against the wrong table: the key was always absent, so
+    /// the branch that consumed it was dead. This asserts the absence directly — the
+    /// setting is supplied, and the emitted value is still the catalogue default. Under
+    /// the old code this returned 0.5 from the fallback and would still have passed for
+    /// <c>GridLinePt</c>, so the token chosen here is one whose old fallback differed
+    /// from its catalogue default (<c>TitleBandHeightPt</c>: 14 against 24).
+    /// </remarks>
+    [Fact]
+    public void A_metric_setting_is_not_read_from_the_settings_map()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>
+            {
+                ["TitleBandHeightPt"] = "999",
+                ["ChartOuterPaddingPt"] = "999",
+            },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(GanttCatalogues.MetricDefault("TitleBandHeightPt"), outcome.Request!.TitleBandHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), outcome.Request.ChartOuterPaddingPt);
+    }
+
+    /// <summary>
+    /// The catalogue accessor itself refuses an unknown token name rather than
+    /// inventing a value.
+    /// </summary>
+    /// <remarks>
+    /// The positive test for the validator: a bad token name must produce the error
+    /// path. Without it, a typo in one of the factory's token constants would resolve
+    /// to nothing and the metric would silently disappear from the chart.
+    /// </remarks>
+    [Fact]
+    public void An_unknown_metric_token_is_refused_by_the_catalogue()
+    {
+        Assert.Throws<ArgumentException>(() => GanttCatalogues.MetricDefault("NoSuchTokenPt"));
+        Assert.False(GanttCatalogues.IsMetricToken("NoSuchTokenPt"));
+        Assert.False(GanttCatalogues.IsMetricToken(null));
+        Assert.True(GanttCatalogues.IsMetricToken("TitleBandHeightPt"));
     }
 
     /// <summary>A null collaborator is refused rather than dereferenced.</summary>

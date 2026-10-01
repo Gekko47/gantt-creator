@@ -61,6 +61,30 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The default plot-range padding, in days, on each side.</summary>
     private const int _defaultRangePaddingDays = 7;
 
+    // The metric tokens this factory resolves. They are named here once and
+    // resolved through GanttCatalogues.MetricDefault rather than being written as
+    // numeric literals, because a literal here is a second authority: the previous
+    // version of this file carried eight of them and six disagreed with the
+    // catalogue, so the rendered chart did not match the tokens the workbook
+    // publishes. A token name that is not in the catalogue now throws at
+    // construction rather than silently falling back (R4.8A D5).
+    private const string _outerPaddingToken = "ChartOuterPaddingPt";
+    private const string _titleBandToken = "TitleBandHeightPt";
+    private const string _yearBandToken = "YearBandHeightPt";
+    private const string _periodBandToken = "PeriodBandHeightPt";
+    private const string _minHeaderLabelWidthToken = "MinimumHeaderLabelWidthPt";
+    private const string _gridLineToken = "GridLinePt";
+    private const string _majorBoundaryToken = "MajorBoundaryPt";
+    private const string _delineatorLineToken = "DelineatorLinePt";
+    private const string _stackGapToken = "StackGapPt";
+    private const string _lanePaddingTopToken = "LanePaddingTopPt";
+    private const string _lanePaddingBottomToken = "LanePaddingBottomPt";
+    private const string _splitterHeightToken = "SplitterHeightPt";
+    private const string _spacerHeightToken = "SpacerHeightPt";
+    private const string _milestoneSizeToken = "MilestoneSizePt";
+    private const string _labelGapToken = "LabelGapPt";
+    private const string _labelHeightToken = "LabelHeightPt";
+
     /// <inheritdoc />
     public SceneBuildRequestOutcome Create(
         IReadOnlyList<GanttEvent> events,
@@ -100,11 +124,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // would be a second computation of a figure the grid already publishes, and
         // the two could disagree on what "the panel width" means.
         var textPanelWidthPt = measuredGrid.TotalWidthPt;
-        var chrome = ReadDouble(settings, "ChartOuterPaddingPt", 0, fallback: 8);
+        var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
 
-        var titleBandPt = ReadDouble(settings, "TitleBandHeightPt", 0, fallback: 14);
-        var yearBandPt = ReadDouble(settings, "YearBandHeightPt", 0, fallback: 16);
-        var periodBandPt = ReadDouble(settings, "PeriodBandHeightPt", 0, fallback: 20);
+        var titleBandPt = GanttCatalogues.MetricDefault(_titleBandToken);
+        var yearBandPt = GanttCatalogues.MetricDefault(_yearBandToken);
+        var periodBandPt = GanttCatalogues.MetricDefault(_periodBandToken);
 
         // The three header bands sit ABOVE the plot, so they are the plot's top
         // offset, and the plot's height is whatever the page has left under them.
@@ -131,11 +155,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // exists to prevent.
         LaneMetricsResolution lanes = LaneMetricsResolver.Resolve(
             measuredGrid,
-            lanePaddingTopPt: 2,
-            lanePaddingBottomPt: 2,
-            stackGapPt: 2,
-            splitterHeightPt: 6,
-            spacerHeightPt: 6);
+            lanePaddingTopPt: GanttCatalogues.MetricDefault(_lanePaddingTopToken),
+            lanePaddingBottomPt: GanttCatalogues.MetricDefault(_lanePaddingBottomToken),
+            stackGapPt: GanttCatalogues.MetricDefault(_stackGapToken),
+            splitterHeightPt: GanttCatalogues.MetricDefault(_splitterHeightToken),
+            spacerHeightPt: GanttCatalogues.MetricDefault(_spacerHeightToken));
         if (lanes.Metrics is not { } laneMetrics)
         {
             return SceneBuildRequestOutcome.Refused(
@@ -221,18 +245,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             AlternateBanding = ReadBool(settings, "AlternateBanding", fallback: true),
             ShowMinorGrid = ReadBool(settings, "ShowMinorGrid", fallback: true),
             ShowMajorGrid = ReadBool(settings, "ShowMajorGrid", fallback: true),
-            YearBandHeightPt = ReadDouble(settings, "YearBandHeightPt", 0, fallback: 16),
-            PeriodBandHeightPt = ReadDouble(settings, "PeriodBandHeightPt", 0, fallback: 20),
-            TitleBandHeightPt = ReadDouble(settings, "TitleBandHeightPt", 0, fallback: 14),
+            YearBandHeightPt = GanttCatalogues.MetricDefault(_yearBandToken),
+            PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
+            TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
             ChartOuterPaddingPt = chrome,
-            MinimumHeaderLabelWidthPt = 0,
-            GridLinePt = ReadDouble(settings, "GridLinePt", 0, fallback: 0.5),
-            MajorBoundaryPt = ReadDouble(settings, "MajorBoundaryPt", 0, fallback: 1),
-            MilestoneSizePt = ReadDouble(settings, "MilestoneSizePt", 0, fallback: 8),
-            DelineatorLinePt = ReadDouble(settings, "DelineatorLinePt", 0, fallback: 1),
-            DelineatorStackGapPt = ReadDouble(settings, "DelineatorStackGapPt", 0, fallback: 10),
-            LabelGapPt = ReadDouble(settings, "LabelGapPt", 0, fallback: 2),
-            LabelHeightPt = ReadDouble(settings, "LabelHeightPt", 0, fallback: 8),
+            MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
+            GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
+            MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
+            MilestoneSizePt = GanttCatalogues.MetricDefault(_milestoneSizeToken),
+            DelineatorLinePt = GanttCatalogues.MetricDefault(_delineatorLineToken),
+            DelineatorStackGapPt = GanttCatalogues.MetricDefault(_stackGapToken),
+            LabelGapPt = GanttCatalogues.MetricDefault(_labelGapToken),
+            LabelHeightPt = GanttCatalogues.MetricDefault(_labelHeightToken),
         };
 
     /// <summary>
