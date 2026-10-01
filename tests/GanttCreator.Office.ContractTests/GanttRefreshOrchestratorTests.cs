@@ -152,6 +152,8 @@ public class GanttRefreshOrchestratorTests
                 "Read",
                 "Config",
                 "Guard",
+                "Columns",
+                "Identity",
                 "Outline",
                 "Duration",
                 "RowHeights",
@@ -186,6 +188,8 @@ public class GanttRefreshOrchestratorTests
     [InlineData("rowheight", GanttRefreshRefusal.RowHeightRefused)]
     [InlineData("measure", GanttRefreshRefusal.MeasurementRefused)]
     [InlineData("factory", GanttRefreshRefusal.SceneRequestRefused)]
+    [InlineData("columns", GanttRefreshRefusal.ColumnPresentationRefused)]
+    [InlineData("identity", GanttRefreshRefusal.IdentityRefused)]
     public void A_refusal_at_any_preflight_step_mutates_no_shape(string failure, GanttRefreshRefusal expected)
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
@@ -199,6 +203,8 @@ public class GanttRefreshOrchestratorTests
             case "rowheight": fakes.RowHeightRefused = true; break;
             case "measure": fakes.MeasurementRefused = true; break;
             case "factory": fakes.FactoryRefused = true; break;
+            case "columns": fakes.ColumnPresentationRefused = true; break;
+            case "identity": fakes.IdentityRefused = true; break;
             default: throw new ArgumentOutOfRangeException(nameof(failure), failure, "unknown injected failure");
         }
 
@@ -302,16 +308,18 @@ public class GanttRefreshOrchestratorTests
     [Theory]
     [InlineData("table", GanttRefreshRefusal.TableMissing)]
     [InlineData("factory", GanttRefreshRefusal.SceneRequestRefused)]
+    [InlineData("columns", GanttRefreshRefusal.ColumnPresentationRefused)]
+    [InlineData("identity", GanttRefreshRefusal.IdentityRefused)]
     public void Every_refusal_carries_a_message(string failure, GanttRefreshRefusal expected)
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
-        if (failure == "table")
+        switch (failure)
         {
-            fakes.TableReadRefused = true;
-        }
-        else
-        {
-            fakes.FactoryRefused = true;
+            case "table": fakes.TableReadRefused = true; break;
+            case "factory": fakes.FactoryRefused = true; break;
+            case "columns": fakes.ColumnPresentationRefused = true; break;
+            case "identity": fakes.IdentityRefused = true; break;
+            default: throw new ArgumentOutOfRangeException(nameof(failure), failure, "Unknown failure point.");
         }
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
@@ -418,19 +426,21 @@ public class GanttRefreshOrchestratorTests
     [Theory]
     [InlineData("table", GanttRefreshRefusal.TableMissing)]
     [InlineData("factory", GanttRefreshRefusal.SceneRequestRefused)]
+    [InlineData("columns", GanttRefreshRefusal.ColumnPresentationRefused)]
+    [InlineData("identity", GanttRefreshRefusal.IdentityRefused)]
     public void The_application_state_is_restored_on_a_refusal_too(string failure, GanttRefreshRefusal expected)
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
         // The orchestrator disposes the scope; the test owns it only to inspect the
         // recorded calls, so it is disposed here too rather than left to the analyzer.
         using RecordingScope scope = new();
-        if (failure == "table")
+        switch (failure)
         {
-            fakes.TableReadRefused = true;
-        }
-        else
-        {
-            fakes.FactoryRefused = true;
+            case "table": fakes.TableReadRefused = true; break;
+            case "factory": fakes.FactoryRefused = true; break;
+            case "columns": fakes.ColumnPresentationRefused = true; break;
+            case "identity": fakes.IdentityRefused = true; break;
+            default: throw new ArgumentOutOfRangeException(nameof(failure), failure, "Unknown failure point.");
         }
 
         GanttRefreshOutcome outcome = fakes.BuildOrchestrator(scope).Refresh();

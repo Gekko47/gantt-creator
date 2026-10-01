@@ -93,6 +93,18 @@ internal sealed class RefreshFakes
     /// <summary>The scene-request factory fake.</summary>
     public ISceneBuildRequestFactory Factory => new FakeFactory(this);
 
+    /// <summary>The managed-column classification restorer fake.</summary>
+    public IColumnPresentationPort ColumnPresentation => new FakeColumnPresentation(this);
+
+    /// <summary>The row-identity repairer fake.</summary>
+    public IGanttRowIdentityRepairer Identity => new FakeIdentityRepairer(this);
+
+    /// <summary>Whether the column-classification restore refuses.</summary>
+    public bool ColumnPresentationRefused { get; set; }
+
+    /// <summary>Whether the row-identity repair refuses.</summary>
+    public bool IdentityRefused { get; set; }
+
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
     public GanttRefreshOrchestrator BuildOrchestrator() =>
@@ -105,7 +117,9 @@ internal sealed class RefreshFakes
             RowHeights,
             Outline,
             Factory,
-            Shapes);
+            Shapes,
+            ColumnPresentation,
+            Identity);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -121,6 +135,8 @@ internal sealed class RefreshFakes
             Outline,
             Factory,
             Shapes,
+            ColumnPresentation,
+            Identity,
             scope);
 
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
@@ -239,6 +255,28 @@ internal sealed class RefreshFakes
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
                 : RowHeightNormalisationOutcome.Ok(0);
+        }
+    }
+
+    private sealed class FakeColumnPresentation(RefreshFakes owner) : IColumnPresentationPort
+    {
+        public ColumnPresentationOutcome EnsureClassification()
+        {
+            owner.Steps.Add("Columns");
+            return owner.ColumnPresentationRefused
+                ? ColumnPresentationOutcome.Refused(ColumnPresentationRefusalReason.TargetProtected)
+                : ColumnPresentationOutcome.Ok(0);
+        }
+    }
+
+    private sealed class FakeIdentityRepairer(RefreshFakes owner) : IGanttRowIdentityRepairer
+    {
+        public GanttRowIdentityRepairOutcome Repair()
+        {
+            owner.Steps.Add("Identity");
+            return owner.IdentityRefused
+                ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
+                : GanttRowIdentityRepairOutcome.Ok(0);
         }
     }
 

@@ -107,6 +107,13 @@ internal static class RefreshSheetCommand
             new ExcelSceneBuildRequestFactory(new FakeTextMetrics()),
             new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
 
+            // R4.8A D2's two remaining preflight steps, supplied here so the
+            // orchestrator runs them. Both are optional in the constructor, which is
+            // what keeps this additive: a caller that omits them gets the pipeline
+            // exactly as it behaved before this row.
+            new ExcelColumnPresentationRestorer(application),
+            new ExcelGanttRowIdentityRepairer(application),
+
             // ADR-0020's five-setting scope. It is a single object owned by the
             // orchestrator, which disposes it on every path; constructing one per
             // operation would capture-and-restore the same setting several times and

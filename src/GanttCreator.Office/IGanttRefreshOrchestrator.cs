@@ -74,6 +74,21 @@ public enum GanttRefreshRefusal
     /// row reports the partial outcome rather than attempting a rollback.
     /// </remarks>
     PartialReconciliation = 13,
+
+    /// <summary>The row identifiers could not be seeded or repaired.</summary>
+    IdentityRefused = 14,
+
+    /// <summary>
+    /// The managed columns could not be restored to their hidden/locked
+    /// classification (R4.7C D1/D2).
+    /// </summary>
+    /// <remarks>
+    /// Reported as its own reason rather than folded into a generic "the sheet could
+    /// not be prepared" because the user's remedy is specific: the workbook is in a
+    /// state the add-in considers inconsistent, and the usual cause is that the sheet
+    /// was protected or the table was edited by hand.
+    /// </remarks>
+    ColumnPresentationRefused = 15,
 }
 
 /// <summary>The typed result of one whole-sheet refresh.</summary>

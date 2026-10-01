@@ -51,6 +51,8 @@ public sealed class GanttRefreshOrchestrator(
     IOutlineGroupPort outlineWriter,
     ISceneBuildRequestFactory requestFactory,
     IShapeWritePort shapeWriter,
+    IColumnPresentationPort? columnPresentation = null,
+    IGanttRowIdentityRepairer? identityRepairer = null,
     IApplicationStateScope? stateScope = null)
     : IGanttRefreshOrchestrator
 {
@@ -63,6 +65,40 @@ public sealed class GanttRefreshOrchestrator(
     private readonly IOutlineGroupPort _outlineWriter = outlineWriter ?? throw new ArgumentNullException(nameof(outlineWriter));
     private readonly ISceneBuildRequestFactory _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
     private readonly IShapeWritePort _shapeWriter = shapeWriter ?? throw new ArgumentNullException(nameof(shapeWriter));
+
+    /// <summary>
+    /// Restores the managed columns' hidden/locked classification, or
+    /// <see langword="null"/> to skip the step.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Optional rather than required so a caller with no Excel application, and a test
+    /// that is not about column state, need not construct one. When supplied the step
+    /// runs; when it is absent the pipeline behaves exactly as it did before this row,
+    /// which is what keeps this change additive rather than a behaviour change for
+    /// existing callers.
+    /// </para>
+    /// <para>
+    /// <b>Why the step exists at all.</b> R4.7C applies the classification on
+    /// Initialise only, and its own code comment records that "un-hide one and refresh
+    /// restores it" is a repair belonging to R4.8A. Without this step a user who
+    /// unhid an engine column kept it hidden in name only: the column stayed visible
+    /// and the authoring surface no longer matched the schema the validator enforces.
+    /// </para>
+    /// </remarks>
+    private readonly IColumnPresentationPort? _columnPresentation = columnPresentation;
+
+    /// <summary>
+    /// Seeds or repairs row identifiers, or <see langword="null"/> to skip the step.
+    /// </summary>
+    /// <remarks>
+    /// R4.8A D2 names "process blank and new entities and IDs" as a preflight step.
+    /// Identity repair repairs only the <c>Id</c> column — malformed, missing, or
+    /// later duplicate — and so is the narrow operation that belongs here. The wider
+    /// promotion-on-delete and clone-reseed behaviour belongs to the hierarchy row,
+    /// not to a Refresh.
+    /// </remarks>
+    private readonly IGanttRowIdentityRepairer? _identityRepairer = identityRepairer;
 
     /// <summary>
     /// The application-state scope, or <see langword="null"/> for the no-op scope.
@@ -137,7 +173,37 @@ public sealed class GanttRefreshOrchestrator(
                     : "The Gantt worksheet is protected, so the chart cannot be updated. Unprotect it and try again.");
         }
 
-        // Step 4-5. Validate every row. A blocking error means the refresh is not
+        // Step 4. The managed columns' hidden/locked classification, restored before
+        // anything is validated or measured. A user who unhid an engine column would
+        // otherwise keep seeing it, and the panel measurement that follows would
+        // measure a column the schema says is not there. R4.7C applies this on
+        // Initialise and records that this repair belongs to R4.8A.
+        if (_columnPresentation is { } columns)
+        {
+            ColumnPresentationOutcome presentation = columns.EnsureClassification();
+            if (!presentation.Succeeded)
+            {
+                return Refuse(
+                    GanttRefreshRefusal.ColumnPresentationRefused,
+                    "The managed columns could not be restored to their schema state.");
+            }
+        }
+
+        // Step 5. Row identity: a row with no usable Id, or a duplicate one, cannot be
+        // validated or projected, so it is seeded here rather than surfacing as a
+        // blocking error the user has no way to clear.
+        if (_identityRepairer is { } identity)
+        {
+            GanttRowIdentityRepairOutcome repaired = identity.Repair();
+            if (repaired.Refusal is not null)
+            {
+                return Refuse(
+                    GanttRefreshRefusal.IdentityRefused,
+                    "The row identifiers could not be repaired.");
+            }
+        }
+
+        // Step 6. Validate every row. A blocking error means the refresh is not
         // attempted at all; the previous chart stays exactly as it was.
         GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows);
         if (!validation.IsValid)

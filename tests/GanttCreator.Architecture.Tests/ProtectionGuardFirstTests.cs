@@ -83,6 +83,12 @@ public sealed class ProtectionGuardFirstTests
         // content -- so it is a data mutation under ADR-0008 D4 and consults the
         // guard before its single ranged write.
         new("src/GanttCreator.Office/ExcelDurationWriter.cs", "Write"),
+        // R4.8A D2: the column-classification restorer hides and locks columns on the
+        // user's VISIBLE worksheet, so it mutates user-facing presentation state and
+        // consults the guard before its first write. Listed at "EnsureClassification",
+        // its first mutating member. It also reads the same code-owned GanttTableSchema
+        // as the initialiser, so the classification has one authority.
+        new("src/GanttCreator.Office/ExcelColumnPresentationRestorer.cs", "EnsureClassification"),
     ];
 
     /// <summary>
@@ -102,6 +108,9 @@ public sealed class ProtectionGuardFirstTests
     /// </summary>
     private static readonly string[] NoDataMutationOfficeFiles =
     [
+        // The port for the column-classification restorer. It declares no mutation of
+        // its own; the mutating implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IColumnPresentationPort.cs",
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
@@ -278,6 +287,19 @@ public sealed class ProtectionGuardFirstTests
         ".Value2",
         ".RowHeight",
         ".OutlineLevel",
+        // R4.8A D2: the managed columns' presentation state. `.Locked` sets the
+        // stored cell format and `.Hidden` hides the worksheet column, so both are
+        // user-visible worksheet state and a data mutation under ADR-0008 D4 --
+        // without them the column-classification restorer would have been
+        // auto-classified read-only and would have escaped guard-first ordering
+        // silently, which is exactly what the R4.1 note on Shapes.AddShape records
+        // happening once already.
+        //
+        // Both go through ContainsAssignment rather than being plain substrings,
+        // because the adapter COMPARES both before writing (`if (ReadHiddenFlag(...) !=
+        // wanted)`), and a comparison contains the same text as a write.
+        ".Locked",
+        ".Hidden",
     ];
 
     /// <summary>
