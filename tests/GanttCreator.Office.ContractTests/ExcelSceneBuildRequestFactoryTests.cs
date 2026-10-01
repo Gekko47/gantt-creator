@@ -32,9 +32,22 @@ public class ExcelSceneBuildRequestFactoryTests
             Visible: true,
             SortOrder: 0);
 
-    /// <summary>A measured grid narrow enough to leave a readable A4-landscape plot.</summary>
-    private static PanelCellGrid Grid(double widthPt = 120) =>
-        PanelCellGrid.TryCreate([new PanelColumn("Id", widthPt)], [15.0], 15, ["Id"]).Grid!;
+    /// <summary>
+    /// A measured grid narrow enough to leave a readable A4-landscape plot.
+    /// </summary>
+    /// <param name="widthPt">The panel's total measured width.</param>
+    /// <param name="originTopPt">The first body row's absolute top edge (ADR-0030 D3).</param>
+    /// <param name="rowHeightsPt">The measured body row heights.</param>
+    private static PanelCellGrid Grid(
+        double widthPt = 120,
+        double originTopPt = 58,
+        double[]? rowHeightsPt = null) =>
+        PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", widthPt)],
+            rowHeightsPt ?? [15.0],
+            15,
+            ["Id"],
+            originTopPt).Grid!;
 
     private static FakeTextMetrics Metrics() => new();
 
@@ -127,6 +140,131 @@ public class ExcelSceneBuildRequestFactoryTests
         // only emits a request whose grid and plot both resolved, so a null here is a
         // defect the equality assertion reports as a mismatch rather than a null crash.
         Assert.Equal(request.Grid!.TotalWidthPt + chrome, request.PlotBounds!.Value.X, precision: 6);
+    }
+
+    /// <summary>
+    /// The plot's TOP is the first body row's measured top edge (ADR-0030 D1).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the test for the reported defect.</b> The plot's top used to be a
+    /// fixed token sum — <c>TitleBand + YearBand + PeriodBand</c> = 58pt — regardless
+    /// of the worksheet, which put lane 0 roughly 43pt (2.4 rows) below its own row.
+    /// The value here is deliberately neither 58 nor zero, so neither the old page
+    /// origin nor a default can satisfy it.
+    /// </remarks>
+    /// <summary>
+    /// Builds a request over one event and the supplied measured grid.
+    /// </summary>
+    /// <param name="grid">The measured grid the scene is composed against.</param>
+    /// <returns>The factory outcome.</returns>
+    private static SceneBuildRequestOutcome Create(PanelCellGrid grid)
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        return factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid);
+    }
+
+    [Fact]
+    public void The_plot_top_is_the_first_body_rows_measured_top()
+    {
+        SceneBuildRequestOutcome outcome = Create(
+            Grid(originTopPt: 137.5, rowHeightsPt: [15.0, 15.0, 15.0]));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
+        Assert.Equal(137.5, request.PlotBounds!.Value.Y, precision: 6);
+    }
+
+    /// <summary>
+    /// The plot's HEIGHT is the measured body total, so the chart ends with the table
+    /// (ADR-0030 D2).
+    /// </summary>
+    /// <remarks>
+    /// Previously the height was the remaining <em>page</em> height (~531pt on A4
+    /// landscape), so a 3-row chart ran ~400pt past the last row. The sum here is
+    /// 45pt, and it is asserted rather than any page figure.
+    /// </remarks>
+    [Fact]
+    public void The_plot_height_is_the_measured_body_total_not_the_page_height()
+    {
+        SceneBuildRequestOutcome outcome = Create(
+            Grid(rowHeightsPt: [15.0, 15.0, 15.0]));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
+        RectD plot = request.PlotBounds!.Value;
+
+        Assert.Equal(45.0, plot.Height, precision: 6);
+        Assert.Equal(45.0, request.Grid!.TotalRowHeightPt, precision: 6);
+    }
+
+    /// <summary>
+    /// The plot's bottom edge is the last row's bottom edge.
+    /// </summary>
+    /// <remarks>
+    /// Stated as a relationship rather than a number because it is the property the
+    /// user sees: the chart must stop where the table stops. Before ADR-0030 the chart
+    /// ran far past it, so nothing asserted this.
+    /// </remarks>
+    [Fact]
+    public void The_plot_bottom_coincides_with_the_last_rows_bottom()
+    {
+        SceneBuildRequestOutcome outcome = Create(
+            Grid(originTopPt: 64, rowHeightsPt: [18.0, 18.0, 24.0, 18.0]));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
+        RectD plot = request.PlotBounds!.Value;
+
+        Assert.Equal(64.0 + 18.0 + 18.0 + 24.0 + 18.0, plot.Y + plot.Height, precision: 6);
+    }
+
+    /// <summary>
+    /// A table taller than the preset's page still renders (ADR-0030 D7).
+    /// </summary>
+    /// <remarks>
+    /// <b>The counterweight to the height test above.</b> With the page still bounding
+    /// the vertical extent, a 40-row schedule on A4 landscape (29 rows tall) would be
+    /// refused outright — the same defect as lane auto-growth, wearing a page budget
+    /// instead of a row height. The width budget is untouched, so an over-wide panel
+    /// still refuses.
+    /// </remarks>
+    [Fact]
+    public void A_table_taller_than_the_page_is_not_refused()
+    {
+        double[] fortyRows = [.. Enumerable.Repeat(18.0, 40)];
+
+        SceneBuildRequestOutcome outcome = Create(Grid(rowHeightsPt: fortyRows));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildRequest request = Assert.IsType<SceneBuildRequest>(outcome.Request);
+        Assert.Equal(40 * 18.0, request.PlotBounds!.Value.Height, precision: 6);
+    }
+
+    /// <summary>
+    /// A panel too wide to leave a readable plot is still refused (R4.7H D4).
+    /// </summary>
+    /// <remarks>
+    /// The counterweight that D7 did not loosen: dropping the page bound is about the
+    /// <em>vertical</em> extent only. The width budget still refuses a panel that
+    /// would leave an unreadable plot, so "the page no longer bounds it" cannot be
+    /// read as "the page no longer constrains anything".
+    /// </remarks>
+    [Fact]
+    public void An_over_wide_panel_is_still_refused()
+    {
+        // The default preset is A4 landscape (841.89pt wide); at 830 the panel plus
+        // both chromes leaves under 1pt of plot, below MinimumPlotWidthPt (24).
+        SceneBuildRequestOutcome outcome = Create(Grid(widthPt: 830));
+
+        Assert.False(outcome.Succeeded);
     }
 
     [Fact]

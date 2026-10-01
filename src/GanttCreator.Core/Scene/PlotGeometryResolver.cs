@@ -110,6 +110,14 @@ public static class PlotGeometryResolver
     /// <param name="rightChromePt">Chrome consumed right of the plot.</param>
     /// <param name="topPt">The plot's top coordinate.</param>
     /// <param name="heightPt">The plot height, carried from the preset's budget.</param>
+    /// <param name="boundVerticallyToPage">
+    /// Whether the preset's page height bounds the plot vertically. <see langword="true"/>
+    /// for an EXPORT composition, which is drawn onto a page. <see langword="false"/>
+    /// for a LIVE worksheet chart (ADR-0030 D7): there the vertical extent is however
+    /// many rows the user has, so page-bounding it would refuse to render a 40-row
+    /// schedule merely because A4 landscape is 29 rows tall — the same defect as
+    /// lane auto-growth, wearing a page budget instead of a row height.
+    /// </param>
     /// <returns>A typed result carrying the resolved bounds or the shortfall.</returns>
     public static PlotGeometryOutcome TryResolve(
         SizePreset? preset,
@@ -117,7 +125,8 @@ public static class PlotGeometryResolver
         double leftChromePt,
         double rightChromePt,
         double topPt,
-        double heightPt)
+        double heightPt,
+        bool boundVerticallyToPage = true)
     {
         if (preset is null)
         {
@@ -161,7 +170,18 @@ public static class PlotGeometryResolver
         // rather than clamped: clamping would silently draw a chart somewhere the
         // caller did not ask for, which is the substitution this resolver exists to
         // prevent (D3/D4).
-        if (topPt < 0 || topPt + heightPt > preset.HeightPt)
+        if (boundVerticallyToPage && (topPt < 0 || topPt + heightPt > preset.HeightPt))
+        {
+            return Refused(PlotGeometryRefusal.InvalidOrigin);
+        }
+
+        // A live chart is not page-bounded, but its origin and height must still be
+        // real numbers: a negative top or a non-positive height describes no geometry,
+        // and clamping either would place the chart somewhere nobody asked for.
+        if (!double.IsFinite(topPt)
+            || (!boundVerticallyToPage && topPt < 0)
+            || !double.IsFinite(heightPt)
+            || heightPt <= 0)
         {
             return Refused(PlotGeometryRefusal.InvalidOrigin);
         }

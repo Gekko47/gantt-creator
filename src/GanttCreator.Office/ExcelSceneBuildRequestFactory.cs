@@ -159,27 +159,39 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         var textPanelWidthPt = measuredGrid.TotalWidthPt;
         var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
 
-        var titleBandPt = GanttCatalogues.MetricDefault(_titleBandToken);
-        var yearBandPt = GanttCatalogues.MetricDefault(_yearBandToken);
-        var periodBandPt = GanttCatalogues.MetricDefault(_periodBandToken);
+        // The header band heights are NOT read here any more. They used to be summed into
+        // the plot's top offset; that sum was the page-coordinate origin ADR-0030
+        // removes. The bands are now positioned by the scene from the reserved and
+        // header rows the worksheet already carries (slice 1), so the factory has no
+        // band arithmetic left to get wrong.
 
-        // The three header bands sit ABOVE the plot, so they are the plot's top
-        // offset, and the plot's height is whatever the page has left under them.
-        // Deriving height as (page height - top offset) rather than (page height -
-        // title band alone) is what keeps the plot's bottom edge on the page: the
-        // resolver refuses a rectangle that runs past the bottom, so the
-        // under-subtraction here would be a refusal rather than a cropped chart.
-        var topPt = titleBandPt + yearBandPt + periodBandPt;
+        // ADR-0030 D1/D2: the plot's vertical extent comes from the WORKSHEET, not from
+        // the paper. `topPt` is the first body row's measured top, so lane 0 begins
+        // exactly where that row does; `heightPt` is the measured total body height,
+        // so the chart ends with the last row. Both were previously the preset's page
+        // coordinates - a fixed 58pt offset and the remaining page height - which is
+        // why a live bar sat ~2.4 rows below its own row and a 7-row chart ran ~400pt
+        // past the table.
+        //
+        // The page no longer bounds the vertical extent (D7): a live sheet is as tall
+        // as the user made it, and page-bounding it would refuse to render a 40-row
+        // schedule because A4 landscape is 29 rows tall. The WIDTH budget is
+        // untouched, so the plot still refuses a panel too wide to leave a readable
+        // plot (R4.7H D4).
+        var topPt = measuredGrid.OriginTopPt;
+        var heightPt = measuredGrid.TotalRowHeightPt;
 
         // The single production call to the plot authority. PlotGeometryResolver owns
-        // the subtraction; this type supplies the measurements and consumes the result.
+        // the subtraction and the bounds; this type supplies the measurements and
+        // consumes the result.
         PlotGeometryOutcome geometry = PlotGeometryResolver.TryResolve(
             preset,
             textPanelWidthPt,
             leftChromePt: chrome,
             rightChromePt: chrome,
             topPt: topPt,
-            heightPt: preset!.HeightPt - topPt - chrome);
+            heightPt: heightPt,
+            boundVerticallyToPage: false);
 
         // Lane metrics are resolved from the MEASURED grid rather than from a
         // constant, because a lane's height is the row height the user can see
