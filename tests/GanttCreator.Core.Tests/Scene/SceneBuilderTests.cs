@@ -688,13 +688,13 @@ public sealed class SceneBuilderTests
             outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             rect => rect.ZLayer == ZLayer.CriticalOverlay);
 
-        // Clipped to the plot on both edges, and not to the shorter parent.
+        // Clipped to the plot on both edges, and not to the shorter parent. The
+        // exact equality against the plot width IS the "was not clipped to the
+        // parent" proof: a parent clip would stop the overlay short of the plot's
+        // right edge and fail the second assertion.
         Assert.Equal(_plotBounds.Left, overlay.Bounds.Left, precision: 6);
         Assert.Equal(_plotBounds.Right, overlay.Bounds.Right, precision: 6);
         Assert.Equal(_plotBounds.Width, overlay.Bounds.Width, precision: 6);
-        Assert.True(
-            overlay.Bounds.Width > _plotBounds.Width * 0.9,
-            "The overlay must span the plot, proving it was NOT clipped to the parent's shorter span.");
     }
 
     /// <summary>

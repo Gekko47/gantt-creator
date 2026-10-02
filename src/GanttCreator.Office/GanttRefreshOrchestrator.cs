@@ -217,6 +217,24 @@ public sealed class GanttRefreshOrchestrator(
                     GanttRefreshRefusal.IdentityRefused,
                     "The row identifiers could not be repaired.");
             }
+
+            // The step-1 snapshot is now STALE: repair writes new Id values into the
+            // worksheet, and those writes are the whole point of the step. Validating
+            // the pre-repair rows would report the blank or malformed Ids that repair
+            // just fixed — so a workbook needing only an ID refresh refused with
+            // BlockingValidationErrors, which is both wrong and unfixable by the
+            // user. Re-read through the same port, and take the same refusal path a
+            // failed first read takes, because from here on it is indistinguishable
+            // from one.
+            rows = _tableReader.Read();
+            if (!rows.Succeeded)
+            {
+                GanttTableReadRefusalReason rereadRefusal =
+                    rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+                return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                    ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
+                    : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+            }
         }
 
         // Step 6. Validate every row. A blocking error means the refresh is not

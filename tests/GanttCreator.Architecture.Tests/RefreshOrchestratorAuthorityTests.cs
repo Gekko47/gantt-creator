@@ -42,6 +42,41 @@ public sealed class RefreshOrchestratorAuthorityTests
     private const string FactoryPath = "src/GanttCreator.Office/GanttRefreshOrchestrator.cs";
 
     /// <summary>
+    /// The files permitted to name the factory WITHOUT being the orchestrator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A file cannot avoid naming the type it implements, the interface it implements,
+    /// or the object it constructs, so those references are declarations rather than
+    /// competing authorities. Everything else that names the type is a second
+    /// pipeline in waiting and is reported.
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>ISceneBuildRequestFactory.cs</c> — the port's own declaration.
+    /// </description></item>
+    /// <item><description>
+    /// <c>ExcelSceneBuildRequestFactory.cs</c> — the port's implementation, which
+    /// necessarily names both the class it declares and the interface it implements.
+    /// </description></item>
+    /// <item><description>
+    /// <c>RefreshSheetCommand.cs</c> — <b>the composition root</b>, and the one
+    /// allowed caller. D1 requires the Ribbon command to construct the live
+    /// orchestrator and its collaborators; that is where the single instance is
+    /// assembled, and it is stated in the command's own remarks. It is allowlisted
+    /// rather than left undetected, so the exemption is visible and a THIRD caller
+    /// still fails this test.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    private static readonly string[] FactoryDeclarationPaths =
+    [
+        "src/GanttCreator.Office/ISceneBuildRequestFactory.cs",
+        "src/GanttCreator.Office/ExcelSceneBuildRequestFactory.cs",
+        "src/GanttCreator.AddIn/RefreshSheetCommand.cs",
+    ];
+
+    /// <summary>
     /// Only the orchestrator drives a whole refresh, so the pipeline order lives in
     /// one place.
     /// </summary>
@@ -91,7 +126,7 @@ public sealed class RefreshOrchestratorAuthorityTests
         {
             foreach (string file in EnumerateProductionFiles(repositoryRoot, root))
             {
-                if (file == FactoryPath)
+                if (file == FactoryPath || FactoryDeclarationPaths.Contains(file, StringComparer.Ordinal))
                 {
                     continue;
                 }
@@ -107,9 +142,68 @@ public sealed class RefreshOrchestratorAuthorityTests
         }
 
         Assert.True(
-            callers is [FactoryPath] or [],
-            "The scene-request factory must be used by the orchestrator alone, but these reference it: "
+            callers is [],
+            "The scene-request factory must be used by the orchestrator and the declared composition root alone, but these reference it: "
             + string.Join(", ", callers));
+    }
+
+    /// <summary>
+    /// The bare-name branch really does detect the shapes that matter, proved against
+    /// inline source.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive control for the guard above, and it exists because that
+    /// guard was silently weak.</b> Its bare-name branch originally iterated
+    /// <c>MemberAccessExpressionSyntax</c> and read <c>access.Name</c>, so it could
+    /// only match <c>Foo.Bar</c>. It therefore never saw <c>new Foo()</c>, a
+    /// <c>Foo</c>-typed parameter, or a cast — and the real
+    /// <c>RefreshSheetCommand</c> constructs the factory with <c>new</c>. The
+    /// production test passed only because it was looking in the wrong place, and the
+    /// composition root had to be added to an allowlist when the branch was fixed.
+    /// </para>
+    /// <para>
+    /// Without this test the same regression could return silently: a matcher that
+    /// finds nothing looks identical to a matcher that is working.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    // The shape that actually occurred in production and was missed.
+    [InlineData("class C { void M() { var f = new ExcelSceneBuildRequestFactory(); } }")]
+    // The other two ways a type is named without a dotted access.
+    [InlineData("class C { void M(ISceneBuildRequestFactory f) { } }")]
+    [InlineData("class C { void M(object o) { var f = (ISceneBuildRequestFactory)o; } }")]
+    // A local of the concrete type.
+    [InlineData("class C { void M() { ExcelSceneBuildRequestFactory f = null; } }")]
+    public void The_bare_name_branch_detects_a_type_reference_that_is_not_a_member_access(string source)
+    {
+        SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
+
+        Assert.True(
+            MentionsIn(root, "ExcelSceneBuildRequestFactory")
+                || MentionsIn(root, "ISceneBuildRequestFactory"),
+            "the matcher missed a plain type reference in: " + source);
+    }
+
+    /// <summary>
+    /// The counterweight: a comment or a string literal naming the type is NOT a
+    /// mention, and neither is an unrelated name.
+    /// </summary>
+    /// <remarks>
+    /// A guard that matched raw text would flag both of these, which is why the check
+    /// is syntactic. Asserting it keeps the fix from being made by broadening to
+    /// substrings.
+    /// </remarks>
+    [Fact]
+    public void A_comment_or_string_naming_the_type_is_not_a_mention()
+    {
+        const string Commented = "class C { /* ExcelSceneBuildRequestFactory */ void M() { } }";
+        const string InAString = "class C { string s = \"ExcelSceneBuildRequestFactory\"; void M() { } }";
+        const string Unrelated = "class C { void M() { ShapeReconciler.Reconcile(); } }";
+
+        Assert.False(MentionsIn(CSharpSyntaxTree.ParseText(Commented).GetRoot(), "ExcelSceneBuildRequestFactory"));
+        Assert.False(MentionsIn(CSharpSyntaxTree.ParseText(InAString).GetRoot(), "ExcelSceneBuildRequestFactory"));
+        Assert.False(MentionsIn(CSharpSyntaxTree.ParseText(Unrelated).GetRoot(), "ExcelSceneBuildRequestFactory"));
     }
 
     /// <summary>
@@ -225,8 +319,50 @@ public sealed class RefreshOrchestratorAuthorityTests
     private static bool Mentions(string relativePath, string member)
     {
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), relativePath));
-        SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        return MentionsIn(CSharpSyntaxTree.ParseText(source).GetRoot(), member);
+    }
 
+    /// <summary>
+    /// Whether the syntax tree <em>uses</em> the named member.
+    /// </summary>
+    /// <param name="root">The parsed source root.</param>
+    /// <param name="member">
+    /// The member to look for: either a bare type name
+    /// (<c>ExcelSceneBuildRequestFactory</c>) or a dotted member
+    /// (<c>ShapeReconciler.Reconcile</c>).
+    /// </param>
+    /// <returns><see langword="true"/> when the member is used.</returns>
+    /// <remarks>
+    /// <para>
+    /// This deliberately matches a reference, not only an invocation. The first
+    /// version looked for an <see cref="InvocationExpressionSyntax"/> whose expression
+    /// text ended with the member name, and a probe proved it vacuous: a file that
+    /// merely named <c>ShapeReconciler.Reconcile</c> — as a method group, a delegate,
+    /// or a log message about it — was reported clean. A guard that can be defeated by
+    /// removing two parentheses is not a guard.
+    /// </para>
+    /// <para>
+    /// Matching a plain identifier reference is still far better than a substring
+    /// search, because a mention inside a comment or a string literal does not parse
+    /// as an identifier. That is the evasion this shape does <em>not</em> permit, and
+    /// the reason the check is syntactic at all.
+    /// </para>
+    /// <para>
+    /// <b>A bare name is matched on every identifier in the tree</b>, not only on
+    /// member-access names. This branch used to iterate
+    /// <see cref="MemberAccessExpressionSyntax"/> and read <c>access.Name</c>, so it
+    /// could only ever find <c>Foo.Bar</c> and missed the three shapes that matter
+    /// most for a type name: <c>new Foo()</c> (an
+    /// <see cref="ObjectCreationExpressionSyntax"/>, whose type is not a member
+    /// access), a parameter or local declared as <c>Foo</c> (an
+    /// <see cref="IdentifierNameSyntax"/> in a type position), and a cast. The real
+    /// <c>RefreshSheetCommand</c> constructs the factory with <c>new</c>, so the guard
+    /// was reporting a composition root it claimed to forbid as clean — for the wrong
+    /// reason.
+    /// </para>
+    /// </remarks>
+    private static bool MentionsIn(SyntaxNode root, string member)
+    {
         // A dotted name is matched on two real identifiers — the receiver type and the
         // member name — rather than on one dotted string. A bare name is matched as a
         // whole identifier.
@@ -237,14 +373,10 @@ public sealed class RefreshOrchestratorAuthorityTests
 
         foreach (SyntaxNode node in root.DescendantNodes())
         {
-            if (node is not MemberAccessExpressionSyntax access)
-            {
-                continue;
-            }
-
             if (bare)
             {
-                if (access.Name.Identifier.ValueText == memberName)
+                if (node is IdentifierNameSyntax identifier
+                    && identifier.Identifier.ValueText == memberName)
                 {
                     return true;
                 }
@@ -252,7 +384,8 @@ public sealed class RefreshOrchestratorAuthorityTests
                 continue;
             }
 
-            if (access.Name.Identifier.ValueText == memberName
+            if (node is MemberAccessExpressionSyntax access
+                && access.Name.Identifier.ValueText == memberName
                 && access.Expression.ToString().EndsWith(typeName, StringComparison.Ordinal))
             {
                 return true;

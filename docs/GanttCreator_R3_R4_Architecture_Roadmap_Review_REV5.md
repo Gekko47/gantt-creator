@@ -10,7 +10,7 @@
 > | --- | --- |
 > | §7, §16 — emit a truthful **line** primitive for Critical Interval | **Rejected.** Stays a **filled rectangle** (`CriticalFill` = `#FF0000`), half the predetermined `ActivityHeightPt`, **centred on its own visual slot** and derived from its **own** dates (owner ruling 2026-09-30 — **not** top-aligned to the parent, and the parent governs lane membership only). `CriticalLinePt` retired. |
 > | §9 — remove live lane auto-growth | **Accepted**, and it reverses `LaneLayoutBuilder` plus checklist §B. ADR-0026. |
-> | §12 — Row Styling | Accepted; unchanged. |
+> | §12 — Row Styling | Accepted, with §12's Critical Interval controls **amended**: the interval is a **filled rectangle**, so it exposes a **fill** control (and label position), not line-supported controls (`CriticalLinePt` is retired). See ADR-0027 D2/D5 and register §2.5. |
 > | §15 — label positions | **Changed.** `Above`/`Below` removed (as REV6 also requires); delineator corners retained. |
 > | §16 — bounded `HostShapeKey` | **Rejected.** R4.7's L18 refusal stands. |
 > | §16 — `CriticalOverlayHeightRatio = 0.5` | Not a configurable token. The Critical Interval's height is **half the predetermined `ActivityHeightPt`**, centred on **its own visual slot**; the parent bar determines **lane membership only** and is never read for geometry. |
@@ -303,8 +303,10 @@ Entity Type -> default StyleKey -> configured style -> row override
 ```
 
 Examples: activities may expose fill/stroke/label position; delineators
-expose stroke/label controls; Critical Interval exposes line-supported
-controls; Spacer exposes none.
+expose stroke/label controls; Critical Interval exposes **fill and
+label** controls — it is a filled rectangle (`CriticalFill`), not a
+line, so a fill override is legal and `CriticalLinePt` no longer
+exists (ADR-0027 D2/D4/D5); Spacer exposes none.
 
 The user never edits hidden style columns. Row Styling does not redraw;
 Refresh applies the changes.

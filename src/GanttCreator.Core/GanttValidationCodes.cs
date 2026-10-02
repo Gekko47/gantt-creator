@@ -62,7 +62,12 @@ public static class GanttValidationCodes
     /// <summary>A <c>Critical Interval</c> references a parent row that is not valid.</summary>
     public const string ParentInvalid = nameof(ParentInvalid);
 
-    /// <summary>A <c>Critical Interval</c> parent relationship contains a cycle.</summary>
+    /// <summary>A <c>ParentId</c> parent relationship contains a cycle.</summary>
+    /// <remarks>
+    /// Reported for every child-capable type, not only Critical Interval: a
+    /// self-reference or a longer cycle in the parent graph is the same fault
+    /// whatever the rows are called.
+    /// </remarks>
     public const string ParentCycle = nameof(ParentCycle);
 
     /// <summary>A <c>Custom Activity</c> row is missing its required <c>StyleKey</c>.</summary>

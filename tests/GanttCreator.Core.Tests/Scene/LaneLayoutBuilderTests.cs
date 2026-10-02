@@ -135,6 +135,87 @@ public sealed class LaneLayoutBuilderTests
         Assert.Equal(2, lane.Slots[1].EventIds.Count);
     }
 
+    /// <summary>
+    /// Two time-overlapping children of ONE parent share the parent's slot by
+    /// design and must not warn.
+    /// </summary>
+    /// <remarks>
+    /// REV6 §8 states that projected children "may overlap", distinguished by date
+    /// geometry, Type, style, z-order and labels. <c>IsProjectionPair</c> guarded the
+    /// owner/child pair but not two siblings: both children carry the SAME
+    /// <c>RenderLaneOwner</c>, neither names the other, so both comparisons failed and
+    /// each pair emitted <c>AmbiguousStackOverlap</c>. The warning reported the product
+    /// working — and, because <c>SceneValidator</c> keys duplicate warnings by
+    /// (owner, code), a parent with two overlapping children could also be reported as
+    /// carrying a duplicate warning.
+    /// </remarks>
+    [Fact]
+    public void Two_overlapping_children_of_one_parent_do_not_warn_as_ambiguous()
+    {
+        GanttEvent parent = Event(1, "parent");
+        GanttEvent firstChild = Event(
+            2, "first-child", start: new DateOnly(2024, 1, 1), finish: new DateOnly(2024, 1, 10));
+        GanttEvent secondChild = Event(
+            3, "second-child", start: new DateOnly(2024, 1, 5), finish: new DateOnly(2024, 1, 15));
+
+        // Positive control on the input: the two children genuinely DO overlap in
+        // time, so a suppressed warning cannot be explained by non-overlapping dates.
+        Assert.True(firstChild.Start <= secondChild.Finish && secondChild.Start <= firstChild.Finish);
+
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [
+                new LaneEventInput(parent, 8),
+                new LaneEventInput(firstChild, 8, EffectiveStackIndex: null, RenderLaneOwner: parent),
+                new LaneEventInput(secondChild, 8, EffectiveStackIndex: null, RenderLaneOwner: parent),
+            ],
+            _metrics);
+
+        Assert.True(outcome.Succeeded);
+        Assert.DoesNotContain(outcome.Layout!.Warnings, w => w.Code == "AmbiguousStackOverlap");
+
+        // All three really do share one slot, so the warning was suppressed rather
+        // than avoided by the children having been given slots of their own.
+        // Compared as a set: EventIds is ordered by SortOrder then Id, not by
+        // row, so an ordered assertion would be testing the ordering rule.
+        LaneGeometry lane = Assert.Single(outcome.Layout.Lanes);
+        SlotGeometry slot = Assert.Single(lane.Slots);
+        Assert.Equal(3, slot.EventIds.Count);
+        Assert.Equal(
+            new HashSet<GanttRowId>([parent.Id, firstChild.Id, secondChild.Id]),
+            new HashSet<GanttRowId>(slot.EventIds));
+    }
+
+    /// <summary>
+    /// The counterweight that stops the sibling rule from silencing a real ambiguity.
+    /// </summary>
+    /// <remarks>
+    /// Two events that are NOT related by the hierarchy still warn when they share a
+    /// slot and overlap, including the case where one is projected onto an owner the
+    /// other does not share. Without this, a broad "same owner, no warning" rule
+    /// would pass the test above while suppressing genuine collisions entirely.
+    /// </remarks>
+    [Fact]
+    public void Two_unrelated_overlapping_events_still_warn_as_ambiguous()
+    {
+        GanttEvent owner = Event(1, "owner");
+        GanttEvent child = Event(2, "child", start: new DateOnly(2024, 1, 1), finish: new DateOnly(2024, 1, 10));
+        GanttEvent stranger = Event(3, "stranger", start: new DateOnly(2024, 1, 5), finish: new DateOnly(2024, 1, 15));
+
+        // The stranger is forced onto the OWNER's slot by an explicit compatibility
+        // stack value, and it has no render-lane owner at all, so no hierarchy
+        // relationship explains the collision.
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [
+                new LaneEventInput(owner, 8, EffectiveStackIndex: 0),
+                new LaneEventInput(child, 8, EffectiveStackIndex: null, RenderLaneOwner: owner),
+                new LaneEventInput(stranger, 8, EffectiveStackIndex: 0),
+            ],
+            _metrics);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Contains(outcome.Layout!.Warnings, w => w.Code == "AmbiguousStackOverlap");
+    }
+
     [Fact]
     public void An_empty_input_is_a_successful_empty_layout_not_a_refusal()
     {

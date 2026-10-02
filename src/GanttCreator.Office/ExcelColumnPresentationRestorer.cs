@@ -25,13 +25,21 @@ namespace GanttCreator.Office;
 /// first time R4.7C's schema changed.
 /// </para>
 /// <para>
-/// <b>Only a drifted column is written.</b> A column already carrying the schema's
-/// visibility is left alone, so a correct sheet yields an empty write set and a
-/// Refresh does not mark the workbook dirty. This mirrors the initialiser's
-/// behaviour, including its <c>Range.Hidden</c> unboxing: the PIA declares that
-/// property as <see cref="object"/>, so comparing it to a <see cref="bool"/> with
-/// <c>!=</c> compares boxed references and is always true — which would rewrite every
-/// column on every Refresh and dirty the workbook.
+/// <b>Only a drifted column is written, and columns are matched by name.</b> A column
+/// already carrying the schema's visibility is left alone, so a correct sheet yields
+/// an empty write set and a Refresh does not mark the workbook dirty. This mirrors the
+/// initialiser's behaviour, including its unboxing of the two properties this PIA
+/// declares as <see cref="object"/>: <c>Range.Locked</c> and <c>Range.Hidden</c>. A
+/// direct <c>!=</c> comparison against a <see cref="bool"/> compares boxed references
+/// and is always true, which would rewrite every column on every Refresh and dirty the
+/// workbook.
+/// </para>
+/// <para>
+/// <b>Matching is by name, never by position,</b> because a positional walk silently
+/// misclassifies every column when the live order differs from the schema's. A schema
+/// column the live table lacks is a typed
+/// <see cref="ColumnPresentationRefusalReason.SchemaColumnMissing"/>; a live column the
+/// schema does not declare is left untouched.
 /// </para>
 /// <para>
 /// <b>COM ownership.</b> The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -92,28 +100,118 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         var restored = 0;
         Excel.ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        for (var index = 1; index <= schema.Count; index++)
-        {
-            Excel.ListColumn column = GetColumnAt(columns, index);
-            Excel.Range columnRange = column.Range;
 
-            if (columnRange.Locked != schema[index - 1].IsLocked)
+        // Matched by NAME, not by position. A positional walk assumes the live
+        // table's columns are in the schema's exact order, and when a user or an
+        // older workbook has them in another order every classification is written
+        // to the wrong column — hiding `Description` and leaving `Id` visible, with
+        // no refusal and no warning. A name that the schema declares but the live
+        // table lacks is a typed refusal rather than a silent skip.
+        for (var index = 0; index < schema.Count; index++)
+        {
+            GanttTableColumn column = schema[index];
+
+            if (!TryFindColumnByName(columns, column.Name, out Excel.ListColumn? live))
             {
-                columnRange.Locked = schema[index - 1].IsLocked;
+                return ColumnPresentationOutcome.Refused(
+                    ColumnPresentationRefusalReason.SchemaColumnMissing);
+            }
+
+            Excel.Range columnRange = live!.Range;
+
+            // The desired value is computed ONCE and used for both the comparison and
+            // the assignment. Reading `IsLocked` twice would be correct only while the
+            // schema stayed constant across the two reads; one local makes the
+            // "already correct means no write" guarantee independent of that.
+            var wantedLocked = column.IsLocked;
+
+            // `Range.Locked` is declared `object` in this PIA (verified by reflection
+            // over the installed Microsoft.Office.Interop.Excel), so it must be
+            // unboxed before comparison for exactly the reason `Hidden` is. Comparing
+            // a boxed value with `!=` against a bool compares references and is always
+            // true, which would rewrite every column on every Refresh and dirty the
+            // workbook. A null or non-boolean value is treated as drifted, so an
+            // unknown state is corrected rather than preserved.
+            if (ReadLockedFlag(columnRange) != wantedLocked)
+            {
+                columnRange.Locked = wantedLocked;
                 restored++;
             }
 
             Excel.Range entireColumn = GetEntireColumn(columnRange);
-            var wanted = schema[index - 1].IsHidden;
-            if (ReadHiddenFlag(entireColumn) != wanted)
+            var wantedHidden = column.IsHidden;
+            if (ReadHiddenFlag(entireColumn) != wantedHidden)
             {
-                entireColumn.Hidden = wanted;
+                entireColumn.Hidden = wantedHidden;
                 restored++;
             }
         }
 
         return ColumnPresentationOutcome.Ok(restored);
     }
+
+    /// <summary>
+    /// Finds a live table column by its header name.
+    /// </summary>
+    /// <param name="columns">The table's list columns.</param>
+    /// <param name="name">The schema column name to find.</param>
+    /// <param name="column">The found column, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> when the live table carries the column.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Ordinal comparison.</b> A worksheet header is text the schema owns, not a
+    /// user-facing label, so a case-insensitive match would let a renamed column
+    /// silently receive another column's classification.
+    /// </para>
+    /// <para>
+    /// <b>A live column the schema does not declare is left alone</b> rather than
+    /// refused: the loop is driven by the schema, so an extra column is simply never
+    /// visited. This adapter restores the add-in's own classification and does not own
+    /// a user's addition to the table.
+    /// </para>
+    /// </remarks>
+    private bool TryFindColumnByName(
+        Excel.ListColumns columns,
+        string name,
+        out Excel.ListColumn? column)
+    {
+        var count = columns.Count;
+        for (var index = 1; index <= count; index++)
+        {
+            Excel.ListColumn candidate = GetColumnAt(columns, index);
+            if (string.Equals(GetColumnName(candidate), name, StringComparison.Ordinal))
+            {
+                column = candidate;
+                return true;
+            }
+        }
+
+        column = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Reads <c>Range.Locked</c> as a real <see cref="bool"/>.
+    /// </summary>
+    /// <param name="range">The column range.</param>
+    /// <returns>The unwrapped lock flag; <see langword="false"/> when unreadable.</returns>
+    /// <remarks>
+    /// The same unboxing <see cref="ReadHiddenFlag"/> performs, applied to the other
+    /// boxed PIA property this adapter writes. A null or non-boolean value reads as
+    /// <see langword="false"/>, which is the correct direction: an unknown state is
+    /// written, and writing makes the column match the schema. Note that this makes a
+    /// genuine <see langword="false"/> indistinguishable from an unreadable one, so a
+    /// schema column that must be unlocked is rewritten rather than skipped — a
+    /// redundant assignment, never a missed one.
+    /// </remarks>
+    private static bool ReadLockedFlag(Excel.Range range) =>
+        range.Locked switch
+        {
+            bool value => value,
+            int value => value != 0,
+            double value => value != 0,
+            _ => false,
+        };
 
     /// <summary>
     /// Reads <c>Range.Hidden</c> as a real <see cref="bool"/>.
@@ -180,6 +278,11 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
     /// <param name="index">The one-based column index.</param>
     /// <returns>The list column.</returns>
     internal virtual Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => columns[index];
+
+    /// <summary>Gets a column's header name. Test seam over the COM property.</summary>
+    /// <param name="column">The list column.</param>
+    /// <returns>The column's header text.</returns>
+    internal virtual string GetColumnName(Excel.ListColumn column) => column.Name;
 
     /// <summary>Gets the whole worksheet column behind a table column. Test seam.</summary>
     /// <param name="range">The table column's range.</param>

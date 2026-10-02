@@ -221,8 +221,18 @@ public class ExcelWorkbookInitialiser(
             wroteTitle = true;
             WriteHeaderRow(target);
             wroteHeader = true;
-            CreateDataTable(target);
+
+            // The table is split into "create" and "present" so `createdTable` can be
+            // set BETWEEN them. ApplyColumnPresentation hides and locks the table's
+            // columns, and a host that refuses one of those writes throws from inside
+            // it — while `createdTable` was still false, so the catch block rolled back
+            // only the header row and left a real, half-presented `tblGanttData` on the
+            // sheet behind a refusal that promised no mutation. Recording the creation
+            // first makes that path roll the table back too.
+            ListObject table = CreateDataTable(target);
             createdTable = true;
+            ApplyColumnPresentation(table);
+
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
             ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();
@@ -766,10 +776,15 @@ public class ExcelWorkbookInitialiser(
     {
         try
         {
-            var tableCount = target.ListObjects.Count;
+            // One proxy in a local, used for BOTH the count and the indexed lookup.
+            // Reaching `target.ListObjects` twice re-enters the COM property getter and
+            // yields two RCWs for one host collection, which is exactly the chained
+            // access the COM-ownership rule forbids.
+            ListObjects listObjects = target.ListObjects;
+            var tableCount = listObjects.Count;
             for (var index = 1; index <= tableCount; index++)
             {
-                ListObject table = GetTableAt(target.ListObjects, index);
+                ListObject table = GetTableAt(listObjects, index);
                 if (string.Equals(
                     table.Name,
                     GanttTableSchema.TableName,
@@ -841,7 +856,13 @@ public class ExcelWorkbookInitialiser(
     /// (ADR-0007 D8).
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void CreateDataTable(Worksheet target)
+    /// <returns>The created table, so the caller can present it.</returns>
+    /// <remarks>
+    /// Returns the table rather than presenting it. The caller must set its
+    /// <c>createdTable</c> rollback flag before <c>ApplyColumnPresentation</c> runs,
+    /// which is only possible if the two are separate steps.
+    /// </remarks>
+    private ListObject CreateDataTable(Worksheet target)
     {
         var columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
@@ -856,7 +877,7 @@ public class ExcelWorkbookInitialiser(
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
-        ApplyColumnPresentation(table);
+        return table;
     }
 
     /// <summary>

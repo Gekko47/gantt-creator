@@ -742,7 +742,7 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues
     )
     {
-        HashSet<int> cycleRows = CheckCriticalParentCycles(rows, perRow, canonicalById, duplicateIds, issues);
+        HashSet<int> cycleRows = CheckParentCycles(rows, perRow, canonicalById, duplicateIds, issues);
 
         // Resolve each Critical Interval ParentId against the same batch.
         for (var i = 0; i < rows.Count; i++)
@@ -993,24 +993,24 @@ public static class GanttRowValidator
             // EntityHierarchyCatalog contract comment, which all already said a
             // critical interval's own parent must be top-level.
             //
-            // A parent that is itself BLOCKED is skipped. Its children are already
-            // refused by PropagateBlockedParents with ParentInvalid -- the accurate
-            // finding, because the parent is not in Events -- so adding
-            // HierarchyTooDeep on top would tell the user their row is too deeply
-            // nested when the real problem is a bad date or an unresolvable StyleKey
-            // one level up. One fault, one finding.
+            // DEPTH IS DECIDED FROM THE PARENT'S ORIGINAL ParentId, never from the
+            // parent's evolving HasBlockingError flag. The flag is order-dependent:
+            // in a four-level chain authored top-down, the depth rule blocks row 4
+            // while this loop is still running, so row 5 was refused by
+            // PropagateBlockedParents as ParentInvalid; authored bottom-up, row 5 is
+            // reached first, its parent is not yet blocked, and it was refused as
+            // HierarchyTooDeep. The same table produced two different findings for
+            // the same row purely from the order rows were supplied in.
             //
-            // The only way a parent becomes blocked while this loop is still
-            // running is the depth rule itself, so the reachable shape is a
-            // four-level chain: row 4 is refused for depth, and row 5 -- whose
-            // parent is row 4 -- is then refused for the blocked parent alone.
+            // Whether a row is nested is a fact about the declared hierarchy and is
+            // true whatever else is wrong, so it is read from the parent's own
+            // ParentId. Classifying a row whose PARENT is blocked stays with
+            // PropagateBlockedParents, which reports ParentInvalid; this loop no
+            // longer guesses at it, and a parent refused for an unrelated fault (a
+            // bad date, an unresolvable StyleKey) still yields exactly one finding
+            // on its child, because a TOP-LEVEL parent's ParentId is null and so
+            // never trips this rule.
             ValidatedRow? parent = perRow[parentIndex];
-            if (parent is { HasBlockingError: true })
-            {
-                siblings.RemoveAt(siblings.Count - 1);
-                continue;
-            }
-
             if (parent?.Event?.ParentId is not null)
             {
                 issues.Add(
@@ -1054,9 +1054,8 @@ public static class GanttRowValidator
     }
 
     /// <summary>
-    /// Rejects self-references and longer directed cycles formed by
-    /// Critical Interval ParentId values. Ordinary span parents are
-    /// terminal nodes and are not traversed.
+    /// Rejects self-references and longer directed cycles formed by <c>ParentId</c>
+    /// values. Ordinary span parents are terminal nodes and are not traversed.
     /// </summary>
     /// <remarks>
     /// An edge whose target Id is duplicated is ambiguous rather than cyclic:
@@ -1064,7 +1063,7 @@ public static class GanttRowValidator
     /// would replace the accurate <see cref="GanttValidationCodes.ParentAmbiguous"/>
     /// finding. Such an edge terminates the walk instead.
     /// </remarks>
-    private static HashSet<int> CheckCriticalParentCycles(
+    private static HashSet<int> CheckParentCycles(
         IReadOnlyList<GanttRowDto> rows,
         ValidatedRow?[] perRow,
         Dictionary<string, int> canonicalById,
@@ -1078,7 +1077,7 @@ public static class GanttRowValidator
 
         for (var start = 0; start < rows.Count; start++)
         {
-            if (!IsUsableCriticalInterval(start, perRow, canonicalById))
+            if (!IsUsableChildCapableRow(start, perRow, canonicalById))
             {
                 continue;
             }
@@ -1086,7 +1085,7 @@ public static class GanttRowValidator
             path.Clear();
             pathIndexByRow.Clear();
             var current = start;
-            while (current >= 0 && IsUsableCriticalInterval(current, perRow, canonicalById))
+            while (current >= 0 && IsUsableChildCapableRow(current, perRow, canonicalById))
             {
                 if (pathIndexByRow.TryGetValue(current, out var cycleStart))
                 {
@@ -1120,7 +1119,7 @@ public static class GanttRowValidator
                     "ParentId",
                     GanttValidationCodes.ParentCycle,
                     GanttValidationSeverity.Error,
-                    "ParentId forms a Critical Interval parent cycle."
+                    "ParentId forms a parent cycle: a row names itself or an ancestor as its parent."
                 )
             );
             perRow[rowIndex] = perRow[rowIndex]! with { HasBlockingError = true };
@@ -1130,13 +1129,32 @@ public static class GanttRowValidator
     }
 
     /// <summary>
-    /// Returns whether a row is a canonical, error-free Critical Interval
-    /// event that can participate in the parent graph.
+    /// Returns whether a row is a canonical, error-free, child-capable event that can
+    /// participate in the parent graph.
     /// </summary>
-    private static bool IsUsableCriticalInterval(int rowIndex, ValidatedRow?[] perRow, Dictionary<string, int> canonicalById)
+    /// <remarks>
+    /// <para>
+    /// <b>Every child-capable type, not only Critical Interval.</b> The predicate is
+    /// <see cref="EntityHierarchyCatalog.MayBeChild"/> — the same single matrix the
+    /// direct parent pass and the propagation pass consult, so the three cannot
+    /// disagree about who is a child.
+    /// </para>
+    /// <para>
+    /// <b>Why this had to widen.</b> Keying on <c>Type == CriticalInterval</c> meant
+    /// a self-reference on a child ACTIVITY was never walked as a cycle. It then
+    /// reached the depth rule, whose parent is the row itself and whose
+    /// <c>ParentId</c> is non-null, so the user was told the row "is itself a child"
+    /// — a depth complaint about a row that is not nested at all. The accurate finding
+    /// is that the row names itself, which is what <c>ParentCycle</c> says. A
+    /// two-activity cycle behaved the same way: both rows got
+    /// <c>HierarchyTooDeep</c> and neither was told the truth.
+    /// </para>
+    /// </remarks>
+    private static bool IsUsableChildCapableRow(int rowIndex, ValidatedRow?[] perRow, Dictionary<string, int> canonicalById)
     {
         ValidatedRow? row = perRow[rowIndex];
-        return row is { Type: GanttEntityType.CriticalInterval, Event: not null, HasBlockingError: false }
+        return row is { Event: not null, HasBlockingError: false, Type: { } rowType }
+            && EntityHierarchyCatalog.MayBeChild(rowType)
             && row.Id is not null
             && canonicalById.TryGetValue(row.Id.Value, out var canonicalIndex)
             && canonicalIndex == rowIndex;

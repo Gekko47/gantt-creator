@@ -66,6 +66,22 @@ two of them change the visible column set.
   | 2 | R4.7C | `Duration` column, `GanttRowHeightPt`, `CriticalLinePt` retired, `CriticalFill` | **4 → 5** |
   | 3 | R4.7G | permitted label-position set (`Above`/`Below` removed, ADR-0028 D1) | **5 → 6** |
   | 4 | R4 QA review | `SizePreset` and `RangePaddingDays` settings keys added (owner ruling 2026-10-01) | **6 → 7** |
+  | 5 | R4.7I | reserved row above the table carrying the table title and year band; the header row moves from worksheet row 1 to row 2 and the plot anchor moves with it (ADR-0030 D4) | **7 → 8** |
+  | 6 | R4.7I | chart padding rows above the title row and below the last activity row; the header moves from row 2 to row 3 (ADR-0031 D1) | **8 → 9** |
+
+  **Steps 5 and 6 are the R4.7I layout changes, and version 7 does NOT cover
+  them.** Version 7 is the two added settings keys and nothing else. The layout is
+  version **8**, added by ADR-0030's reserved row, and version **9** by ADR-0031's
+  padding rows. This table previously stopped at step 4 while
+  `GanttSchemaVersion.CurrentSchemaVersion` was 9, which left a reader unable to tell
+  which change a given workbook carried — and `ConfigIntegrity` distinguishes
+  pre-layout from post-layout workbooks **by this number and nothing else**. A
+  version-7 workbook has its header on row 1, a version-8 one on row 2, and a
+  version-9 one on row 3; because the anchor repair writes the *expected* address, a
+  workbook carrying the wrong version would otherwise pass its own integrity check
+  while its plot anchor pointed at the wrong row. Recording the steps here is what
+  keeps that signal readable, and D6's "reported, never coerced" is what keeps it
+  safe.
 
   Step 4 was added by the senior QA review of R4 and is **not** a roadmap row. Both
   keys were read by the scene-request factory from the first version of R4.8A but

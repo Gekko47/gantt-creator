@@ -157,6 +157,31 @@ internal sealed class RefreshFakes
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
 
+    /// <summary>
+    /// The rows the table reader returns AFTER identity repair has run, or
+    /// <see langword="null"/> to leave <see cref="Rows"/> unchanged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A real repairer WRITES new Id values into the worksheet, so the table read
+    /// after it must see different rows than the read before it. A fake that changed
+    /// nothing let the orchestrator validate its stale step-1 snapshot and still pass,
+    /// which is exactly the defect the re-read after repair fixes. Setting this
+    /// models the write.
+    /// </para>
+    /// <para>
+    /// A second read can also fail, which the production code has to handle; see
+    /// <see cref="TableReadRefusedAfterRepair"/>.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<GanttRowDto>? RowsAfterRepair { get; set; }
+
+    /// <summary>Whether the table re-read performed after identity repair refuses.</summary>
+    public bool TableReadRefusedAfterRepair { get; set; }
+
+    /// <summary>How many times the table reader was called.</summary>
+    public int TableReadCount { get; private set; }
+
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
     public GanttRefreshOrchestrator BuildOrchestrator() =>
@@ -196,6 +221,21 @@ internal sealed class RefreshFakes
         public GanttTableReadOutcome Read()
         {
             owner.Steps.Add("Read");
+            owner.TableReadCount++;
+
+            // The second and later reads happen after identity repair has written to
+            // the worksheet, so they see the REPAIRED rows and can fail independently
+            // of the first read. A first read still uses the original rows.
+            if (owner.TableReadCount > 1)
+            {
+                if (owner.TableReadRefusedAfterRepair)
+                {
+                    return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+                }
+
+                return GanttTableReadOutcome.Ok(owner.RowsAfterRepair ?? owner.Rows);
+            }
+
             return owner.TableReadRefused
                 ? GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing)
                 : GanttTableReadOutcome.Ok(owner.Rows);

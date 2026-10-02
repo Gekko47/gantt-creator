@@ -129,7 +129,12 @@ quietly reinterpreted.
 - Initialisation writes one row above the table and the header height, so the
   workbook layout is a schema contract: existing workbooks need the approved repair
   path before Refresh can anchor correctly, and the schema version is bumped in the
-  same change per ADR-0029.
+  same change per ADR-0029. **That bump is version 7 → 8** (ADR-0029 D5 step 5), *not*
+  version 7 — version 7 is the two added settings keys. `ConfigIntegrity` therefore
+  distinguishes a pre-layout workbook from a post-layout one by exactly this number,
+  which is what makes the missing migration safe: a version-7 workbook reports a
+  mismatch and is reported, never coerced, rather than being repaired onto a header
+  row it does not have.
 - The live title is a cell, so it is editable, printable, and survives save/reopen
   without a shape. A user who wants a drawn title band above the chart in the live
   sheet no longer has one; that is the owner's ruling.

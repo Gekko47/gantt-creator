@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GanttCreator.Core.Scene;
 
 /// <summary>The reason a lane layout could not be created.</summary>
@@ -313,8 +315,16 @@ public static class LaneLayoutBuilder
                 new SceneWarning(
                     SceneOwnerId.ForRow(GanttRowId.Parse("G-" + StableLaneWarningSuffix(laneKey))),
                     LaneContentExceedsLaneHeightCode,
-                    $"Lane content needs {contentHeight:0.##}pt but the row height is {metrics.LaneHeightPt:0.##}pt; the content is not compressed."
-                )
+
+                    // Formatted with InvariantCulture deliberately. A SceneWarning is
+                    // part of the scene model, and the committed golden snapshot
+                    // serialises these messages: under a locale whose decimal
+                    // separator is a comma the same layout produced different text
+                    // on a different machine. The numbers are diagnostics, but the
+                    // snapshot that carries them must not depend on the host locale.
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"Lane content needs {contentHeight:0.##}pt but the row height is {metrics.LaneHeightPt:0.##}pt; the content is not compressed."))
             );
         }
 
@@ -394,14 +404,51 @@ public static class LaneLayoutBuilder
     }
 
     /// <summary>
-    /// Whether one of the two events is projected onto the lane the other owns, in
-    /// either direction. Such a pair shares a slot because the hierarchy says so.
+    /// Whether the two events share a slot because the hierarchy put them there,
+    /// rather than because placement happened to collide.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two cases, both of which are the product working rather than an ambiguity:
+    /// </para>
+    /// <list type="number">
+    /// <item>
+    /// <description>
+    /// One event is projected onto the lane the other owns — the owner/child pair,
+    /// in either direction.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// <b>Both events are projected onto the same third row</b> — two children of
+    /// one parent. This case was previously unguarded, so two time-overlapping
+    /// children of one parent each emitted <c>AmbiguousStackOverlap</c> and warned
+    /// that the product was broken. REV6 §8 states children on one parent lane "may
+    /// overlap", distinguished by date geometry, Type, style, z-order and label;
+    /// that is the intended presentation, exactly as the owner/child overlap above
+    /// is. Two children of one parent are as unambiguous as a parent and its child.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// <para>
+    /// Genuine same-slot overlap between unrelated rows — neither projected, or
+    /// projected onto different owners — still warns, because nothing in the
+    /// hierarchy explains why they share a slot.
+    /// </para>
+    /// </remarks>
     private static bool IsProjectionPair(LaneEventInput first, LaneEventInput second)
     {
         GanttRowId? firstParent = first.RenderLaneOwner?.Id;
         GanttRowId? secondParent = second.RenderLaneOwner?.Id;
-        return (firstParent == second.Event.Id) || (secondParent == first.Event.Id);
+
+        // Siblings under one parent: both name a real owner and they agree.
+        // Non-null on BOTH sides is required, so two unrelated top-level events
+        // (neither projected, both null) do not take this branch.
+        var shareOneOwner = firstParent is not null && firstParent == secondParent;
+
+        return shareOneOwner
+            || (firstParent == second.Event.Id)
+            || (secondParent == first.Event.Id);
     }
 
     private static bool Overlaps(GanttEvent first, GanttEvent second)

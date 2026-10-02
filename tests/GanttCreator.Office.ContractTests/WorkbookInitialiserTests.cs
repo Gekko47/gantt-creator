@@ -309,6 +309,41 @@ public class WorkbookInitialiserTests
         }
 
         /// <summary>
+        /// Makes the column-PRESENTATION step throw on its first write, as a host that
+        /// refuses a hide or lock does.
+        /// </summary>
+        /// <remarks>
+        /// The callback is installed on the mocked column range's <c>Locked</c>
+        /// setter, which the presentation step writes before it hides anything, so
+        /// the fault lands inside <c>ApplyColumnPresentation</c> — after the table
+        /// exists and while the workbook is mid-Initialise. That is the window in
+        /// which the rollback ordering matters.
+        /// </remarks>
+        internal void FailColumnPresentationWrite()
+        {
+            if (Columns.Count == 0)
+            {
+                throw new InvalidOperationException("No columns are wired on this sheet.");
+            }
+
+            // The rollback's own visibility pass reads `EntireColumn.Hidden`, so a
+            // range that returns nothing for it would fault the ROLLBACK rather than
+            // the step under test. It is wired to report "visible", which is what a
+            // column the presentation step never reached actually is.
+            Mock<Excel.Range> entireColumn = new();
+            _ = entireColumn.SetupGet(r => r.Hidden).Returns(false);
+            _ = entireColumn.SetupSet(r => r.Hidden = It.IsAny<object>());
+
+            Mock<Excel.Range> range = new();
+            _ = range.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Throws(new InvalidOperationException("The host refused the lock write."));
+            _ = range.SetupGet(r => r.EntireColumn).Returns(entireColumn.Object);
+
+            // Re-point the first column at a range that throws on the lock write.
+            _ = Columns[0].SetupGet(c => c.Range).Returns(range.Object);
+        }
+
+        /// <summary>
         /// Verifies the <c>tblGanttData</c> list object was created the given
         /// number of times on this sheet. Asserted through <see cref="Mock{T}.Verify"/>
         /// rather than a callback: the PIA's optional parameters carry no
@@ -868,6 +903,38 @@ public class WorkbookInitialiserTests
         // satisfy the count above while still handing the user an altered sheet. This
         // asserts the observable state the user is left with: no column is hidden.
         Assert.DoesNotContain(active.HiddenStates, hidden => hidden);
+    }
+
+    /// <summary>
+    /// A failure inside column presentation still rolls the TABLE back, not just the
+    /// header row.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> <c>CreateDataTable</c> used to call
+    /// <c>ApplyColumnPresentation</c> internally, and the caller set
+    /// <c>createdTable = true</c> only once it returned. A host that refused a column
+    /// write therefore threw with <c>createdTable</c> still false, the catch block
+    /// rolled back only the header and title rows, and a real
+    /// <c>tblGanttData</c> was left on the user's sheet behind a command that reported
+    /// a refusal — and re-running Initialise would then refuse with
+    /// <c>TableExists</c>, so the workbook was wedged.
+    /// </remarks>
+    [Fact]
+    public void A_failure_during_column_presentation_still_rolls_back_the_table()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        // The fault lands inside ApplyColumnPresentation, after the table exists.
+        active.FailColumnPresentationWrite();
+
+        Assert.Throws<InvalidOperationException>(() => graph.Build(active).Initialise());
+
+        // The table was created, so the rollback had something to remove — and it did.
+        // Without the fix this Delete is never called and the table survives.
+        active.Table.Verify(t => t.Delete(), Times.Once);
     }
 
     [Fact]

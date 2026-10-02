@@ -325,6 +325,10 @@ public class GanttRefreshOrchestratorTests
                 "Guard",
                 "Columns",
                 "Identity",
+
+                // The re-read after repair. The first snapshot is stale the moment
+                // repair writes an Id, so validation must not consume it.
+                "Read",
                 "Outline",
                 "Duration",
                 "RowHeights",
@@ -631,6 +635,107 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(expected, outcome.Refusal);
         Assert.Equal("Dispose", scope.Calls[^1]);
     }
+
+    /// <summary>
+    /// Validation sees the REPAIRED rows, not the snapshot taken before repair.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> Identity repair exists to fix a blank or
+    /// malformed <c>Id</c>, so it WRITES new identifiers to the worksheet. The
+    /// orchestrator read the table once at step 1, and validating that snapshot meant
+    /// reporting the very <c>IdMissingOrMalformed</c> errors repair had just resolved —
+    /// a refresh refused with <c>BlockingValidationErrors</c> on a workbook the user
+    /// could not fix by any means, because the column they would edit is engine-hidden
+    /// and the row was already repaired underneath it.
+    /// </remarks>
+    [Fact]
+    public void Validation_receives_the_rows_repaired_by_the_identity_step()
+    {
+        // The FIRST read returns a row with no usable Id: the blocking error that
+        // makes identity repair necessary in the first place.
+        RefreshFakes fakes = new() { Rows = [RowWithoutId()] };
+
+        // After repair the same row carries a well-formed Id, which is what the
+        // repairer writes to the worksheet.
+        fakes.RowsAfterRepair = ValidRows();
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(
+            outcome.Succeeded,
+            "the refresh refused: " + outcome.Refusal + " " + outcome.Message);
+
+        // The re-read really happened, after the repair and before validation.
+        Assert.Equal(2, fakes.TableReadCount);
+        Assert.True(
+            fakes.Steps.IndexOf("Identity") < IndexOfSecond(fakes.Steps, "Read"),
+            "the re-read must follow identity repair; steps were " + string.Join(", ", fakes.Steps));
+        Assert.DoesNotContain(
+            outcome.ValidationIssues,
+            issue => issue.Severity == GanttValidationSeverity.Error);
+    }
+
+    /// <summary>
+    /// A failed re-read after repair takes the table-read refusal path, with no
+    /// shape mutation.
+    /// </summary>
+    /// <remarks>
+    /// <b>The positive test for the new refusal branch.</b> Without handling it, a
+    /// re-read that failed would be validated against the stale rows or — worse —
+    /// produce a chart from data the repair was in the middle of changing. It maps to
+    /// <see cref="GanttRefreshRefusal.TableMissing"/> because from that point on it is
+    /// indistinguishable from a first read that failed.
+    /// </remarks>
+    [Fact]
+    public void A_failed_reread_after_repair_refuses_as_a_table_miss_and_mutates_no_shape()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = [RowWithoutId()],
+            TableReadRefusedAfterRepair = true,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>The one-based position of the second occurrence of <paramref name="step"/>.</summary>
+    private static int IndexOfSecond(List<string> steps, string step)
+    {
+        var seen = 0;
+        for (var index = 0; index < steps.Count; index++)
+        {
+            if (string.Equals(steps[index], step, StringComparison.Ordinal)
+                && ++seen == 2)
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException("'" + step + "' does not occur twice in " + string.Join(", ", steps));
+    }
+
+    /// <summary>A row whose <c>Id</c> is blank, which is what identity repair fixes.</summary>
+    private static GanttRowDto RowWithoutId() =>
+        new(
+            2,
+            string.Empty,
+            NewId(),
+            0,
+            "As-Planned Activity",
+            "Design",
+            new DateOnly(2024, 1, 8),
+            new DateOnly(2024, 1, 19),
+            parentId: null,
+            styleKey: null,
+            labelPositionText: null,
+            fillColourText: null,
+            strokeColourText: null,
+            visible: true,
+            sortOrder: null);
 
     /// <summary>Null collaborators are refused at construction, not at first use.</summary>
     [Fact]

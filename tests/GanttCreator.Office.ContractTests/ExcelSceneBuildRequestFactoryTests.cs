@@ -401,11 +401,12 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <remarks>
     /// The name used to read "a known preset key is honoured", which overstated it. This
     /// test injects the key into a hand-built dictionary, so it proves the factory
-    /// parses a preset it is <em>given</em> — it does not prove the workbook can give it
-    /// one, and today it cannot: <c>SizePreset</c> is absent from
-    /// <c>GanttCatalogues.Settings</c>, so <c>ValidateSettings</c> never returns it. See
-    /// <see cref="The_size_preset_keys_are_still_absent_from_the_catalogue"/> for that
-    /// gap, which needs a schema bump and is tracked separately.
+    /// parses a preset it is <em>given</em> — it does NOT prove the workbook can give
+    /// it one. That separate reachability claim is made by
+    /// <see cref="A_preset_selected_in_a_catalogue_shaped_map_reaches_the_factory"/>.
+    /// Both keys are real catalogue settings as of schema version 7; before that they
+    /// were absent, so every case here was unreachable in production while this test
+    /// stayed green.
     /// </remarks>
     [Theory]
     [InlineData("A4Portrait")]
@@ -747,10 +748,10 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <para>
     /// Asserting against <see cref="GanttCatalogues.Settings"/> closes that gap: a key
     /// that is not in the approved set is now a failing test rather than a silently
-    /// dead branch. The <c>SizePreset</c> and <c>RangePaddingDays</c> keys are
-    /// currently <em>absent</em> from that set, which is a known gap recorded in
-    /// STATUS.md and pending a schema bump — they are therefore not asserted here,
-    /// and instead named explicitly below so the gap stays visible.
+    /// dead branch. The <c>SizePreset</c> and <c>RangePaddingDays</c> keys were the
+    /// two that were missing for a long time; they are now real catalogue settings,
+    /// pinned by <see cref="The_size_preset_keys_are_now_catalogue_settings"/> rather
+    /// than recorded as a known gap here.
     /// </para>
     /// </remarks>
     [Fact]
