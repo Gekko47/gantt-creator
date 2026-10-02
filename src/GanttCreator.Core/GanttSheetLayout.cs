@@ -90,60 +90,74 @@ public static class GanttSheetLayout
     public static int TitleRowIndex => ReservedRowIndex;
 
     /// <summary>
-    /// Gets the one-based worksheet column the table title starts in: the first
-    /// AUTHORING column.
+    /// Gets the one-based worksheet column carrying the table title: the column above
+    /// <c>Description</c>.
     /// </summary>
     /// <remarks>
-    /// <b>Why the title is not in column A.</b> Columns A-C are
-    /// <see cref="GanttColumnAccess.EngineHidden"/> bookkeeping
-    /// (<c>Id</c>/<c>LaneId</c>/<c>StackIndex</c>). They are hidden but they still
-    /// occupy worksheet positions, so a title written to column A would sit above
-    /// columns the user cannot see and would appear to start over the middle of the
-    /// table. The owner asked for D2:H2, which is exactly the visible span: the first
-    /// authoring column through the last visible one.
+    /// <para>
+    /// This was the first AUTHORING column (D), and the title was then written across
+    /// a 1-by-5 <c>Resize</c> range so it would "read as one heading across the
+    /// visible columns". That premise is false: assigning <c>Value2</c> to a
+    /// multi-cell range writes the value into <em>every</em> cell, so the title
+    /// appeared once per column instead of once. The owner asked for a single title
+    /// cell directly above <c>Description</c>, which is also the column the table is
+    /// read by.
+    /// </para>
+    /// <para>
+    /// Columns A-C are <see cref="GanttColumnAccess.EngineHidden"/> bookkeeping. They
+    /// are hidden but still occupy worksheet positions, so a title in column A would
+    /// sit above columns the user cannot see.
+    /// </para>
     /// </remarks>
-    public static int TitleStartColumnIndex
+    public static int TitleColumnIndex
     {
         get
         {
             IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
             for (var i = 0; i < columns.Count; i++)
             {
-                if (columns[i].Access != GanttColumnAccess.EngineHidden)
+                if (string.Equals(columns[i].Name, "Description", StringComparison.Ordinal))
                 {
                     return i + 1;
                 }
             }
 
-            throw new InvalidOperationException("The table schema has no user-visible column to title.");
+            throw new InvalidOperationException("The table schema has no Description column to title.");
         }
     }
 
     /// <summary>
-    /// Gets the one-based worksheet column the table title ends in: the last
-    /// user-visible column.
+    /// Gets the one-based worksheet column the table title starts in: the column above
+    /// <c>Description</c>.
     /// </summary>
-    public static int TitleEndColumnIndex
-    {
-        get
-        {
-            IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
-            for (var i = columns.Count - 1; i >= 0; i--)
-            {
-                if (columns[i].Access != GanttColumnAccess.EngineHidden)
-                {
-                    return i + 1;
-                }
-            }
-
-            throw new InvalidOperationException("The table schema has no user-visible column to title.");
-        }
-    }
+    /// <remarks>
+    /// Retained as the start of the title's span. It now equals
+    /// <see cref="TitleColumnIndex"/> because the title is ONE cell, not a row-wide
+    /// heading.
+    /// </remarks>
+    public static int TitleStartColumnIndex => TitleColumnIndex;
 
     /// <summary>
-    /// Gets how many worksheet columns the table title spans.
+    /// Gets the one-based worksheet column the table title ends in: the same single
+    /// column it starts in.
     /// </summary>
-    public static int TitleColumnSpan => TitleEndColumnIndex - TitleStartColumnIndex + 1;
+    public static int TitleEndColumnIndex => TitleColumnIndex;
+
+    /// <summary>
+    /// Gets how many worksheet columns the table title spans: exactly one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This was five. It feeds the <c>Resize</c> that built the written range, and a
+    /// span greater than one is what wrote the title into every visible column.
+    /// </para>
+    /// <para>
+    /// A title that is genuinely wider than its column should be expressed with a
+    /// merge or a left-aligned overflow into empty cells, which is a presentation
+    /// decision; writing the value into each cell is not that.
+    /// </para>
+    /// </remarks>
+    public static int TitleColumnSpan => 1;
 
     /// <summary>
     /// Gets the one-based worksheet row of the bottom padding row: the row directly

@@ -1000,14 +1000,16 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void WriteTitleRow(Worksheet target, string chartTitle)
     {
-        // The value is assigned to the RANGE, not to a sub-range's first cell. Excel
-        // resolves a range assignment to that range's top-left cell, so D2:H2 receives
-        // the title in D2 and the text reads as one heading across the visible columns
-        // because E2:H2 are empty. Reaching into the range's own one-based cell
-        // indexer would express the same intent, but it is precisely the hardcoded
-        // addressing SheetLayoutAuthorityTests forbids -- and it would need a COM
-        // indexer member on the test double that exists only to satisfy the test
-        // (ADR-0032 D1).
+        // ONE cell, above Description.
+        //
+        // This previously wrote to a 1-by-5 `Resize` range on the stated belief that
+        // "Excel resolves a range assignment to that range's top-left cell, so D2:H2
+        // receives the title in D2". That premise is FALSE: assigning `Value2` to a
+        // multi-cell range writes the value into EVERY cell, which is why the live
+        // sheet showed "Gantt Chart" once per visible column. The fix is not to reach
+        // into the range's one-based cell indexer - which ADR-0032 D1 forbids as
+        // hardcoded addressing - but to make the RANGE itself one cell wide, derived
+        // from `GanttSheetLayout` like every other piece of sheet geometry.
         Excel.Range titleRange = GetTitleRange(target);
         titleRange.Value2 = chartTitle;
     }
@@ -1075,25 +1077,32 @@ public class ExcelWorkbookInitialiser(
         => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
 
     /// <summary>
-    /// Returns the range holding the table title, in the reserved row above the
-    /// header, spanning the user-visible columns (D2:H2). Test seam over the COM
-    /// parameterised <c>Range.Item</c> property, mirroring
+    /// Returns the SINGLE cell holding the table title, in the reserved row directly
+    /// above the header and above the <c>Description</c> column. Test seam over the
+    /// COM parameterised <c>Range.Resize</c> property, mirroring
     /// <see cref="GetHeaderRange"/>.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    /// <returns>The one-row range for the title.</returns>
+    /// <returns>The one-cell range for the title.</returns>
     /// <remarks>
-    /// <b>The span is a RANGE, not one cell (ADR-0032 D1).</b> The title used to be
-    /// written to column A, which is an engine-hidden bookkeeping column: it is
-    /// invisible, so the title appeared to float over the middle of the table rather
-    /// than to head it. Writing across D2:H2 puts it over the columns the user
-    /// actually reads. The row and the column span both come from
+    /// <para>
+    /// The span is <b>one cell</b>, and that is the fix rather than a detail. It was
+    /// five, so the title was assigned to D2:H2 and Excel wrote the value into every
+    /// one of those cells - the live sheet showed the title duplicated across the
+    /// table. A range assignment resolves to each cell in the range, not to the
+    /// range's top-left cell, which is what the previous comment here asserted.
+    /// </para>
+    /// <para>
+    /// The owner asked for the title directly above <c>Description</c>, the column the
+    /// table is read by. The row and the column both come from
     /// <see cref="GanttSheetLayout"/>, so this seam cannot disagree with the layout
-    /// authority about where the title lives.
+    /// authority about where the title lives. A title wider than its column is a
+    /// merge or a left-aligned overflow, not a value written into each cell.
+    /// </para>
     /// </remarks>
     internal virtual Excel.Range GetTitleRange(Worksheet target) =>
         target
-            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleStartColumnIndex]
+            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleColumnIndex]
             .Resize[1, GanttSheetLayout.TitleColumnSpan];
 
     /// <summary>

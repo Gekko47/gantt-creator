@@ -38,31 +38,48 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
-    /// The title spans D2:H2 - the user-VISIBLE columns, starting past the hidden
-    /// engine columns (ADR-0032 D1).
+    /// The title occupies exactly ONE cell, directly above the <c>Description</c>
+    /// column, on the title row.
     /// </summary>
     /// <remarks>
-    /// <b>Why the literal letters are not used.</b> Columns A-C are
-    /// <c>EngineHidden</c> bookkeeping. They are hidden but still occupy worksheet
-    /// positions, so a title written to column A appears above columns the user
-    /// cannot see. The expectation is written as the SCHEMA's visible span and the
-    /// A1 reference is derived from it, so a schema that adds or reorders columns
-    /// moves this test rather than silently leaving the title over hidden columns.
+    /// <para>
+    /// This asserted D2:H2 - a five-column span - on the reasoning that Excel resolves
+    /// a range assignment to the range's top-left cell. <b>That premise is false</b>:
+    /// assigning <c>Value2</c> to a multi-cell range writes into every cell, so the
+    /// live sheet rendered the title once per visible column. The owner asked for a
+    /// single title cell above <c>Description</c>.
+    /// </para>
+    /// <para>
+    /// The column is derived from the SCHEMA's <c>Description</c> column and the A1
+    /// reference is derived from that, so a schema that adds or reorders columns moves
+    /// this test rather than stranding the title over a hidden column.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void The_title_spans_the_visible_columns_on_the_title_row()
+    public void The_title_is_one_cell_directly_above_the_description_column()
     {
-        Assert.Equal(4, GanttSheetLayout.TitleStartColumnIndex);
-        Assert.Equal(8, GanttSheetLayout.TitleEndColumnIndex);
-        Assert.Equal(5, GanttSheetLayout.TitleColumnSpan);
+        // ONE column, so start and end agree and the span is 1. A span above 1 is
+        // exactly what made Excel write the value into every cell.
+        Assert.Equal(1, GanttSheetLayout.TitleColumnSpan);
+        Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleStartColumnIndex);
+        Assert.Equal(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleEndColumnIndex);
 
-        // The derived reference is the owner's D2:H2 exactly.
-        Assert.Equal("D2", GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleStartColumnIndex, GanttSheetLayout.TitleRowIndex));
-        Assert.Equal("H2", GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleEndColumnIndex, GanttSheetLayout.TitleRowIndex));
+        // The derived reference is the single cell above Description.
+        Assert.Equal(
+            "E2",
+            GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, GanttSheetLayout.TitleRowIndex));
 
-        // It starts AFTER the engine columns, which is the whole point: a title in
-        // column A would sit over hidden bookkeeping.
-        Assert.True(GanttSheetLayout.TitleStartColumnIndex > 1);
+        // It starts AFTER the engine columns: a title in column A would sit over
+        // hidden bookkeeping the user cannot see.
+        Assert.True(GanttSheetLayout.TitleColumnIndex > 1);
+
+        // And it really is the Description column's own index, not a coincidence.
+        Assert.Equal(
+            GanttTableSchema.Default.Columns
+                .Select((column, index) => (column, index))
+                .Single(entry => string.Equals(entry.column.Name, "Description", StringComparison.Ordinal))
+                .index + 1,
+            GanttSheetLayout.TitleColumnIndex);
     }
 
     /// <summary>
