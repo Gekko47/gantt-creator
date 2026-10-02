@@ -59,24 +59,33 @@ public class ExcelGanttRowInserter(
 
         IReadOnlyList<object?> values = GanttRowDefaults.Build(type, nextId);
         Excel.ListRows rows = GetListRows(table);
-        Excel.Range? reusableRow = null;
-        Excel.ListRow? newRow = null;
-        if (GetListRowCount(rows) == 0)
-        {
-            reusableRow = GetReusableInitialBlankRow(table);
-        }
+        Excel.Range? reusableRow = GetListRowCount(rows) == 0 ? GetReusableInitialBlankRow(table) : null;
 
+        // ADR-0035 D3: EVERY insert appends at the end of the body. The active
+        // cell is no longer consulted, so nothing below the insertion point moves.
+        //
+        // The previous rule inserted at the active row and shifted every row below
+        // it down. That is inherent to inserting a worksheet row, but it was not
+        // what the product wanted, and it interacted with the reserved padding row:
+        // the table grows downward over the row that WAS the bottom margin, so the
+        // chart's bottom margin changed identity and height on every insert. A
+        // product owner confirmed the old behaviour in
+        // `evidence/r2.8-active-row-f5.md` on 2026-09-24; this ADR records what
+        // superseded it, and that evidence file is deliberately left as written
+        // rather than edited to match.
+        Excel.ListRow? newRow = null;
         Excel.Range rowRange;
         if (reusableRow is not null)
         {
+            // An initialised table whose body is empty can still own one blank row
+            // that Excel does not count as a ListRow. Reusing it keeps the first
+            // insert from leaving a trailing blank row inside the table, and is
+            // independent of WHERE the row goes.
             rowRange = reusableRow;
         }
         else
         {
-            var position = GetInsertionPosition(application!, table, rows);
-            newRow = position is null
-                ? AddRow(rows)
-                : AddRowAtPosition(rows, position.Value);
+            newRow = AddRow(rows);
             rowRange = GetRowRange(newRow);
         }
 
@@ -97,31 +106,6 @@ public class ExcelGanttRowInserter(
         }
 
         return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow));
-    }
-
-    private int? GetInsertionPosition(
-        Excel.Application application,
-        Excel.ListObject table,
-        Excel.ListRows rows)
-    {
-        Excel.Range? activeCell = GetActiveCell(application);
-        if (!GetTableActive(table) || activeCell is null)
-        {
-            return null;
-        }
-
-        Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyIndex = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
-        return bodyIndex < 0 || bodyIndex > rowCount
-            ? null
-            : bodyIndex == 0
-                ? 1
-                : bodyIndex == rowCount
-                    ? null
-                    : bodyIndex + 1;
     }
 
     private static bool IsBlankValue(object? value) =>
@@ -274,14 +258,6 @@ public class ExcelGanttRowInserter(
     internal virtual void ClearRange(Excel.Range range) => range.ClearContents();
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
-
-    internal virtual Excel.ListRow AddRowAtPosition(Excel.ListRows rows, int position) => rows.Add(position);
-
-    internal virtual Excel.Range? GetActiveCell(Excel.Application application) => application.ActiveCell;
-
-    internal virtual bool GetTableActive(Excel.ListObject table) => table.Active;
-
-    internal virtual int GetRangeRow(Excel.Range range) => range.Row;
 
     internal virtual int GetRowIndex(Excel.ListRow row) => row.Index;
 

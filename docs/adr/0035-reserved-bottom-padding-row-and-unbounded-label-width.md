@@ -1,0 +1,41 @@
+# ADR-0035 — Labels are bounded only by available space, the bottom margin is a reserved row, and every insert appends
+
+- **Status:** Accepted
+- **Date:** 2026-10-02
+- **Relates to:** entity guide §3, §22; ADR-0015; ADR-0026 D3/D4; ADR-0029 D5/D6; ADR-0030; ADR-0031 D1/D2; R2.8; R4.7D; R4.8A
+- **Decided by:** product owner, 2026-10-02
+- **Supersedes:** nothing. **Amends:** ADR-0031 D1/D2 (the bottom padding row becomes *reserved* rather than merely *named*) and the R2.8 active-cell-relative insertion rule.
+
+## Context
+
+Three defects were reported from one live workbook and traced to source rather than inferred from the screenshot.
+
+**D1 — a label's length was capped by an absolute token, not by space.** The owner reported that labels should not have a limit to how long they are; only the space available should limit them. `LabelPlanner` applied `Math.Min(freeWidth, metrics.MaximumExternalLabelWidthPt)` in **both** placement paths — `TryAccept` and `TryWidestGap` — and the token's default was 144pt. A description needing 200pt sitting in a 300pt gap was therefore *refused by the cascade* (because it overflowed the cap rather than the gap) and then *ellipsised to 144pt by the fallback*, while the empty space beside it was wide enough to hold the whole string. Entity guide §22 named the token as authoritative, and `SceneBuilderTests.An_external_label_is_capped_by_the_configured_maximum_width_not_the_plot_width` asserted the cap directly, so the suite was green through the defect.
+
+**D2 — the chart's bottom margin was a row the add-in did not own.** `GanttSheetLayout.BottomPaddingRowIndex(bodyRowCount)` returned `FirstBodyRowIndex + bodyRowCount`, and two adapters acted on that arithmetic without checking it against the sheet. `ExcelRowHeightNormaliser` **wrote** the `ChartPaddingRowHeightPt` height to it; `ExcelPanelGridMeasurement.ReadBottomPaddingHeight` **read** it as the chart's bottom margin. The row was an ordinary worksheet row: the user could type in it, and the add-in would then resize it to 6pt on the next Refresh. Because a `ListObject` grows *downward over* the row below it, an insert also consumed the margin row — the table absorbed it as a new body row, and the margin became a different, differently-sized row. Nothing anywhere asserted that the row existed, that it was the one below the table, or that it was empty. This is the second time in this area that a relationship was correct-by-accident rather than by assertion (the first was `HeaderRowIndex`, caught by `GanttSheetLayoutTests.The_reserved_header_and_body_rows_are_contiguous` in R4.7I).
+
+**D3 — inserting an activity relative to the active cell shifted every row below it.** `GetInsertionPosition` returned `bodyIndex + 1`, so a mid-table insert pushed the rest of the body down. That is inherent to inserting a worksheet row, but it was not what the product wanted, and it compounded D2: each insert moved the row the chart was using as its bottom margin. `docs/evidence/r2.8-active-row-f5.md` records a product owner confirming this behaviour on 2026-09-24. That evidence is **left exactly as written** — it records what was confirmed on that date; this ADR records what superseded it.
+
+## Decision
+
+- **D1 — a label's width is bounded only by the free space available at the chosen position.** `MaximumExternalLabelWidthPt` is **retired** from `GanttCatalogues.Metrics`, from `LabelMetrics`, from `SceneBuildRequest`, and from both `Math.Min` call sites. The **space-based rules are unchanged**: a cascade candidate that cannot hold the full text is still refused so the cascade continues; the ADR-0015 widest-gap fallback still truncates with `…` to the gap it measured; a gap too small for even `…` still suppresses the label with exactly one warning.
+- **D2 — the chart's bottom margin is a reserved worksheet row, resolved from the body's measured span and verified before use.** `GanttSheetLayout.ResolveBottomPaddingRow` is the single authority: it accepts only the row immediately below the measured body, and it **refuses** a non-positive or inverted span, a non-contiguous observed row, and an occupied or unverified row. `ExcelRowHeightNormaliser` resolves through it and refuses with the new typed `PaddingRowNotOwned` rather than writing to a row it cannot verify; `ExcelPanelGridMeasurement` does the same and reports the margin as absent, which the caller already maps to `InvalidMeasurement`.
+- **D3 — every insert appends at the end of the body.** `GetInsertionPosition` is removed. Nothing below the insertion point moves. The initial-blank-row reuse is retained, because it concerns whether a row is *reused* rather than *where* it goes.
+
+## Consequences
+
+- A long description is emitted whole whenever the gap beside it can hold it. `SceneBuilderTests.An_external_label_is_bounded_only_by_the_free_space_beside_its_shape` is the **inverted** form of the test that pinned the cap; its fixture is chosen so the old rule and the new one give different answers (a 240pt label in a ~270pt gap), because a fixture with a narrow gap would have passed under both and proved nothing. Non-vacuity was proven by mutation: reinstating `Math.Min(freeWidth, 144)` fails it with `"WWWWWWWWWWWWWWWWWWWWW…"`.
+- `LabelPlannerTests.The_widest_gap_fallback_anchors_a_left_label_to_the_gap_boundary` kept its *intent* — a truncated `Left` label is anchored by its right edge to the gap boundary — but its fixture changed from 40 to 70 characters. The old 160pt label fitted the 247pt gap comfortably and was only ever truncated **by the cap**, so the test was measuring the cap rather than the anchor.
+- A workbook whose table has moved, or whose margin row carries content, now **refuses** rather than silently resizing or mis-measuring. Each refusal is a state Initialise or Repair can act on.
+- The metric count moves 23 → 22 and the workbook schema version moves 9 → 10. As with versions 8 and 9 there is **no migration** (ADR-0029 D6): a version-9 workbook reports a mismatch and the remedy is Initialise, which is also what establishes the reservation.
+- The R2.8 middle-insert contract tests are **replaced, not deleted** (AGENTS.md forbids deleting tests). Four branch-specific tests collapse into one property — *for every active-cell position the insert appends* — plus a source-level assertion that no positional insert path survives. The source assertion is used because `ListRows` exposes a **single** `Add(object)` method: a positional insert and an append are the same call distinguished only by the argument, so `Verify(r => r.Add(It.IsAny<object>()), Times.Never)` matches **both** and cannot separate them. That was caught by the mutation, not by inspection.
+
+## Alternatives considered
+
+- **Raise the label cap instead of retiring it** (rejected: it leaves the identical defect at a larger width; the owner asked for space to be the only limit, not for a bigger number).
+- **Keep the cap but only for `Inside` labels** (rejected: `Inside` is already bounded by the shape's own extent, so the cap adds nothing there and only truncates the external positions).
+- **Add the padding row to the `ListObject` range** (rejected: it would become a data row, acquire `Type` validation and a `Duration` cell, and be read by `ExcelGanttTableReader`).
+- **Continue deriving the padding row and simply skip the write when it looks occupied** (rejected: "looks occupied" is a guess. The reported defect is precisely that the add-in acted on a row it had not verified).
+- **Resolve the padding row from the derived index and compare it to itself** (rejected: vacuous. Passing the derived value back in would make the layout authority agree with itself always, which is why the validator's inputs are the host's *measured* rows).
+- **Insert at the end but keep the active-cell-relative behaviour for parent/child groups** (rejected by the owner in favour of unconditional append: simplicity, and it removes the shift entirely).
+- **Insert rows without shifting by reserving slack rows** (rejected: a second reservation scheme, and it still cannot stop the table absorbing the row below it on append).

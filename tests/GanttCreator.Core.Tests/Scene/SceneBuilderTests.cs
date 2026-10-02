@@ -868,29 +868,37 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void An_external_label_is_capped_by_the_configured_maximum_width_not_the_plot_width()
+    public void An_external_label_is_bounded_only_by_the_free_space_beside_its_shape()
     {
-        // The regression the request property fixes. LabelMetrics' maximum external
-        // width was the plot width, so the cap moved with the time axis rather than
-        // following the approved MaximumExternalLabelWidthPt token. Here the plot is
-        // 300pt wide but the configured cap is 36pt, so a long description must be
-        // truncated to the cap rather than allowed the whole 300pt gap.
+        // ADR-0035 D1, INVERTED. This test previously asserted the OPPOSITE -- that a
+        // label is capped by an absolute MaximumExternalLabelWidthPt -- and it stayed
+        // green straight through the live defect for the same reason the band-order
+        // test did: it pinned the produced literal rather than the relationship. The
+        // product owner ruled that available space is the only limit on label length.
+        //
+        // The fixture is chosen so the two rules give DIFFERENT answers. The bar sits
+        // at the very start of the month, so the gap to its right is roughly 270pt --
+        // far more than the retired 144pt default cap. At 4pt per character a
+        // 60-character description is 240pt: wider than 144, so the old cap would
+        // have ellipsised it, and comfortably inside the free space, so the new rule
+        // must emit it whole. A fixture with a narrow gap would have passed under
+        // BOTH rules and proved nothing.
+        const int DescriptionLength = 60;
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(
-                Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                Event(1, start: new DateOnly(2024, 1, 1), finish: new DateOnly(2024, 1, 3))
                 with
                 {
                     LabelPosition = GanttLabelPosition.Right,
-                    Description = new string('W', 60),
+                    Description = new string('W', DescriptionLength),
                 })
             with
             {
                 LabelStyle = new SceneStyle("DefaultText"),
-                MaximumExternalLabelWidthPt = 36,
+                Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        Assert.True(_plotBounds.Width > 36, "The plot must be wider than the cap for this test to discriminate.");
 
         // Filtered to row-owned text: the frame's own period/year labels also end in
         // ":label", so an unfiltered match would pick a chart label instead.
@@ -899,12 +907,17 @@ public sealed class SceneBuilderTests
                 .OfType<SceneText>(),
             text => text.OwnerId.Kind == SceneOwnerKind.Row
                 && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        // The whole string survives: no ellipsis, and byte-for-byte the row's text.
+        Assert.Equal(new string('W', DescriptionLength), description.Text);
+        Assert.DoesNotContain('…', description.Text);
+
+        // The measurable form of the same claim. The box is strictly wider than the
+        // 144pt the retired default cap imposed, so reinstating ANY absolute cap --
+        // at 36, 144, or 360 -- fails here rather than passing quietly.
         Assert.True(
-            description.TextBounds.Width <= 36 + 1e-9,
-            "An external label must respect the configured cap, not the plot width.");
-        Assert.Contains(
-            outcome.Result!.Scene.Warnings,
-            warning => warning.Code == LabelPlanner.TruncatedToFitCode);
+            description.TextBounds.Width > 144,
+            $"A label must fill the free gap, not stop at the retired 144pt cap (was {description.TextBounds.Width}pt).");
     }
 
     [Fact]

@@ -28,10 +28,6 @@ public class GanttRowInserterTests
         Func<Excel.Range, object?> rangeValueAt,
         Action<Excel.Range> clearRange,
         Func<Excel.ListRows, Excel.ListRow> addRow,
-        Func<Excel.ListRows, int, Excel.ListRow> addRowAtPosition,
-        Func<Excel.Application, Excel.Range?> activeCell,
-        Func<Excel.ListObject, bool> tableActive,
-        Func<Excel.Range, int> rangeRow,
         Func<Excel.ListRow, int> rowIndex,
         Func<Excel.ListRow, Excel.Range> rowRange,
         ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser)
@@ -47,10 +43,6 @@ public class GanttRowInserterTests
         private readonly Func<Excel.Range, object?> _rangeValueAt = rangeValueAt;
         private readonly Action<Excel.Range> _clearRange = clearRange;
         private readonly Func<Excel.ListRows, Excel.ListRow> _addRow = addRow;
-        private readonly Func<Excel.ListRows, int, Excel.ListRow> _addRowAtPosition = addRowAtPosition;
-        private readonly Func<Excel.Application, Excel.Range?> _activeCell = activeCell;
-        private readonly Func<Excel.ListObject, bool> _tableActive = tableActive;
-        private readonly Func<Excel.Range, int> _rangeRow = rangeRow;
         private readonly Func<Excel.ListRow, int> _rowIndex = rowIndex;
         private readonly Func<Excel.ListRow, Excel.Range> _rowRange = rowRange;
 
@@ -65,10 +57,6 @@ public class GanttRowInserterTests
         internal override object? GetRangeValue2(Excel.Range range) => _rangeValueAt(range);
         internal override void ClearRange(Excel.Range range) => _clearRange(range);
         internal override Excel.ListRow AddRow(Excel.ListRows rows) => _addRow(rows);
-        internal override Excel.ListRow AddRowAtPosition(Excel.ListRows rows, int position) => _addRowAtPosition(rows, position);
-        internal override Excel.Range? GetActiveCell(Excel.Application application) => _activeCell(application);
-        internal override bool GetTableActive(Excel.ListObject table) => _tableActive(table);
-        internal override int GetRangeRow(Excel.Range range) => _rangeRow(range);
         internal override int GetRowIndex(Excel.ListRow row) => _rowIndex(row);
         internal override Excel.Range GetRowRange(Excel.ListRow row) => _rowRange(row);
     }
@@ -203,24 +191,14 @@ public class GanttRowInserterTests
                 AddRowCalls++;
                 return NewRow.Object;
             },
-            (rows, position) =>
-            {
-                Assert.Same(ListRows.Object, rows);
-                AddRowAtPositionCalls++;
-                LastInsertionPosition = position;
-                return PositionedRow.Object;
-            },
-            _ => ActiveCell.Object,
-            table => table.Active,
-            range => range.Row,
             row =>
             {
-                Assert.True(ReferenceEquals(NewRow.Object, row) || ReferenceEquals(PositionedRow.Object, row));
+                Assert.Same(NewRow.Object, row);
                 return 2;
             },
             row =>
             {
-                Assert.True(ReferenceEquals(NewRow.Object, row) || ReferenceEquals(PositionedRow.Object, row));
+                Assert.Same(NewRow.Object, row);
                 return RowRange.Object;
             },
             typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser());
@@ -317,13 +295,37 @@ public class GanttRowInserterTests
         graph.NewRow.Verify(r => r.Delete(), Times.Never);
     }
 
-    [Fact]
-    public void Insert_uses_active_row_position_for_a_middle_table_row()
+    /// <summary>
+    /// ADR-0035 D3: EVERY insert appends at the end of the body, whatever the
+    /// active cell was. Nothing below the insertion point moves.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This test replaces four tests that asserted the OPPOSITE -- insert at the
+    /// active row, append for the last row, append when the active cell was outside
+    /// the table, and insert at position one for the header. Each described a branch
+    /// of <c>GetInsertionPosition</c>, which no longer exists. They were not deleted
+    /// silently: the single property they collectively implied is the one worth
+    /// keeping, and it is stronger than any of them -- the position is not merely
+    /// different, it is <em>absent</em>.
+    /// </para>
+    /// <para>
+    /// The active cell is varied across every case the old code branched on. If any
+    /// of them still produced a positioned insert, this theory would catch it.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true, 1)]  // header row selected
+    [InlineData(true, 2)]  // first body row
+    [InlineData(true, 5)]  // middle body row -- the case that used to shift rows down
+    [InlineData(true, 9)]  // last body row
+    [InlineData(false, 4)] // active cell outside the table
+    public void Every_insert_appends_and_never_uses_the_active_cell(bool tableActive, int activeRow)
     {
         var graph = new Graph();
-        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
-        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
-        _ = graph.ListRows.SetupGet(r => r.Count).Returns(2);
+        _ = graph.Table.SetupGet(t => t.Active).Returns(tableActive);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(activeRow);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
 
@@ -332,64 +334,71 @@ public class GanttRowInserterTests
             GanttRowId.New);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(2, outcome.BodyIndex);
-        Assert.Equal(1, graph.AddRowAtPositionCalls);
-        Assert.Equal(2, graph.LastInsertionPosition);
-        Assert.Equal(0, graph.AddRowCalls);
-    }
 
-    [Fact]
-    public void Insert_uses_append_for_the_last_active_table_row()
-    {
-        var graph = new Graph();
-        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
-        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
-        _ = graph.ListRows.SetupGet(r => r.Count).Returns(1);
-        Mock<IWorksheetProtectionGuard> guard = new();
-        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
-
-        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
-            GanttEntityType.AsPlannedActivity,
-            GanttRowId.New);
-
-        Assert.True(outcome.Succeeded);
+        // The ONLY mutation is the positional-free append, for every active cell.
         Assert.Equal(1, graph.AddRowCalls);
         Assert.Equal(0, graph.AddRowAtPositionCalls);
+
+        // The row really was written, so "appends" is not satisfied by a no-op.
+        Assert.NotNull(graph.WrittenValue);
     }
 
+    /// <summary>
+    /// No positional insert path survives anywhere in the adapter (ADR-0035 D3).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The behavioural theory above cannot prove this on its own, and the reason is
+    /// structural rather than incidental: <c>ListRows</c> exposes a single
+    /// <c>Add(object)</c> method, so a positional insert and an append are the SAME
+    /// method call distinguished only by the argument -- <c>Add(Type.Missing)</c>
+    /// versus <c>Add(position)</c>. A Moq <c>Verify(r =&gt; r.Add(It.IsAny&lt;object&gt;()))</c>
+    /// therefore matches <em>both</em> and cannot separate them.
+    /// </para>
+    /// <para>
+    /// Asserting on the source is the honest way to pin this, and the repository
+    /// already does it for the layout authority and the protection-guard patterns,
+    /// so it follows an established convention rather than inventing one.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void Insert_uses_append_when_the_active_cell_is_outside_the_table()
+    public void The_adapter_contains_no_positional_insert_path()
     {
-        var graph = new Graph();
-        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
-        Mock<IWorksheetProtectionGuard> guard = new();
-        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        string source = File.ReadAllText(LocateInserterSource());
 
-        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
-            GanttEntityType.AsPlannedActivity,
-            GanttRowId.New);
+        // The method that resolved an insertion position is gone, not merely unused.
+        Assert.DoesNotContain("GetInsertionPosition", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddRowAtPosition", source, StringComparison.Ordinal);
 
-        Assert.True(outcome.Succeeded);
-        Assert.Equal(1, graph.AddRowCalls);
-        Assert.Equal(0, graph.AddRowAtPositionCalls);
+        // The only Add call is the positional-free append.
+        Assert.Contains("rows.Add(Type.Missing)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("rows.Add(position)", source, StringComparison.Ordinal);
+
+        // The active cell is never read, so it cannot influence the insert.
+        Assert.DoesNotContain("ActiveCell", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("table.Active", source, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Insert_uses_position_one_when_the_active_cell_is_in_the_header()
+    private static string LocateInserterSource()
     {
-        var graph = new Graph();
-        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
-        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(1);
-        Mock<IWorksheetProtectionGuard> guard = new();
-        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            string candidate = Path.Combine(
+                directory.FullName,
+                "src",
+                "GanttCreator.Office",
+                "ExcelGanttRowInserter.cs");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
 
-        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
-            GanttEntityType.AsPlannedActivity,
-            GanttRowId.New);
+            directory = directory.Parent;
+        }
 
-        Assert.True(outcome.Succeeded);
-        Assert.Equal(1, graph.AddRowAtPositionCalls);
-        Assert.Equal(1, graph.LastInsertionPosition);
+        throw new DirectoryNotFoundException(
+            "Could not locate src/GanttCreator.Office/ExcelGanttRowInserter.cs from " + AppContext.BaseDirectory);
     }
 
     [Fact]

@@ -228,32 +228,11 @@ public sealed record SceneBuildRequest
     /// row it belonged to and the text sat slightly above the bar's centre. The box
     /// is now the row height, and the <c>LabelHeightPt</c> token no longer feeds it.
     /// The default is the code-owned <c>GanttRowHeightPt</c> catalogue value rather
-    /// than zero, for the same reason <see cref="MaximumExternalLabelWidthPt"/> is
-    /// seeded: a zero height would make every label box degenerate, and the planner
-    /// accepts zero as valid rather than refusing it.
+    /// than zero: a zero height would make every label box degenerate, and the
+    /// planner accepts zero as valid rather than refusing it.
     /// </remarks>
     public double RowHeightPt { get; init; } =
         GanttCatalogues.Metrics.First(token => token.Name == "GanttRowHeightPt").DefaultValue;
-
-    /// <summary>
-    /// Gets the maximum width of an external label, transcribed from the
-    /// <c>MaximumExternalLabelWidthPt</c> metric token.
-    /// </summary>
-    /// <remarks>
-    /// Entity guide section 22 makes this token the maximum external width, and
-    /// <see cref="LabelPlanner"/> already honours whatever it is given. Passing the
-    /// plot width instead made the cap depend on how wide the caller happened to
-    /// draw the time axis rather than on the approved token, so a wide plot
-    /// produced a label wider than the 36-360pt the catalogue allows.
-    /// </remarks>
-    /// <remarks>
-    /// The default is the code-owned catalogue value, not zero. The planner accepts
-    /// a zero maximum as valid, so a request that omitted the property would have
-    /// silently suppressed every external label rather than failing; seeding the
-    /// approved default keeps an incomplete request behaving like the catalogue.
-    /// </remarks>
-    public double MaximumExternalLabelWidthPt { get; init; } =
-        GanttCatalogues.Metrics.First(token => token.Name == "MaximumExternalLabelWidthPt").DefaultValue;
 
     /// <summary>Gets the vertical gap between stacked same-date delineator labels.</summary>
     public double DelineatorStackGapPt { get; init; }
@@ -1074,8 +1053,7 @@ public static class SceneBuilder
             plotBounds,
             chartBounds,
             request.LabelGapPt,
-            request.RowHeightPt,
-            request.MaximumExternalLabelWidthPt);
+            request.RowHeightPt);
 
         List<LabelOccupant> occupants = [];
 

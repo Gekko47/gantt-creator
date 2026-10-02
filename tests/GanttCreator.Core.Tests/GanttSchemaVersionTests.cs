@@ -31,7 +31,12 @@ public class GanttSchemaVersionTests
         // Schema v9 is ADR-0031 D1: the chart's top and bottom padding become real
         // worksheet rows, so the header moves from row 2 to row 3 and the plot anchor
         // moves again. It also adds the ChartPaddingRowHeightPt token.
-        Assert.Equal(9, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v10 is ADR-0035: the BOTTOM padding row becomes a genuinely
+        // reserved row rather than whatever row followed the table, and the metric
+        // catalogue loses MaximumExternalLabelWidthPt. No header move this time --
+        // the reservation is below the table -- but the stored catalogue hash moves,
+        // so a version-9 workbook reports a mismatch and Initialise is the remedy.
+        Assert.Equal(10, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

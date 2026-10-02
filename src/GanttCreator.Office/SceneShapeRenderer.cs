@@ -399,11 +399,12 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// <para>
     /// R4.4 D1: this consumes and never re-measures. <see cref="SceneText.Text"/>
     /// is written exactly as the scene produced it - including the single-
-    /// character ellipsis R3.6's overflow policy already applied at
-    /// <c>MaximumExternalLabelWidthPt</c> - and the shape is positioned at the
-    /// resolved <see cref="SceneText.TextBounds"/>. No measuring API is called, no
-    /// truncation is applied here, and the label side the scene chose is not
-    /// revisited, even when the opposite side would look emptier.
+    /// character ellipsis R3.6's overflow policy already applied against the
+    /// free space beside the shape (ADR-0035 D1 retired the absolute
+    /// <c>MaximumExternalLabelWidthPt</c> cap) - and the shape is positioned at
+    /// the resolved <see cref="SceneText.TextBounds"/>. No measuring API is
+    /// called, no truncation is applied here, and the label side the scene chose
+    /// is not revisited, even when the opposite side would look emptier.
     /// </para>
     /// <para>
     /// The alignment is <see cref="SceneText.Alignment"/>, which ADR-0018 D4's

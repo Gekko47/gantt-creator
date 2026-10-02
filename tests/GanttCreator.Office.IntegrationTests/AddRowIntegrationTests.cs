@@ -127,9 +127,28 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// ADR-0035 D3, INVERTED. Every insert appends, so selecting a row changes
+    /// nothing and the row directly below the last one keeps its identity.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This replaces <c>Insert_active_row_places_new_row_below_it_and_shifts_following_rows</c>,
+    /// which asserted the OPPOSITE and was human-confirmed in
+    /// <c>evidence/r2.8-active-row-f5.md</c>. It is replaced rather than deleted: the
+    /// property it implied — the new row is the LAST body row and no existing row
+    /// moves — is the one worth keeping, and it is strictly stronger.
+    /// </para>
+    /// <para>
+    /// The live host is the only place this can be proved, because
+    /// <c>ListRows.Add(position)</c> and <c>ListRows.Add()</c> are the same COM
+    /// method distinguished only by their argument; a shape assertion cannot tell
+    /// them apart, which is the same trap the contract test hit.
+    /// </para>
+    /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task Insert_active_row_places_new_row_below_it_and_shifts_following_rows()
+    public async Task Every_insert_appends_and_shifts_no_following_row()
     {
         var fixture = new OfficeFixture();
         try
@@ -147,28 +166,113 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.True(inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('1')).Succeeded);
-            table.ListRows[1].Range.Select();
             Assert.True(inserter.Insert(
                 GanttEntityType.AsPlannedMilestone,
                 () => FixedId('2')).Succeeded);
-            table.ListRows[2].Range.Select();
             Assert.True(inserter.Insert(
                 GanttEntityType.Delineator,
                 () => FixedId('3')).Succeeded);
 
-            table.ListRows[2].Range.Select();
+            // Select the FIRST row -- the case that used to insert at position one
+            // and shift everything below it down.
+            table.ListRows[1].Range.Select();
             GanttRowInsertOutcome inserted = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('4'));
 
             Assert.True(inserted.Succeeded, $"Insert refused: {inserted.Refusal}");
-            Assert.Equal(3, inserted.BodyIndex);
+
+            // The new row is the LAST body row, not the second.
+            Assert.Equal(4, inserted.BodyIndex);
             Assert.Equal(4, table.DataBodyRange.Rows.Count);
             Assert.Equal(5, table.Range.Rows.Count);
+
+            // And crucially: the three pre-existing rows kept their positions. This
+            // ordering is the whole claim -- under the old rule the new row would be
+            // body row 2 and '4' would sit above '2'.
             AssertId(table.ListRows[1], FixedId('1').Value);
             AssertId(table.ListRows[2], FixedId('2').Value);
-            AssertId(table.ListRows[3], FixedId('4').Value);
-            AssertId(table.ListRows[4], FixedId('3').Value);
+            AssertId(table.ListRows[3], FixedId('3').Value);
+            AssertId(table.ListRows[4], FixedId('4').Value);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The reserved bottom padding row stays the chart's margin across an append
+    /// (ADR-0035 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the live gate for the reported defect. A <c>ListObject</c> grows
+    /// <em>downward over</em> the row beneath it, so before ADR-0035 the append
+    /// consumed the bottom margin row: it stopped being the margin, became a body
+    /// row, and received the new row's text. Only a real host can demonstrate that
+    /// absorption, so this is the test that would have caught it.
+    /// </para>
+    /// <para>
+    /// Asserting the margin row is <b>outside</b> the table after the append is the
+    /// load-bearing part. Asserting only its height would pass under the old
+    /// behaviour too, because the replacement row is a fresh worksheet row that
+    /// happens to be measured fresh as well.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task The_bottom_padding_row_survives_an_append_as_the_row_below_the_table()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('1')).Succeeded);
+
+            Excel.Range body = table.DataBodyRange;
+            int firstBodyRow = body.Row;
+            int lastBodyRowBefore = firstBodyRow + body.Rows.Count - 1;
+            int paddingRowBefore = GanttSheetLayout.BottomPaddingRowIndex(body.Rows.Count);
+
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('2')).Succeeded);
+
+            Excel.Range bodyAfter = table.DataBodyRange;
+            int lastBodyRowAfter = bodyAfter.Row + bodyAfter.Rows.Count - 1;
+
+            // The body grew downward, so the reserved margin is now the row directly
+            // below the NEW last body row...
+            Assert.Equal(paddingRowBefore + 1, lastBodyRowAfter + 1);
+
+            // ...and it is still outside the table. This is the assertion that fails
+            // if the table absorbed it.
+            Assert.True(
+                lastBodyRowAfter + 1 > bodyAfter.Row + bodyAfter.Rows.Count - 1,
+                "The reserved padding row must sit below the table, never inside it.");
+
+            // And the row the table absorbed is a BODY row carrying the new Id --
+            // which is exactly what the user saw and reported.
+            AssertId(table.ListRows[table.ListRows.Count], FixedId('2').Value);
+
+            // The margin row itself is empty, so the verified read will accept it.
+            Excel.Range paddingRow = sheet.Rows[lastBodyRowAfter + 1];
+            object? paddingValue = paddingRow.Value2;
+            Assert.True(
+                paddingValue is null or DBNull or string { Length: 0 },
+                $"The reserved padding row must be empty, but reported '{paddingValue}'.");
         }
         finally
         {

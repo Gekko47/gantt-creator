@@ -38,6 +38,160 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
+    /// The reserved bottom padding row is the row immediately below the measured
+    /// body, and nothing else (ADR-0035 D2).
+    /// </summary>
+    /// <remarks>
+    /// This is the assertion whose absence caused the live defect. The two adapters
+    /// used to take <see cref="GanttSheetLayout.BottomPaddingRowIndex"/> on trust --
+    /// one writing a row height to it, one reading it as the chart's bottom margin
+    /// -- and nothing checked that the row existed, was the right one, or was empty.
+    /// </remarks>
+    [Fact]
+    public void The_reserved_bottom_padding_row_is_the_row_directly_below_the_measured_body()
+    {
+        // Body rows 4..10, so the padding row is 11. This agrees with the derived
+        // index for a seven-row body, which is the case where the old arithmetic
+        // happened to be right.
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedPaddingRow: 11,
+            paddingRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(11, resolved.Row);
+        Assert.Null(resolved.Refusal);
+    }
+
+    /// <summary>
+    /// The measured body wins over the derived one: a body that has MOVED resolves
+    /// against where it actually is.
+    /// </summary>
+    /// <remarks>
+    /// This is the case the derived index could never handle. If the table sits at
+    /// rows 20..25, the old arithmetic named row 11 -- nine rows above the table,
+    /// inside the header band area -- and wrote the chart's 6pt margin height there.
+    /// Resolving from the measured span is what makes a moved table correct.
+    /// </remarks>
+    [Fact]
+    public void A_moved_table_resolves_against_its_measured_span_not_the_derived_index()
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow: 20,
+            lastBodyRow: 25,
+            observedPaddingRow: 26,
+            paddingRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(26, resolved.Row);
+
+        // The derived index would have said 11 for a six-row body -- provably not
+        // the same answer, so this test discriminates rather than restating.
+        Assert.NotEqual(GanttSheetLayout.BottomPaddingRowIndex(6), resolved.Row);
+    }
+
+    /// <summary>
+    /// A padding row that is not contiguous with the body is refused: the add-in
+    /// would be writing to a row it does not own.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator.</b> The gap case is what a user gets by
+    /// deleting a worksheet row between the table and the margin, and the
+    /// inside-the-body case is what the old arithmetic produced. Both must be
+    /// reported, because both are workbook states Repair can act on.
+    /// </remarks>
+    [Theory]
+    [InlineData(12)] // a gap: two rows below the body
+    [InlineData(10)] // inside the body: the last body row itself
+    [InlineData(4)] // the first body row
+    public void A_padding_row_that_is_not_the_row_below_the_body_is_refused(int observed)
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedPaddingRow: observed,
+            paddingRowIsEmpty: true);
+
+        Assert.False(resolved.Succeeded);
+        Assert.Equal(BottomPaddingRefusalReason.PaddingRowNotContiguous, resolved.Refusal);
+        Assert.Null(resolved.Row);
+    }
+
+    /// <summary>
+    /// An occupied or unverified padding row is refused, because it is the user's
+    /// row rather than the chart's margin.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator</b>, and the one that closes the reported
+    /// defect. <c>null</c> is refused as well as <c>false</c>: an unestablished
+    /// emptiness must not be read as an empty row, because that substitution is
+    /// exactly how the add-in came to resize a row the user had typed in.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void An_occupied_or_unverified_padding_row_is_refused(bool? isEmpty)
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedPaddingRow: 11,
+            paddingRowIsEmpty: isEmpty);
+
+        Assert.False(resolved.Succeeded);
+        Assert.Equal(BottomPaddingRefusalReason.PaddingRowOccupied, resolved.Refusal);
+        Assert.Null(resolved.Row);
+    }
+
+    /// <summary>
+    /// A body span that is not a body is refused before any row is named.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator.</b> Grouped as one theory because both
+    /// inputs describe the same failure -- there is no body to sit below -- and
+    /// neither can produce a plausible row index. Asserting them separately would
+    /// only restate the same two guards.
+    /// </remarks>
+    [Theory]
+    [InlineData(0, 10)]
+    [InlineData(-1, 10)]
+    [InlineData(4, 0)]
+    [InlineData(10, 4)]
+    public void A_span_that_is_not_a_body_is_refused(int firstBodyRow, int lastBodyRow)
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow,
+            lastBodyRow,
+            observedPaddingRow: 11,
+            paddingRowIsEmpty: true);
+
+        Assert.False(resolved.Succeeded);
+        Assert.NotNull(resolved.Refusal);
+        Assert.Null(resolved.Row);
+    }
+
+    /// <summary>
+    /// A padding row that could not be identified at all is refused.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator.</b> The host failing to report a row is
+    /// absence, and absence is not contiguity.
+    /// </remarks>
+    [Fact]
+    public void An_unidentified_padding_row_is_refused()
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedPaddingRow: null,
+            paddingRowIsEmpty: true);
+
+        Assert.False(resolved.Succeeded);
+        Assert.Equal(BottomPaddingRefusalReason.PaddingRowNotContiguous, resolved.Refusal);
+    }
+
+    /// <summary>
     /// The title occupies exactly ONE cell, directly above the <c>Description</c>
     /// column, on the title row.
     /// </summary>

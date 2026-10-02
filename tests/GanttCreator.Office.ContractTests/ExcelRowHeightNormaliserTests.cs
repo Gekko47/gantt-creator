@@ -100,9 +100,42 @@ public sealed class ExcelRowHeightNormaliserTests
         }
 
         internal override string? ReadTypeCellText(Excel.Range typeColumn, int index) =>
-            types is null || index < 1 || index > types.Count ? null : types[index - 1];
+        types is null || index < 1 || index > types.Count ? null : types[index - 1];
 
-        /// <summary>The heights the layout rows start at, and receive when written.</summary>
+    /// <summary>
+        /// The body's first worksheet row, as the host reports it.
+    /// </summary>
+    /// <remarks>
+    /// ADR-0035 D2 makes the bottom padding row resolve from the body's MEASURED
+    /// span rather than from the derived row count. Without this seam the mocked
+    /// <c>Range.Row</c> reports 0, every normalisation refuses as
+    /// <c>PaddingRowNotOwned</c>, and every test in this file would be asserting the
+    /// refusal rather than the behaviour it names.
+    /// </remarks>
+    internal override int GetRangeRow(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return GanttSheetLayout.FirstBodyRowIndex;
+    }
+
+    /// <summary>
+        /// Whether the reserved padding row reads as empty.
+    /// </summary>
+    /// <remarks>
+    /// Empty by default because these tests are about HEIGHTS, and an unseeded
+    /// emptiness would refuse before any height was considered. The occupied case
+    /// has its own test, which is the positive test for the validator.
+    /// </remarks>
+    internal override bool? IsLayoutRowEmpty(Excel.Worksheet source, int rowIndex) =>
+        PaddingRowOccupied ? false : true;
+
+    /// <summary>Whether the fixture pretends the padding row carries content.</summary>
+    internal bool PaddingRowOccupied { get; set; }
+
+    /// <summary>Reads a layout row's reported <c>Value2</c> as empty for this fixture.</summary>
+    internal override object? GetRangeValue2(Excel.Range range) => null;
+
+    /// <summary>The heights the layout rows start at, and receive when written.</summary>
     internal Dictionary<int, double> LayoutHeights { get; } = layoutHeights ?? new Dictionary<int, double>
     {
         [GanttSheetLayout.TopPaddingRowIndex] = 22d,
@@ -134,6 +167,58 @@ public sealed class ExcelRowHeightNormaliserTests
     }
 
         private Excel.Range SourceBody { get; } = new Mock<Excel.Range>().Object;
+    }
+
+    /// <summary>
+    /// An OCCUPIED padding row refuses rather than resizing it (ADR-0035 D2).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the positive test for the validator, and it is the reported
+    /// defect.</b> The old adapter computed the padding row arithmetically and wrote
+    /// the chart's 6pt margin height to it unconditionally, so a user who had typed
+    /// in that row had it silently resized by the very Refresh meant to restore the
+    /// sheet. Refusing with a distinct reason is what makes the state visible and
+    /// repairable instead of invisible.
+    /// </remarks>
+    [Fact]
+    public void An_occupied_bottom_padding_row_is_refused_and_never_resized()
+    {
+        var (normaliser, written, layout) = Build();
+        normaliser.PaddingRowOccupied = true;
+
+        var paddingRow = GanttSheetLayout.BottomPaddingRowIndex(1);
+        layout[paddingRow] = 45d;
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(RowHeightNormalisationRefusalReason.PaddingRowNotOwned, outcome.Refusal);
+        Assert.Equal(0, outcome.RowsWritten);
+
+        // The user's row is untouched, and it is the padding row specifically --
+        // the whole point is that the add-in does not touch a row it does not own.
+        Assert.Equal(45d, layout[paddingRow]);
+        Assert.DoesNotContain(paddingRow, written);
+    }
+
+    /// <summary>
+    /// The refusal is <b>typed and distinct</b> from a measurement failure, so the
+    /// caller can tell "the sheet is in an unexpected state" from "the host would
+    /// not report a height".
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator.</b> A new enum member that happened to
+    /// share a value with an existing one, or that no call site could return, would
+    /// both pass a suite that only checked that <em>something</em> refused.
+    /// </remarks>
+    [Fact]
+    public void The_padding_row_refusal_is_distinct_and_reachable()
+    {
+        Assert.NotEqual(
+            RowHeightNormalisationRefusalReason.InvalidMeasurement,
+            RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
+        Assert.Equal(4, (int)RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
     }
 
     /// <summary>

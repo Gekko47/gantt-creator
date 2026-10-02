@@ -11,8 +11,7 @@ public sealed class DateLabelBuilderTests
         new RectD(0.0, 0.0, 400.0, 200.0),
         new RectD(-10.0, -10.0, 420.0, 220.0),
         4.0,
-        10.0,
-        120.0);
+        10.0);
 
     [Fact]
     public void A_span_emits_both_labels_with_the_stable_role_derived_ids()
@@ -344,16 +343,15 @@ public sealed class DateLabelBuilderTests
         // emitted one.
         //
         // The advance table makes every date character wide (the 10-character
-        // date needs 400pt, far past the 120pt external maximum) while the
-        // ellipsis stays 2pt, so the gap holds the ellipsis and the planner
-        // truncates rather than declining outright. That is the only path that
-        // produces a truncated result, so it is the path under test.
+        // date needs 400pt, far past the 120pt of free space on the chosen side)
+        // while the ellipsis stays 2pt, so the gap holds the ellipsis and the
+        // planner truncates rather than declining outright. That is the only path
+        // that produces a truncated result, so it is the path under test.
         var metrics = new LabelMetrics(
             new RectD(0.0, 0.0, 400.0, 200.0),
             new RectD(-10.0, -10.0, 420.0, 220.0),
             4.0,
-            10.0,
-            120.0);
+            10.0);
         var wide = new FakeTextMetrics(c => c == '…' ? 2.0 : 40.0, 10.0);
         var request = Request() with { TextMetrics = wide, Metrics = metrics };
 

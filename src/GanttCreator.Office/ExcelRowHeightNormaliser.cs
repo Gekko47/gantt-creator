@@ -22,6 +22,13 @@ public enum RowHeightNormalisationRefusalReason
     /// write exists to remove.
     /// </summary>
     InvalidMeasurement = 3,
+
+    /// <summary>
+    /// The reserved bottom padding row could not be verified: the measured body
+    /// span and the row below it do not form the reserved margin, or that row
+    /// carries content (ADR-0035 D2).
+    /// </summary>
+    PaddingRowNotOwned = 4,
 }
 
 /// <summary>The typed result of normalising managed row heights.</summary>
@@ -156,15 +163,27 @@ public class ExcelRowHeightNormaliser(
             return RowHeightNormalisationOutcome.Ok(written);
         }
 
-        // The bottom padding row is derived from the body length, so it can only be
-        // addressed once the row count is known - which is why it is normalised here
-        // and not alongside the rows above. It is normalised BEFORE the body rows
-        // themselves for the same reason they are: a user who drags it is asking for
-        // a different margin, and restoring it is the whole point of this adapter.
-        written += NormaliseLayoutRow(
-            worksheet,
-            GanttSheetLayout.BottomPaddingRowIndex(rowCount),
-            paddingRowHeightPt);
+        // ADR-0035 D2: the bottom padding row is now RESOLVED AND VERIFIED against the
+        // body's measured worksheet span rather than derived from the row count on
+        // trust. The old arithmetic (`FirstBodyRowIndex + rowCount`) was correct only
+        // while the table sat exactly where the layout authority assumed; a table
+        // that had moved made this adapter write the chart's margin height to an
+        // arbitrary user row. Refusing is the honest outcome -- the sheet does not
+        // have the layout the add-in believes in, and Initialise/Repair is the remedy.
+        //
+        // It is checked BEFORE the body rows are written, so a workbook in this
+        // state is not half-normalised.
+        BottomPaddingResolution padding = ResolveBottomPaddingRow(worksheet, table, body, rowCount);
+        if (!padding.Succeeded)
+        {
+            return RowHeightNormalisationOutcome.Refused(
+                RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
+        }
+
+        // Normalised BEFORE the body rows themselves for the same reason they are: a
+        // user who drags it is asking for a different margin, and restoring it is the
+        // whole point of this adapter.
+        written += NormaliseLayoutRow(worksheet, padding.Row!.Value, paddingRowHeightPt);
 
         // Each row's KIND is read from its own Type cell, because the height policy
         // differs by kind: a Splitter follows `SplitterPt` and a Spacer `SpacerPt`,
@@ -220,6 +239,111 @@ public class ExcelRowHeightNormaliser(
         }
 
         return RowHeightNormalisationOutcome.Ok(written + writtenAfterBody);
+    }
+
+    /// <summary>
+    /// Resolves and verifies the reserved bottom padding row from the body's
+    /// MEASURED worksheet span (ADR-0035 D2).
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="table">The Gantt table, used only to reach its worksheet.</param>
+    /// <param name="body">The table's data-body range.</param>
+    /// <param name="rowCount">The measured body row count.</param>
+    /// <returns>The verified padding row, or a typed refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// The measured span is what makes the check capable of failing. Deriving both
+    /// sides from the row count would compare the layout authority with itself and
+    /// always agree, which is the shape of bug this replaces.
+    /// </para>
+    /// <para>
+    /// Emptiness is verified through a seam rather than assumed, because "the user
+    /// has not typed in it" is the one fact the previous code never established and
+    /// the one that produced the reported defect. A row that cannot be read yields
+    /// <see langword="null"/> -- not established -- which refuses.
+    /// </para>
+    /// </remarks>
+    private BottomPaddingResolution ResolveBottomPaddingRow(
+        Excel.Worksheet worksheet,
+        Excel.ListObject table,
+        Excel.Range body,
+        int rowCount)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var firstBodyRow = GetRangeRow(body);
+        var lastBodyRow = rowCount > 0 && firstBodyRow > 0
+            ? firstBodyRow + rowCount - 1
+            : 0;
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+
+        return GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow,
+            lastBodyRow,
+            candidate,
+            candidate is { } row ? IsLayoutRowEmpty(worksheet, row) : null);
+    }
+
+    /// <summary>
+    /// Reads a whole worksheet row's first worksheet index. Test seam over the COM
+    /// <c>Range.Row</c> property.
+    /// </summary>
+    /// <param name="range">The range whose first row index is wanted.</param>
+    /// <returns>The one-based worksheet row index.</returns>
+    internal virtual int GetRangeRow(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return range.Row;
+    }
+
+    /// <summary>
+    /// Whether a whole worksheet row carries no content.
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="rowIndex">The one-based worksheet row.</param>
+    /// <returns>
+    /// <see langword="true"/> when the row was read and holds nothing;
+    /// <see langword="false"/> when it holds something; <see langword="null"/> when
+    /// the host would not report it.
+    /// </returns>
+    /// <remarks>
+    /// <b>Three-valued on purpose.</b> "Not read" and "empty" are different facts,
+    /// and collapsing them is how an unverified row came to be treated as the chart's
+    /// margin. Only a genuine empty row resolves.
+    /// </remarks>
+    internal virtual bool? IsLayoutRowEmpty(Excel.Worksheet worksheet, int rowIndex)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+        Excel.Range? row = GetLayoutRow(worksheet, rowIndex);
+        if (row is null)
+        {
+            return null;
+        }
+
+        List<object?[]> values = ExcelValue2Matrix.ReadRows(GetRangeValue2(row));
+        return values.Count == 1 && values[0].All(IsBlankCellValue);
+    }
+
+    /// <summary>Whether one cell value counts as blank for the padding-row check.</summary>
+    /// <param name="value">The raw cell value.</param>
+    /// <returns>Whether the cell is blank.</returns>
+    private static bool IsBlankCellValue(object? value) =>
+        value is null
+        || value is System.Reflection.Missing
+        || value is DBNull
+        || (value is string text && string.IsNullOrWhiteSpace(text));
+
+    /// <summary>
+    /// Reads a range's <c>Value2</c>. Test seam over the COM parameterised member.
+    /// </summary>
+    /// <param name="range">The range to read.</param>
+    /// <returns>The raw value.</returns>
+    internal virtual object? GetRangeValue2(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return range.Value2;
     }
 
     /// <summary>

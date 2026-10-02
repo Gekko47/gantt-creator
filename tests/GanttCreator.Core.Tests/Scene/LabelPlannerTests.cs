@@ -18,8 +18,7 @@ public sealed class LabelPlannerTests
         LabelGapPt: 3,
         // One worksheet row (owner ruling). It was 10, a single-line height, which
         // produced a label box shorter than the row it sat in.
-        RowHeightPt: 18,
-        MaximumExternalLabelWidthPt: 144
+        RowHeightPt: 18
     );
 
     [Fact]
@@ -286,16 +285,26 @@ public sealed class LabelPlannerTests
     [Fact]
     public void The_widest_gap_fallback_anchors_a_left_label_to_the_gap_boundary()
     {
-        // A 10pt bar at 250 leaves a 247pt gap to its left, which the 144pt
-        // external maximum caps. The truncated label is anchored by its right edge
-        // to shape.left − LabelGapPt = 247, exactly as an untruncated Left label
-        // would be, rather than starting at the far end of the whole gap.
-        LabelPlanResult result = Plan(Shape(250, 20, 10), new string('x', 40));
+        // A 10pt bar at 250 leaves a 247pt gap to its left. The label is 70
+        // characters = 280pt, so it cannot fit that gap whole and the widest-gap
+        // fallback truncates it to exactly the space available.
+        //
+        // The anchoring rule is the point of this test: the truncated label is
+        // anchored by its RIGHT edge to shape.left - LabelGapPt = 247, exactly as
+        // an untruncated Left label would be, rather than starting at the far end
+        // of the whole gap. The fixture changed when ADR-0035 D1 retired the
+        // 144pt absolute cap -- the old 40-character label was 160pt and fitted
+        // comfortably, so it was only ever truncated by the cap and this test was
+        // really measuring the cap rather than the anchor.
+        LabelPlanResult result = Plan(Shape(250, 20, 10), new string('x', 70));
 
         Assert.Equal(GanttLabelPosition.Left, result.Position);
         Assert.True(result.WasTruncated);
         Assert.Equal(247, result.Bounds!.Value.Right);
-        Assert.Equal(103, result.Bounds.Value.Left);
+
+        // The whole 247pt gap is consumed, because space is now the only limit.
+        Assert.Equal(0, result.Bounds.Value.Left);
+        Assert.Equal(247, result.Bounds.Value.Width);
     }
 
     [Fact]

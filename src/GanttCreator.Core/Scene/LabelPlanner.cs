@@ -119,13 +119,19 @@ public sealed record LabelRequest(
 /// <c>LabelHeightPt</c>, a 10pt single-line height, which produced a box shorter
 /// than the 18pt row it sat in.
 /// </param>
-/// <param name="MaximumExternalLabelWidthPt">The maximum width of an external label.</param>
+/// <remarks>
+/// The former <c>MaximumExternalLabelWidthPt</c> member is <b>removed</b> (ADR-0035
+/// D1), not defaulted. It was an absolute cap that truncated a description while
+/// the gap beside it was wide enough to hold the text whole, and the product owner
+/// ruled that available space is the only thing that limits a label. Retiring the
+/// member rather than keeping it optional makes the cap unrepresentable: a caller
+/// cannot reintroduce the defect by passing a number.
+/// </remarks>
 public sealed record LabelMetrics(
     RectD PlotBounds,
     RectD ChartBounds,
     double LabelGapPt,
-    double RowHeightPt,
-    double MaximumExternalLabelWidthPt
+    double RowHeightPt
 );
 
 /// <summary>The result of planning one label.</summary>
@@ -434,7 +440,14 @@ public static class LabelPlanner
                 return false;
             }
 
-            var width = Math.Min(freeWidth, metrics.MaximumExternalLabelWidthPt);
+            // ADR-0035 D1: the free gap is the ONLY width limit. The retired
+            // MaximumExternalLabelWidthPt capped this at 144pt by default, so a
+            // description with 300pt of free space was refused by the cascade and
+            // then ellipsised by the fallback. The product owner ruled that
+            // available space alone bounds a label. The absolute cap is retired
+            // rather than raised, because raising it would leave the identical
+            // defect at a larger width.
+            var width = freeWidth;
 
             // A cascade candidate must hold the *full* text. A position that
             // cannot is rejected so the cascade continues, and truncation happens
@@ -499,8 +512,11 @@ public static class LabelPlanner
                     continue;
                 }
 
-                // Free space never exceeds the approved external maximum.
-                var usable = Math.Min(freeWidth, metrics.MaximumExternalLabelWidthPt);
+                // ADR-0035 D1: the free gap is the only width limit, so the
+                // fallback truncates against the space it actually measured. The
+                // former absolute cap made a long description ellipsise while the
+                // gap beside it was wide enough to hold it whole.
+                var usable = freeWidth;
 
                 // A gap too small to hold even the ellipsis is not usable: the
                 // ADR requires suppression, not a label drawn over an obstruction.
@@ -782,8 +798,7 @@ public static class LabelPlanner
         IsFinite(metrics.PlotBounds)
         && IsFinite(metrics.ChartBounds)
         && IsFiniteNonNegative(metrics.LabelGapPt)
-        && IsFiniteNonNegative(metrics.RowHeightPt)
-        && IsFiniteNonNegative(metrics.MaximumExternalLabelWidthPt);
+        && IsFiniteNonNegative(metrics.RowHeightPt);
 
     private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;
 

@@ -20,7 +20,7 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Metrics_contains_exactly_the_23_entity_guide_tokens() =>
+    public void Metrics_contains_exactly_the_22_entity_guide_tokens() =>
         // R4.7C retired CriticalLinePt (ADR-0027 D4) and renamed LaneHeightPt to
         // GanttRowHeightPt (ADR-0026 D1). A rename keeps the count; the retirement
         // is what took it from 23 to 22.
@@ -29,7 +29,39 @@ public class GanttConfigCatalogueTests
         // is a NEW token rather than a reuse of YearBandHeightPt because a padding
         // row is empty breathing room and a band is drawn content; a user who wants
         // a taller margin should not have to resize the year header to get it.
-        Assert.Equal(23, GanttCatalogues.Metrics.Count);
+        // ADR-0035 D1 RETIRED MaximumExternalLabelWidthPt, taking 23 back to 22. It
+        // was an absolute cap that truncated a description while the gap beside it
+        // was wide enough to hold the text whole; the owner ruled that available
+        // space is the only limit. Retiring it rather than raising its ceiling is
+        // what makes the defect unrepresentable rather than merely moved.
+        Assert.Equal(22, GanttCatalogues.Metrics.Count);
+
+    /// <summary>
+    /// The retired cap must be <b>absent</b>, not merely unused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A count pin alone would still pass if the token were re-added alongside
+    /// another removal, and a commented-out <c>Math.Min</c> would still pass every
+    /// geometry assertion while the defect returned. This asserts the two facts that
+    /// together make ADR-0035 D1 durable: the token is not in the catalogue, and the
+    /// layout request exposes no property that could reintroduce it.
+    /// </para>
+    /// <para>
+    /// This is a positive test for the retirement (AGENTS.md validator rule): it
+    /// constructs the lookup the old code performed and asserts it now fails.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_retired_maximum_external_label_width_token_is_absent()
+    {
+        Assert.DoesNotContain(
+            GanttCatalogues.Metrics,
+            token => string.Equals(token.Name, "MaximumExternalLabelWidthPt", StringComparison.Ordinal));
+        Assert.False(GanttCatalogues.IsMetricToken("MaximumExternalLabelWidthPt"));
+        Assert.Throws<ArgumentException>(() => GanttCatalogues.MetricDefault("MaximumExternalLabelWidthPt"));
+        Assert.Null(typeof(Core.Scene.SceneBuildRequest).GetProperty("MaximumExternalLabelWidthPt"));
+    }
 
     [Fact]
     public void The_padding_row_default_matches_the_chrome_margin_it_replaced()
@@ -620,9 +652,16 @@ public class GanttConfigCatalogueTests
     /// repair from writing a version-9 anchor onto a version-8 sheet whose header
     /// is still on row 2.
     /// </para>
+    /// <para>
+    /// <b>Advanced again to 10 by ADR-0035</b>: the metric catalogue loses
+    /// <c>MaximumExternalLabelWidthPt</c> (D1) and the workbook's structural
+    /// contract gains a reserved bottom padding row (D2), so the hash and the
+    /// schema version move together. A version-9 workbook reports a mismatch and
+    /// the remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "4976ef571985937aaa8549a04fa1de5bbda6dcda7ca0f2d0e176231833de2ab0";
+        "4ea8b0b0cb636ff1b9e3a029b54fa9c1262cbbb512a33a7e6ca57dd06493afed";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

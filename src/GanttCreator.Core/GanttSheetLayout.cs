@@ -185,6 +185,79 @@ public static class GanttSheetLayout
     }
 
     /// <summary>
+    /// Resolves and <b>verifies</b> the reserved bottom padding row from the body's
+    /// MEASURED worksheet rows (ADR-0035 D2).
+    /// </summary>
+    /// <param name="firstBodyRow">The body's first worksheet row, as the host reported it.</param>
+    /// <param name="lastBodyRow">The body's last worksheet row, as the host reported it.</param>
+    /// <param name="observedPaddingRow">
+    /// The row the caller believes is the padding row, or <see langword="null"/>
+    /// when no such row could be identified.
+    /// </param>
+    /// <param name="paddingRowIsEmpty">
+    /// Whether the observed padding row was verified to carry no content, or
+    /// <see langword="null"/> when emptiness was not established.
+    /// </param>
+    /// <returns>The resolved row, or a typed refusal.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists at all.</b> <see cref="BottomPaddingRowIndex"/> derives
+    /// the row arithmetically from the body length, and two adapters acted on that
+    /// arithmetic without ever checking it against the sheet: the row-height
+    /// normaliser WROTE a height to it and the panel measurement READ it as the
+    /// chart's bottom margin. Nothing established that the row existed, that it was
+    /// the one below the table, or that it was empty -- so the add-in was resizing
+    /// and measuring an ordinary user row, and a user who typed in it had their row
+    /// silently changed.
+    /// </para>
+    /// <para>
+    /// <b>Why the inputs are measured rather than derived.</b> Passing the derived
+    /// index back in would make the check vacuous -- it would compare the layout
+    /// authority against itself and always agree. The caller must pass what the
+    /// host reported, which is the only way a divergence between the assumed layout
+    /// and the real table can be detected at all.
+    /// </para>
+    /// <para>
+    /// <b>Why each input can refuse.</b> A non-positive or inverted span means there
+    /// is no body to sit below. A non-contiguous observed row means the sheet does
+    /// not have the layout the add-in believes in. An occupied row means the user
+    /// owns it. All three are reported rather than absorbed, because each is a
+    /// workbook state Initialise or Repair can act on.
+    /// </para>
+    /// </remarks>
+    public static BottomPaddingResolution ResolveBottomPaddingRow(
+        int firstBodyRow,
+        int lastBodyRow,
+        int? observedPaddingRow,
+        bool? paddingRowIsEmpty)
+    {
+        if (firstBodyRow < 1 || lastBodyRow < 1)
+        {
+            return BottomPaddingResolution.Refused(BottomPaddingRefusalReason.NonPositiveRowIndex);
+        }
+
+        if (lastBodyRow < firstBodyRow)
+        {
+            return BottomPaddingResolution.Refused(BottomPaddingRefusalReason.InvertedBodySpan);
+        }
+
+        // The ONLY row this may name is the one immediately below the body. Any
+        // other candidate means the sheet disagrees with the add-in's model of it.
+        var expected = lastBodyRow + 1;
+        if (observedPaddingRow is not { } observed || observed != expected)
+        {
+            return BottomPaddingResolution.Refused(BottomPaddingRefusalReason.PaddingRowNotContiguous);
+        }
+
+        // Emptiness is checked, not assumed. `null` -- "not established" -- refuses,
+        // because treating an unknown as empty is the substitution that produced the
+        // original defect.
+        return paddingRowIsEmpty is true
+            ? BottomPaddingResolution.Ok(observed)
+            : BottomPaddingResolution.Refused(BottomPaddingRefusalReason.PaddingRowOccupied);
+    }
+
+    /// <summary>
     /// Gets the one-based worksheet column of the plot anchor: the column one to the
     /// right of the table's last column.
     /// </summary>
@@ -266,4 +339,52 @@ public static class GanttSheetLayout
 
         return builder.ToString();
     }
+}
+
+/// <summary>Why a measured table body could not yield a reserved bottom padding row.</summary>
+public enum BottomPaddingRefusalReason
+{
+    /// <summary>No reason; the row resolved.</summary>
+    None = 0,
+
+    /// <summary>The body's first or last worksheet row was not a positive index.</summary>
+    NonPositiveRowIndex = 1,
+
+    /// <summary>The body's last row precedes its first, so the span is not a body.</summary>
+    InvertedBodySpan = 2,
+
+    /// <summary>
+    /// The row below the body is not the row the caller measured, so the add-in
+    /// would be writing to a row it does not own.
+    /// </summary>
+    PaddingRowNotContiguous = 3,
+
+    /// <summary>
+    /// The reserved padding row carries content, so it is a user row rather than
+    /// the chart's bottom margin.
+    /// </summary>
+    PaddingRowOccupied = 4,
+}
+
+/// <summary>
+/// The measured outcome of resolving the reserved bottom padding row
+/// (ADR-0035 D2).
+/// </summary>
+/// <param name="Succeeded">Whether the row was resolved and verified.</param>
+/// <param name="Row">The padding row, or <see langword="null"/> on refusal.</param>
+/// <param name="Refusal">The typed refusal reason on refusal.</param>
+public sealed record BottomPaddingResolution(
+    bool Succeeded,
+    int? Row,
+    BottomPaddingRefusalReason? Refusal)
+{
+    /// <summary>Creates a successful resolution.</summary>
+    /// <param name="row">The verified padding row.</param>
+    /// <returns>A successful outcome.</returns>
+    public static BottomPaddingResolution Ok(int row) => new(true, row, null);
+
+    /// <summary>Creates a refusal.</summary>
+    /// <param name="refusal">The refusal reason.</param>
+    /// <returns>The refusal.</returns>
+    public static BottomPaddingResolution Refused(BottomPaddingRefusalReason refusal) => new(false, null, refusal);
 }

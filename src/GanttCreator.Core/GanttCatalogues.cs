@@ -154,7 +154,6 @@ public static class GanttCatalogues
         new("MilestoneSizePt", 8, 3, 36),
         new("LabelGapPt", 3, 0, 18),
         new("LabelHeightPt", 10, 6, 36),
-        new("MaximumExternalLabelWidthPt", 144, 36, 360),
         new("StandardOutlinePt", 0.75, 0, 6),
         new("GridLinePt", 0.5, 0.25, 3),
         new("MajorBoundaryPt", 1, 0.25, 6),
