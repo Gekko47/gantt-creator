@@ -61,18 +61,15 @@ public class ExcelGanttRowInserter(
         Excel.ListRows rows = GetListRows(table);
         Excel.Range? reusableRow = GetListRowCount(rows) == 0 ? GetReusableInitialBlankRow(table) : null;
 
-        // ADR-0035 D3: EVERY insert appends at the end of the body. The active
-        // cell is no longer consulted, so nothing below the insertion point moves.
-        //
-        // The previous rule inserted at the active row and shifted every row below
-        // it down. That is inherent to inserting a worksheet row, but it was not
-        // what the product wanted, and it interacted with the reserved padding row:
-        // the table grows downward over the row that WAS the bottom margin, so the
-        // chart's bottom margin changed identity and height on every insert. A
-        // product owner confirmed the old behaviour in
-        // `evidence/r2.8-active-row-f5.md` on 2026-09-24; this ADR records what
-        // superseded it, and that evidence file is deliberately left as written
-        // rather than edited to match.
+        // ADR-0035 D3 (superseding the append-only form): the new row goes
+        // immediately BELOW the active cell when the active cell is inside the table,
+        // and APPENDS before the padding row otherwise. The append-only rule this
+        // replaces was correct about the push-down being noisy but wrong about the
+        // cause: `ListRows.Add(position)` inserts a real worksheet row, which shifts
+        // everything below -- including the bottom padding row and the bottom of the
+        // chart frame. A live probe confirmed a shape straddling the insertion point
+        // moves down exactly one row height (15pt) and returns exactly to its
+        // original Top when the row is deleted, so the chart tracks the sheet.
         Excel.ListRow? newRow = null;
         Excel.Range rowRange;
         if (reusableRow is not null)
@@ -85,8 +82,24 @@ public class ExcelGanttRowInserter(
         }
         else
         {
-            newRow = AddRow(rows);
+            var position = GetInsertionPosition(application!, table, rows);
+            newRow = position is null ? AddRow(rows) : AddRowAtPosition(rows, position.Value);
             rowRange = GetRowRange(newRow);
+
+            // An APPEND does not shift anything: ListRows.Add() with no position
+            // claims the row already sitting below the table -- which is the RESERVED
+            // BOTTOM PADDING ROW -- and turns it into a body row. That is why the
+            // chart appeared not to move. Inserting a genuine worksheet row below the
+            // table restores it: the padding row moves down one row and, because the
+            // chart frame straddles that row, the frame grows with it.
+            //
+            // The row is inserted BELOW the table, never inside its range: Excel
+            // REFUSES a worksheet row inserted inside a ListObject, which the live
+            // probe hit directly.
+            if (position is null)
+            {
+                InsertWorksheetRowBelowTable(table);
+            }
         }
 
         WriteRow(rowRange, values, columnMap);
@@ -106,6 +119,121 @@ public class ExcelGanttRowInserter(
         }
 
         return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow));
+    }
+
+    /// <summary>
+    /// Resolves where the new row goes, from the active cell (ADR-0035 D3).
+    /// </summary>
+    /// <param name="application">The application, for the active cell.</param>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="rows">The table's list rows.</param>
+    /// <returns>
+    /// The one-based list position to insert at, or <see langword="null"/> to APPEND
+    /// at the end of the body.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// This restores the R2.8 rule, which ADR-0035's append-only form had removed.
+    /// The owner's ruling is conditional and both branches are load-bearing:
+    /// an active cell INSIDE the table inserts immediately below it, and an active
+    /// cell anywhere else -- another sheet, the header, the padding row -- appends.
+    /// </para>
+    /// <para>
+    /// The active row is converted to a body index by subtracting the TABLE's first
+    /// row, which is the header. That makes the arithmetic one-based already, so
+    /// <c>bodyIndex + 1</c> is "the row after the selected one". A body index of 0
+    /// means the header was selected and the new row goes to the top.
+    /// </para>
+    /// </remarks>
+    private int? GetInsertionPosition(
+        Excel.Application application,
+        Excel.ListObject table,
+        Excel.ListRows rows)
+    {
+        Excel.Range? activeCell = GetActiveCell(application);
+        if (!GetTableActive(table) || activeCell is null)
+        {
+            return null;
+        }
+
+        Excel.Range tableRange = GetTableRange(table);
+        var tableFirstRow = GetRangeRow(tableRange);
+        var activeRow = GetRangeRow(activeCell);
+        var bodyIndex = activeRow - tableFirstRow;
+        var rowCount = GetListRowCount(rows);
+
+        // Outside the body in either direction: not a position the user can name.
+        if (bodyIndex < 0 || bodyIndex > rowCount)
+        {
+            return null;
+        }
+
+        if (bodyIndex == 0)
+        {
+            return 1;
+        }
+
+        // The LAST body row appends rather than inserting below itself, which would
+        // be the same place by a different route.
+        return bodyIndex == rowCount ? null : bodyIndex + 1;
+    }
+
+    // Excel's own values, carried as named constants rather than PIA enums: the
+    // interop assembly Office compiles against does not expose XlInsertionShift or
+    // XlFormatFrom, and these are the exact values a live probe drove Rows.Insert
+    // with successfully.
+    private const int _excelShiftDown = -4121;              // xlShiftDown
+    private const int _excelFormatFromLeftOrAbove = -4142; // xlFormatFromLeftOrAbove
+
+    /// <summary>
+    /// Inserts one real worksheet row directly below the table, so the reserved
+    /// bottom padding row moves down instead of being absorbed (ADR-0035 D3).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <remarks>
+    /// <para>
+    /// Best-effort by design. A failure here means the row could not be pushed down,
+    /// which leaves the sheet in the state the append alone would have produced --
+    /// the padding row absorbed into the table -- rather than in a worse one. It is
+    /// deliberately not allowed to fail the INSERT, because the row itself is
+    /// already written and reported; the alternative is refusing a row the user asked
+    /// for over a presentation detail the next Refresh can correct.
+    /// </para>
+    /// <para>
+    /// CA1031: an Excel host refusing a row insert is a host refusal, not a bug in
+    /// this adapter, and must not surface as an exception into the Ribbon callback.
+    /// </para>
+    /// </remarks>
+    internal virtual void InsertWorksheetRowBelowTable(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+#pragma warning disable CA1031
+        try
+        {
+            if (table.Parent is not Excel.Worksheet worksheet || worksheet.Rows is not { } rows)
+            {
+                return;
+            }
+
+            Excel.Range? tableRange = GetTableRange(table);
+            if (tableRange is null)
+            {
+                return;
+            }
+
+            // One past the table's last row. Reading it through the range rather than
+            // assuming the layout keeps this correct if the table ever adopts at a
+            // different row.
+            var lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
+            rows[lastRow + 1].Insert(_excelShiftDown, _excelFormatFromLeftOrAbove);
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException or ArgumentException)
+        {
+            // Intentionally empty: see the remarks. The row is already added.
+            _ = ex;
+        }
+#pragma warning restore CA1031
     }
 
     private static bool IsBlankValue(object? value) =>
@@ -258,6 +386,27 @@ public class ExcelGanttRowInserter(
     internal virtual void ClearRange(Excel.Range range) => range.ClearContents();
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
+
+    /// <summary>Inserts a list row at a one-based position. Test seam over <c>ListRows.Add(object)</c>.</summary>
+    /// <param name="rows">The table's list rows.</param>
+    /// <param name="position">The one-based insert position.</param>
+    /// <returns>The inserted row.</returns>
+    internal virtual Excel.ListRow AddRowAtPosition(Excel.ListRows rows, int position) => rows.Add(position);
+
+    /// <summary>The active cell, or null. Test seam over <c>Application.ActiveCell</c>.</summary>
+    /// <param name="application">The application object.</param>
+    /// <returns>The active cell.</returns>
+    internal virtual Excel.Range? GetActiveCell(Excel.Application application) => application.ActiveCell;
+
+    /// <summary>Whether the table is the active one. Test seam over <c>ListObject.Active</c>.</summary>
+    /// <param name="table">The table.</param>
+    /// <returns>Whether the table is active.</returns>
+    internal virtual bool GetTableActive(Excel.ListObject table) => table.Active;
+
+    /// <summary>A range's first worksheet row. Test seam over <c>Range.Row</c>.</summary>
+    /// <param name="range">The range.</param>
+    /// <returns>The one-based worksheet row index.</returns>
+    internal virtual int GetRangeRow(Excel.Range range) => range.Row;
 
     internal virtual int GetRowIndex(Excel.ListRow row) => row.Index;
 
