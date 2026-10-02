@@ -219,8 +219,8 @@ public sealed class PanelCellGridTests
         // The guard is per row, not on an aggregate: an adapter that reads a mixed
         // range could otherwise return one good height and one absent one.
         Assert.Equal(
-            PanelCellGridRefusal.NonPositiveRowHeight,
-            PanelCellGrid.TryCreate([Col("Id")], [12.0, 0.0], 12.0, Required).Refusal);
+            PanelCellGridRefusal.NegativeRowHeight,
+            PanelCellGrid.TryCreate([Col("Id")], [12.0, -1.0], 12.0, Required).Refusal);
     }
 
     [Fact]
@@ -263,14 +263,27 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
-    public void A_non_positive_or_non_finite_row_height_is_refused()
+    public void A_negative_or_non_finite_row_height_is_refused()
     {
-        foreach (double height in new[] { 0.0, -3.0, double.NaN, double.PositiveInfinity })
+        foreach (double height in new[] { -3.0, double.NaN, double.PositiveInfinity })
         {
             Assert.Equal(
-                PanelCellGridRefusal.NonPositiveRowHeight,
-                PanelCellGrid.TryCreate([Col("Id")], [height], 12.0, Required).Refusal);
+                PanelCellGridRefusal.NegativeRowHeight,
+                PanelCellGrid.TryCreate([Col("Id")], [height], 12.0, []).Refusal);
         }
+    }
+
+    /// <summary>
+    /// A hidden row measures zero height (ADR-0034): Excel reports it as zero
+    /// and the rows below it share its top, so zero is a real measurement.
+    /// </summary>
+    [Fact]
+    public void A_zero_row_height_is_accepted_as_a_hidden_row()
+    {
+        PanelCellGridCreationOutcome outcome =
+            PanelCellGrid.TryCreate([Col("Id")], [0.0], 12.0, []);
+
+        Assert.True(outcome.Succeeded);
     }
 
     [Fact]

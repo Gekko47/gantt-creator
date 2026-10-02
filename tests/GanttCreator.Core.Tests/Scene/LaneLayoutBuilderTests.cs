@@ -21,10 +21,67 @@ public sealed class LaneLayoutBuilderTests
         LaneGeometry lane = Assert.Single(outcome.Layout!.Lanes);
         Assert.Equal([0, 1], lane.Slots.Select(slot => slot.EffectiveStackIndex));
         Assert.Equal([0, 1], lane.Slots.Select(slot => slot.VisualSlotIndex));
+
+        // ADR-0034 D2: the two-slot block fills the lane (2 x 8 + 2 gap + 2 x 3
+        // padding = 24 > 18), so free space is zero and the block is unmoved:
+        // it starts at laneTop + LanePaddingTopPt exactly as before.
         Assert.Equal(3, lane.Slots[0].Top);
         Assert.Equal(7, lane.Slots[0].Centre);
         Assert.Equal(13, lane.Slots[1].Top);
         Assert.Equal(17, lane.Slots[1].Centre);
+    }
+
+    /// <summary>
+    /// A single-slot lane's content is centred in the row (ADR-0034 D2): both
+    /// paddings are real insets and the free space is split evenly above and
+    /// below the block.
+    /// </summary>
+    /// <remarks>
+    /// The relationship, not the literals, is the contract: a single 8pt slot
+    /// in an 18pt lane with 3pt paddings leaves 4pt free, so the slot starts at
+    /// laneTop + 5 and its centre is the row's own centre (laneTop + 9). The
+    /// previous form of the two-slot test above pinned Top = 3 / Centre = 7 for
+    /// slot 0 without stating why that case does not move (free = 0).
+    /// </remarks>
+    [Fact]
+    public void A_single_slot_lane_is_centred_in_its_row()
+    {
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(Event(1, "only"), 8)],
+            _metrics
+        );
+
+        Assert.True(outcome.Succeeded);
+        LaneGeometry lane = Assert.Single(outcome.Layout!.Lanes);
+        SlotGeometry slot = Assert.Single(lane.Slots);
+
+        // Free = 18 - 3 - 3 - 8 = 4; half (2) goes above the block.
+        Assert.Equal(5, slot.Top);
+        Assert.Equal(9, slot.Centre);
+        Assert.Equal(13, slot.Bottom);
+
+        // The relationship form: the slot centre is the lane centre.
+        Assert.Equal(lane.Top + (lane.Height / 2), slot.Centre);
+    }
+
+    /// <summary>
+    /// A failed row-anchor resolution is refused, never silently stacked
+    /// (ADR-0034 D1): stacking is the defect this replaces.
+    /// </summary>
+    [Fact]
+    public void A_failed_row_anchor_resolution_is_refused()
+    {
+        var refused = new LaneRowAnchorResolution([], LaneRowAnchorRefusal.UnknownLaneOwner);
+
+        LaneLayoutCreationOutcome outcome = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(Event(1, "only"), 8)],
+            _metrics,
+            refused
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(LaneLayoutRefusal.InvalidRowAnchors, outcome.Refusal);
+        Assert.Null(outcome.Layout);
     }
 
     /// <summary>
@@ -304,6 +361,36 @@ public sealed class LaneLayoutBuilderTests
             LaneLayoutBuilder.TryBuild([new LaneEventInput(duplicate, 8), new LaneEventInput(duplicate, 8)], _metrics).Refusal
         );
         Assert.Throws<ArgumentNullException>(() => LaneOrdering.LaneKey(null!));
+    }
+
+    [Fact]
+    public void An_anchored_lane_coincides_with_its_measured_row()
+    {
+        // ADR-0034 D1: the measured row IS the lane's vertical geometry. Two
+        // activity lanes share one LaneId (one lane group); the anchor puts
+        // that lane at top 36 -- its owning row's measured top -- rather than
+        // stacking it at laneTop (0). Without the anchor the single lane would
+        // sit at 0; with it, the lane coincides with its row.
+        GanttEvent first = Event(1, "first");
+        var anchors = new LaneRowAnchorResolution(
+            [new LaneRowAnchor(LaneOrdering.LaneKey(new LaneEventInput(first, 8)), 36, 18)],
+            null);
+
+        LaneLayoutCreationOutcome unanchored = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(first, 8)],
+            _metrics
+        );
+        LaneLayoutCreationOutcome anchored = LaneLayoutBuilder.TryBuild(
+            [new LaneEventInput(first, 8)],
+            _metrics,
+            anchors
+        );
+
+        Assert.True(unanchored.Succeeded);
+        Assert.True(anchored.Succeeded);
+        Assert.Equal(0, unanchored.Layout!.Lanes[0].Top);
+        Assert.Equal(36, anchored.Layout!.Lanes[0].Top);
+        Assert.Equal(18, anchored.Layout.Lanes[0].Height);
     }
 
     private static GanttEvent Event(

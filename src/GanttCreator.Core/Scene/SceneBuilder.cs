@@ -47,6 +47,20 @@ public enum SceneBuilderRefusal
     /// condition instead.
     /// </remarks>
     LiveProfileCarriesPanel = 9,
+
+    /// <summary>
+    /// A lane could not be anchored to its measured worksheet row, so the scene cannot
+    /// place it on the row it must coincide with (ADR-0034 D1).
+    /// </summary>
+    /// <remarks>
+    /// Raised when the request asks for row anchoring
+    /// (<see cref="SceneBuildRequest.AnchorLanesToRows"/>) and the anchor resolution
+    /// refuses — a lane whose owning row is not among the supplied events, a row beyond
+    /// the measured body, or a row that measures no height. Refused rather than stacked,
+    /// because the stacking is the defect this replaces: it would produce a chart whose
+    /// bars sit a row away from their cells with nothing reporting it.
+    /// </remarks>
+    UnresolvableLaneAnchor = 10,
 }
 
 /// <summary>
@@ -77,6 +91,20 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
+
+    /// <summary>
+    /// Gets whether a lane's vertical geometry is anchored to its measured worksheet
+    /// row (ADR-0034 D1).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/>, so every existing composition keeps the
+    /// stacking it has always had and only a caller that has measured a worksheet asks
+    /// for anchoring. The LIVE request factory sets it; an export composition has no
+    /// worksheet rows to coincide with and leaves it off. Anchoring needs
+    /// <see cref="Grid"/>, so a request that asks for it without a grid is refused
+    /// rather than silently stacked.
+    /// </remarks>
+    public bool AnchorLanesToRows { get; init; }
 
     /// <summary>
     /// Gets the caller-supplied measured plot bounds. These must be the output of
@@ -499,7 +527,28 @@ public static class SceneBuilder
             laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
 
-        if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
+        // ADR-0034 D1: a LIVE composition anchors every lane to the worksheet row it
+        // renders on, so a body row that owns no lane (a Delineator, a projected child)
+        // leaves its own band empty instead of pulling every later lane upwards. The
+        // measured grid is the anchor source and is required, so a request that asks
+        // for anchoring without one is refused rather than quietly stacked -- a silent
+        // fall back is exactly how a lane ends up one row from its row unreported.
+        LaneRowAnchorResolution? rowAnchors = null;
+        if (request.AnchorLanesToRows)
+        {
+            if (request.Grid is not { } anchorGrid)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            rowAnchors = LaneRowAnchorResolver.TryResolve(laneInputs, request.Events, anchorGrid);
+            if (!rowAnchors.Succeeded)
+            {
+                return Refused(SceneBuilderRefusal.UnresolvableLaneAnchor);
+            }
+        }
+
+        if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics, rowAnchors).Layout is not { } laneLayout)
         {
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }

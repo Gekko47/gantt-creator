@@ -173,7 +173,6 @@ public sealed class LaneMetricsResolverTests
     /// </para>
     /// </remarks>
     [Theory]
-    [InlineData(0d)]
     [InlineData(-5d)]
     [InlineData(double.NaN)]
     [InlineData(double.PositiveInfinity)]
@@ -186,6 +185,22 @@ public sealed class LaneMetricsResolverTests
             ["Id", "Description"]);
 
         Assert.False(outcome.Succeeded);
-        Assert.Equal(PanelCellGridRefusal.NonPositiveRowHeight, outcome.Refusal);
+        Assert.Equal(PanelCellGridRefusal.NegativeRowHeight, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// A hidden row measures zero height, which is a real measurement rather
+    /// than a missing one (ADR-0034): the rows below it share its top.
+    /// </summary>
+    [Fact]
+    public void A_hidden_row_measures_zero_and_is_accepted()
+    {
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+            [0d, 18],
+            10,
+            ["Id", "Description"]);
+
+        Assert.True(outcome.Succeeded);
     }
 }

@@ -30,6 +30,9 @@
 | ADR-0022 | The §10 splitter band is a new scene builder on the existing style pipeline | Accepted | 2026-09-28 | [`adr/0022-splitter-band-builder.md`](adr/0022-splitter-band-builder.md) |
 | ADR-0023 | The panel measures per row, and the panel's bounds are derived | Accepted | 2026-09-28 | [`adr/0023-panel-measures-per-row.md`](adr/0023-panel-measures-per-row.md) |
 | ADR-0024 | Measure each row; a read-only measurement does not refuse a protected sheet | Accepted | 2026-09-28 | [`adr/0024-per-row-measurement-and-read-only-protection.md`](adr/0024-per-row-measurement-and-read-only-protection.md) |
+| ADR-0030 | The live chart is anchored to the worksheet rows, not to page coordinates | Accepted | 2026-10-01 | [`adr/0030-live-chart-vertical-anchoring.md`](adr/0030-live-chart-vertical-anchoring.md) |
+| ADR-0033 | Labels: no fill, no border, no margin, one row tall, and stacks are not collisions | Accepted | 2026-10-02 | [`adr/0033-label-appearance-and-stack-collision.md`](adr/0033-label-appearance-and-stack-collision.md) |
+| ADR-0034 | Lanes are anchored to their worksheet rows, the content block is centred, and the critical interval is top-aligned | Accepted | 2026-10-02 | [`adr/0034-lane-anchoring-centring-critical-top-align.md`](adr/0034-lane-anchoring-centring-critical-top-align.md) |
 
 ## ADR template
 

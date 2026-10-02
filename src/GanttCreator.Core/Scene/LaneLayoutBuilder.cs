@@ -34,6 +34,14 @@ public enum LaneLayoutRefusal
     /// hierarchy does not put it.
     /// </summary>
     UnresolvedRenderLaneOwner = 7,
+
+    /// <summary>
+    /// A lane's row anchor could not be resolved, so the lane cannot be placed on the
+    /// worksheet row it must coincide with (ADR-0034 D1). Refused rather than fallen
+    /// back to the stacking: silently ignoring a failed anchor would place bars at a
+    /// plausible but wrong height, which is the defect being fixed.
+    /// </summary>
+    InvalidRowAnchors = 8,
 }
 
 /// <summary>The typed result of attempting to build lane geometry.</summary>
@@ -96,8 +104,17 @@ public static class LaneLayoutBuilder
     /// empty layout: §24 makes a Delineator a plot-global entity that consumes no lane.
     /// </param>
     /// <param name="metrics">The resolved lane metrics.</param>
+    /// <param name="rowAnchors">
+    /// The measured worksheet-row anchor for each lane (ADR-0034 D1), or
+    /// <see langword="null"/> to stack the lanes as before. A LIVE composition supplies
+    /// them so every lane's Top and Height are its own row's; an EXPORT composition has
+    /// no worksheet rows to coincide with and passes none.
+    /// </param>
     /// <returns>A typed layout outcome.</returns>
-    public static LaneLayoutCreationOutcome TryBuild(IReadOnlyList<LaneEventInput>? events, LaneLayoutMetrics? metrics)
+    public static LaneLayoutCreationOutcome TryBuild(
+        IReadOnlyList<LaneEventInput>? events,
+        LaneLayoutMetrics? metrics,
+        LaneRowAnchorResolution? rowAnchors = null)
     {
         if (events is null)
         {
@@ -112,6 +129,14 @@ public static class LaneLayoutBuilder
         if (!ValidMetrics(metrics))
         {
             return Refused(LaneLayoutRefusal.InvalidMetrics);
+        }
+
+        // A failed anchor resolution is a refusal, never a silent fall back to the
+        // stacking: that fallback is precisely how a lane ends up one row away from
+        // the row it belongs to without anything reporting it (ADR-0034 D1).
+        if (rowAnchors is not null && !rowAnchors.Succeeded)
+        {
+            return Refused(LaneLayoutRefusal.InvalidRowAnchors);
         }
 
         // An empty input is a successful empty layout, not a refusal. Entity guide
@@ -160,10 +185,29 @@ public static class LaneLayoutBuilder
             LaneEventInput[] laneInputs = [.. group];
             var isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
             var isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
+
+            // ADR-0034 D1: when this lane has a measured worksheet row, that row IS the
+            // lane's vertical geometry. Landing lane Tops on their own rows is what
+            // lets a body row that owns no lane leave its own band empty instead of
+            // pulling every later lane upwards. The stacking below remains the fallback
+            // for a composition with no worksheet rows to anchor to (export).
+            LaneRowAnchor? anchor = null;
+            _ = rowAnchors?.TryGet(group.Key, out anchor);
+
+            var anchoredTop = anchor?.TopOffsetPt ?? laneTop;
+            var laneHeightPt = anchor?.HeightPt ?? metrics.LaneHeightPt;
+
             LaneGeometry? lane =
                 isSplitter || isSpacer
-                    ? BuildFixedLane(group.Key, laneOrder, laneTop, laneInputs, isSplitter, isSpacer, metrics)
-                    : BuildEventLane(group.Key, laneOrder, laneTop, laneInputs, metrics, warnings);
+                    ? BuildFixedLane(
+                        group.Key,
+                        laneOrder,
+                        anchoredTop,
+                        anchor?.HeightPt ?? (isSplitter ? metrics.SplitterHeightPt : metrics.SpacerHeightPt),
+                        laneInputs,
+                        isSplitter,
+                        isSpacer)
+                    : BuildEventLane(group.Key, laneOrder, anchoredTop, laneHeightPt, laneInputs, metrics, warnings);
 
             // A typed refusal, not an exception: an unrepresentable hierarchy is a
             // reportable condition, and this builder's whole surface is TryBuild
@@ -176,7 +220,10 @@ public static class LaneLayoutBuilder
             }
 
             lanes.Add(lane);
-            laneTop += lane.Height;
+
+            // Continue from the lane just built, so an anchored lane and a stacked one
+            // compose without a gap if a caller anchors only some lanes.
+            laneTop = lane.Top + lane.Height;
             laneOrder++;
         }
 
@@ -187,13 +234,16 @@ public static class LaneLayoutBuilder
         string laneKey,
         int laneOrder,
         double laneTop,
+        double heightPt,
         IReadOnlyList<LaneEventInput> inputs,
         bool isSplitter,
-        bool isSpacer,
-        LaneLayoutMetrics metrics
+        bool isSpacer
     )
     {
-        var height = isSplitter ? metrics.SplitterHeightPt : metrics.SpacerHeightPt;
+        // The height is a parameter, not a token read: an anchored structural row
+        // takes its measured row height so the lane equals the row it sits in
+        // (ADR-0026 D3), while an unanchored one keeps its own Splitter/Spacer token.
+        var height = heightPt;
         GanttRowId[] eventIds = [.. inputs.Select(input => input.Event.Id)];
         SlotGeometry slot = new(0, 0, laneTop, laneTop + (height / 2), laneTop + height, height, eventIds);
         return new LaneGeometry(laneKey, laneOrder, laneTop, height, [slot], eventIds, isSplitter, isSpacer);
@@ -206,6 +256,13 @@ public static class LaneLayoutBuilder
     /// <param name="laneKey">The lane's key, for the overflow warning owner.</param>
     /// <param name="laneOrder">The lane's zero-based order.</param>
     /// <param name="laneTop">The lane's top edge in points.</param>
+    /// <param name="laneHeightPt">
+    /// The lane's own height in points: the anchored worksheet row's measured height
+    /// when the lane is anchored (ADR-0034 D1), otherwise
+    /// <see cref="LaneLayoutMetrics.LaneHeightPt"/>. It is passed rather than re-read
+    /// from the metrics so a lane can never be sized against a different row than the
+    /// one it is positioned on.
+    /// </param>
     /// <param name="inputs">The lane's events.</param>
     /// <param name="metrics">The resolved lane metrics.</param>
     /// <param name="warnings">The scene warning sink.</param>
@@ -214,6 +271,7 @@ public static class LaneLayoutBuilder
         string laneKey,
         int laneOrder,
         double laneTop,
+        double laneHeightPt,
         LaneEventInput[] inputs,
         LaneLayoutMetrics metrics,
         List<SceneWarning> warnings
@@ -300,7 +358,7 @@ public static class LaneLayoutBuilder
         contentHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
         contentHeight += effectiveValues.Sum(value => effectiveSlots[value].Max(input => input.ResolvedHeightPt));
 
-        if (contentHeight > metrics.LaneHeightPt + GeometryMath.Epsilon)
+        if (contentHeight > laneHeightPt + GeometryMath.Epsilon)
         {
             // Reported, never accommodated. Growing the lane is the defect this
             // replaces; silently compressing the content would hide it instead.
@@ -324,13 +382,34 @@ public static class LaneLayoutBuilder
                     // snapshot that carries them must not depend on the host locale.
                     string.Create(
                         CultureInfo.InvariantCulture,
-                        $"Lane content needs {contentHeight:0.##}pt but the row height is {metrics.LaneHeightPt:0.##}pt; the content is not compressed."))
+                        $"Lane content needs {contentHeight:0.##}pt but the row height is {laneHeightPt:0.##}pt; the content is not compressed."))
             );
         }
 
-        var laneHeight = metrics.LaneHeightPt;
+        var laneHeight = laneHeightPt;
+
+        // ADR-0034 D2: the content block is centred in the lane, and both paddings are
+        // real insets. The block was packed from `laneTop + LanePaddingTopPt`, so a
+        // one-slot row occupied laneTop+3..laneTop+11 inside an 18pt row: its centre
+        // was 7 rather than the row's 9, every shape and label sat 2pt high, and the
+        // visible space below was 7pt while LanePaddingBottomPt said 3. That token had
+        // no geometric effect at all -- it was read only by the overflow warning above.
+        //
+        // `free` is the space the padding does not claim and the content does not use,
+        // and half of it goes above the block, which makes a single-slot row's shape
+        // centre the row's own centre exactly, and leaves a full-height block (whose
+        // free space is zero) exactly where it was.
+        var blockHeight = 0d;
+        foreach (var value in effectiveValues)
+        {
+            blockHeight += effectiveSlots[value].Max(input => input.ResolvedHeightPt);
+        }
+
+        blockHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
+        var freePt = Math.Max(0d, laneHeight - metrics.LanePaddingTopPt - metrics.LanePaddingBottomPt - blockHeight);
+
         var slots = new List<SlotGeometry>();
-        var slotTop = laneTop + metrics.LanePaddingTopPt;
+        var slotTop = laneTop + metrics.LanePaddingTopPt + (freePt / 2);
         for (var visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)
         {
             var effective = effectiveValues[visualIndex];

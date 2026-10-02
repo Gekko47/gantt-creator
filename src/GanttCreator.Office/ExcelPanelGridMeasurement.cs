@@ -136,6 +136,11 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                     return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
                 }
 
+                // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
+                // HIDDEN row's height as zero, and a collapsed outline group hides its
+                // child rows, so zero is a real measurement of the displayed sheet rather
+                // than a missing one. Core accepts it and the rows below share its top;
+                // a negative height is still refused there.
                 rowHeights.Add(height);
             }
         }

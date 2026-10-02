@@ -306,6 +306,13 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
 
+            // ADR-0034 D1: the LIVE chart anchors every lane to its measured worksheet
+            // row, so a body row that owns no lane (a Delineator, a projected child)
+            // leaves its own band empty rather than pulling every later lane up one row.
+            // Set here, in code, for the same reason the profile is: a caller who forgot
+            // it would get silently stacked lanes, which is the reported defect.
+            AnchorLanesToRows = true,
+
             // LiveExcel, chosen in code (D4). The panel stays null because the
             // worksheet's own cells are the panel; SceneBuilder refuses a live
             // request that supplies one, so this cannot drift into drawing a replica

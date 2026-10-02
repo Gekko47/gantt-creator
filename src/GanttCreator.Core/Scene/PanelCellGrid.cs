@@ -25,8 +25,18 @@ public enum PanelCellGridRefusal
     /// <summary>A column width was not finite, or was not positive.</summary>
     NonPositiveWidth = 2,
 
-    /// <summary>The row height was not finite, or was not positive.</summary>
-    NonPositiveRowHeight = 3,
+    /// <summary>
+    /// A row height was not finite, or was negative. (ADR-0034)
+    /// </summary>
+    /// <remarks>
+    /// This was <c>NonPositiveRowHeight</c>, and zero was refused. Zero is not a
+    /// missing measurement: Excel reports a <b>hidden</b> row's height as zero, and a
+    /// collapsed outline group hides its child rows, so refusing zero made a
+    /// collapse-then-Refresh fail the whole measurement instead of laying the sheet
+    /// out the way it is actually displayed. A negative height is still refused
+    /// because it would place a row above the one before it.
+    /// </remarks>
+    NegativeRowHeight = 3,
 
     /// <summary>No body row height was supplied.</summary>
     NoRows = 4,
@@ -116,6 +126,21 @@ public sealed record PanelCellGrid
         OriginLeftPt = originLeftPt;
         TopPaddingHeightPt = topPaddingHeightPt;
         BottomPaddingHeightPt = bottomPaddingHeightPt;
+
+        // The cumulative tops are derived ONCE, here, so a lane anchor and a panel
+        // row cannot disagree about where a body row starts. Entry n is
+        // OriginTopPt plus the heights of every row above n, which is the row's
+        // absolute worksheet top edge; a zero-height row therefore contributes no
+        // space and the rows below it share its top (ADR-0034).
+        double[] tops = new double[rowHeightsPt.Count];
+        var running = originTopPt;
+        for (var index = 0; index < rowHeightsPt.Count; index++)
+        {
+            tops[index] = running;
+            running += rowHeightsPt[index];
+        }
+
+        RowTopsPt = tops;
     }
 
     /// <summary>The included columns, in caller order.</summary>
@@ -133,6 +158,28 @@ public sealed record PanelCellGrid
     /// which is what <see cref="PanelBuildRequest.Rows"/> must match in order and count.
     /// </remarks>
     public IReadOnlyList<double> RowHeightsPt { get; }
+
+    /// <summary>
+    /// The absolute worksheet top edge of each body row, in points, in worksheet
+    /// order, one per body row (ADR-0034 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Entry <c>n</c> is <see cref="OriginTopPt"/> plus the sum of the heights of the
+    /// rows above it. This is the value that makes ADR-0026 D3's
+    /// <c>Excel Top == Scene lane Top</c> representable: a lane is anchored to the row
+    /// it renders on, rather than to the running sum of the lanes above it, so a body
+    /// row that owns no lane (a <c>Delineator</c>, a projected child) leaves its own
+    /// band empty instead of pulling every later lane upwards.
+    /// </para>
+    /// <para>
+    /// <b>A zero-height row consumes no space, deliberately.</b> Excel reports a
+    /// hidden row's height as zero, and a collapsed outline group hides its child
+    /// rows, so a zero entry is a real measurement rather than a missing one: the rows
+    /// below it share its top, exactly as the worksheet lays them out.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<double> RowTopsPt { get; }
 
     /// <summary>
     /// The measured header row height in points, separate from the body rows.
@@ -308,9 +355,11 @@ public sealed record PanelCellGrid
 
         foreach (var rowHeight in rowHeightsPt)
         {
-            if (!double.IsFinite(rowHeight) || rowHeight <= 0)
+            // Zero is legal: it is what the host reports for a hidden row, whose space
+            // the rows below share. Only a negative height is refused (ADR-0034).
+            if (!double.IsFinite(rowHeight) || rowHeight < 0)
             {
-                return Refused(PanelCellGridRefusal.NonPositiveRowHeight);
+                return Refused(PanelCellGridRefusal.NegativeRowHeight);
             }
         }
 
