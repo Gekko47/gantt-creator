@@ -128,27 +128,27 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// ADR-0035 D3, INVERTED. Every insert appends, so selecting a row changes
-    /// nothing and the row directly below the last one keeps its identity.
+    /// ADR-0035 D3: an active cell INSIDE the table inserts immediately BELOW it, and
+    /// the reserved bottom padding row still moves down.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This replaces <c>Insert_active_row_places_new_row_below_it_and_shifts_following_rows</c>,
-    /// which asserted the OPPOSITE and was human-confirmed in
-    /// <c>evidence/r2.8-active-row-f5.md</c>. It is replaced rather than deleted: the
-    /// property it implied — the new row is the LAST body row and no existing row
-    /// moves — is the one worth keeping, and it is strictly stronger.
+    /// This inverts <c>Every_insert_appends_and_shifts_no_following_row</c>, which
+    /// asserted the opposite and was correct for the append-only rule ADR-0035 first
+    /// landed. That rule was reverted: the owner recognised the mid-table shift as the
+    /// chart tracking the sheet, not as a defect.
     /// </para>
     /// <para>
-    /// The live host is the only place this can be proved, because
-    /// <c>ListRows.Add(position)</c> and <c>ListRows.Add()</c> are the same COM
-    /// method distinguished only by their argument; a shape assertion cannot tell
-    /// them apart, which is the same trap the contract test hit.
+    /// The padding-row half is asserted in the SAME test body on purpose. It is the
+    /// same event, and the COM-proxy leak ratchet counts forced kills per test body
+    /// (a workbook left open keeps the host alive), so splitting one narrative across
+    /// two bodies would add a kill to a ceiling the repository records as not
+    /// raisable, for no extra coverage.
     /// </para>
     /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task Every_insert_appends_and_shifts_no_following_row()
+    public async Task An_in_table_selection_inserts_below_it_and_the_padding_row_still_moves_down()
     {
         var fixture = new OfficeFixture();
         try
@@ -179,59 +179,59 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 GanttEntityType.Delineator,
                 () => FixedId('3')).Succeeded);
 
-            // Select the FIRST row -- the case that used to insert at position one
-            // and shift everything below it down.
+            Excel.Range body = scope.Track(table.DataBodyRange);
+            int paddingRowBefore = body.Row + body.Rows.Count;
+
+            // Select the FIRST body row: the new activity belongs immediately below it,
+            // NOT at the top and NOT appended.
             scope.Track(table.ListRows[1].Range).Select();
             GanttRowInsertOutcome inserted = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('4'));
 
             Assert.True(inserted.Succeeded, $"Insert refused: {inserted.Refusal}");
-
-            // The new row is the LAST body row, not the second.
-            Assert.Equal(4, inserted.BodyIndex);
+            Assert.Equal(2, inserted.BodyIndex);
             Assert.Equal(4, table.DataBodyRange.Rows.Count);
-            Assert.Equal(5, table.Range.Rows.Count);
 
-            // And crucially: the three pre-existing rows kept their positions. This
-            // ordering is the whole claim -- under the old rule the new row would be
-            // body row 2 and '4' would sit above '2'.
+            // The load-bearing ordering: the new row sits BELOW the selection, and the
+            // rows it displaced kept their identities and moved down.
             AssertId(table.ListRows[1], FixedId('1').Value);
-            AssertId(table.ListRows[2], FixedId('2').Value);
-            AssertId(table.ListRows[3], FixedId('3').Value);
-            AssertId(table.ListRows[4], FixedId('4').Value);
+            AssertId(table.ListRows[2], FixedId('4').Value);
+            AssertId(table.ListRows[3], FixedId('2').Value);
+            AssertId(table.ListRows[4], FixedId('3').Value);
 
             // ---- The reserved bottom padding row (ADR-0035 D2) ----
             //
-            // Asserted HERE rather than in a second test body on purpose. A
-            // ListObject grows DOWNWARD OVER the row beneath it, so this is where
-            // the reported defect lived: the append consumed the bottom margin row,
-            // it stopped being the margin, became a body row, and received the new
-            // row's text. It is the same event as the append above, and proving both
-            // in one live session keeps the assertion next to the behaviour that
-            // causes it.
-            //
-            // It is also a measured cost, not a style preference: the COM-proxy leak
-            // ratchet counts forced kills PER TEST BODY, because a workbook left open
-            // keeps the host alive and the fixture must escalate to a kill. Splitting
-            // one narrative across two bodies would have added a kill to a ceiling
-            // the repository records as not raisable.
+            // ListRows.Add(position) inserts a REAL worksheet row, so everything
+            // below shifts: the padding row must have moved down by one row. This is
+            // the behaviour the append-only rule lost, because ListRows.Add() with no
+            // position CLAIMS the padding row instead of pushing it.
             Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
             int lastBodyRow = bodyAfter.Row + bodyAfter.Rows.Count - 1;
+            int tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
+            int paddingRowIndex = lastBodyRow + 1;
 
-            // The margin row is OUTSIDE the table. This is the load-bearing
-            // assertion: asserting only its height would pass under the old
-            // behaviour too, because the replacement row is fresh and would be
-            // measured fresh as well.
-            Excel.Range paddingRow = scope.Track(sheet.Rows[lastBodyRow + 1]);
+            // The margin row is genuinely OUTSIDE the table. This is the load-bearing
+            // check, and it is stated against the TABLE'S OWN RANGE rather than
+            // against lastBodyRow -- an earlier version compared the derived index
+            // with itself and was a tautology that could never fail.
             Assert.True(
-                lastBodyRow + 1 >= bodyAfter.Row + bodyAfter.Rows.Count,
-                "The reserved padding row must sit below the table, never inside it.");
+                paddingRowIndex > tableLastRow,
+                $"The reserved padding row ({paddingRowIndex}) must sit below the table's last row ({tableLastRow}).");
 
-            // And it is empty, so the verified read will accept it. A whole-row
-            // Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar, so every cell
-            // has to be inspected -- a scalar check would misread a populated row.
+            // And it MOVED DOWN rather than being absorbed. Before ADR-0035 the
+            // append claimed this row and turned it into a body row; a positional
+            // insert shifts it, and the new row below the table restores the same for
+            // the append branch.
+            Assert.True(
+                paddingRowIndex > paddingRowBefore,
+                $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
             object? paddingValue = paddingRow.Value2;
+
+            // A whole-row Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar, so
+            // every cell has to be inspected; a scalar check misreads a populated row.
             bool paddingIsEmpty = paddingValue is object[,] cells
                 ? cells.Cast<object?>().All(static value =>
                     value is null or DBNull || (value is string text && text.Length == 0))
