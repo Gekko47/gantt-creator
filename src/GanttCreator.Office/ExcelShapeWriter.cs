@@ -1397,6 +1397,19 @@ public class ExcelShapeWriter(
         frame.WordWrap = MsoTriState.msoFalse;
         frame.AutoSize = MsoAutoSize.msoAutoSizeNone;
 
+        // The internal margins are zeroed because the scene already resolved the
+        // box, and a host default inset would silently move the text away from the
+        // position the scene chose - the same no-remeasure violation as auto-sizing.
+        // Excel's textbox default is roughly 0.1in left/right and 0.05in top/bottom,
+        // which is 3.6pt/7.2pt: enough to make a Right-anchored label start visibly
+        // right of the bar it labels, and to make a Left-anchored one end short of
+        // it. Verified against the installed interop assembly that all four members
+        // are settable Single properties on TextFrame2.
+        frame.MarginLeft = 0f;
+        frame.MarginRight = 0f;
+        frame.MarginTop = 0f;
+        frame.MarginBottom = 0f;
+
         TextRange2? textRange = frame.TextRange;
         if (textRange is null)
         {

@@ -95,8 +95,20 @@ public class StyleWriteTests
             _ = shape.Setup(s => s.Delete()).Callback(() => Deleted = true);
 
             // TextFrame2 is the first member ApplyText reads, so a plain mock is
-            // enough for the paths where the content write succeeds.
+            // enough for the paths where the content write succeeds. The four
+            // margin members are captured because the writer is required to zero
+            // them: Excel's textbox defaults inset the text by ~7.2pt left/right
+            // and ~3.6pt top/bottom, which would silently displace it from the
+            // box the scene resolved.
             var frame = new Mock<Excel.TextFrame2>();
+            _ = frame.SetupSet(f => f.MarginLeft = It.IsAny<float>())
+                .Callback<float>(value => MarginLeft = value);
+            _ = frame.SetupSet(f => f.MarginRight = It.IsAny<float>())
+                .Callback<float>(value => MarginRight = value);
+            _ = frame.SetupSet(f => f.MarginTop = It.IsAny<float>())
+                .Callback<float>(value => MarginTop = value);
+            _ = frame.SetupSet(f => f.MarginBottom = It.IsAny<float>())
+                .Callback<float>(value => MarginBottom = value);
             _ = shape.SetupGet(s => s.TextFrame2).Returns(frame.Object);
 
             Shape = shape.Object;
@@ -138,6 +150,18 @@ public class StyleWriteTests
         public float LineTransparency { get; private set; }
 
         public MsoTriState LineVisible { get; private set; }
+
+        /// <summary>The left internal margin the writer last wrote.</summary>
+        public float MarginLeft { get; private set; } = float.NaN;
+
+        /// <summary>The right internal margin the writer last wrote.</summary>
+        public float MarginRight { get; private set; } = float.NaN;
+
+        /// <summary>The top internal margin the writer last wrote.</summary>
+        public float MarginTop { get; private set; } = float.NaN;
+
+        /// <summary>The bottom internal margin the writer last wrote.</summary>
+        public float MarginBottom { get; private set; } = float.NaN;
     }
 
     /// <summary>
@@ -237,6 +261,77 @@ public class StyleWriteTests
         var application = new Mock<Excel.Application>();
         _ = application.Setup(a => a.ActiveWorkbook).Returns(workbook.Object);
         return application.Object;
+    }
+
+    /// <summary>
+    /// A label box carries no internal margin, so its text starts exactly where the
+    /// scene placed the box.
+    /// </summary>
+    /// <remarks>
+    /// The scene resolves label bounds and the renderer must consume them without
+    /// re-measuring. Excel's text box defaults inset its text by roughly 7.2pt
+    /// left/right and 3.6pt top/bottom; left unwritten, a Right-anchored label began
+    /// visibly right of the bar it labels and a Left-anchored one stopped short of
+    /// it, which is the same silent re-layout as letting the box auto-size.
+    /// <see cref="ExcelShapeWriter.ApplyText"/> already disables word wrap and auto
+    /// size for this reason; the margins are the third member of that same rule.
+    /// </remarks>
+    [Fact]
+    public void Creating_a_label_zeroes_every_internal_margin()
+    {
+        var host = new HostShape();
+        var writer = new TextBoxWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            Text: "abc",
+            TextColour: ColourHex.Parse("#000000")));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // Each margin is seeded to NaN, so "not written" and "written as zero" are
+        // distinguishable. Asserting against 0 alone would pass against the default.
+        Assert.False(float.IsNaN(host.MarginLeft));
+        Assert.False(float.IsNaN(host.MarginRight));
+        Assert.False(float.IsNaN(host.MarginTop));
+        Assert.False(float.IsNaN(host.MarginBottom));
+
+        Assert.Equal(0f, host.MarginLeft);
+        Assert.Equal(0f, host.MarginRight);
+        Assert.Equal(0f, host.MarginTop);
+        Assert.Equal(0f, host.MarginBottom);
+    }
+
+    /// <summary>
+    /// A label is not painted: no fill, and no border even when its style names one.
+    /// </summary>
+    [Fact]
+    public void Creating_a_label_writes_no_fill_and_no_border()
+    {
+        var host = new HostShape();
+        var writer = new TextBoxWriter(host);
+
+        // A fill AND a stroke are named deliberately: a named style may legitimately
+        // carry either, and neither may put paint on a label box.
+        ShapeWriteOutcome outcome = writer.Create(new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            FillColour: ColourHex.Parse("#000000"),
+            StrokeColour: ColourHex.Parse("#FF0000"),
+            LineWidthPt: 1,
+            Text: "abc"));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        Assert.Equal(MsoTriState.msoFalse, host.FillVisible);
+        Assert.Equal(0, host.FillRgb);
+        Assert.Equal(MsoTriState.msoFalse, host.LineVisible);
+        Assert.Equal(0, host.LineRgb);
     }
 
     [Fact]

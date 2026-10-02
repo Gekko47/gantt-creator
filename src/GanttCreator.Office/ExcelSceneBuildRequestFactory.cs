@@ -91,8 +91,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
-    /// <summary>The default plot-range padding, in days, on each side.</summary>
-    private const int _defaultRangePaddingDays = 7;
+    /// <summary>
+    /// The default plot-range padding, in days, on each side.
+    /// </summary>
+    /// <remarks>
+    /// It was <c>7</c>. The plot extent is now snapped to whole months (owner ruling,
+    /// 2026-10-02), and a 7-day pad is wider than the gap the snap is meant to
+    /// resolve: it would push a 10 Jan start back to 27 Dec, contradicting the stated
+    /// requirement that a 10 Jan earliest date renders from 1 Jan. Three days is the
+    /// owner's figure and is what makes 10 Jan land on 1 Jan while 3 Jan escapes to
+    /// 1 Dec.
+    /// </remarks>
+    private const int _defaultRangePaddingDays = 3;
 
     // The metric tokens this factory resolves. They are named here once and
     // resolved through GanttCatalogues.MetricDefault rather than being written as
@@ -116,7 +126,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     private const string _spacerHeightToken = "SpacerHeightPt";
     private const string _milestoneSizeToken = "MilestoneSizePt";
     private const string _labelGapToken = "LabelGapPt";
-    private const string _labelHeightToken = "LabelHeightPt";
+    private const string _rowHeightToken = "GanttRowHeightPt";
 
     /// <inheritdoc />
     public SceneBuildRequestOutcome Create(
@@ -328,7 +338,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // The style is the code-owned DefaultText token, exactly as the export
             // composition resolves its outside-label colour: the token table stays
             // the single authority for a colour rather than a literal here.
-            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            //
+            // The token is the label's TEXT colour, never its fill. It was written
+            // as `fillColour: ColourHex.Parse("#000000")`, and `OfficeStyleMapper`
+            // reports a TextBox as carrying a fill, so every description and date
+            // label reached the host with an opaque black rectangle and default black
+            // text on top of it. The comment above already said "DefaultText token",
+            // so the intent was the text colour all along; only the named argument was
+            // wrong. A label has no fill and no stroke - owner ruling - so both are
+            // left null rather than defaulted to white.
+            LabelStyle = new SceneStyle("DefaultText", textColour: ResolveDefaultTextColour()),
             MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
             GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
             MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
@@ -336,8 +355,33 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             DelineatorLinePt = GanttCatalogues.MetricDefault(_delineatorLineToken),
             DelineatorStackGapPt = GanttCatalogues.MetricDefault(_stackGapToken),
             LabelGapPt = GanttCatalogues.MetricDefault(_labelGapToken),
-            LabelHeightPt = GanttCatalogues.MetricDefault(_labelHeightToken),
+            RowHeightPt = GanttCatalogues.MetricDefault(_rowHeightToken),
         };
+
+    /// <summary>
+    /// Resolves the code-owned <c>DefaultText</c> colour token, or
+    /// <see langword="null"/> when the catalogue does not publish it.
+    /// </summary>
+    /// <returns>The parsed token colour, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// The token table is the single authority for the colour; this type must not
+    /// restate <c>#000000</c> as a literal. A missing or unparseable token resolves
+    /// to <see langword="null"/>, which reaches the host as "leave the font alone"
+    /// rather than as a substituted colour.
+    /// </para>
+    /// <para>
+    /// This mirrors the outside-label lookup <c>SceneBuilder</c> performs for
+    /// section 17, so both paths resolve the same token the same way and cannot
+    /// disagree about what "default text" means.
+    /// </para>
+    /// </remarks>
+    private static ColourHex? ResolveDefaultTextColour() =>
+        GanttCatalogues.Colours.FirstOrDefault(token => token.Name == "DefaultText")
+            is { } defaultTextToken
+            && ColourHex.TryParse(defaultTextToken.HexValue, out ColourHex? parsed)
+                ? parsed
+                : null;
 
     /// <summary>
     /// The frame and band styles, which the scene requires to be non-null on every
@@ -430,8 +474,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             latest = finishes.Max();
         }
 
-        plotStart = earliest.AddDays(-padding);
-        plotFinish = latest.AddDays(padding);
+        // Month-snapped plot extent (owner ruling, 2026-10-02).
+        //
+        // The order is PADDING FIRST, THEN SNAP outward to the containing month, and
+        // that order is load-bearing. Snapping first and then padding would place the
+        // 10 Jan edge at 1 Jan minus the pad; padding first gives 10 Jan - 3 = 7 Jan,
+        // which is still inside January, so it snaps back to 1 Jan. The 3-day pad is
+        // therefore a tie-breaker for dates near a month edge, not a visible margin:
+        // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
+        // month further out to 1 Dec. Both were stated by the owner and only this
+        // order satisfies both.
+        plotStart = MonthStart(earliest.AddDays(-padding));
+        plotFinish = MonthEnd(latest.AddDays(padding));
 
         // A one-day chart is degenerate: the scale builder has no interval to divide
         // and would either refuse or emit a single unreadable column. Widening to two
@@ -444,6 +498,30 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
 
         return true;
     }
+
+    /// <summary>
+    /// Returns the first day of the month containing <paramref name="date"/>.
+    /// </summary>
+    /// <param name="date">The date whose month is wanted.</param>
+    /// <returns>The first day of that month.</returns>
+    /// <remarks>
+    /// Constructed arithmetically rather than with <c>DateOnly.AddMonths</c> plus a
+    /// day subtraction, which would overflow the <c>DateOnly.MinValue</c> range. The
+    /// year and month are rebuilt from the date's own parts instead.
+    /// </remarks>
+    private static DateOnly MonthStart(DateOnly date) => new(date.Year, date.Month, 1);
+
+    /// <summary>
+    /// Returns the last day of the month containing <paramref name="date"/>.
+    /// </summary>
+    /// <param name="date">The date whose month is wanted.</param>
+    /// <returns>The last day of that month.</returns>
+    /// <remarks>
+    /// Day zero of the FOLLOWING month is the last day of this one, which avoids
+    /// both a hard-coded 28/30/31 table and the December overflow that
+    /// <c>AddMonths(1)</c> would need a range check for.
+    /// </remarks>
+    private static DateOnly MonthEnd(DateOnly date) => MonthStart(date).AddMonths(1).AddDays(-1);
 
     /// <summary>
     /// Resolves the size preset, refusing an unknown key rather than defaulting.

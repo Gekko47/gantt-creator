@@ -177,7 +177,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             ChartPadding = ChartPaddingPt.Uniform(0),
             MinimumHeaderLabelWidthPt = 0,
         };
@@ -777,9 +777,9 @@ public sealed class SceneBuilderTests
 
 
     [Fact]
-    public void The_panel_header_band_bottom_equals_the_R3_5_derived_period_header_bottom()
+    public void The_panel_header_band_bottom_equals_the_period_header_bottom()
     {
-        // Section 4 fixes the header bottom to PlotBounds.Y - YearBandHeightPt. The
+        // Section 4 fixes the header bottom to the period band's bottom. The
         // panel builder cannot know the plot bounds, so SceneBuilder supplies it;
         // this test proves the value arrives intact rather than being assumed.
         SceneBuildRequest request = Request(Event(1)) with
@@ -798,7 +798,14 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        double expectedBottom = _plotBounds.Y - request.YearBandHeightPt;
+
+        // The period band sits DIRECTLY above the plot (entity guide §6), so its
+        // bottom - and therefore the panel header's bottom - is the plot's own top
+        // edge. This asserted `_plotBounds.Y - request.YearBandHeightPt`, which is
+        // only correct while the YEAR band is the one adjacent to the plot. That
+        // ordering was the inversion: it made the header align with a band that is
+        // not there, so the value was wrong even though the test was green.
+        double expectedBottom = _plotBounds.Y;
 
         // Filtered to the header cells specifically. The period band is also a
         // SceneRect whose bottom happens to equal expectedBottom, so an unfiltered
@@ -814,6 +821,21 @@ public sealed class SceneBuilderTests
         Assert.All(
             headers,
             header => Assert.Equal(expectedBottom, header.Bounds.Top + header.Bounds.Height, precision: 9));
+
+        // And the panel header must align with the period band the scene actually
+        // emitted, not merely with a number this test computed. That is the
+        // relationship §4 states, and computing the expectation here independently
+        // is what let the two drift apart in the first place.
+        SceneRect[] periodBands =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(periodBands);
+        Assert.All(
+            periodBands,
+            band => Assert.Equal(expectedBottom, band.Bounds.Bottom, precision: 9));
     }
 
     [Fact]
@@ -1635,7 +1657,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
     }
@@ -1704,7 +1726,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
 
@@ -1797,7 +1819,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
             Panel = new PanelTheme(
                 new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),

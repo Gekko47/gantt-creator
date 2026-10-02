@@ -524,6 +524,67 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
         Assert.False(style.FillVisible);
     }
 
+    /// <summary>
+    /// A label box is never painted, whatever fill or stroke its style names.
+    /// </summary>
+    /// <remarks>
+    /// The live defect: <c>ExcelSceneBuildRequestFactory</c> built the label style as
+    /// <c>new SceneStyle("DefaultText", fillColour: #000000)</c> — the colour went to
+    /// the FILL, not the text. Because a TextBox "carries a fill", every description
+    /// and date label reached Excel as an opaque black rectangle. This asserts the
+    /// rule that prevents a recurrence: the entity decides, not the token, so even a
+    /// style that explicitly names both a fill and a stroke paints nothing.
+    /// </remarks>
+    [Fact]
+    public void A_label_is_never_filled_or_stroked_even_when_its_style_names_both()
+    {
+        OfficeShapeRequest request = new(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(10, 20, 100, 18)),
+            ZLayer.Label,
+            Text: "abc",
+            FillColour: ColourHex.Parse("#000000"),
+            StrokeColour: ColourHex.Parse("#FF0000"),
+            LineWidthPt: 1,
+            TextColour: ColourHex.Parse("#000000"));
+
+        OfficeShapeStyle style = OfficeStyleMapper.Map(request);
+
+        Assert.False(style.FillVisible);
+        Assert.Null(style.FillRgb);
+        Assert.Null(style.FillBackgroundRgb);
+        Assert.Equal(0f, style.FillTransparency);
+        Assert.Null(style.HatchPattern);
+
+        Assert.False(style.LineVisible);
+        Assert.Null(style.LineRgb);
+        Assert.Null(style.LineWeightPt);
+
+        // The text colour is untouched: suppressing the fill must not suppress the
+        // font, or the label would become invisible rather than merely unboxed.
+        Assert.Equal(0x000000, style.TextRgb);
+    }
+
+    /// <summary>
+    /// The same suppression must not leak onto the kinds that legitimately carry a
+    /// fill and a stroke.
+    /// </summary>
+    [Fact]
+    public void A_body_rectangle_still_reports_its_fill_and_stroke()
+    {
+        OfficeShapeStyle style = OfficeStyleMapper.Map(
+            RectangleRequest(
+                fill: ColourHex.Parse("#92D050"),
+                stroke: ColourHex.Parse("#548235"),
+                width: 0.75));
+
+        Assert.True(style.FillVisible);
+        Assert.Equal(0x50D092, style.FillRgb);
+        Assert.True(style.LineVisible);
+        Assert.Equal(0x358254, style.LineRgb);
+    }
+
     private static OfficeShapeRequest LabelRequest(ColourHex? textColour) =>
         new(
             "row-1:label",

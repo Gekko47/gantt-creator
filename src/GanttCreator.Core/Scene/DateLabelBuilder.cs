@@ -29,6 +29,11 @@ namespace GanttCreator.Core.Scene;
 /// "collision with the description label" rule could never fire and overlapping
 /// labels would be emitted rather than resolved.
 /// </param>
+/// <param name="LaneOrder">
+/// The owning row's lane, so ADR-0033 D2's stack-sibling exemption can be applied to
+/// this row's own boxes as well as to the occupants passed in.
+/// </param>
+/// <param name="StackIndex">The owning row's visual slot within its lane.</param>
 public sealed record DateLabelRequest(
     GanttEvent Event,
     RectD VisibleBounds,
@@ -41,7 +46,9 @@ public sealed record DateLabelRequest(
     bool ShowFinish = true,
     GanttLabelPosition? StartPosition = null,
     GanttLabelPosition? FinishPosition = null,
-    IReadOnlyList<RectD>? Occupants = null
+    IReadOnlyList<LabelOccupant>? Occupants = null,
+    int? LaneOrder = null,
+    int? StackIndex = null
 );
 
 /// <summary>The reason a date-label build was refused.</summary>
@@ -188,7 +195,7 @@ public static class DateLabelBuilder
         // start label this builder places then blocks the finish label, so the
         // two dates of one row are planned against each other rather than each
         // being planned in isolation and overlapping.
-        List<RectD> occupied = [.. request.Occupants ?? []];
+        List<LabelOccupant> occupied = [.. request.Occupants ?? []];
         List<SceneWarning> warnings = [];
 
         DateLabelRefusal? refusal = null;
@@ -220,7 +227,7 @@ public static class DateLabelBuilder
         string role,
         GanttLabelPosition? explicitPosition,
         bool clipped,
-        List<RectD> occupied,
+        List<LabelOccupant> occupied,
         List<SceneText> emitted,
         List<string> suppressed,
         List<SceneWarning> warnings)
@@ -243,6 +250,8 @@ public static class DateLabelBuilder
                 request.VisibleBounds,
                 request.TextStyle,
                 request.TextMetrics,
+                LaneOrder: request.LaneOrder,
+                StackIndex: request.StackIndex,
                 Role: role),
             request.Metrics,
             occupied);
@@ -258,7 +267,7 @@ public static class DateLabelBuilder
             {
                 // Register the placed box so the finish label is planned against
                 // the start label rather than overlapping it.
-                occupied.Add(placed);
+                occupied.Add(new LabelOccupant(placed, request.LaneOrder, request.StackIndex));
             }
 
             return null;
@@ -301,7 +310,7 @@ public static class DateLabelBuilder
             // planned as if the start date had never been drawn, and the two
             // could land on the same box -- the exact overlap the occupant list
             // exists to prevent.
-            occupied.Add(fallback.TextBounds);
+            occupied.Add(new LabelOccupant(fallback.TextBounds, request.LaneOrder, request.StackIndex));
             return null;
         }
 
@@ -349,10 +358,12 @@ public static class DateLabelBuilder
     {
         if (!request.TextMetrics.TryMeasure(text, out TextMeasurement? measured) || measured is null)
         {
-            measured = new TextMeasurement(text.Length * 4.0, request.Metrics.LabelHeightPt);
+            measured = new TextMeasurement(text.Length * 4.0, request.Metrics.RowHeightPt);
         }
 
-        var height = request.Metrics.LabelHeightPt;
+        // One row tall, matching LabelPlanner's box, so the two paths cannot disagree
+        // about the height of a date label (owner ruling).
+        var height = request.Metrics.RowHeightPt;
         var gap = request.Metrics.LabelGapPt;
         RectD visible = request.VisibleBounds;
         RectD chart = request.Metrics.ChartBounds;

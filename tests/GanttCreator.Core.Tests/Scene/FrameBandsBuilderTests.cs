@@ -180,6 +180,62 @@ public sealed class FrameBandsBuilderTests
             $"Year band ({geometry.YearBounds.Y}) must sit above the period band ({geometry.PeriodBounds.Y}).");
     }
 
+    /// <summary>
+    /// The emitted year and period header PRIMITIVES sit where the returned geometry
+    /// says they do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the assertion the inversion was missing. The sibling test above checks
+    /// that <c>geometry.YearBounds</c> is above <c>geometry.PeriodBounds</c>, and it
+    /// passed throughout - because <c>TryBuild</c> built that geometry correctly. But
+    /// <c>AddHeaders</c> recomputed both bands from the plot's top edge and the two
+    /// band heights, in the opposite order, so the primitives that were actually drawn
+    /// were mirrored relative to the geometry the same method returned. Checking the
+    /// geometry alone therefore could never see the defect.
+    /// </para>
+    /// <para>
+    /// The live symptom was month labels in the upper row and the year in the lower
+    /// one, which is entity guide §5/§6 inverted on screen.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_emitted_header_primitives_agree_with_the_returned_geometry()
+    {
+        FrameBandsRequest request = CreateRequest();
+        FrameBandsCreationOutcome outcome = Build(request);
+
+        Assert.True(outcome.Succeeded);
+        ChartFrameGeometry geometry = outcome.Result!.Geometry;
+
+        SceneRect yearBand = Assert.Single(
+            outcome.Result.Primitives.OfType<SceneRect>(),
+            rect => rect.PrimitiveId.StartsWith("chart:year:", StringComparison.Ordinal));
+
+        // One rectangle per period, so there is more than one; every one of them must
+        // share the period band's vertical placement.
+        SceneRect[] periodBands =
+        [
+            .. outcome.Result.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(periodBands);
+
+        // Vertical placement and height come from the geometry; only the horizontal
+        // extent differs per band, so X and Width are deliberately not compared.
+        Assert.Equal(geometry.YearBounds.Y, yearBand.Bounds.Y, precision: 6);
+        Assert.Equal(geometry.YearBounds.Height, yearBand.Bounds.Height, precision: 6);
+        Assert.All(periodBands, band => Assert.Equal(geometry.PeriodBounds.Y, band.Bounds.Y, precision: 6));
+        Assert.All(periodBands, band => Assert.Equal(geometry.PeriodBounds.Height, band.Bounds.Height, precision: 6));
+
+        // The relationship itself, on the drawn primitives rather than the geometry.
+        Assert.True(
+            yearBand.Bounds.Y < periodBands[0].Bounds.Y,
+            $"The drawn year band ({yearBand.Bounds.Y}) must sit above the drawn period band ({periodBands[0].Bounds.Y}).");
+        Assert.All(periodBands, band => Assert.Equal(request.PlotBounds.Top, band.Bounds.Bottom, precision: 6));
+    }
+
     [Fact]
     public void Builds_exact_bounds_and_chart_owned_primitive_layers()
     {

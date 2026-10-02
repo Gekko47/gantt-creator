@@ -191,8 +191,21 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the gap between a shape bound and an external label.</summary>
     public double LabelGapPt { get; init; }
 
-    /// <summary>Gets the one-line label box height.</summary>
-    public double LabelHeightPt { get; init; }
+    /// <summary>
+    /// Gets the label box height, which is one worksheet row (owner ruling).
+    /// </summary>
+    /// <remarks>
+    /// This was <c>LabelHeightPt</c>, a 10pt single-line height drawn from its own
+    /// catalogue token, inside an 18pt row - so the label box was shorter than the
+    /// row it belonged to and the text sat slightly above the bar's centre. The box
+    /// is now the row height, and the <c>LabelHeightPt</c> token no longer feeds it.
+    /// The default is the code-owned <c>GanttRowHeightPt</c> catalogue value rather
+    /// than zero, for the same reason <see cref="MaximumExternalLabelWidthPt"/> is
+    /// seeded: a zero height would make every label box degenerate, and the planner
+    /// accepts zero as valid rather than refusing it.
+    /// </remarks>
+    public double RowHeightPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "GanttRowHeightPt").DefaultValue;
 
     /// <summary>
     /// Gets the maximum width of an external label, transcribed from the
@@ -744,9 +757,21 @@ public static class SceneBuilder
         if (request.Panel is { } panelTheme)
         {
             // Section 4 fixes the header band's bottom edge to the period header's
-            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
-            // panel builder cannot know the plot bounds, so it is supplied here and
-            // SceneBuilderTests asserts the emitted bottom equals this value.
+            // bottom. The period band sits DIRECTLY above the plot (entity guide
+            // §6: "one clipped cell per period below the year band"), so its bottom
+            // is the plot's own top edge.
+            //
+            // This was `PlotBounds.Y - YearBandHeightPt`, which is only correct while
+            // the YEAR band is the one adjacent to the plot. R3.5 built the bands the
+            // other way round, and FrameBandsBuilder's own AddHeaders contradicted
+            // even that - so this expression, the emitted primitives, and the
+            // returned ChartFrameGeometry were three different answers to one
+            // question. It now reads the plot's top directly, which is correct under
+            // the ordering the geometry itself publishes and needs no band height at
+            // all, so a future band-height change cannot silently break it.
+            //
+            // The panel builder cannot know the plot bounds, so they are supplied
+            // here and SceneBuilderTests asserts the emitted bottom equals this value.
             //
             // Rows come from the source-row projection, not from lane placements: a
             // Splitter, Spacer, Delineator, or hidden row is a row in the table §3
@@ -766,7 +791,7 @@ public static class SceneBuilder
                     request.Grid!,
                     projected.Rows,
                     plotBounds,
-                    plotBounds.Y - request.YearBandHeightPt,
+                    plotBounds.Y,
                     panelTheme));
 
             // A panel refusal must not be dropped: an empty panel would read as a
@@ -1000,10 +1025,10 @@ public static class SceneBuilder
             plotBounds,
             chartBounds,
             request.LabelGapPt,
-            request.LabelHeightPt,
+            request.RowHeightPt,
             request.MaximumExternalLabelWidthPt);
 
-        List<RectD> occupants = [];
+        List<LabelOccupant> occupants = [];
 
         // OrderBy is a stable sort, so the placement order the lane layout already
         // fixed (lane, stack, subtype, sort order, stable ID) survives within one
@@ -1026,7 +1051,7 @@ public static class SceneBuilder
             // but the free-space measure is one-dimensional, and without this filter a
             // label far to the right of another lane's bar would shrink this row's
             // measured gap and truncate or suppress a label that has room.
-            List<RectD> relevant = VerticalBand(occupants, shapeBounds);
+            List<LabelOccupant> relevant = VerticalBand(occupants, shapeBounds);
 
             // The inside label carries the row's own resolved text colour, so a
             // delay event's label is DelayText over its red body. A row whose style
@@ -1065,7 +1090,16 @@ public static class SceneBuilder
                 if (described.Primitive is { } descriptionText && described.Bounds is { } descriptionBounds)
                 {
                     primitives.Add(descriptionText);
-                    occupants.Add(descriptionBounds);
+
+                    // The lane and stack travel with the box, because ADR-0033 D2's
+                    // exemption can only recognise a stack sibling from them. Recorded
+                    // here rather than inferred later, so the identity is the one the
+                    // placement actually used.
+                    occupants.Add(
+                        new LabelOccupant(
+                            descriptionBounds,
+                            placement.LaneOrder,
+                            placement.EffectiveStackIndex));
                 }
             }
 
@@ -1098,7 +1132,9 @@ public static class SceneBuilder
                     request.Metrics!,
                     request.DateFormat,
                     outsideLabelStyle,
-                    Occupants: VerticalBand(occupants, shapeBounds)));
+                    Occupants: VerticalBand(occupants, shapeBounds),
+                    LaneOrder: placement.LaneOrder,
+                    StackIndex: placement.EffectiveStackIndex));
             if (dates.Result is not { } planned)
             {
                 // A refused date label is a broken dependency, not a placement
@@ -1116,7 +1152,12 @@ public static class SceneBuilder
             warnings.AddRange(planned.Warnings);
             foreach (SceneText dateLabel in planned.Primitives)
             {
-                occupants.Add(dateLabel.TextBounds);
+                // Same identity as the description label above, for the same reason.
+                occupants.Add(
+                    new LabelOccupant(
+                        dateLabel.TextBounds,
+                        placement.LaneOrder,
+                        placement.EffectiveStackIndex));
             }
         }
     }
@@ -1158,18 +1199,18 @@ public static class SceneBuilder
     /// <param name="occupants">Every label box placed so far, in any lane.</param>
     /// <param name="band">The row's own shape bounds.</param>
     /// <returns>The overlapping subset; the same list instance when all of them do.</returns>
-    private static List<RectD> VerticalBand(List<RectD> occupants, RectD band)
+    private static List<LabelOccupant> VerticalBand(List<LabelOccupant> occupants, RectD band)
     {
         // `skipped` is tracked separately from `relevant`: when the *first* occupant
         // is filtered out there is nothing to copy yet, so a null `relevant` alone
         // would mean "keep everything" and silently return the unfiltered list.
         var skipped = false;
-        List<RectD>? relevant = null;
+        List<LabelOccupant>? relevant = null;
         for (var i = 0; i < occupants.Count; i++)
         {
-            RectD occupant = occupants[i];
-            if (occupant.Bottom <= band.Top + GeometryMath.Epsilon
-                || occupant.Top >= band.Bottom - GeometryMath.Epsilon)
+            LabelOccupant occupant = occupants[i];
+            if (occupant.Bounds.Bottom <= band.Top + GeometryMath.Epsilon
+                || occupant.Bounds.Top >= band.Bottom - GeometryMath.Epsilon)
             {
                 skipped = true;
                 continue;

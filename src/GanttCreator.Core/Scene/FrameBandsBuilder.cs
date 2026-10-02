@@ -184,7 +184,7 @@ public static class FrameBandsBuilder
         ];
         List<SceneWarning> warnings = [];
         AddBands(primitives, request, sequence);
-        AddHeaders(primitives, request, sequence);
+        AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
         AddGrid(primitives, request, sequence);
         AddOuterFrame(primitives, request, chartBounds);
@@ -218,13 +218,53 @@ public static class FrameBandsBuilder
         }
     }
 
-    private static void AddHeaders(List<ScenePrimitive> primitives, FrameBandsRequest request, BandSequence sequence)
+    /// <summary>
+    /// Emits the year and period header bands, taking each band's VERTICAL extent
+    /// from the already-resolved <see cref="ChartFrameGeometry"/>.
+    /// </summary>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="request">The frame/band request.</param>
+    /// <param name="sequence">The resolved band sequence.</param>
+    /// <param name="geometry">
+    /// The resolved geometry, whose <see cref="ChartFrameGeometry.YearBounds"/> and
+    /// <see cref="ChartFrameGeometry.PeriodBounds"/> are the single authority for
+    /// where each band sits.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// This method previously recomputed both bands from
+    /// <c>PlotBounds.Y</c> and the two band heights, and it computed them in the
+    /// OPPOSITE order to <c>TryBuild</c>: it put the year band directly above the
+    /// plot and the period band above that, while <c>TryBuild</c> puts the period
+    /// band directly above the plot and the year band above it. So the
+    /// <see cref="ChartFrameGeometry"/> this method's own caller returned described
+    /// one arrangement and the primitives it emitted drew the other.
+    /// </para>
+    /// <para>
+    /// The live symptom was entity guide sections 5 and 6 inverted on screen - the
+    /// month labels sat in the upper row and the year in the lower one - and nothing
+    /// caught it because the two computations each looked locally correct. It was
+    /// invisible in the golden fixtures, which build from Core with their own band
+    /// heights, and appeared only once the bands were positioned against real
+    /// measured rows.
+    /// </para>
+    /// <para>
+    /// Consuming the geometry makes the two incapable of disagreeing. The horizontal
+    /// extents still come from the sequence, because each band is one rectangle PER
+    /// year or per period; only the shared vertical placement is taken from here.
+    /// </para>
+    /// </remarks>
+    private static void AddHeaders(
+        List<ScenePrimitive> primitives,
+        FrameBandsRequest request,
+        BandSequence sequence,
+        ChartFrameGeometry geometry)
     {
         for (var index = 0; index < sequence.Years.Count; index++)
         {
             BandInterval year = sequence.Years[index];
             var id = $"chart:year:{year.Start.Year}";
-            RectD bounds = new(year.Left, request.PlotBounds.Y - request.YearBandHeightPt, year.Width, request.YearBandHeightPt);
+            RectD bounds = new(year.Left, geometry.YearBounds.Y, year.Width, geometry.YearBounds.Height);
             primitives.Add(
                 new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
             );
@@ -257,9 +297,9 @@ public static class FrameBandsBuilder
             var id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
             RectD bounds = new(
                 period.Left,
-                request.PlotBounds.Y - request.YearBandHeightPt - request.PeriodBandHeightPt,
+                geometry.PeriodBounds.Y,
                 period.Width,
-                request.PeriodBandHeightPt
+                geometry.PeriodBounds.Height
             );
             primitives.Add(new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.PeriodHeader));
             if (period.ShowLabel)

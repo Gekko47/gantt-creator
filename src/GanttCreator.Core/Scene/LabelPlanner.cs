@@ -1,5 +1,71 @@
 namespace GanttCreator.Core.Scene;
 
+/// <summary>
+/// One already-placed box that can block a candidate label, with the lane and stack
+/// it belongs to.
+/// </summary>
+/// <param name="Bounds">The occupied rectangle.</param>
+/// <param name="LaneOrder">The lane the occupant's row sits in, when known.</param>
+/// <param name="StackIndex">The occupant's visual slot within that lane, when known.</param>
+/// <remarks>
+/// <para>
+/// This was a bare <see cref="RectD"/> list, which made a label unable to tell
+/// <em>why</em> a box was in its way. The stack exemption needs that distinction:
+/// two events stacked in one lane are a deliberate layout, and their label boxes
+/// necessarily overlap once the box is a full row tall, so treating them as a
+/// collision truncated both to an ellipsis (ADR-0033 D2).
+/// </para>
+/// <para>
+/// Both identity members are optional so a caller that has no lane layout - a
+/// delineator group, a date label's internal occupancy - keeps working unchanged.
+/// An occupant with an unknown lane or stack is never exempt, which is the
+/// conservative direction: an unidentified box still blocks.
+/// </para>
+/// </remarks>
+public sealed record LabelOccupant(RectD Bounds, int? LaneOrder = null, int? StackIndex = null)
+{
+    /// <summary>
+    /// Treats a bare rectangle as an occupant with no lane or stack identity.
+    /// </summary>
+    /// <param name="bounds">The occupied rectangle.</param>
+    /// <remarks>
+    /// A rectangle carries no identity, so it can never be a stack sibling and
+    /// therefore always blocks. The conversion exists so callers that genuinely have
+    /// no lane layout - and the many tests that pass a bare box to mean "something is
+    /// in the way" - read naturally instead of wrapping every rectangle by hand.
+    /// </remarks>
+    public static implicit operator LabelOccupant(RectD bounds) => FromRectD(bounds);
+
+    /// <summary>
+    /// Creates an occupant from a bare rectangle, carrying no lane or stack identity.
+    /// </summary>
+    /// <param name="bounds">The occupied rectangle.</param>
+    /// <returns>An occupant that always blocks.</returns>
+    /// <remarks>
+    /// The named alternate to the implicit conversion, required by CA2225. An
+    /// occupant built this way can never be a stack sibling, so it always blocks -
+    /// the conservative direction for a box whose origin is unknown.
+    /// </remarks>
+    public static LabelOccupant FromRectD(RectD bounds) => new(bounds);
+    /// <summary>
+    /// Determines whether this occupant is a stack sibling of the given placement and
+    /// is therefore exempt from blocking it (ADR-0033 D2).
+    /// </summary>
+    /// <param name="laneOrder">The candidate's lane ordering value.</param>
+    /// <param name="stackIndex">The candidate's stack ordering value.</param>
+    /// <returns>
+    /// <see langword="true"/> only when both sides name the same lane and
+    /// <em>different</em> slots. A same-slot occupant is a genuine collision and
+    /// still blocks.
+    /// </returns>
+    public bool IsStackSiblingOf(int? laneOrder, int? stackIndex) =>
+        LaneOrder is { } lane
+        && laneOrder == lane
+        && StackIndex is { } stack
+        && stackIndex is { } candidate
+        && stack != candidate;
+}
+
 /// <summary>One label placement request.</summary>
 /// <param name="Event">The validated event owning the label.</param>
 /// <param name="Text">The label text; blank produces no label.</param>
@@ -48,13 +114,17 @@ public sealed record LabelRequest(
 /// <param name="PlotBounds">The visible plot bounds; they bound the free space.</param>
 /// <param name="ChartBounds">The chart bounds enclosing panels, headers, and plot.</param>
 /// <param name="LabelGapPt">The gap between a shape bound and an external label.</param>
-/// <param name="LabelHeightPt">The one-line label box height.</param>
+/// <param name="RowHeightPt">
+/// The height of the label box, which is one worksheet row (owner ruling). It was
+/// <c>LabelHeightPt</c>, a 10pt single-line height, which produced a box shorter
+/// than the 18pt row it sat in.
+/// </param>
 /// <param name="MaximumExternalLabelWidthPt">The maximum width of an external label.</param>
 public sealed record LabelMetrics(
     RectD PlotBounds,
     RectD ChartBounds,
     double LabelGapPt,
-    double LabelHeightPt,
+    double RowHeightPt,
     double MaximumExternalLabelWidthPt
 );
 
@@ -171,7 +241,7 @@ public static class LabelPlanner
     /// may occupy its own parent shape and ignores that one entry.
     /// </param>
     /// <returns>A typed result or refusal.</returns>
-    public static LabelPlanCreationOutcome TryPlan(LabelRequest? request, LabelMetrics? metrics, IReadOnlyList<RectD>? occupants = null)
+    public static LabelPlanCreationOutcome TryPlan(LabelRequest? request, LabelMetrics? metrics, IReadOnlyList<LabelOccupant>? occupants = null)
     {
         if (request is null)
         {
@@ -232,7 +302,7 @@ public static class LabelPlanner
 
         _ = measured;
         GanttEvent @event = request.Event;
-        IReadOnlyList<RectD> blocked = occupants ?? [];
+        IReadOnlyList<LabelOccupant> blocked = occupants ?? [];
         var isDelay = @event.Type == GanttEntityType.DelayEvent;
         // §20/ADR-0015 D2: a milestone's Auto order is not the span order, so the
         // cascade is selected from the entity kind rather than assumed.
@@ -483,15 +553,33 @@ public static class LabelPlanner
 
         bool Blocked(RectD candidate, GanttLabelPosition position)
         {
-            foreach (RectD occupant in blocked)
+            foreach (LabelOccupant occupant in blocked)
             {
                 // An Inside label may occupy its own parent rectangle.
-                if (position == GanttLabelPosition.Inside && SameRect(occupant, request.ShapeBounds))
+                if (position == GanttLabelPosition.Inside && SameRect(occupant.Bounds, request.ShapeBounds))
                 {
                     continue;
                 }
 
-                if (candidate.IntersectsWith(occupant))
+                // ADR-0033 D2: a stack sibling is not a collision. Two events in one
+                // lane occupy DIFFERENT vertical slots of the same row, so their
+                // labels are drawn side by side by design; the boxes overlap only
+                // because a label box is now a full row tall and centred, which is the
+                // owner's ruling rather than a defect. Treating that overlap as a
+                // collision sent both through the ADR-0015 widest-gap fallback and
+                // ellipsised them to nothing - which is what a stacked lane looked
+                // like on screen.
+                //
+                // The exemption is deliberately narrow. It needs BOTH a matching lane
+                // and a DIFFERENT stack index, so a same-slot collision, a
+                // cross-lane neighbour, and any occupant whose lane or stack is
+                // unknown all still block exactly as before.
+                if (occupant.IsStackSiblingOf(request.LaneOrder, request.StackIndex))
+                {
+                    continue;
+                }
+
+                if (candidate.IntersectsWith(occupant.Bounds))
                 {
                     return true;
                 }
@@ -569,7 +657,7 @@ public static class LabelPlanner
         GanttLabelPosition position,
         RectD shape,
         LabelMetrics metrics,
-        IReadOnlyList<RectD> blocked,
+        IReadOnlyList<LabelOccupant> blocked,
         out RectD bounds,
         out double freeWidth
     )
@@ -577,10 +665,15 @@ public static class LabelPlanner
         bounds = default;
         freeWidth = 0;
 
-        // Every candidate is vertically centred on the shape's own band, and the
-        // box height is the one-line label height.
-        var top = shape.Top + ((shape.Height - metrics.LabelHeightPt) / 2);
-        var height = metrics.LabelHeightPt;
+        // The box is one row tall and vertically centred on the shape's own band
+        // (owner ruling). It was a 10pt single-line box centred on an 8pt bar, so
+        // the text sat slightly high and the box was shorter than the row it
+        // belonged to. Centring on the SHAPE rather than the lane is deliberate and
+        // still correct: a bar, a milestone, and a critical overlay are each built
+        // centred on their own slot, so the shape's centre IS the row's centre, and
+        // a stacked event still centres on its own slot rather than the whole lane.
+        var top = shape.Top + ((shape.Height - metrics.RowHeightPt) / 2);
+        var height = metrics.RowHeightPt;
 
         switch (position)
         {
@@ -635,16 +728,16 @@ public static class LabelPlanner
     }
 
     /// <summary>Measures the free space running right from a left edge to the nearest obstruction.</summary>
-    private static double FreeRight(double left, RectD plot, IReadOnlyList<RectD> blocked)
+    private static double FreeRight(double left, RectD plot, IReadOnlyList<LabelOccupant> blocked)
     {
         var limit = plot.Right;
-        foreach (RectD occupant in blocked)
+        foreach (LabelOccupant occupant in blocked)
         {
             // Only an occupant that starts to the right of the candidate limits
             // it; anything else is irrelevant to this direction.
-            if (occupant.Left > left + GeometryMath.Epsilon)
+            if (occupant.Bounds.Left > left + GeometryMath.Epsilon)
             {
-                limit = Math.Min(limit, occupant.Left);
+                limit = Math.Min(limit, occupant.Bounds.Left);
             }
         }
 
@@ -662,14 +755,14 @@ public static class LabelPlanner
         && candidate.Bottom <= bounds.Bottom + GeometryMath.Epsilon;
 
     /// <summary>Measures the free space running left from a right edge to the nearest obstruction.</summary>
-    private static double FreeLeft(double right, RectD plot, IReadOnlyList<RectD> blocked)
+    private static double FreeLeft(double right, RectD plot, IReadOnlyList<LabelOccupant> blocked)
     {
         var limit = plot.Left;
-        foreach (RectD occupant in blocked)
+        foreach (LabelOccupant occupant in blocked)
         {
-            if (occupant.Right < right - GeometryMath.Epsilon)
+            if (occupant.Bounds.Right < right - GeometryMath.Epsilon)
             {
-                limit = Math.Max(limit, occupant.Right);
+                limit = Math.Max(limit, occupant.Bounds.Right);
             }
         }
 
@@ -689,7 +782,7 @@ public static class LabelPlanner
         IsFinite(metrics.PlotBounds)
         && IsFinite(metrics.ChartBounds)
         && IsFiniteNonNegative(metrics.LabelGapPt)
-        && IsFiniteNonNegative(metrics.LabelHeightPt)
+        && IsFiniteNonNegative(metrics.RowHeightPt)
         && IsFiniteNonNegative(metrics.MaximumExternalLabelWidthPt);
 
     private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;

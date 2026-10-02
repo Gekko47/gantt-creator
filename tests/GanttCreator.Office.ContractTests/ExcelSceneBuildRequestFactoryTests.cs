@@ -14,6 +14,21 @@ namespace GanttCreator.Office.ContractTests;
 /// </remarks>
 public class ExcelSceneBuildRequestFactoryTests
 {
+    /// <summary>
+    /// The managed worksheet row height this fixture measures, taken from the
+    /// code-owned catalogue rather than written as a literal.
+    /// </summary>
+    /// <remarks>
+    /// It was 15, which is shorter than the <c>GanttRowHeightPt</c> default of 18. A
+    /// label box is now one row tall, so an 18pt box inside a 15pt plot cannot be
+    /// contained by the chart bounds and every label was suppressed with
+    /// <c>LabelSuppressedNoSpace</c> - a fixture that measured a row height the
+    /// product never produces. Reading the token keeps the two in step: if the
+    /// catalogue row height changes, this fixture follows it.
+    /// </remarks>
+    private static readonly double _managedRowHeight =
+        GanttCatalogues.MetricDefault("GanttRowHeightPt");
+
     private static GanttEvent Event(DateOnly start, DateOnly finish) =>
         new(
             RowNumber: 1,
@@ -44,8 +59,8 @@ public class ExcelSceneBuildRequestFactoryTests
         double[]? rowHeightsPt = null) =>
         PanelCellGrid.TryCreate(
             [new PanelColumn("Id", widthPt)],
-            rowHeightsPt ?? [15.0],
-            15,
+            rowHeightsPt ?? [_managedRowHeight],
+            _managedRowHeight,
             ["Id"],
             originTopPt).Grid!;
 
@@ -192,6 +207,19 @@ public class ExcelSceneBuildRequestFactoryTests
             grid);
     }
 
+    /// <summary>
+    /// Builds a request over one span-dated event, for the plot-range assertions.
+    /// </summary>
+    /// <param name="start">The event's start date.</param>
+    /// <param name="finish">The event's finish date; defaults to <paramref name="start"/>.</param>
+    /// <returns>The factory outcome.</returns>
+    private static SceneBuildRequestOutcome CreateForRange(DateOnly start, DateOnly? finish = null) =>
+        new ExcelSceneBuildRequestFactory(Metrics()).Create(
+            [Event(start, finish ?? start)],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid());
+
     [Fact]
     public void The_plot_top_is_the_first_body_rows_measured_top()
     {
@@ -282,6 +310,87 @@ public class ExcelSceneBuildRequestFactoryTests
     /// would leave an unreadable plot, so "the page no longer bounds it" cannot be
     /// read as "the page no longer constrains anything".
     /// </remarks>
+    /// <summary>
+    /// The plot extent is the whole month containing the padded earliest and latest
+    /// dates (owner ruling, 2026-10-02).
+    /// </summary>
+    /// <remarks>
+    /// Both cases were stated by the owner and they pin the ORDER of the two steps,
+    /// because padding-then-snap and snap-then-pad disagree about the 10 Jan case:
+    /// <list type="bullet">
+    /// <item>10 Jan - 3 = 7 Jan, still inside January, so it snaps back to 1 Jan.</item>
+    /// <item>3 Jan - 3 = 31 Dec, which is inside December, so it snaps to 1 Dec -
+    /// a whole month further out than 1 Jan.</item>
+    /// </list>
+    /// Snapping first and then padding would instead give 27 Dec for the first case,
+    /// which is exactly the day-padded edge this change exists to remove.
+    /// </remarks>
+    [Theory]
+    [InlineData(2025, 1, 10, 2025, 1, 1)]   // mid-month: the pad is absorbed by the snap
+    [InlineData(2025, 1, 3, 2024, 12, 1)]   // near the start: the pad escapes a whole month
+    [InlineData(2025, 1, 1, 2024, 12, 1)]   // exactly on the boundary
+    public void The_plot_starts_on_the_first_day_of_the_month_of_the_padded_earliest_date(
+        int year,
+        int month,
+        int day,
+        int expectedYear,
+        int expectedMonth,
+        int expectedDay)
+    {
+        SceneBuildRequestOutcome outcome = CreateForRange(new DateOnly(year, month, day));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(
+            new DateOnly(expectedYear, expectedMonth, expectedDay),
+            outcome.Request!.PlotStart);
+    }
+
+    /// <summary>
+    /// The plot ends on the last day of the month containing the padded latest date,
+    /// which is what stops a bar being cut off mid-month at the right edge.
+    /// </summary>
+    [Theory]
+    [InlineData(2025, 8, 10, 2025, 8, 31)]  // a 31-day month
+    [InlineData(2025, 2, 10, 2025, 2, 28)]  // a non-leap February
+    [InlineData(2024, 2, 10, 2024, 2, 29)]  // a leap February
+    [InlineData(2025, 12, 10, 2025, 12, 31)] // the year boundary
+    public void The_plot_ends_on_the_last_day_of_the_month_of_the_padded_latest_date(
+        int year,
+        int month,
+        int day,
+        int expectedYear,
+        int expectedMonth,
+        int expectedDay)
+    {
+        SceneBuildRequestOutcome outcome = CreateForRange(new DateOnly(year, month, day));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(
+            new DateOnly(expectedYear, expectedMonth, expectedDay),
+            outcome.Request!.PlotFinish);
+    }
+
+    /// <summary>
+    /// A range whose padding stays inside its own months is not widened past them.
+    /// </summary>
+    /// <remarks>
+    /// The dates are chosen so the 3-day pad does not cross a month boundary on
+    /// either side, which is the only way a range can be genuinely unchanged by the
+    /// snap. A range starting exactly on the 1st CANNOT be: 1 Jan pads to 29 Dec and
+    /// therefore escapes to 1 Dec, the same as the owner's 3 Jan case. That is a
+    /// consequence of padding-before-snapping and is asserted separately rather than
+    /// hidden here.
+    /// </remarks>
+    [Fact]
+    public void A_range_whose_padding_stays_inside_its_months_is_unchanged_by_the_snap()
+    {
+        SceneBuildRequestOutcome outcome = CreateForRange(new DateOnly(2025, 1, 10), new DateOnly(2025, 6, 25));
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(new DateOnly(2025, 1, 1), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2025, 6, 30), outcome.Request.PlotFinish);
+    }
+
     [Fact]
     public void An_over_wide_panel_is_still_refused()
     {
@@ -525,11 +634,18 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// The plot range covers the events themselves, padded, rather than a stored
+    /// The plot range covers whole months around the events rather than a stored
     /// range that could survive the data changing.
     /// </summary>
+    /// <remarks>
+    /// A whole March now renders from 1 Feb to 30 Apr: the 2-day pad carries 1 Mar
+    /// back into February and 31 Mar forward into April, and each is then snapped to
+    /// its own month's boundary. This asserted 28 Feb and 2 Apr, which were the raw
+    /// padded days - the exact day-granular edges the month snap removes, so a bar
+    /// could begin part-way through a month column.
+    /// </remarks>
     [Fact]
-    public void The_plot_range_is_derived_from_the_events_and_padded()
+    public void The_plot_range_is_derived_from_the_events_and_snapped_to_month_boundaries()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
@@ -540,8 +656,34 @@ public class ExcelSceneBuildRequestFactoryTests
             Grid());
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
-        Assert.Equal(new DateOnly(2024, 2, 28), outcome.Request!.PlotStart);
-        Assert.Equal(new DateOnly(2024, 4, 2), outcome.Request.PlotFinish);
+        Assert.Equal(new DateOnly(2024, 2, 1), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2024, 4, 30), outcome.Request.PlotFinish);
+    }
+
+    /// <summary>
+    /// The stored padding setting still widens the range when it crosses a month.
+    /// </summary>
+    /// <remarks>
+    /// This is what keeps <c>RangePaddingDays</c> meaningful now that the snap
+    /// dominates. With the default 3-day pad the start would be 1 March either way;
+    /// a 31-day pad carries 15 March back to 13 February and forward to 15 April, so
+    /// the range grows to whole February and April and the setting is observable
+    /// rather than dead.
+    /// </remarks>
+    [Fact]
+    public void The_stored_padding_setting_still_widens_the_range_across_a_month()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 15), new DateOnly(2024, 3, 15))],
+            new Dictionary<string, string> { ["RangePaddingDays"] = "31" },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(new DateOnly(2024, 2, 1), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2024, 4, 30), outcome.Request.PlotFinish);
     }
 
     /// <summary>
@@ -650,7 +792,9 @@ public class ExcelSceneBuildRequestFactoryTests
             ("MilestoneSizePt", request.MilestoneSizePt),
             ("DelineatorLinePt", request.DelineatorLinePt),
             ("LabelGapPt", request.LabelGapPt),
-            ("LabelHeightPt", request.LabelHeightPt),
+            // The label box is one worksheet row tall (owner ruling), so the member is
+            // fed by the row-height token rather than the retired LabelHeightPt.
+            ("GanttRowHeightPt", request.RowHeightPt),
             ("LanePaddingTopPt", request.LaneMetrics!.LanePaddingTopPt),
             ("LanePaddingBottomPt", request.LaneMetrics.LanePaddingBottomPt),
             ("StackGapPt", request.LaneMetrics.StackGapPt),
