@@ -132,7 +132,7 @@ public sealed record PanelCellGrid
         // OriginTopPt plus the heights of every row above n, which is the row's
         // absolute worksheet top edge; a zero-height row therefore contributes no
         // space and the rows below it share its top (ADR-0034).
-        double[] tops = new double[rowHeightsPt.Count];
+        var tops = new double[rowHeightsPt.Count];
         var running = originTopPt;
         for (var index = 0; index < rowHeightsPt.Count; index++)
         {
