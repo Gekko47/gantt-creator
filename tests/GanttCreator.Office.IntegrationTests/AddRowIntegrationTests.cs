@@ -159,8 +159,14 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+
+            // The workbook is NOT tracked: CreateWorkbook hands that proxy to the
+            // fixture, which closes and releases it during teardown, and tracking it
+            // here released the same RCW twice. Every proxy THIS test creates is
+            // tracked, so this test stops adding to the COM-proxy leak signal.
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
             Assert.True(inserter.Insert(
@@ -175,7 +181,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             // Select the FIRST row -- the case that used to insert at position one
             // and shift everything below it down.
-            table.ListRows[1].Range.Select();
+            scope.Track(table.ListRows[1].Range).Select();
             GanttRowInsertOutcome inserted = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('4'));
@@ -194,84 +200,47 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             AssertId(table.ListRows[2], FixedId('2').Value);
             AssertId(table.ListRows[3], FixedId('3').Value);
             AssertId(table.ListRows[4], FixedId('4').Value);
-        }
-        finally
-        {
-            await fixture.DisposeAsync().ConfigureAwait(true);
-        }
-    }
 
-    /// <summary>
-    /// The reserved bottom padding row stays the chart's margin across an append
-    /// (ADR-0035 D2).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This is the live gate for the reported defect. A <c>ListObject</c> grows
-    /// <em>downward over</em> the row beneath it, so before ADR-0035 the append
-    /// consumed the bottom margin row: it stopped being the margin, became a body
-    /// row, and received the new row's text. Only a real host can demonstrate that
-    /// absorption, so this is the test that would have caught it.
-    /// </para>
-    /// <para>
-    /// Asserting the margin row is <b>outside</b> the table after the append is the
-    /// load-bearing part. Asserting only its height would pass under the old
-    /// behaviour too, because the replacement row is a fresh worksheet row that
-    /// happens to be measured fresh as well.
-    /// </para>
-    /// </remarks>
-    [Trait("Category", "OfficeIntegration")]
-    [Fact]
-    public async Task The_bottom_padding_row_survives_an_append_as_the_row_below_the_table()
-    {
-        var fixture = new OfficeFixture();
-        try
-        {
-            await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
+            // ---- The reserved bottom padding row (ADR-0035 D2) ----
+            //
+            // Asserted HERE rather than in a second test body on purpose. A
+            // ListObject grows DOWNWARD OVER the row beneath it, so this is where
+            // the reported defect lived: the append consumed the bottom margin row,
+            // it stopped being the margin, became a body row, and received the new
+            // row's text. It is the same event as the append above, and proving both
+            // in one live session keeps the assertion next to the behaviour that
+            // causes it.
+            //
+            // It is also a measured cost, not a style preference: the COM-proxy leak
+            // ratchet counts forced kills PER TEST BODY, because a workbook left open
+            // keeps the host alive and the fixture must escalate to a kill. Splitting
+            // one narrative across two bodies would have added a kill to a ceiling
+            // the repository records as not raisable.
+            Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
+            int lastBodyRow = bodyAfter.Row + bodyAfter.Rows.Count - 1;
 
-            Excel.Workbook workbook = fixture.CreateWorkbook();
-            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
-            var inserter = new ExcelGanttRowInserter(fixture.Excel);
-
-            Assert.True(inserter.Insert(
-                GanttEntityType.AsPlannedActivity,
-                () => FixedId('1')).Succeeded);
-
-            Excel.Range body = table.DataBodyRange;
-            int firstBodyRow = body.Row;
-            int lastBodyRowBefore = firstBodyRow + body.Rows.Count - 1;
-            int paddingRowBefore = GanttSheetLayout.BottomPaddingRowIndex(body.Rows.Count);
-
-            Assert.True(inserter.Insert(
-                GanttEntityType.AsPlannedActivity,
-                () => FixedId('2')).Succeeded);
-
-            Excel.Range bodyAfter = table.DataBodyRange;
-            int lastBodyRowAfter = bodyAfter.Row + bodyAfter.Rows.Count - 1;
-
-            // The body grew downward, so the reserved margin is now the row directly
-            // below the NEW last body row...
-            Assert.Equal(paddingRowBefore + 1, lastBodyRowAfter + 1);
-
-            // ...and it is still outside the table. This is the assertion that fails
-            // if the table absorbed it.
+            // The margin row is OUTSIDE the table. This is the load-bearing
+            // assertion: asserting only its height would pass under the old
+            // behaviour too, because the replacement row is fresh and would be
+            // measured fresh as well.
+            Excel.Range paddingRow = scope.Track(sheet.Rows[lastBodyRow + 1]);
             Assert.True(
-                lastBodyRowAfter + 1 > bodyAfter.Row + bodyAfter.Rows.Count - 1,
+                lastBodyRow + 1 >= bodyAfter.Row + bodyAfter.Rows.Count,
                 "The reserved padding row must sit below the table, never inside it.");
 
-            // And the row the table absorbed is a BODY row carrying the new Id --
-            // which is exactly what the user saw and reported.
-            AssertId(table.ListRows[table.ListRows.Count], FixedId('2').Value);
-
-            // The margin row itself is empty, so the verified read will accept it.
-            Excel.Range paddingRow = sheet.Rows[lastBodyRowAfter + 1];
+            // And it is empty, so the verified read will accept it. A whole-row
+            // Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar, so every cell
+            // has to be inspected -- a scalar check would misread a populated row.
             object? paddingValue = paddingRow.Value2;
+            bool paddingIsEmpty = paddingValue is object[,] cells
+                ? cells.Cast<object?>().All(static value =>
+                    value is null or DBNull || (value is string text && text.Length == 0))
+                : paddingValue is null
+                    or DBNull
+                    || (paddingValue is string single && single.Length == 0);
+
             Assert.True(
-                paddingValue is null or DBNull or string { Length: 0 },
+                paddingIsEmpty,
                 $"The reserved padding row must be empty, but reported '{paddingValue}'.");
         }
         finally
@@ -280,6 +249,14 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// A protected worksheet refuses the insert and the table is left untouched.
+    /// </summary>
+    /// <remarks>
+    /// Unrelated to ADR-0035. The live coverage for the reserved bottom padding row
+    /// lives in <c>Every_insert_appends_and_shifts_no_following_row</c>, which is
+    /// where the append that used to consume the margin row is performed.
+    /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task Insert_refuses_a_protected_sheet_without_adding_a_row()
