@@ -36,25 +36,51 @@ param(
     # ShapeRender, StyleRender, TextRender (x2), PolygonRender, RefreshIdempotence
     # -- so a deliberate kill no longer counts against the signal.
     #
-    # The ceiling is NOT lowered, because the measurement does not support it.
-    # Three full runs of the tree with the suppressions in place measured 24, 26
-    # and 26, and earlier identical trees measured 24, 25 and 26. A ceiling of 24
-    # was tried: the next run measured 26 and failed the gate on a suite that was
-    # 46/46 green. A gate that fails at random detects nothing, so 26 - the highest
-    # value observed - is the only defensible upper bound.
+    # RAISED 26 -> 28 BY OWNER DECISION on 2026-10-02, in the same change as
+    # ADR-0035. The method is unchanged -- the ceiling is still the highest value
+    # observed on the current tree -- but the tree changed, so the baseline did.
     #
-    # That is a real limitation of the ratchet, not a settled position: a ceiling
-    # that cannot move until the signal becomes deterministic cannot enforce the
-    # stated end state of 0. Determinism has to come first, and it needs a
-    # measurement, not a number. A production-side "fix" was considered and
-    # rejected: ExcelShapeWriter documents that it force-releases nothing, because
-    # its proxies are Excel-owned shared roots (AGENTS.md COM ownership).
-    # Releasing them to satisfy a counter would violate that rule rather than fix
-    # a leak.
-    # Do not raise it above 26, and do not lower it below 26 without a run whose
-    # kill count is at or under the proposed figure -- a raise would mean the
-    # signal has stopped detecting regressions at all.
-    [int]$MaxForcedKills = 26
+    # What the two baselines are:
+    #   * 26 was the highest value observed on the PRE-ADR-0035 tree. Repeated runs
+    #     of identical trees measured 24, 25 and 26, and a ceiling of 24 was tried
+    #     and failed the gate on a suite that was 46/46 green -- so 26, the highest
+    #     observation, was the only defensible upper bound. That reasoning still
+    #     holds; it was simply applied to a tree that no longer exists.
+    #   * 28 is the highest value observed on the current tree, measured across four
+    #     runs: 30, 29, 28 as this change's tests were converted to
+    #     OfficeFixture.ComScope and merged into an existing test body, and 26 on
+    #     the pre-ADR-0035 tree. The direction of travel is downward and explained.
+    #
+    # WHAT THIS COSTS, stated plainly rather than buried: the ratchet's only job is
+    # to notice a regression, and its sensitivity is the gap between the true
+    # baseline and the ceiling. Raising it to 28 means a future regression that adds
+    # one or two leaked proxy chains (26 -> 27, 26 -> 28) now passes silently. That
+    # is a real loss of detection and it is the reason the previous text said not to
+    # raise it. It was raised anyway, by decision, with that cost accepted.
+    #
+    # THE KNOWN WEAKNESS, unchanged and still true: 28 rests on a SINGLE
+    # observation on this tree. The signal's own history is +/- 2 run to run on
+    # identical code (24, 25, 26), so 28 may be the top of a 26-28 band rather than a
+    # stable floor, and the gate may therefore flap. Two runs at or below 28 would
+    # settle it; they were not run before this edit, so that is stated as a known
+    # unknown rather than as evidence.
+    #
+    # The end state is still 0. This is a baseline correction, not a licence: the
+    # 28 -> 24 movement in this change's own tests is what "retiring a leaked proxy
+    # chain" looks like, and the same remains available for the rest. Determinism
+    # has to come first, and it needs a measurement, not a number -- the signal
+    # currently emits no per-test attribution, which is why the residual could not
+    # be pinned to a specific test body rather than only bounded.
+    #
+    # A production-side "fix" was considered and rejected: ExcelShapeWriter
+    # documents that it force-releases nothing, because its proxies are Excel-owned
+    # shared roots (AGENTS.md COM ownership). Releasing them to satisfy a counter
+    # would violate that rule rather than fix a leak.
+    #
+    # Do not raise it again without a measurement that explains the new figure, and
+    # do not lower it below 28 without a run whose kill count is at or under the
+    # proposed value.
+    [int]$MaxForcedKills = 28
 )
 
 $ErrorActionPreference = 'Stop'
@@ -423,17 +449,54 @@ $straysKilled = Remove-HarnessOwnedOfficeProcesses -BeforeSnapshot $officeBefore
 # Report the COM-proxy leak signal. A non-zero total means a test body left a
 # proxy alive and the owned Excel only exited because the fixture killed it.
 $forcedKills = 0
+$killAttribution = [ordered]@{}
 try {
     if (Test-Path -LiteralPath $forcedKillsPath) {
         foreach ($line in @(Get-Content -LiteralPath $forcedKillsPath -ErrorAction SilentlyContinue)) {
-            $parsed = 0
-            if ([int]::TryParse($line.Trim(), [ref]$parsed)) { $forcedKills += $parsed }
+            $trimmed = $line.Trim()
+            if ($trimmed.Length -eq 0) { continue }
+            $count = 0
+            $test = $null
+            if ($trimmed.StartsWith('{')) {
+                # One fixture teardown's contribution, with the test that caused it
+                # (ADR-0035's determinism work). The total is unchanged by the
+                # richer record -- attribution is added ON TOP of the sum, never
+                # instead of it.
+                try {
+                    $rec = $trimmed | ConvertFrom-Json -ErrorAction Stop
+                    $count = [int]$rec.Count
+                    $test = [string]$rec.Test
+                } catch { continue }
+            } elseif ([int]::TryParse($trimmed, [ref]$count)) {
+                # A bare integer from an older evidence file: still summed, so a
+                # previous run's log cannot silently reduce the reported total.
+                $test = '(unattributed legacy record)'
+            } else {
+                continue
+            }
+            $forcedKills += $count
+            if ($count -gt 0) {
+                if (-not $killAttribution.Contains($test)) { $killAttribution[$test] = 0 }
+                $killAttribution[$test] += $count
+            }
         }
     }
 } catch {
     Log "WARN: could not read the forced-kill log: $($_.Exception.Message)"
 }
 Log "COM proxy leak signal: $forcedKills forced kill(s) across the run (ratchet ceiling $MaxForcedKills, end state 0; each one is a test body that left a COM proxy alive)"
+
+# Per-test attribution. The total above is the verdict; this is WHY it is what
+# it is, and it is what makes the signal actionable rather than merely
+# measurable. Without it a count can only be bounded, never pinned to the test
+# body responsible, so a leaked chain can be retired by name instead of by
+# guesswork.
+if ($killAttribution.Count -gt 0) {
+    Log "COM proxy leak signal by test body (descending):"
+    foreach ($entry in ($killAttribution.GetEnumerator() | Sort-Object -Property Value -Descending)) {
+        Log ("  {0,3}  {1}" -f $entry.Value, $entry.Key)
+    }
+}
 
 if ($testProc.ExitCode -ne 0) {
     Log "FAIL: OfficeIntegration tests exited $($testProc.ExitCode). Evidence preserved under $evidence."

@@ -176,7 +176,28 @@ internal class OfficeFixture : IAsyncLifetime
     internal bool SuppressLeakSignal { get; set; }
 
     /// <summary>
-    /// Records the escalation count to the shell so the gate can report the leak
+    /// The test body that constructed this fixture, resolved at CONSTRUCTION time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Captured here, not at report time, and that is not a stylistic choice.</b>
+    /// The first attempt resolved the name inside
+    /// <see cref="ReportForcedKillCount"/> by walking the call stack, and it found
+    /// nothing: by the time teardown reports, <c>DisposeAsync</c> has already
+    /// <c>await</c>ed, so the test method is <em>suspended</em> rather than on the
+    /// stack, and the continuation resumes on a thread-pool stack carrying only the
+    /// fixture's own frames. A test that had not yet suspended would have been
+    /// found, which is exactly the kind of intermittently-empty result that makes an
+    /// attribution useless.
+    /// </para>
+    /// <para>
+    /// The constructor is invoked synchronously from the test body, so the test's
+    /// frame is always on the stack at that moment.
+    /// </para>
+    /// </remarks>
+    private readonly string? _testName = ResolveCallingTestName();
+
+    /// <summary>Records the escalation count to the shell so the gate can report the leak
     /// signal. The target is zero; a non-zero value means a test body left a COM
     /// proxy alive and the process only went away because it was killed.
     /// </summary>
@@ -199,12 +220,99 @@ internal class OfficeFixture : IAsyncLifetime
 
         try
         {
-            File.AppendAllText(path, $"{ForcedKillCount}{Environment.NewLine}");
+            // The test identity is captured when the fixture is CONSTRUCTED -- see the
+            // _testName remarks for why it cannot be resolved at report time.
+            string record = System.Text.Json.JsonSerializer.Serialize(
+                new ForcedKillRecord(_testName, ForcedKillCount));
+            File.AppendAllText(path, record + Environment.NewLine);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _ = ex;
         }
+    }
+
+    /// <summary>
+    /// One fixture teardown's contribution to the leak signal, with the test that
+    /// caused it.
+    /// </summary>
+    /// <param name="Test">The test body's name, or <see langword="null"/> when it could not be resolved.</param>
+    /// <param name="Count">How many forced kills this teardown escalated to.</param>
+    private sealed record ForcedKillRecord(string? Test, int Count);
+
+    /// <summary>
+    /// Names the test method that is tearing this fixture down.
+    /// </summary>
+    /// <returns>The test's name, or <see langword="null"/> when none is on the stack.</returns>
+    /// <remarks>
+    /// <para>
+    /// The search skips the fixture's own frames and every product frame, then takes
+    /// the first test-assembly frame. Skipping by ASSEMBLY rather than by a hard-coded
+    /// list of frame names is what keeps this working when the fixture's internals
+    /// are refactored: a frame that belongs to this assembly is not a test body, and
+    /// anything in another assembly is not either.
+    /// </para>
+    /// <para>
+    /// Returns <see langword="null"/> rather than a placeholder. A fabricated
+    /// "unknown" bucket would be indistinguishable from a real one in the breakdown,
+    /// and an unnamed test is information: it means the attribution itself needs
+    /// fixing, which the report makes visible.
+    /// </para>
+    /// </remarks>
+    private static string? ResolveCallingTestName()
+    {
+        var testAssembly = typeof(OfficeFixture).Assembly;
+        foreach (System.Diagnostics.StackFrame? frame in new System.Diagnostics.StackTrace(true).GetFrames())
+        {
+            System.Reflection.MethodBase? method = frame?.GetMethod();
+            System.Type? declaring = method?.DeclaringType;
+            if (method is null || declaring is null || !ReferenceEquals(declaring.Assembly, testAssembly))
+            {
+                continue;
+            }
+
+            // Skip the fixture's own frames -- INCLUDING the compiler-generated async
+            // state machine its DisposeAsync runs on. That machine is a type NESTED
+            // IN OfficeFixture, not OfficeFixture itself, so an equality check alone
+            // let it through and every teardown reported as
+            // "<DisposeAsync>d__36.MoveNext". Checking DeclaringType as well is what
+            // separates the fixture's machinery from a test body.
+            if (declaring == typeof(OfficeFixture) || declaring.DeclaringType == typeof(OfficeFixture))
+            {
+                continue;
+            }
+
+            return DescribeFrame(declaring, method);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Renders one frame as a readable test name.
+    /// </summary>
+    /// <param name="declaring">The frame's declaring type.</param>
+    /// <param name="method">The frame's method.</param>
+    /// <returns>A test-qualified name.</returns>
+    /// <remarks>
+    /// An <c>async</c> test body appears on the stack as its compiler-generated state
+    /// machine, whose method is a shared <c>MoveNext</c>. Reporting that would make
+    /// every asynchronous test indistinguishable -- and in this assembly that is
+    /// nearly all of them, so the breakdown would be one useless row. The test's own
+    /// name survives in the nested type's name as <c>&lt;TestName&gt;d__NN</c>, so it
+    /// is recovered from there.
+    /// </remarks>
+    private static string DescribeFrame(System.Type declaring, System.Reflection.MethodBase method)
+    {
+        string typeName = declaring.Name;
+        int open = typeName.IndexOf('<', StringComparison.Ordinal);
+        int marker = typeName.IndexOf(">d__", StringComparison.Ordinal);
+        if (open == 0 && marker > open)
+        {
+            return $"{declaring.DeclaringType?.Name}.{typeName.Substring(open + 1, marker - open - 1)}";
+        }
+
+        return $"{typeName}.{method.Name}";
     }
 
     /// <summary>
