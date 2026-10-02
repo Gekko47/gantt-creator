@@ -619,18 +619,15 @@ public class ExcelWorkbookInitialiser(
         try
         {
             _application.DisplayAlerts = false;
-            var tableCount = target.ListObjects.Count;
-            for (var index = 1; index <= tableCount; index++)
+
+            // Unhide before deleting: deleting the table does not unhide the
+            // worksheet column behind it, so restoring afterwards would find no
+            // table to read the columns from and would leave the user's engine
+            // columns hidden after a refused Initialise.
+            if (FindDataTable(target) is { } owned)
             {
-                ListObject table = GetTableAt(target.ListObjects, index);
-                if (string.Equals(
-                    table.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    table.Delete();
-                    break;
-                }
+                RestoreColumnVisibility(owned);
+                owned.Delete();
             }
         }
         catch (System.Runtime.InteropServices.COMException)
@@ -645,16 +642,103 @@ public class ExcelWorkbookInitialiser(
 
     /// <summary>
     /// Clears the header row content written by <see cref="WriteHeaderRow"/> on
-    /// <paramref name="target"/>. Used to roll back the header row when a later
-    /// mutation fails.
+    /// <paramref name="target"/> and unhides the columns it hid. Used to roll back the
+    /// header row when a later mutation fails.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
+    /// <remarks>
+    /// The hidden state is restored because hiding a column is a <em>worksheet</em>
+    /// change that outlives the table: deleting the table (see
+    /// <see cref="RollBackDataTable"/>) does not unhide the worksheet column behind it.
+    /// Rolling back the table and the header while leaving eleven engine columns hidden
+    /// would leave the user's sheet altered after a refused Initialise, which is
+    /// exactly the zero-mutation guarantee the refusals promise.
+    /// </remarks>
     private void RollBackHeaderRow(Worksheet target)
     {
         Excel.Range headerRange = GetHeaderRange(
             target,
             GanttTableSchema.Default.Columns.Count);
         headerRange.ClearContents();
+
+        // Best-effort: the table may already have been deleted by the preceding
+        // rollback, in which case RollBackDataTable restored the visibility already.
+        if (FindDataTable(target) is { } remaining)
+        {
+            RestoreColumnVisibility(remaining);
+        }
+    }
+
+    /// <summary>
+    /// Unhides every column of <paramref name="table"/>, undoing
+    /// <see cref="ApplyColumnPresentation"/>. Every column is restored to visible
+    /// because a schema column that is visible to the user must be visible, and one
+    /// hidden by the failed attempt is an artefact of that attempt rather than
+    /// something the user chose.
+    /// </summary>
+    /// <param name="table">The add-in-owned table whose columns were hidden.</param>
+    /// <remarks>
+    /// Takes the table rather than re-finding it: on the
+    /// <see cref="RollBackDataTable"/> path the table is deleted immediately after
+    /// this runs, so a second lookup would have nothing to find, and on the
+    /// <see cref="RollBackHeaderRow"/> path the table has already been deleted.
+    /// </remarks>
+    private void RestoreColumnVisibility(ListObject table)
+    {
+        // The table may already have been removed, or the host may refuse the read.
+        // Either way there is no add-in-owned visibility left to restore, and a
+        // rollback must not throw over a best-effort restore.
+        try
+        {
+            ListColumns listColumns = GetTableColumns(table);
+            var count = listColumns.Count;
+            for (var columnIndex = 1; columnIndex <= count; columnIndex++)
+            {
+                ListColumn column = GetColumnAt(listColumns, columnIndex);
+                Excel.Range columnRange = column.Range;
+                Excel.Range entireColumn = GetEntireColumn(columnRange);
+                if (ReadHiddenFlag(entireColumn))
+                {
+                    entireColumn.Hidden = false;
+                }
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // The table is gone or the host refused the read; there is no
+            // add-in-owned visibility left to restore.
+        }
+    }
+
+    /// <summary>
+    /// Finds the add-in's own table on <paramref name="target"/>, or
+    /// <see langword="null"/> when it is absent or already deleted.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <returns>The named table, or <see langword="null"/>.</returns>
+    private ListObject? FindDataTable(Worksheet target)
+    {
+        try
+        {
+            var tableCount = target.ListObjects.Count;
+            for (var index = 1; index <= tableCount; index++)
+            {
+                ListObject table = GetTableAt(target.ListObjects, index);
+                if (string.Equals(
+                    table.Name,
+                    GanttTableSchema.TableName,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return table;
+                }
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // The worksheet is gone; there is no table to find.
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -726,7 +810,89 @@ public class ExcelWorkbookInitialiser(
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
+        ApplyColumnPresentation(table);
     }
+
+    /// <summary>
+    /// Applies each column's <see cref="GanttColumnAccess"/> classification to the
+    /// live table: engine columns are hidden and every non-authoring column's cells
+    /// carry the locked format (R4.7C D1/D2, ADR-0029 D7/D8).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This runs on Initialise only. The acceptance test "un-hiding one and
+    /// refreshing restores it" is a <em>repair</em>, and repair on Refresh is
+    /// R4.8A's orchestration; wiring it here would give this adapter a second
+    /// trigger it does not own. What this row guarantees is that a freshly
+    /// initialised workbook is correct, and that the classification driving it is
+    /// the code-owned schema rather than a hand-written column list.
+    /// </para>
+    /// <para>
+    /// <b>Hidden, not just locked.</b> A cell's <c>Locked</c> flag has no effect
+    /// until the sheet is protected, and the add-in refuses a protected target
+    /// rather than protecting one (ADR-0008 D4). So <c>Locked</c> alone would
+    /// leave the engine columns fully visible on an ordinary sheet; hiding them
+    /// is what actually presents the table the product describes.
+    /// </para>
+    /// <para>
+    /// <b>Why the whole worksheet column is hidden.</b> Excel has no per-table
+    /// hidden flag: a ListObject column is hidden by hiding the worksheet column
+    /// behind it, which is what the Excel UI's own Hide command does. The
+    /// alternative, zero column width, leaves a visible sliver and breaks
+    /// print layout, so it is rejected.
+    /// </para>
+    /// </remarks>
+    private void ApplyColumnPresentation(ListObject table)
+    {
+        ListColumns columns = GetTableColumns(table);
+        IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
+        for (var index = 1; index <= schema.Count; index++)
+        {
+            ListColumn column = GetColumnAt(columns, index);
+            Excel.Range columnRange = column.Range;
+            columnRange.Locked = schema[index - 1].IsLocked;
+            Excel.Range entireColumn = GetEntireColumn(columnRange);
+
+            // `Range.Hidden` is declared `object` in this PIA (verified by reflection
+            // over the installed Microsoft.Office.Interop.Excel 14.0.1), so comparing it
+            // to a `bool` with `!=` boxed the right-hand side and compared references:
+            // always true, whatever the host actually reported. Every column was
+            // therefore rewritten on every Initialise, which marks the workbook dirty
+            // for a sheet that is already in the intended state. The value is unwrapped
+            // to a real `bool` first, so a column already carrying the schema's
+            // visibility is left alone.
+            var wanted = schema[index - 1].IsHidden;
+            if (ReadHiddenFlag(entireColumn) != wanted)
+            {
+                entireColumn.Hidden = wanted;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>Range.Hidden</c> as a <see cref="bool"/>.
+    /// </summary>
+    /// <param name="range">The worksheet column behind a table column.</param>
+    /// <returns>
+    /// The column's hidden state. A value the host does not report as a boolean reads
+    /// as <see langword="false"/>, which matches the ordinary visible-column default
+    /// and therefore causes the write that makes the state correct.
+    /// </returns>
+    /// <remarks>
+    /// The PIA types <c>Hidden</c> as <see cref="object"/>, so the value arrives boxed
+    /// and must be unwrapped before any comparison. An unrecognised or absent value
+    /// falls back to "not hidden" rather than being propagated: a column whose real
+    /// state is unknown is written, and a write is the safe direction because it makes
+    /// the column match the schema instead of leaving a possibly-wrong state alone.
+    /// </remarks>
+    private static bool ReadHiddenFlag(Excel.Range range) => range.Hidden switch
+    {
+        bool flag => flag,
+        null => false,
+        _ => bool.TryParse(
+            Convert.ToString(range.Hidden, CultureInfo.InvariantCulture),
+            out bool parsed) && parsed,
+    };
 
     /// <summary>
     /// Creates the configuration worksheet directly after the Gantt sheet,
@@ -748,48 +914,10 @@ public class ExcelWorkbookInitialiser(
     /// <param name="target">The Gantt worksheet.</param>
     private static void WritePlotAnchorName(Worksheet target)
     {
-        var anchorColumnIndex = GanttTableSchema.Default.Columns.Count + 1;
         Names names = target.Names;
         _ = names.Add(
             GanttWorkbookContract.PlotAnchorDefinedName,
-            BuildAnchorRefersTo(target.Name, anchorColumnIndex));
-    }
-
-    /// <summary>
-    /// Builds the <c>refersTo</c> string for the plot anchor:
-    /// <c>='&lt;escaped sheet name&gt;'!$&lt;column&gt;$1</c> in invariant
-    /// culture. Sheet names may contain apostrophes, so each is doubled
-    /// inside the quoted reference.
-    /// </summary>
-    /// <param name="sheetName">The final label of the Gantt worksheet.</param>
-    /// <param name="anchorColumnIndex">The one-based anchor column index.</param>
-    /// <returns>The <c>refersTo</c> string.</returns>
-    private static string BuildAnchorRefersTo(string sheetName, int anchorColumnIndex)
-    {
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"='{escaped}'!${ToA1Column(anchorColumnIndex)}$1");
-    }
-
-    /// <summary>
-    /// Converts a one-based column index to its A1-style letter sequence
-    /// (1 → A, 26 → Z, 27 → AA), culture-invariant.
-    /// </summary>
-    /// <param name="columnIndex">The one-based column index.</param>
-    /// <returns>The A1-style column letters.</returns>
-    private static string ToA1Column(int columnIndex)
-    {
-        System.Text.StringBuilder builder = new();
-        var remaining = columnIndex;
-        while (remaining > 0)
-        {
-            var digit = (remaining - 1) % 26;
-            _ = builder.Insert(0, (char)('A' + digit));
-            remaining = (remaining - 1) / 26;
-        }
-
-        return builder.ToString();
+            GanttSheetLayout.BuildPlotAnchorRefersTo(target.Name));
     }
 
     /// <summary>
@@ -839,5 +967,33 @@ public class ExcelWorkbookInitialiser(
     /// <param name="columnCount">The header column count.</param>
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
-        => target.Cells[1, 1].Resize[1, columnCount];
+        => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
+
+    /// <summary>
+    /// Returns the table's list-column collection. Test seam over the COM
+    /// parameterised <c>ListObject.ListColumns</c> collection, so contract tests
+    /// can supply columns without a host.
+    /// </summary>
+    /// <param name="table">The created data table.</param>
+    /// <returns>The table's list columns.</returns>
+    internal virtual ListColumns GetTableColumns(ListObject table) => table.ListColumns;
+
+    /// <summary>
+    /// Returns the list column at the one-based index. Test seam over the COM
+    /// parameterised <c>ListColumns.Item</c> property (see the type remarks).
+    /// </summary>
+    /// <param name="columns">The table's list columns.</param>
+    /// <param name="index">The one-based column index.</param>
+    /// <returns>The list column at the index.</returns>
+    internal virtual ListColumn GetColumnAt(ListColumns columns, int index)
+        => columns[index];
+
+    /// <summary>
+    /// Returns the whole worksheet column behind a range. Test seam over the
+    /// COM parameterised <c>Range.EntireColumn</c> property, which is where the
+    /// per-column hidden state actually lives.
+    /// </summary>
+    /// <param name="range">The column's range.</param>
+    /// <returns>The entire worksheet column.</returns>
+    internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
 }

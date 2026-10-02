@@ -25,10 +25,10 @@ public class EntityTypeCatalogTests
     ];
 
     private static readonly GanttLabelPosition[] s_spanLabels =
-        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside, GanttLabelPosition.Above, GanttLabelPosition.Below, GanttLabelPosition.None];
+        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside, GanttLabelPosition.None];
 
     private static readonly GanttLabelPosition[] s_milestoneLabels =
-        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Above, GanttLabelPosition.Below, GanttLabelPosition.None];
+        [GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.None];
 
     private static readonly GanttLabelPosition[] s_delineatorLabels =
         [GanttLabelPosition.Auto, GanttLabelPosition.TopLeft, GanttLabelPosition.TopRight, GanttLabelPosition.BottomLeft, GanttLabelPosition.BottomRight, GanttLabelPosition.None];
@@ -85,7 +85,7 @@ public class EntityTypeCatalogTests
             (GanttEntityType.AsBuiltActivity, "As-Built Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedActivity, "As-Planned Activity", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.BaselineActivity, "Baseline Activity", EntityKind.Span, EntityDateMode.StartFinish, "BaselineActivity", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
-            (GanttEntityType.CriticalInterval, "Critical Interval", EntityKind.Span, EntityDateMode.StartFinish, "CriticalInterval", EntityColourCapability.Stroke, false, [GanttLabelPosition.None]),
+            (GanttEntityType.CriticalInterval, "Critical Interval", EntityKind.Span, EntityDateMode.StartFinish, "CriticalInterval", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, [GanttLabelPosition.None]),
             (GanttEntityType.DelayEvent, "Delay Event", EntityKind.Span, EntityDateMode.StartFinish, "DelayEvent", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsBuiltProcurement, "As-Built Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedProcurement, "As-Planned Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),

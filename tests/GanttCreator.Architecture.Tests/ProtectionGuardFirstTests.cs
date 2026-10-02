@@ -70,6 +70,25 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelPlotAnchorRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelGanttRowIdentityRepairer.cs", "Repair"),
         new("src/GanttCreator.Office/ExcelShapeWriter.cs", "Create"),
+        // R4.7D: the two workspace-geometry writers. Both mutate the user's
+        // VISIBLE worksheet -- a row height and an outline level are user-facing
+        // data, not generated content -- so both are data mutations under
+        // ADR-0008 D4 and must consult the guard before their first write. The
+        // outline writer is listed at "Apply", its first mutating member, so the
+        // guard is reached before any outline-level write.
+        new("src/GanttCreator.Office/ExcelRowHeightNormaliser.cs", "Normalise"),
+        new("src/GanttCreator.Office/ExcelOutlineGroupWriter.cs", "Apply"),
+        // R4.7F: the Duration writer mutates the user's VISIBLE worksheet -- the
+        // engine-owned Duration column is user-facing table data, not generated
+        // content -- so it is a data mutation under ADR-0008 D4 and consults the
+        // guard before its single ranged write.
+        new("src/GanttCreator.Office/ExcelDurationWriter.cs", "Write"),
+        // R4.8A D2: the column-classification restorer hides and locks columns on the
+        // user's VISIBLE worksheet, so it mutates user-facing presentation state and
+        // consults the guard before its first write. Listed at "EnsureClassification",
+        // its first mutating member. It also reads the same code-owned GanttTableSchema
+        // as the initialiser, so the classification has one authority.
+        new("src/GanttCreator.Office/ExcelColumnPresentationRestorer.cs", "EnsureClassification"),
     ];
 
     /// <summary>
@@ -89,6 +108,9 @@ public sealed class ProtectionGuardFirstTests
     /// </summary>
     private static readonly string[] NoDataMutationOfficeFiles =
     [
+        // The port for the column-classification restorer. It declares no mutation of
+        // its own; the mutating implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IColumnPresentationPort.cs",
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
@@ -96,6 +118,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
+        "src/GanttCreator.Office/IDurationWritePort.cs",
         "src/GanttCreator.Office/IShapeWritePort.cs",
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",
@@ -146,6 +169,43 @@ public sealed class ProtectionGuardFirstTests
         // classification for the same reason.
         "src/GanttCreator.Office/ShapeReconcilePlan.cs",
         "src/GanttCreator.Office/ShapeReconciler.cs",
+        // R4.7D: the two workspace-geometry ports. These are interface
+        // declarations only -- no interop proxy, no statement, nothing to guard.
+        // Their implementations are the two mutating adapters registered above.
+        "src/GanttCreator.Office/IRowHeightNormalisationPort.cs",
+        "src/GanttCreator.Office/IOutlineGroupPort.cs",
+        // R4.8A: the scene-request factory and its port. The factory is a pure
+        // function over events, a settings map, a registry, and a measured grid - it
+        // reads no COM proxy, names no interop type, and mutates nothing - so a
+        // protection consultation would be unreachable code rather than a missing
+        // guard. The protection question for the refresh it feeds is asked by the
+        // orchestrator below, before any write, which is where it belongs: a
+        // read-only collaborator cannot know whether the refresh as a whole may
+        // proceed.
+        "src/GanttCreator.Office/ISceneBuildRequestFactory.cs",
+        "src/GanttCreator.Office/ExcelSceneBuildRequestFactory.cs",
+        // R4.8A: the orchestrator's port and outcome. A pure interface declaration
+        // with no statement and nothing to guard.
+        "src/GanttCreator.Office/IGanttRefreshOrchestrator.cs",
+        // R4.8A: the refresh orchestrator. It DOES drive a refresh that mutates the
+        // visible worksheet, so it is listed here for a precise reason rather than
+        // because it is inert: it holds no COM proxy and performs no direct mutation
+        // itself - every write is delegated to a registered mutating adapter, each of
+        // which consults the guard. Classifying it as a mutating adapter is
+        // impossible, and trying produced a clear "no mutation shape was found in it"
+        // failure, which is this registry working correctly. What the orchestrator
+        // DOES do is consult the guard itself, before the first write, so a protected
+        // sheet is refused once at the boundary rather than being discovered halfway
+        // through - and that behaviour is pinned by
+        // GanttRefreshOrchestratorTests.The_protection_guard_is_consulted_before_any_write.
+        "src/GanttCreator.Office/GanttRefreshOrchestrator.cs",
+        // R4.8A D8: the application-state scope port. An interface declaration plus
+        // its no-op implementation - no COM proxy, no statement that mutates
+        // anything, and no host call. The SETTING it manipulates is restored, not
+        // changed on the user's behalf: the scope exists precisely so a command
+        // cannot leave a setting altered, which is the opposite of a data mutation
+        // and therefore not a guard candidate.
+        "src/GanttCreator.Office/IApplicationStateScope.cs",
     ];
 
     /// <summary>
@@ -198,6 +258,48 @@ public sealed class ProtectionGuardFirstTests
         "shapes.AddTextbox(",
         "Shapes.BuildFreeform(",
         "shapes.BuildFreeform(",
+    ];
+
+    /// <summary>
+    /// Members that are mutations only when ASSIGNED. A following <c>=</c> makes the
+    /// occurrence a comparison, not a write, so these are matched through
+    /// <see cref="ContainsAssignment"/> rather than as plain substrings.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// R4.7D's worksheet geometry writers: <c>RowHeight</c> and <c>OutlineLevel</c> are
+    /// user-visible worksheet data, not generated content, so writing either is a data
+    /// mutation under ADR-0008 D4.
+    /// </para>
+    /// <para>
+    /// <c>.Value2</c> has always been matched this way. The R4.7D worksheet geometry
+    /// members <c>.RowHeight</c> and <c>.OutlineLevel</c> were previously plain
+    /// substrings (<c>".RowHeight="</c>), which a COMPARISON also contains:
+    /// <c>row.RowHeight == expected</c> contains <c>".RowHeight="</c> at the first
+    /// <c>=</c>, so a file that only ever COMPARED a row height was classified as a
+    /// mutating adapter and made to carry guard-first ordering it did not need -- and,
+    /// worse, a registered adapter whose only "mutation" was a comparison satisfied the
+    /// discovery rule for the wrong reason. All three now get the same treatment.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] AssignedMutationMembers =
+    [
+        ".Value2",
+        ".RowHeight",
+        ".OutlineLevel",
+        // R4.8A D2: the managed columns' presentation state. `.Locked` sets the
+        // stored cell format and `.Hidden` hides the worksheet column, so both are
+        // user-visible worksheet state and a data mutation under ADR-0008 D4 --
+        // without them the column-classification restorer would have been
+        // auto-classified read-only and would have escaped guard-first ordering
+        // silently, which is exactly what the R4.1 note on Shapes.AddShape records
+        // happening once already.
+        //
+        // Both go through ContainsAssignment rather than being plain substrings,
+        // because the adapter COMPARES both before writing (`if (ReadHiddenFlag(...) !=
+        // wanted)`), and a comparison contains the same text as a write.
+        ".Locked",
+        ".Hidden",
     ];
 
     /// <summary>
@@ -518,6 +620,144 @@ public sealed class ProtectionGuardFirstTests
     }
 
     [Fact]
+    public void Checker_ignores_an_equality_comparison_of_a_geometry_member()
+    {
+        // The negative control for the two R4.7D members. `.RowHeight=` and
+        // `.OutlineLevel=` were plain substrings, and `==` CONTAINS them -- so a file
+        // that only ever compared a row height was discovered as a mutating adapter and
+        // made to carry guard-first ordering it had no reason to have. A comparison
+        // mutates nothing, so it must classify as read-only.
+        const string ComparisonOnly = """
+            class Reader
+            {
+                bool Matches(Range row, double expected)
+                {
+                    return row.RowHeight == expected;
+                }
+
+                bool MatchesLevel(Range row, object level)
+                {
+                    return row.OutlineLevel == level;
+                }
+            }
+            """;
+
+        var sources = Sources(("src/GanttCreator.Office/Reader.cs", ComparisonOnly));
+
+        Assert.Empty(DiscoveryViolations(sources, []));
+        Assert.Empty(ProtectionOrderViolations(sources, []));
+    }
+
+    [Fact]
+    public void Checker_treats_an_assignment_of_a_geometry_member_as_a_mutation()
+    {
+        // The positive control for the two rows above: the same members, assigned.
+        // Without this, deleting `AssignedMutationMembers` from
+        // `ContainsMutationShape` would leave the comparison test green while the two
+        // geometry writers were auto-classified read-only and escaped the guard
+        // ordering silently -- which is exactly what the original missing patterns
+        // would have caused.
+        const string AssignsRowHeight = """
+            class Adapter
+            {
+                void Apply()
+                {
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+
+                    row.RowHeight = 18;
+                }
+            }
+            """;
+        const string AssignsOutlineLevel = """
+            class Adapter
+            {
+                void Apply()
+                {
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+
+                    range.OutlineLevel = 1;
+                }
+            }
+            """;
+
+        foreach (string source in new[] { AssignsRowHeight, AssignsOutlineLevel })
+        {
+            var sources = Sources(("src/GanttCreator.Office/Adapter.cs", source));
+            var registered = new[] { "src/GanttCreator.Office/Adapter.cs" };
+
+            Assert.Empty(
+                DiscoveryViolations(sources, registered));
+            Assert.Empty(
+                ProtectionOrderViolations(sources, [new MutatingAdapter("src/GanttCreator.Office/Adapter.cs", "Apply")]));
+        }
+    }
+
+    [Fact]
+    public void Checker_flags_a_geometry_mutation_that_precedes_the_protection_read()
+    {
+        // The ordering control for the same two members: an assignment after the guard
+        // is fine, the same assignment before it is a violation. This is what proves
+        // `FirstMutationIndex` locates the ASSIGNMENT -- if it located the first
+        // `.RowHeight=` substring instead, this file's guard read would still be
+        // reported as coming first.
+        const string MutationFirst = """
+            class Adapter
+            {
+                void Apply()
+                {
+                    row.RowHeight = 18;
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+                }
+            }
+            """;
+
+        Assert.NotEmpty(ProtectionOrderViolations(
+            Sources(("src/GanttCreator.Office/Adapter.cs", MutationFirst)),
+            [new MutatingAdapter("src/GanttCreator.Office/Adapter.cs", "Apply")]));
+    }
+
+    [Fact]
+    public void Checker_does_not_report_a_comparison_as_the_mutation_the_order_is_measured_against()
+    {
+        // The first mutation here is the COMPARISON on line 8; the real assignment is
+        // several lines later. If `FirstMutationIndex` matched the comparison, the
+        // protection read on line 11 would appear to come AFTER it and this file would
+        // be wrongly reported as mutating before its guard.
+        const string CompareThenReadThenAssign = """
+            class Adapter
+            {
+                void Apply()
+                {
+                    if (row.RowHeight == expected)
+                    {
+                        return;
+                    }
+
+                    if (IsWorksheetProtected(sheet))
+                    {
+                        return;
+                    }
+
+                    row.RowHeight = 18;
+                }
+            }
+            """;
+
+        Assert.Empty(ProtectionOrderViolations(
+            Sources(("src/GanttCreator.Office/Adapter.cs", CompareThenReadThenAssign)),
+            [new MutatingAdapter("src/GanttCreator.Office/Adapter.cs", "Apply")]));
+    }
+
+    [Fact]
     public void Checker_reports_an_unclassified_file()
     {
         var violations = ClassificationViolations(
@@ -670,8 +910,16 @@ public sealed class ProtectionGuardFirstTests
     /// <param name="code">Token text with comments and string contents removed.</param>
     /// <returns><see langword="true"/> when a mutation shape is present.</returns>
     private static bool ContainsMutationShape(string code) =>
-        ContainsAssignment(code, ".Value2")
+        ContainsAnyAssignment(code)
         || DataMutationPatterns.Any(pattern => code.Contains(pattern, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Returns whether any of the assignment-only members is assigned.
+    /// </summary>
+    /// <param name="code">Token text with comments and string contents removed.</param>
+    /// <returns><see langword="true"/> when one is assigned rather than compared.</returns>
+    private static bool ContainsAnyAssignment(string code) =>
+        AssignedMutationMembers.Any(member => ContainsAssignment(code, member));
 
     /// <summary>
     /// Returns whether the token text assigns to <paramref name="member"/> (a
@@ -720,17 +968,60 @@ public sealed class ProtectionGuardFirstTests
     }
 
     /// <summary>
+    /// Returns the index of the first assignment to a member, or -1 when the member is
+    /// only ever compared.
+    /// </summary>
+    /// <param name="code">Token text with comments and string contents removed.</param>
+    /// <param name="member">The member name, for example <c>.Value2</c>.</param>
+    /// <returns>The index of the first assignment, or -1.</returns>
+    /// <remarks>
+    /// The index analogue of <see cref="ContainsAssignment"/>. The ordering rule compares
+    /// a protection read against the first mutation, so an index a COMPARISON could
+    /// produce would let a file whose first "mutation" is a comparison report a spurious
+    /// guard-ordering violation -- and, in the other direction, would let a real
+    /// assignment hide behind an earlier comparison and be excused.
+    /// </remarks>
+    private static int FirstAssignmentIndex(string code, string member)
+    {
+        var needle = member + "=";
+        var index = code.IndexOf(needle, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var after = index + needle.Length;
+            if (after >= code.Length || code[after] != '=')
+            {
+                return index;
+            }
+
+            index = code.IndexOf(needle, after, StringComparison.Ordinal);
+        }
+
+        return -1;
+    }
+
+    /// <summary>
     /// Returns the index of the first data-mutation shape in the token text, or
     /// <see cref="int.MaxValue"/> when there is none.
     /// </summary>
     /// <param name="code">Token text with comments and string contents removed.</param>
     /// <returns>The index of the first mutation, or <see cref="int.MaxValue"/>.</returns>
+    /// <remarks>
+    /// The assignment-only members are located with the same equality exclusion
+    /// <see cref="ContainsMutationShape"/> uses, so "is there a mutation?" and "where
+    /// is the first one?" cannot disagree -- which is what stops a comparison being
+    /// reported as the mutation the guard-ordering rule is measured against.
+    /// </remarks>
     private static int FirstMutationIndex(string code)
     {
-        var earliest = code.IndexOf(".Value2=", StringComparison.Ordinal);
-        if (earliest < 0)
+        var earliest = int.MaxValue;
+
+        foreach (string member in AssignedMutationMembers)
         {
-            earliest = int.MaxValue;
+            int index = FirstAssignmentIndex(code, member);
+            if (index >= 0 && index < earliest)
+            {
+                earliest = index;
+            }
         }
 
         foreach (var pattern in DataMutationPatterns)

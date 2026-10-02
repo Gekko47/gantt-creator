@@ -17,7 +17,9 @@ public sealed record GanttRowDto
         GanttCell<string> descriptionCell,
         GanttCell<DateOnly?> startCell,
         GanttCell<DateOnly?> finishCell,
+        GanttCell<string> durationCell,
         GanttCell<string> parentIdCell,
+        GanttCell<int?> siblingOrderCell,
         GanttCell<string> styleKeyCell,
         GanttCell<string> labelPositionCell,
         GanttCell<string> fillColourCell,
@@ -33,7 +35,9 @@ public sealed record GanttRowDto
         DescriptionCell = descriptionCell;
         StartCell = startCell;
         FinishCell = finishCell;
+        DurationCell = durationCell;
         ParentIdCell = parentIdCell;
+        SiblingOrderCell = siblingOrderCell;
         StyleKeyCell = styleKeyCell;
         LabelPositionCell = labelPositionCell;
         FillColourCell = fillColourCell;
@@ -42,7 +46,13 @@ public sealed record GanttRowDto
         SortOrderCell = sortOrderCell;
     }
 
-    /// <summary>Creates a normalized compatibility row from the pre-R2.4b shape.</summary>
+    /// <summary>
+    /// Creates a normalized compatibility row from the pre-R2.4b shape.
+    /// <c>SiblingOrder</c> is absent, which the validator reads as "the engine has
+    /// not assigned one yet" rather than as ordering. <c>Duration</c> is absent for
+    /// the same reason: it is engine-owned and computed on Refresh (R4.7F), so a
+    /// caller constructing this shape has not supplied one.
+    /// </summary>
     public GanttRowDto(
         int rowNumber,
         string? id,
@@ -68,7 +78,9 @@ public sealed record GanttRowDto
             Cell(description),
             Cell(start),
             Cell(finish),
+            GanttCells.Empty<string>(),
             Cell(parentId),
+            GanttCells.Empty<int?>(),
             Cell(styleKey),
             Cell(labelPositionText),
             Cell(fillColourText),
@@ -102,8 +114,26 @@ public sealed record GanttRowDto
     /// <summary>Raw typed Finish cell state.</summary>
     public GanttCell<DateOnly?> FinishCell { get; init; }
 
+    /// <summary>
+    /// Raw typed Duration cell state (R4.7C D1). Engine-owned and visible but
+    /// locked: the add-in writes it on Refresh (R4.7F) because the analyst must
+    /// read a duration without being able to invent one. It is text rather than a
+    /// number because the contract carries a non-duration marker (<c>-</c>) for
+    /// milestones and delineators, blank for structural rows, and no value at all
+    /// for invalid dates — a numeric column could express only the first case.
+    /// </summary>
+    public GanttCell<string> DurationCell { get; init; }
+
     /// <summary>Raw typed ParentId cell state.</summary>
     public GanttCell<string> ParentIdCell { get; init; }
+
+    /// <summary>
+    /// Raw typed SiblingOrder cell state (R4.7A D2). Engine-maintained: it makes
+    /// hierarchy order independent of physical row number, so a user sort cannot
+    /// silently redefine the tree. Empty means "not yet assigned", which the
+    /// validator reports rather than treating as ordering.
+    /// </summary>
+    public GanttCell<int?> SiblingOrderCell { get; init; }
 
     /// <summary>Raw typed StyleKey cell state.</summary>
     public GanttCell<string> StyleKeyCell { get; init; }
@@ -143,8 +173,14 @@ public sealed record GanttRowDto
     /// <summary>Normalized Finish compatibility view.</summary>
     public DateOnly? Finish => FinishCell.Value;
 
+    /// <summary>Normalized Duration compatibility view.</summary>
+    public string? Duration => DurationCell.Value;
+
     /// <summary>Normalized ParentId compatibility view.</summary>
     public string? ParentId => ParentIdCell.Value;
+
+    /// <summary>Normalized SiblingOrder compatibility view.</summary>
+    public int? SiblingOrder => SiblingOrderCell.Value;
 
     /// <summary>Normalized StyleKey compatibility view.</summary>
     public string? StyleKey => StyleKeyCell.Value;

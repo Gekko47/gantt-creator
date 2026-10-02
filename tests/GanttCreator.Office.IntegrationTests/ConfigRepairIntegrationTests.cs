@@ -34,6 +34,7 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
 
             Excel.Worksheet gantt = FindSheet(workbook, GanttWorkbookContract.GanttSheetLabel);
             Excel.Worksheet config = FindSheet(workbook, GanttWorkbookContract.ConfigSheetName);
+            Excel.ListObject ganttTable = gantt.ListObjects[GanttTableSchema.TableName];
             int sheetCountBefore = workbook.Sheets.Count;
 
             config.Visible = Excel.XlSheetVisibility.xlSheetVisible;
@@ -55,8 +56,12 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
 
             Assert.Null(outcome.Refusal);
             Assert.Equal(Excel.XlSheetVisibility.xlSheetVeryHidden, config.Visible);
+            // Derived from the live column count, as in
+            // InitialiseSheetIntegrationTests: a literal column letter went stale
+            // when R4.7A added SiblingOrder and only the live gate caught it.
+            Excel.Range anchorCell = gantt.Cells[1, ganttTable.ListColumns.Count + 1];
             Assert.Equal(
-                $"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1",
+                $"='{GanttWorkbookContract.GanttSheetLabel}'!{anchorCell.Address[External: false]}",
                 gantt.Names.Item(GanttWorkbookContract.PlotAnchorDefinedName).RefersTo,
                 StringComparer.Ordinal);
             Assert.Equal(

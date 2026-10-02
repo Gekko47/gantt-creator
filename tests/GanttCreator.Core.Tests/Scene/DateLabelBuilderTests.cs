@@ -190,29 +190,40 @@ public sealed class DateLabelBuilderTests
         Assert.DoesNotContain(result.Warnings, warning => warning.Code == DateLabelBuilder.PositionChangedCode);
     }
 
+    /// <summary>
+    /// Above and Below were retired by owner ruling 2026-09-30, so the date
+    /// label's vertical cases are gone. Every remaining external position routes
+    /// through the left/right cascade, which is what this pins: a stored
+    /// "Above" no longer resolves to a bespoke vertical box, and cannot silently
+    /// keep producing one.
+    /// </summary>
     [Fact]
-    public void An_explicit_vertical_date_label_position_is_not_routed_through_the_left_branch()
+    public void A_retired_vertical_date_position_is_not_constructible()
     {
-        // §23 allows the same external positions as a span label, and §22 gives
-        // Above and Below their own geometry: horizontally centred, with the label
-        // above or below the shape. The fallback had a two-case branch that sent
-        // every non-Right position to the left of the bar, so an explicit Above
-        // produced a label beside the bar instead of above it.
-        DateLabelResult result = DateLabelBuilder
-            .TryBuild(Request(full: new RectD(150.0, 100.0, 180.0, 12.0)) with
-            {
-                StartPosition = GanttLabelPosition.Above,
-                FinishPosition = GanttLabelPosition.Below,
-            })
-            .Result!;
+        // The enum member is gone, so the old assertion cannot even be written.
+        // This is the compile-time half of the contract, expressed at runtime so
+        // a re-introduction is a failing test rather than a silent capability.
+        Assert.False(Enum.TryParse("Above", ignoreCase: false, out GanttLabelPosition _));
+        Assert.False(Enum.TryParse("Below", ignoreCase: false, out GanttLabelPosition _));
 
-        SceneText start = result.Primitives[0];
-        SceneText finish = result.Primitives[1];
+        // And the surviving positions all reach the builder.
+        foreach (GanttLabelPosition position in new[]
+        {
+            GanttLabelPosition.Left,
+            GanttLabelPosition.Right,
+            GanttLabelPosition.Inside,
+        })
+        {
+            DateLabelResult outcome = DateLabelBuilder
+                .TryBuild(Request(full: new RectD(150.0, 100.0, 180.0, 12.0)) with
+                {
+                    StartPosition = position,
+                    FinishPosition = position,
+                })
+                .Result!;
 
-        // Above sits entirely above the visible bar; Below entirely below it. The
-        // old two-case branch placed both to the left, inside the bar's own band.
-        Assert.True(start.TextBounds.Bottom <= Visible().Top, "the start label belongs above the bar");
-        Assert.True(finish.TextBounds.Top >= Visible().Bottom, "the finish label belongs below the bar");
+            Assert.Equal(2, outcome.Primitives.Count);
+        }
     }
 
     [Fact]

@@ -63,7 +63,7 @@ Required columns:
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `Id` | text | Stable event identifier; generated once, never row-number based |
-| `LaneId` | text | Stable visual-lane identifier shared by events on the same line |
+| `LaneId` | text or blank | Engine-generated visual-lane identifier shared by events on the same line; blank is the normal scaffolded state, and the render lane is derived in Core (R4.7B) |
 | `StackIndex` | whole number or blank | Schema-v1 compatibility value; Core derives the effective vertical slot from deterministic row/parent-child position and never trusts or requires this cell for layout |
 | `Type` | catalogue text | In-cell dropdown from the single `EntityTypeCatalog` defined by the entity guide |
 | `Description` | text | User-facing label |
@@ -322,6 +322,6 @@ Do not optimise before profiling. Record the reference hardware and Office build
 - Avoid `dynamic` unless an isolated, documented late-binding compatibility adapter requires it.
 - Avoid chained COM property calls. Hold each COM proxy in a local variable and release it through one tested ownership helper.
 - Excel/PowerPoint calls execute on the required STA/main thread. Do not use `Task.Run` around COM.
-- Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, status bar (both `DisplayStatusBar` and `StatusBar`), and selection only when changed, using `try/finally`. Calculation mode is **not** in this list: `Application.Calculation` is unusable on the reference host and [ADR-0020](adr/0020-application-state-scope-five-settings.md) removed it because rendering writes shapes, never cells. A command that writes cells must reinstate it with a probed path.
+- Save and restore `ScreenUpdating`, `EnableEvents`, `DisplayAlerts`, status bar (both `DisplayStatusBar` and `StatusBar`), and selection only when changed, using `try/finally`. Calculation mode is **not** in this list: `Application.Calculation` is unusable on the reference host and [ADR-0020](adr/0020-application-state-scope-five-settings.md) removed it because rendering writes shapes, never cells. A command that writes cells must reinstate it with a probed path. The scope supports all five; which of them a given command invokes is its own decision, and **status-bar visibility is the user's setting, not the add-in's** — Refresh writes progress text without suppressing `DisplayStatusBar`, so a user who hides the status bar keeps it hidden (ADR-0020 D4).
 - User errors are concise and actionable. Technical details go to a local rolling log with no workbook content unless explicitly opted in.
 - Every public member carries XML documentation, enforced by `GenerateDocumentationFile` + CS1591 with warnings-as-errors; add detail beyond the summary when the contract is non-obvious. Internal comments explain why, invariants, or Office quirks—not line-by-line mechanics.

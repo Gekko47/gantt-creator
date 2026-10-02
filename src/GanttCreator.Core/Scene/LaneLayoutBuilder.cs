@@ -23,6 +23,15 @@ public enum LaneLayoutRefusal
 
     /// <summary>Two input events carried the same stable row ID.</summary>
     DuplicateEventId = 6,
+
+    /// <summary>
+    /// A projected event named a render-lane owner that is not in this layout, and
+    /// carried no compatibility stack value of its own, so the slot it belongs to
+    /// cannot be determined. Refused rather than defaulted to a slot: the child would
+    /// otherwise be placed in an arbitrary lane position and render somewhere its
+    /// hierarchy does not put it.
+    /// </summary>
+    UnresolvedRenderLaneOwner = 7,
 }
 
 /// <summary>The typed result of attempting to build lane geometry.</summary>
@@ -38,6 +47,46 @@ public sealed record LaneLayoutCreationOutcome(LaneLayoutResult? Layout, LaneLay
 public static class LaneLayoutBuilder
 {
     private const string _ambiguousStackOverlapCode = "AmbiguousStackOverlap";
+
+    /// <summary>
+    /// The warning code for lane content that does not fit the fixed row height
+    /// (R4.7D, ADR-0026 D7). The content is neither compressed nor accommodated by
+    /// growing the lane; the user is told.
+    /// </summary>
+    public const string LaneContentExceedsLaneHeightCode = "LaneContentExceedsRowHeight";
+
+    /// <summary>
+    /// Derives a stable 32-hex-digit suffix from a lane key, for the synthetic
+    /// warning owner described on the overflow warning.
+    /// </summary>
+    /// <remarks>
+    /// A row id is <c>G-</c> plus 32 lowercase hex digits, so a lane warning can
+    /// only borrow that shape if the suffix really is 32 hex digits. SHA-256 is
+    /// used purely to obtain a stable 32-hex-digit string, not for any security
+    /// purpose: this is not authentication, and a collision would merge two
+    /// identical overflow messages rather than misreport anything.
+    /// </remarks>
+    private static string StableLaneWarningSuffix(string laneKey)
+    {
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(laneKey));
+
+        // Formatted as lowercase hex directly rather than via
+        // Convert.ToHexString(...).ToLowerInvariant(): a GanttRowId is
+        // `G-` plus 32 LOWERCASE hex digits, so the case is a contract, and
+        // CA1308 (prefer upper-case) would otherwise push a diagnostic-only
+        // preference onto a value the row-id parser rejects. This is formatting,
+        // not comparison, so the rule does not apply to it.
+        return string.Create(32, digest, static (span, bytes) =>
+        {
+            const string Digits = "0123456789abcdef";
+            for (var i = 0; i < 16; i++)
+            {
+                span[i * 2] = Digits[bytes[i] >> 4];
+                span[(i * 2) + 1] = Digits[bytes[i] & 0x0F];
+            }
+        });
+    }
 
     /// <summary>Attempts to build deterministic lane geometry.</summary>
     /// <param name="events">
@@ -109,10 +158,21 @@ public static class LaneLayoutBuilder
             LaneEventInput[] laneInputs = [.. group];
             var isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
             var isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
-            LaneGeometry lane =
+            LaneGeometry? lane =
                 isSplitter || isSpacer
                     ? BuildFixedLane(group.Key, laneOrder, laneTop, laneInputs, isSplitter, isSpacer, metrics)
                     : BuildEventLane(group.Key, laneOrder, laneTop, laneInputs, metrics, warnings);
+
+            // A typed refusal, not an exception: an unrepresentable hierarchy is a
+            // reportable condition, and this builder's whole surface is TryBuild
+            // returning a reason. Propagated as the layout's outcome so the caller
+            // sees WHICH lane could not be laid out rather than a thrown
+            // KeyNotFoundException from deep inside a private helper.
+            if (lane is null)
+            {
+                return Refused(LaneLayoutRefusal.UnresolvedRenderLaneOwner);
+            }
+
             lanes.Add(lane);
             laneTop += lane.Height;
             laneOrder++;
@@ -137,11 +197,22 @@ public static class LaneLayoutBuilder
         return new LaneGeometry(laneKey, laneOrder, laneTop, height, [slot], eventIds, isSplitter, isSpacer);
     }
 
-    private static LaneGeometry BuildEventLane(
+    /// <summary>
+    /// Builds one event lane's slots, or returns <see langword="null"/> when a
+    /// projected child's render-lane owner cannot be resolved in this lane.
+    /// </summary>
+    /// <param name="laneKey">The lane's key, for the overflow warning owner.</param>
+    /// <param name="laneOrder">The lane's zero-based order.</param>
+    /// <param name="laneTop">The lane's top edge in points.</param>
+    /// <param name="inputs">The lane's events.</param>
+    /// <param name="metrics">The resolved lane metrics.</param>
+    /// <param name="warnings">The scene warning sink.</param>
+    /// <returns>The lane, or <see langword="null"/> for an unresolved render-lane owner.</returns>
+    private static LaneGeometry? BuildEventLane(
         string laneKey,
         int laneOrder,
         double laneTop,
-        IReadOnlyList<LaneEventInput> inputs,
+        LaneEventInput[] inputs,
         LaneLayoutMetrics metrics,
         List<SceneWarning> warnings
     )
@@ -150,24 +221,104 @@ public static class LaneLayoutBuilder
         [
             .. inputs.OrderBy(input => input.Event.RowNumber).ThenBy(input => input.Event.Id.Value, StringComparer.Ordinal),
         ];
-        Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
-        for (var index = 0; index < rowOrdered.Length; index++)
+
+        // R4.7B: a projected child takes its lane owner's effective stack index, so
+        // it lands in the SAME slot and overlaps. Assigning it its own index by
+        // position would give it a second slot, stacking it below the parent and
+        // growing the lane -- which ADR-0026 D7 forbids and which is the whole
+        // reason a child is projected rather than given a lane of its own.
+        //
+        // Two passes, because the owner is not guaranteed to precede the child in
+        // row order: an authoring UI may place a child above its parent. Owners are
+        // therefore indexed first, and only then do children look one up.
+        var effectiveById = new Dictionary<GanttRowId, int>();
+        var ownIndex = 0;
+
+        foreach (LaneEventInput input in rowOrdered)
         {
-            var effective = rowOrdered[index].EffectiveStackIndex ?? index;
+            if (input.IsProjected)
+            {
+                continue;
+            }
+
+            effectiveById[input.Event.Id] = ownIndex;
+            ownIndex++;
+        }
+        foreach (LaneEventInput input in rowOrdered)
+        {
+            if (!input.IsProjected)
+            {
+                continue;
+            }
+
+            // TryGetValue, not the indexer. A projected child whose owner is not in
+            // this lane has no slot to inherit; the indexer threw a
+            // KeyNotFoundException straight out of a builder whose entire contract is
+            // to return a typed refusal, so one unrepresentable hierarchy crashed the
+            // caller instead of being reported. The owner may legitimately be absent
+            // when a caller lays out a subset of the table.
+            if (input.RenderLaneOwner is { } owner
+                && effectiveById.TryGetValue(owner.Id, out var ownerIndex))
+            {
+                effectiveById[input.Event.Id] = ownerIndex;
+            }
+            else if (input.EffectiveStackIndex is null)
+            {
+                // No owner to inherit from and no compatibility value supplied, so the
+                // effective slot is genuinely unknown. Surfaced by TryBuild as
+                // UnresolvedRenderLaneOwner.
+                return null;
+            }
+        }
+
+        Dictionary<int, List<LaneEventInput>> effectiveSlots = [];
+        foreach (LaneEventInput input in rowOrdered)
+        {
+            // A supplied compatibility stack value is authoritative and is used as-is:
+            // the caller assigned it, so no lookup is needed or wanted.
+            var effective = input.EffectiveStackIndex ?? effectiveById[input.Event.Id];
             if (!effectiveSlots.TryGetValue(effective, out List<LaneEventInput>? slotEvents))
             {
                 slotEvents = [];
                 effectiveSlots.Add(effective, slotEvents);
             }
 
-            slotEvents.Add(rowOrdered[index]);
+            slotEvents.Add(input);
         }
 
         int[] effectiveValues = [.. effectiveSlots.Keys.OrderBy(value => value)];
+
+        // R4.7D / ADR-0026: the lane height is FIXED. The previous rule was
+        // `laneHeight = max(LaneHeightPt, contentHeight)` -- "the lane grows;
+        // events are never silently compressed" -- which is removed rather than
+        // capped. A lane that grows disagrees with the Excel row it is meant to
+        // sit in, and a projected child must not be able to grow the lane its
+        // parent owns. LaneHeightPt is now the height, not a minimum.
         var contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
         contentHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
         contentHeight += effectiveValues.Sum(value => effectiveSlots[value].Max(input => input.ResolvedHeightPt));
-        var laneHeight = Math.Max(metrics.LaneHeightPt, contentHeight);
+
+        if (contentHeight > metrics.LaneHeightPt + GeometryMath.Epsilon)
+        {
+            // Reported, never accommodated. Growing the lane is the defect this
+            // replaces; silently compressing the content would hide it instead.
+            //
+            // The owner is a synthetic row keyed by the LANE, not by one of the
+            // lane's own rows. SceneValidator keys duplicate warnings by
+            // (owner, code), so a row that owns several lanes would make this
+            // code repeat for the same owner and SceneValidator would report a
+            // DuplicateWarning finding against a correct scene. The identical
+            // collision was hit and fixed for AmbiguousStackOverlap in R4.7B.
+            warnings.Add(
+                new SceneWarning(
+                    SceneOwnerId.ForRow(GanttRowId.Parse("G-" + StableLaneWarningSuffix(laneKey))),
+                    LaneContentExceedsLaneHeightCode,
+                    $"Lane content needs {contentHeight:0.##}pt but the row height is {metrics.LaneHeightPt:0.##}pt; the content is not compressed."
+                )
+            );
+        }
+
+        var laneHeight = metrics.LaneHeightPt;
         var slots = new List<SlotGeometry>();
         var slotTop = laneTop + metrics.LanePaddingTopPt;
         for (var visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)
@@ -197,12 +348,36 @@ public static class LaneLayoutBuilder
         return new LaneGeometry(laneKey, laneOrder, laneTop, laneHeight, slots, laneEventIds, false, false);
     }
 
+    /// <summary>
+    /// Emits the same-stack overlap warning for a slot, once per slot.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// R4.7B: a projected child shares its parent's slot <b>by design</b>, and
+    /// overlapping its parent is the intended presentation — REV6 §8 says several
+    /// children on one parent lane "may overlap", distinguished by date geometry,
+    /// Type, style, z-order and label. Emitting <c>AmbiguousStackOverlap</c> for
+    /// that case would report the product working, and it would also collide with
+    /// any genuine ambiguity on the same owner, because <c>SceneValidator</c> keys
+    /// duplicate warnings by (owner, code) and a parent can own more than one
+    /// slot.
+    /// </para>
+    /// <para>
+    /// So a pair where one event is projected onto the other is not ambiguous and
+    /// warns nothing; genuine same-slot overlap between unrelated rows still does.
+    /// </para>
+    /// </remarks>
     private static void AddAmbiguityWarning(List<LaneEventInput> slotEvents, List<SceneWarning> warnings)
     {
         for (var firstIndex = 0; firstIndex < slotEvents.Count; firstIndex++)
         {
             for (var secondIndex = firstIndex + 1; secondIndex < slotEvents.Count; secondIndex++)
             {
+                if (IsProjectionPair(slotEvents[firstIndex], slotEvents[secondIndex]))
+                {
+                    continue;
+                }
+
                 if (Overlaps(slotEvents[firstIndex].Event, slotEvents[secondIndex].Event))
                 {
                     warnings.Add(
@@ -216,6 +391,17 @@ public static class LaneLayoutBuilder
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Whether one of the two events is projected onto the lane the other owns, in
+    /// either direction. Such a pair shares a slot because the hierarchy says so.
+    /// </summary>
+    private static bool IsProjectionPair(LaneEventInput first, LaneEventInput second)
+    {
+        GanttRowId? firstParent = first.RenderLaneOwner?.Id;
+        GanttRowId? secondParent = second.RenderLaneOwner?.Id;
+        return (firstParent == second.Event.Id) || (secondParent == first.Event.Id);
     }
 
     private static bool Overlaps(GanttEvent first, GanttEvent second)

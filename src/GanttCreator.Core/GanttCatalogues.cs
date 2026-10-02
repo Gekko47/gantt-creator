@@ -118,8 +118,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 23 metric tokens, in entity-guide "Shared metric tokens" order
-    /// (name, default, valid range; all values in points).
+    /// The metric tokens, in entity-guide "Shared metric tokens" order
+    /// (name, default, valid range; all values in points). R4.7C renamed
+    /// <c>LaneHeightPt</c> to <c>GanttRowHeightPt</c> and retired
+    /// <c>CriticalLinePt</c> (ADR-0026 D1, ADR-0027 D4).
     /// </summary>
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
@@ -128,7 +130,7 @@ public static class GanttCatalogues
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),
         new("MinimumHeaderLabelWidthPt", 18, 6, 72),
-        new("LaneHeightPt", 18, 10, 72),
+        new("GanttRowHeightPt", 18, 10, 72),
         new("SplitterHeightPt", 18, 10, 72),
         new("SpacerHeightPt", 9, 0, 72),
         new("LanePaddingTopPt", 3, 0, 18),
@@ -140,7 +142,6 @@ public static class GanttCatalogues
         new("LabelHeightPt", 10, 6, 36),
         new("MaximumExternalLabelWidthPt", 144, 36, 360),
         new("StandardOutlinePt", 0.75, 0, 6),
-        new("CriticalLinePt", 2.25, 0.5, 12),
         new("GridLinePt", 0.5, 0.25, 3),
         new("MajorBoundaryPt", 1, 0.25, 6),
         new("DelineatorLinePt", 0.75, 0.25, 6),
@@ -149,9 +150,11 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 21 colour tokens, in entity-guide "Shared colour and typography
+    /// The colour tokens, in entity-guide "Shared colour and typography
     /// tokens" order (uppercase <c>#RRGGBB</c>; explicit alpha <c>FF</c>
-    /// unless transparency is named).
+    /// unless transparency is named). R4.7C added <c>CriticalFill</c>
+    /// (ADR-0027 D2), which shares <c>CriticalStroke</c>'s value but differs by
+    /// role, so the catalogue never carries a stroke token used as a fill.
     /// </summary>
     public static IReadOnlyList<GanttColourToken> Colours { get; } =
     [
@@ -162,6 +165,7 @@ public static class GanttCatalogues
         new("BaselineFill", "#00B050"),
         new("BaselineOutline", "#006100"),
         new("CriticalStroke", "#FF0000"),
+        new("CriticalFill", "#FF0000"),
         new("CriticalOutline", "#C00000"),
         new("DelayFill", "#FF0000"),
         new("DelayText", "#FFFFFF"),
@@ -194,9 +198,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 13 schema-v3 setting definitions approved by ADR-0007, ADR-0014, and
-    /// ADR-0016. The <c>DateDisplayFormat</c> key is appended last so the
-    /// existing contract order is preserved; the order is part of the schema
+    /// The 15 schema-v7 setting definitions approved by ADR-0007, ADR-0014, and
+    /// ADR-0016, plus the two added by the R4 QA review's schema bump (owner
+    /// permitted). <c>DateDisplayFormat</c> is appended before the two new keys so
+    /// the pre-existing contract order is preserved; the order is part of the schema
     /// contract, not an incidental listing detail.
     /// </summary>
     public static IReadOnlyList<GanttSettingDefinition> Settings { get; } =
@@ -214,6 +219,23 @@ public static class GanttCatalogues
         new("ShowMinorGrid", "TRUE"),
         new("ShowMajorGrid", "TRUE"),
         new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMyyyy)),
+
+        // Schema version 7. These two were read by the scene-request factory from the
+        // very first version of R4.8A but were never part of the approved key set, so
+        // `ValidateSettings` could not return them and BOTH always fell back: the
+        // output-size preset was permanently A4-portrait and the plot range padding was
+        // permanently 7 days, with the code paths reading them looking entirely live.
+        // A senior QA review of R4 found this; the owner's ruling permitted the schema
+        // bump that adding a key requires.
+        //
+        // `SizePreset` values are validated against `SizePresets.ByKey` by the
+        // factory, which refuses an unknown key and names the alternatives; this row
+        // therefore carries the default key rather than teaching the catalogue the
+        // full enum. `RangePaddingDays` is an integer the factory reads with a
+        // non-negative floor, so a stored value outside that range falls back to 7
+        // rather than producing a negative plot range.
+        new("SizePreset", "A4Portrait"),
+        new("RangePaddingDays", "7"),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)
@@ -234,8 +256,8 @@ public static class GanttCatalogues
             "BaselineActivity", "Baseline Activity", "BaselineFill", "BaselineOutline",
             GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", "ActivityHeightPt", null),
         ["CriticalInterval"] = () => Preset(
-            "CriticalInterval", "Critical Interval", null, "CriticalStroke",
-            GanttHatchPattern.None, "DefaultText", "CriticalLinePt", "ActivityHeightPt", null),
+            "CriticalInterval", "Critical Interval", "CriticalFill", "CriticalStroke",
+            GanttHatchPattern.None, "DefaultText", null, "ActivityHeightPt", null),
         ["DelayEvent"] = () => Preset(
             "DelayEvent", "Delay Event", "DelayFill", "CriticalOutline",
             GanttHatchPattern.None, "DelayText", "StandardOutlinePt", "ActivityHeightPt", null),
@@ -369,11 +391,77 @@ public static class GanttCatalogues
             definition.ColourCapability);
     }
 
+    /// <summary>
+    /// Returns the effective default of a named metric token.
+    /// </summary>
+    /// <param name="tokenName">The metric token name, e.g. <c>TitleBandHeightPt</c>.</param>
+    /// <returns>The token's default value.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="tokenName"/> is not a metric token in
+    /// <see cref="Metrics"/>. Thrown rather than defaulted, because a silently
+    /// invented value is a second authority that disagrees with the catalogue
+    /// at some margin and presents as a layout bug (R4.8A D5).
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the single authority for a metric default.</b> It exists because the
+    /// scene-request factory previously carried its own numeric literals for eight
+    /// tokens, and six of them disagreed with the catalogue — a title band of 14pt
+    /// against a catalogue default of 24pt, for instance. Those literals could never
+    /// be corrected by editing <c>tblGanttMetrics</c>, because the reader validated
+    /// that table and then discarded it.
+    /// </para>
+    /// <para>
+    /// Note that the value is the token's <em>default</em>, not a user override:
+    /// <c>ExcelConfigCatalogueReader.ValidateMetrics</c> requires each stored default
+    /// to equal the code-owned default exactly, so a user cannot currently edit a
+    /// metric. Resolving from the catalogue is therefore not an approximation of the
+    /// stored value — it is provably the same value the workbook would return.
+    /// </para>
+    /// </remarks>
+    public static double MetricDefault(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttMetricToken token in Metrics)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.DefaultValue;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a metric token in the Gantt Creator catalogue.",
+            nameof(tokenName));
+    }
+
+    /// <summary>
+    /// Reports whether a name is a metric token, without throwing.
+    /// </summary>
+    /// <param name="tokenName">The candidate token name.</param>
+    /// <returns><see langword="true"/> when the name is a metric token.</returns>
+    public static bool IsMetricToken(string? tokenName)
+    {
+        if (tokenName is null)
+        {
+            return false;
+        }
+
+        foreach (GanttMetricToken token in Metrics)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string ResolveColour(string tokenName) =>
         Colours.First(token => token.Name == tokenName).HexValue;
 
-    private static double ResolveMetric(string tokenName) =>
-        Metrics.First(token => token.Name == tokenName).DefaultValue;
+    private static double ResolveMetric(string tokenName) => MetricDefault(tokenName);
 
     /// <summary>
     /// Computes the catalogue hash (ADR-0007 D6): SHA-256 over the canonical,

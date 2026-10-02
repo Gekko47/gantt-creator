@@ -10,9 +10,10 @@ Detailed elaboration for each section below lives in the matching on-demand skil
 2. Product invariants in this file and `docs/02-ARCHITECTURE.md`.
 3. Entity contracts in `docs/07-GANTT-ENTITY-GUIDE.md` for any visual, layout, style, label, or export work.
 4. Accepted ADRs and `docs/DECISIONS.md`.
-5. `docs/03-ROADMAP.md` and `docs/04-TEST-STRATEGY.md`.
-6. Existing tested code.
-7. External primary documentation.
+5. Tracked input documents `docs/GanttCreator_R3_R4_Architecture_Roadmap_Review_REV5.md` and `docs/GanttCreator_Revised_Implementation_Plan_REV6.md`, as resolved by `docs/PRE-R4.9-DECISION-REGISTER.md`. They sit **below** the entity guide and above the roadmap: they are inputs, not the contract, and where either proposes something the register rejects, the register wins. Do not implement a rejected proposal.
+6. `docs/03-ROADMAP.md` and `docs/04-TEST-STRATEGY.md`.
+7. Existing tested code.
+8. External primary documentation.
 
 When sources conflict, stop and report the conflict. Do not silently choose one.
 

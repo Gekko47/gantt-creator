@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
     Accuracy gate for docs/STATUS.md. Wired into verify-quick.ps1 so the
@@ -16,9 +16,18 @@
          this gate also runs in CI, where only tracked files exist: a
          git-ignored path referenced here passes locally and fails the
          checkout, which no local filesystem test can reveal.
-      3. Roadmap IDs    -- every backticked R<major>.<minor> token must
+      3. Roadmap IDs    -- every R<major>.<minor>[<suffix>] token must
          appear in docs/03-ROADMAP.md, so the status cannot reference a
-         work item the roadmap does not define.
+         work item the roadmap does not define. The letter suffix is part
+         of the ID (R4.7A, R4.8A). A lowercase suffix (R2.7a) is a
+         sub-item of a base row the roadmap already defines, so it is
+         normalised to that base (R2.7) before the lookup and never
+         demands a guide of its own. An uppercase-suffixed ID must
+         additionally have a work-item guide in docs/work-items/ that
+         appears in the git INDEX -- present on disk alone is not enough,
+         because a clean CI checkout has only tracked files, while a
+         staged new guide stays valid so a work item may be cited in the
+         same commit that introduces it.
       4. Work-item evidence commands -- inside fenced code blocks in
          docs/work-items/*.md, every path a *command* line names must exist
          on disk. Both a separated path (`src/Foo/Bar.cs`) and a bare
@@ -52,6 +61,12 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $statusFile = Join-Path $repoRoot $StatusPath
 $roadmapFile = Join-Path $repoRoot $RoadmapPath
+
+# The work-item guide directory, resolved once against the repository root and
+# shared by the two checks that read it. Resolving it here rather than in the
+# guide lookup alone means the roadmap-ID check and the evidence-command check
+# can never disagree about where the guides live.
+$workItemsDir = Join-Path $repoRoot $WorkItemsPath
 
 if (-not (Test-Path -LiteralPath $statusFile)) { Write-Error "Missing $statusFile"; exit 1 }
 if (-not (Test-Path -LiteralPath $roadmapFile)) { Write-Error "Missing $roadmapFile"; exit 1 }
@@ -217,15 +232,108 @@ foreach ($t in $tokens)
 }
 
 # --- 3. Roadmap IDs ---
+# Returns whether a candidate work-item guide is known to git, reading the INDEX
+# rather than HEAD.
+#
+# The index is what this gate must validate: it runs as a pre-commit hook, so the
+# tree of the commit about to be made IS the index, and a newly authored guide
+# that has been staged is legitimate even though HEAD does not have it yet.
+# Using HEAD would reject exactly the correct workflow -- add a work item and cite
+# it in STATUS in the same commit -- and block the change for being new.
+#
+# The path handed to git is the canonical root-relative form with forward
+# slashes, because that is the spelling git records and prints on every host.
+function Test-GuideIsTracked {
+    <#
+    .SYNOPSIS
+        Whether a work-item guide file appears in the git index.
+
+    .DESCRIPTION
+        Takes a FileInfo for a guide inside the work-items directory and asks git
+        whether the index knows that path. Reads the index (the default for
+        `git ls-files`) rather than HEAD, so a staged new guide counts as tracked
+        and an untracked working-tree file does not.
+
+        An absent repository, or a git invocation that fails, is treated as
+        "not tracked" rather than as a pass: a guide the gate cannot confirm is
+        one the gate must report.
+    #>
+    param([Parameter(Mandatory)][System.IO.FileInfo]$Guide)
+
+    $relative = [System.IO.Path]::GetRelativePath(
+        [System.IO.Path]::GetFullPath($repoRoot),
+        [System.IO.Path]::GetFullPath($Guide.FullName)).Replace('\', '/')
+
+    $tracked = @(git -C $repoRoot ls-files --error-unmatch -- $relative 2>$null)
+    return $LASTEXITCODE -eq 0 -and $tracked.Count -gt 0
+}
+
 # Roadmap IDs appear in bold and plain prose as well as backticks, so scan
 # the raw status text rather than the backticked token list.
-$idTokens = [regex]::Matches($status, '\bR\d+\.\d+\b') |
-    ForEach-Object { $_.Value } | Select-Object -Unique
+#
+# The suffix is part of the ID. Phase 4 inserts R4.7A..R4.7H and R4.8A, and
+# the previous `\bR\d+\.\d+\b` could not match them: there is no word boundary
+# between "7" and "A", because both are word characters. That regex would have
+# silently skipped every letter-suffixed row, so STATUS could cite a work item
+# the roadmap never defined and the gate would still pass -- the exact failure
+# this check exists to prevent, on exactly the rows it was about to be needed
+# for.
+#
+# The suffix class is `[A-Za-z]` and the case is decided afterwards, because the
+# two spellings mean different things. An UPPERCASE suffix (R4.7A..R4.7H,
+# R4.8A) is part of the ID: the roadmap defines that exact row, and a suffixed ID
+# must additionally have a work-item guide. A LOWERCASE suffix (R2.7a..R2.7d,
+# R5.6a, R8.2a) is a sub-item of a base row the roadmap already defines, so it is
+# normalised to that base ID (R2.7a -> R2.7) before the roadmap lookup and is
+# never treated as guide-requiring.
+#
+# The capture therefore has to accept BOTH cases and strip the lowercase one
+# explicitly. Matching only `[A-Z]` — as this check did — meant a lowercase
+# reference such as `R2.7a` was captured as `R2.7` only by accident of the
+# optional group's greediness, while a lowercase ID whose base row is genuinely
+# absent from the roadmap (`R2.9z`) either matched its base and passed, or failed
+# for the wrong reason. Normalising here makes the lowercase case deliberate:
+# the base row is what must exist.
+$idTokens = [regex]::Matches($status, '\bR\d+\.\d+[A-Za-z]*\b') |
+    ForEach-Object {
+        # Uppercase suffix kept whole; lowercase suffix removed so the base row
+        # is what the roadmap is asked about.
+        if ($_.Value -cmatch '^[Rr]\d+\.\d+([a-z]+)$') { $_.Value.Substring(0, $_.Value.Length - $Matches[1].Length) }
+        else { $_.Value }
+    } | Select-Object -Unique
 foreach ($id in $idTokens)
 {
     if ($roadmap -notmatch [regex]::Escape("| $id |"))
     {
         $violations.Add("STATUS references roadmap item '$id' which is absent from $RoadmapPath.")
+    }
+
+    # A roadmap row with a work-item guide is the norm; a letter-suffixed row
+    # that cites no guide is how R4.7A-R4.7H would ship as nine rows nobody can
+    # implement from. Only enforced for suffixed IDs so the pre-existing rows,
+    # several of which are landed or deferred by name, are not retro-required.
+    if ($id -match '\d+[A-Z]$')
+    {
+        # Resolved against $repoRoot, not the current directory. The guide
+        # directory is a repository path like every other one this gate checks,
+        # and `-LiteralPath 'docs/work-items'` silently resolved against the
+        # caller's working directory instead -- so a run started from anywhere
+        # but the repository root found no guide and reported a violation for
+        # every suffixed ID. $workItemsDir is the same resolved path check 4
+        # already uses, so the two cannot drift.
+        #
+        # A file merely PRESENT on disk is not enough, for the same reason check
+        # 2 requires git tracking: a guide that exists only in the working tree
+        # is absent from a clean CI checkout, so the row would be unimplementable
+        # there. The *index* rather than HEAD, for the reason check 2 records --
+        # this gate is a pre-commit hook, so the index is the tree of the commit
+        # about to be made and a staged-but-uncommitted new guide is legitimate.
+        $guide = Get-ChildItem -LiteralPath $workItemsDir -Filter "$id-*.md" -ErrorAction SilentlyContinue |
+            Where-Object { Test-GuideIsTracked $_ }
+        if (-not $guide)
+        {
+            $violations.Add("STATUS references suffixed roadmap item '$id', which has no tracked work-item guide in $WorkItemsPath.")
+        }
     }
 }
 
@@ -249,7 +357,8 @@ foreach ($id in $idTokens)
 #     because STATUS claims describe the repository as it stands; a work
 #     item may legitimately cite a file a later item will create, and
 #     refusing that would be a false positive.
-$workItemsDir = Join-Path $repoRoot $WorkItemsPath
+# $workItemsDir is resolved once at the top of this script and shared with the
+# roadmap-ID guide lookup above.
 $workItemCommandLineCount = 0
 if (Test-Path -LiteralPath $workItemsDir)
 {

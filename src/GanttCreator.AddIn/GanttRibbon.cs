@@ -222,6 +222,50 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunValidateSheet() => ValidateSheetCommand.RunForExcel();
 
+    /// <summary>
+    /// Called when the user clicks the Refresh chart button. The callback is a thin
+    /// error boundary exactly like the Validate one: the refresh command runs across
+    /// the project-wide <see cref="CommandBoundary"/> and the ribbon state is
+    /// refreshed afterwards (R4.9 D3).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnRefreshSheetClick(IRibbonControl control)
+        => OnRefreshSheetClick(control, CommandBoundary.Instance, RunRefreshSheet, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs the Refresh-sheet command across an injected boundary. Internal so
+    /// contract tests can verify the routing without the singletons and the real
+    /// workbook mutation.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event, or null when unavailable.</param>
+    /// <param name="boundary">The command boundary to run the command across.</param>
+    /// <param name="command">The refresh command delegate.</param>
+    /// <param name="onCompleted">Invoked once after the boundary run, or null to skip it.</param>
+    /// <remarks>
+    /// Identical in shape to the Validate routing, deliberately. A refresh that took a
+    /// different path — its own try/catch, its own state refresh, its own message box
+    /// — would be a second command boundary, which is the one thing the architecture
+    /// forbids. The command itself holds the pipeline; this holds only the error
+    /// translation.
+    /// </remarks>
+    internal static void OnRefreshSheetClick(
+        IRibbonControl? control,
+        CommandBoundary boundary,
+        Action command,
+        Action? onCompleted = null)
+    {
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+        boundary.Run(() => ResolveCommandName(control, nameof(OnRefreshSheetClick)), command, nameof(OnRefreshSheetClick));
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// The Refresh-sheet command: assembles the live orchestrator and runs one whole
+    /// refresh for the current Excel session.
+    /// </summary>
+    private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
+
     /// <summary>Called when the user clicks the Repair configuration button.</summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnRepairConfigClick(IRibbonControl control)

@@ -82,7 +82,13 @@ public class GanttRowInserterTests
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
         public Mock<Excel.ListColumns> ListColumns { get; } = new();
-        public Mock<Excel.ListColumn>[] Columns { get; } = [.. Enumerable.Range(0, 14).Select(_ => new Mock<Excel.ListColumn>())];
+        /// <summary>
+        /// Sized from the schema rather than a literal, so adding a column cannot
+        /// leave the fake short of a mock and fail with an IndexOutOfRange that
+        /// names neither the column nor the contract.
+        /// </summary>
+        public Mock<Excel.ListColumn>[] Columns { get; } =
+            [.. Enumerable.Range(0, GanttTableSchema.Default.Columns.Count).Select(_ => new Mock<Excel.ListColumn>())];
         public Mock<Excel.ListRows> ListRows { get; } = new();
         public Mock<Excel.ListRow> NewRow { get; } = new();
         public Mock<Excel.ListRow> PositionedRow { get; } = new();
@@ -238,11 +244,34 @@ public class GanttRowInserterTests
         guard.Verify(g => g.Query(), Times.Once);
         var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
         Assert.Equal(1, matrix.GetLength(0));
-        Assert.Equal(14, matrix.GetLength(1));
-        Assert.Equal(id.Value, matrix[0, 0]);
-        Assert.Equal("As-Planned Activity", matrix[0, 3]);
-        Assert.Equal("AsPlannedActivity", matrix[0, 8]);
-        Assert.Equal(string.Empty, matrix[0, 13]);
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, matrix.GetLength(1));
+
+        // Unreversed headers here, so a logical column's physical position IS its
+        // schema index -- looked up rather than written as a literal. The previous
+        // pinned `matrix[0, 8]` for StyleKey silently became SiblingOrder's cell
+        // when R4.7A inserted that column, which is how the production
+        // GanttRowDefaults defect was found.
+        int Of(string columnName)
+        {
+            for (var i = 0; i < GanttTableSchema.Default.Columns.Count; i++)
+            {
+                if (GanttTableSchema.Default.Columns[i].Name == columnName)
+                {
+                    return i;
+                }
+            }
+
+            throw new InvalidOperationException($"Column '{columnName}' is not in the schema.");
+        }
+
+        Assert.Equal(id.Value, matrix[0, Of("Id")]);
+        Assert.Equal("As-Planned Activity", matrix[0, Of("Type")]);
+        Assert.Equal("AsPlannedActivity", matrix[0, Of("StyleKey")]);
+
+        // SiblingOrder is engine-maintained and has no scaffold default. The
+        // writer coalesces a null cell value to string.Empty, so "blank" is an
+        // empty string here, not null.
+        Assert.Equal(string.Empty, matrix[0, Of("SiblingOrder")]);
     }
 
     [Fact]
@@ -370,27 +399,42 @@ public class GanttRowInserterTests
         var guard = new Mock<IWorksheetProtectionGuard>();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
         IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
-        for (var index = 0; index < columns.Count; index++)
-        {
-            _ = graph.Columns[index].SetupGet(c => c.Name).Returns(columns[index].Name);
-        }
-        // Reverse the table's physical order; the logical scaffold still lands
-        // in the correct header-named cells.
+
+        // Reverse the table's physical order so the logical scaffold cannot be
+        // found by position alone.
         for (var index = 0; index < columns.Count; index++)
         {
             var schemaIndex = columns.Count - index - 1;
             _ = graph.Columns[index].SetupGet(c => c.Name).Returns(columns[schemaIndex].Name);
         }
 
+        // Ask the fake which physical index now carries each header, rather than
+        // recomputing it. GetColumnAt is 1-based and resolves to Columns[index - 1],
+        // so a second arithmetic copy of that rule is a second place to be wrong
+        // by one, and the failure reads as a production defect when it is a
+        // mistake in the expectation.
+        int PhysicalOf(string logicalName) => Array.FindIndex(graph.Columns, c => c.Object.Name == logicalName);
+
         var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(GanttEntityType.Delineator, () => id);
 
         Assert.True(outcome.Succeeded);
         var matrix = Assert.IsType<object[,]>(graph.WrittenValue);
-        // Physical column 0 is logical SortOrder, physical column 13 is Id.
-        Assert.Equal(string.Empty, matrix[0, 0]);
-        Assert.Equal(id.Value, matrix[0, 13]);
-        Assert.Equal("Delineator", matrix[0, 10]);
+
+        // The physical column for a logical column is the REVERSED index, because
+        // the loop above gave physical index i the name of logical
+        // (Count - 1 - i). Deriving both from the schema means adding a column
+        // moves them together; a pinned literal would have asserted the wrong
+        // cell and still passed, which is the failure mode this test exists to
+        // rule out.
+        // The scaffold writes Id, StyleKey and Type and leaves the rest null --
+        // SortOrder included, which has no default. The original assertion of
+        // string.Empty at a pinned physical 0 was only true by accident: it read
+        // whatever column the reversal happened to put there. What this test is
+        // for is that the named values land in the header-named cells.
+        Assert.Equal(id.Value, matrix[0, PhysicalOf("Id")]);
+        Assert.Equal("Delineator", matrix[0, PhysicalOf("Type")]);
+        Assert.Equal("DefaultDelineator", matrix[0, PhysicalOf("StyleKey")]);
     }
 
     [Theory]

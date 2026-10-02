@@ -1,6 +1,8 @@
 # ADR-0015 — Label `Auto` cascade order and the widest-gap truncation fallback
 
-- **Status**: Accepted
+- **Status**: Accepted — **D1 and D2 amended by
+  [ADR-0028](0028-horizontal-only-label-positions.md) on 2026-09-29; D4, D5 and
+  D6 stand unchanged.** See "Amendment by ADR-0028" at the end of this file.
 - **Date**: 2026-09-26
 - **Context**: Entity guide §22 fixes label placement precedence (explicit row value → named-style default → `Auto` candidates → deterministic fallback plus warning) and §12 fixed the span `Auto` order as `Right → Inside → Left`, but three gaps blocked R3.6. First, the product owner requires the span order `Right → Left → Inside`, placing the external sides ahead of the body. Second, §17 made the Delay Event's `Inside` first an *initial position* while §12 and §22 expressed position preference as an ordered `Auto` cascade, so the delay rule was a special case rather than a style-level default. Third, §22 directed an unresolvable case to "the entity's defined fallback", but no per-entity fallback was defined for spans or milestones, so a fully blocked label had no deterministic outcome; the fallback also had to run after a failed acceptance test, and §22's acceptance test (containment plus no intersection) is not a width measurement, so "largest available space" was not expressible against it.
 - **Decision**:
@@ -12,3 +14,26 @@
   - **D6 — Nothing to place.** If every measured gap is too small to hold even the ellipsis, the label is suppressed and exactly one warning is emitted. No position is invented and no label is drawn over an obstruction.
 - **Consequences**: R3.6 implements one cascade evaluator plus one occupancy measurement, and the delay case needs no schema change: `GanttCatalogues` already sets the `DelayEvent` preset default to `Inside`, so the catalogue key set, the ADR-0007 hash, and the workbook schema version are unchanged. Label positions in the first release will move more often than revision 3 implied, because a 6pt `ChartOuterPaddingPt` cannot usually satisfy a 144pt `MaximumExternalLabelWidthPt` to the right of a bar near the plot edge, so the external candidate frequently fails and the widest-gap fallback carries more labels than before; this is intended but is the change most likely to be visible to users and must be covered by the R3.12 representative fixture. Renderers are unaffected: the scene still resolves every label side, bounds, and truncated string, and a renderer may not re-select a side. R3.6 must also correct its own guide, which recorded the superseded `Right → Inside → Left` order as a `fact`.
 - **Alternatives considered**: Keep `Right → Inside → Left` (rejected because the product owner requires the external sides ahead of the body); largest-gap selection as the primary rule with the order used only as a tie-break (rejected because it would make the requested ordering unobservable and discard the product's stated preference); express the delay cascade as a new `tblGanttStyles` column (rejected because the requirement is a precedence relationship the existing single `DefaultLabelPosition` already expresses, and a new column would change the catalogue key set and force a schema-version advance plus an explicit repair path for no added capability); a three-dot ellipsis (rejected for inconsistency with the landed title truncation); font shrinking or wrapping (rejected — no approved wrap or shrink policy exists, and adding one requires an entity-guide amendment); suppress the label when blocked (rejected as the primary outcome because it discards a usable lane space; retained as D6 only when no gap can hold even an ellipsis); search the whole lane for the widest free span rather than the three adjacent positions (rejected because a distant gap detaches the label from its own bar); three periods as the truncation marker.
+
+## Amendment by ADR-0028 (2026-09-29)
+
+[ADR-0028](0028-horizontal-only-label-positions.md) removes `Above` and `Below`
+from the label positions. This ADR is therefore amended on the two decisions
+that named them, and **nothing else is changed**.
+
+- **D1** loses its final sentence. `Above`/`Below` are no longer reachable
+  through a named style, because they no longer exist. The span order
+  `Right → Left → Inside` is unchanged, and `Inside` is still tried last and
+  accepted only when the measured text fits.
+- **D2** loses `Above → Below` from the milestone order. A milestone's cascade is
+  now `Right → Left`.
+- **D4, D5 and D6 are untouched and remain in force.** The widest-gap
+  measurement, the single-character `…` truncation, and the nothing-to-place
+  outcome are all still the resolved behaviour.
+
+This ADR was **not** superseded. An earlier draft of the pre-R4.9 plan read the
+product owner's cascade ruling as replacing D4/D5 with a hard suppression, and
+proposed superseding this ADR accordingly. That reading was withdrawn on the
+owner's correction: *"there is a function already for this, it will truncate if
+there is no space, nothing new needs to be built."* The machinery below is
+reused exactly as built.

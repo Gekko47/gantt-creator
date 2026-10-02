@@ -174,7 +174,7 @@ public sealed class SceneBenchmarkTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
+
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,

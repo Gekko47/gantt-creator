@@ -37,20 +37,55 @@ public class GanttRowDefaultsTests
 
         IReadOnlyList<object?> actual = GanttRowDefaults.Build(type, () => id);
 
-        Assert.Equal(14, actual.Count);
-        Assert.Equal(id.Value, actual[0]);
-        Assert.Null(actual[1]);
-        Assert.Null(actual[2]);
-        Assert.Equal(expectedType, actual[3]);
-        Assert.Null(actual[4]);
-        Assert.Null(actual[5]);
-        Assert.Null(actual[6]);
-        Assert.Null(actual[7]);
-        Assert.Equal(expectedStyleKey, actual[8]);
-        Assert.Null(actual[9]);
-        Assert.Null(actual[10]);
-        Assert.Null(actual[11]);
-        Assert.Null(actual[12]);
-        Assert.Null(actual[13]);
+        // One value per schema column, in schema order.
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, actual.Count);
+
+        // Read by COLUMN NAME, not by index. The previous version of this test
+        // pinned StyleKey at index 8, which is ParentId's position -- and became
+        // SiblingOrder's position when R4.7A inserted that column. The test
+        // therefore passed for a builder that had been writing the style key into
+        // the wrong cell. Looking the value up by name is the contract the caller
+        // depends on, and it cannot silently pass on a shifted literal.
+        var byName = GanttTableSchema.Default.Columns
+            .Select((column, index) => (column.Name, Value: actual[index]))
+            .ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
+
+        Assert.Equal(id.Value, byName["Id"]);
+        Assert.Equal(expectedType, byName["Type"]);
+        Assert.Equal(expectedStyleKey, byName["StyleKey"]);
+
+        // Everything else is blank so validation reports the required authoring inputs.
+        foreach (string column in GanttTableSchema.Default.Columns.Select(c => c.Name))
+        {
+            if (column is "Id" or "Type" or "StyleKey")
+            {
+                continue;
+            }
+
+            Assert.Null(byName[column]);
+        }
+    }
+
+    /// <summary>
+    /// The guard that would have caught the real defect: every populated value
+    /// must land in the column it names. A scaffold that shifts when the schema
+    /// grows writes a style key into the sibling-ordering column, which is
+    /// invisible until a rendered row carries a nonsense ordering.
+    /// </summary>
+    [Fact]
+    public void Every_populated_scaffold_value_lands_in_its_own_column()
+    {
+        IReadOnlyList<object?> actual = GanttRowDefaults.Build(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+        IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
+
+        var populated = columns
+            .Select((column, index) => (column.Name, Value: actual[index]))
+            .Where(p => p.Value is not null)
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(
+            new HashSet<string>(["Id", "Type", "StyleKey"], StringComparer.Ordinal),
+            populated);
     }
 }

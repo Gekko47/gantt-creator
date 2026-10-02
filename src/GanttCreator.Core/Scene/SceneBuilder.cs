@@ -26,6 +26,27 @@ public enum SceneBuilderRefusal
 
     /// <summary>One event's named style could not be resolved to a renderable style.</summary>
     UnresolvableStyle = 7,
+
+    /// <summary>
+    /// The hierarchy could not be resolved into render lanes: a parent is missing
+    /// or ambiguous, a child names a type that may not be one, or the chain is
+    /// deeper than the supported depth.
+    /// </summary>
+    UnresolvableProjection = 8,
+
+    /// <summary>
+    /// A <see cref="SceneCompositionProfile.LiveExcel"/> request carried a data
+    /// panel (R4.8A D4).
+    /// </summary>
+    /// <remarks>
+    /// The live worksheet's own cells <em>are</em> the data panel, so a drawn
+    /// replica would be drawn on top of the user's own cells rather than beside
+    /// them. This was previously expressible-but-unenforced — a caller simply left
+    /// <see cref="SceneBuildRequest.Panel"/> null — so the mistake compiled, ran,
+    /// and presented as a rendering bug. Refusing makes it a typed, reportable
+    /// condition instead.
+    /// </remarks>
+    LiveProfileCarriesPanel = 9,
 }
 
 /// <summary>
@@ -45,10 +66,23 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the named-style registry used to resolve each event's style.</summary>
     public GanttStyleRegistry Registry { get; init; } = GanttStyleRegistry.Empty;
 
+    /// <summary>
+    /// Gets the resolved size preset this composition was built against (R4.7H D7).
+    /// The preset is carried so a caller, a diagnostic, and a test can all name the
+    /// budget the chart was composed for. It is <b>not</b> re-read here:
+    /// <see cref="PlotBounds"/> is already the resolver's output, so deriving the plot
+    /// twice from the same preset is exactly the second authority D1 forbids.
+    /// </summary>
+    public SizePreset? Preset { get; init; }
+
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
 
-    /// <summary>Gets the caller-supplied measured plot bounds.</summary>
+    /// <summary>
+    /// Gets the caller-supplied measured plot bounds. These must be the output of
+    /// <see cref="PlotGeometryResolver"/> (R4.7H D1); the architecture test fails if a
+    /// second construction site appears.
+    /// </summary>
     public RectD? PlotBounds { get; init; }
 
     /// <summary>Gets the single injected text-metrics seam.</summary>
@@ -61,7 +95,26 @@ public sealed record SceneBuildRequest
     public FrameBandsTheme? FrameTheme { get; init; }
 
     /// <summary>Gets the resolved data-panel styles, or null to omit the panel.</summary>
+    /// <remarks>
+    /// Carrying a value here for a
+    /// <see cref="SceneCompositionProfile.LiveExcel"/> build is refused as
+    /// <see cref="SceneBuilderRefusal.LiveProfileCarriesPanel"/>. The rule lives on
+    /// <see cref="SceneCompositionProfiles"/>; this member only records what it
+    /// means for a caller.
+    /// </remarks>
     public PanelTheme? Panel { get; init; }
+
+    /// <summary>
+    /// Gets the composition profile this request is for (R4.8A D4), which decides
+    /// whether <see cref="Panel"/> may be supplied at all.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see cref="SceneCompositionProfile.LiveExcel"/> rather than to a
+    /// profile that draws a panel. The default is the safe direction: a caller who
+    /// forgets to set a profile gets the profile that refuses a panel, never one
+    /// that silently draws a replica over the user's cells.
+    /// </remarks>
+    public SceneCompositionProfile Profile { get; init; } = SceneCompositionProfile.LiveExcel;
 
     /// <summary>Gets the inclusive plot start date.</summary>
     public DateOnly PlotStart { get; init; }
@@ -114,8 +167,15 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the milestone diamond tip-to-tip size.</summary>
     public double MilestoneSizePt { get; init; }
 
-    /// <summary>Gets the critical-interval overlay line width.</summary>
-    public double CriticalLinePt { get; init; }
+    /// <summary>
+    /// No longer a request input. The critical-interval overlay's height is half
+    /// the resolved style's <c>ActivityHeightPt</c>, so the retired
+    /// <c>CriticalLinePt</c> thickness token has no remaining role here
+    /// (ADR-0027 D4, owner ruling 2026-09-30). It was previously a defaulted
+    /// property that nothing populated, so a caller that forgot it silently
+    /// passed 0 and the overlay refused — a missing entity, not a wrong-looking
+    /// one. Removing the field makes that unrepresentable.
+    /// </summary>
 
     /// <summary>Gets the delineator line width, from the <c>DelineatorLinePt</c> token.</summary>
     public double DelineatorLinePt { get; init; }
@@ -204,6 +264,27 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.NullRequest);
         }
 
+        // R4.8A D4. The live sheet's real cells are the data panel, so drawing one
+        // would cover the user's own cells.
+        //
+        // Checked FIRST, before the content and measurement validations, and that
+        // order is deliberate rather than incidental. A panel on a live request is a
+        // request-construction error: it is true of the request itself, independent
+        // of its events or its measurements, and it is the one condition the caller
+        // must fix before anything else can be diagnosed. Checked after EmptyEvents,
+        // an otherwise-valid live request that merely also carried a panel would be
+        // reported as having no events, and the caller would go looking for rows that
+        // were there all along.
+        //
+        // It is also checked before any geometry is derived, because the panel's
+        // bounds feed the frame rectangle (BuildFramePanelAndScene reads the built
+        // panel to size the chart background) — a live request carrying a panel
+        // would otherwise have produced a wrong frame before anything could notice.
+        if (!SceneCompositionProfiles.DrawsDataPanel(request.Profile) && request.Panel is not null)
+        {
+            return Refused(SceneBuilderRefusal.LiveProfileCarriesPanel);
+        }
+
         if (request.Events is null || request.Events.Count == 0 || request.Events.Any(@event => @event is null))
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
@@ -283,6 +364,40 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
 
+        // R4.7B: resolve the render lane for every event BEFORE any lane geometry is
+        // built, so a projected child groups with its parent's lane and no lane grows
+        // to accommodate it. Resolving here rather than in the Office layer keeps
+        // placement a function of the data, not of how the worksheet was read.
+        //
+        // Resolution runs over the WHOLE batch, not just the render-visible rows. A
+        // child whose parent is present but not rendered is still a valid hierarchy,
+        // and resolving over the visible set alone reports it as an unresolvable
+        // parent and refuses the whole scene. Only visible parents are mapped into
+        // `laneOwnerByEntity` below, so such a child keeps its own row-scoped lane
+        // and draws there -- the parent determines lane membership only, and an
+        // invisible parent contributes no lane.
+        ProjectionResolution projection = ProjectionResolver.Resolve(request.Events);
+        if (!projection.Succeeded)
+        {
+            return Refused(SceneBuilderRefusal.UnresolvableProjection);
+        }
+
+        Dictionary<GanttRowId, GanttEvent> visibleById = [];
+        foreach (GanttEvent @event in laneParticipants)
+        {
+            visibleById[@event.Id] = @event;
+        }
+
+        Dictionary<GanttRowId, GanttEvent> laneOwnerByEntity = [];
+        foreach (EntityProjection resolvedProjection in projection.Projections)
+        {
+            if (resolvedProjection.IsProjected
+                && visibleById.TryGetValue(resolvedProjection.RenderLaneOwnerId, out GanttEvent? owner))
+            {
+                laneOwnerByEntity[resolvedProjection.SourceEntityId] = owner;
+            }
+        }
+
         List<LaneEventInput> laneInputs = [];
         Dictionary<GanttRowId, ResolvedEventStyle> styles = [];
 
@@ -359,7 +474,8 @@ public static class SceneBuilder
             };
 
             styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
-            laneInputs.Add(new LaneEventInput(@event, heightPt));
+            _ = laneOwnerByEntity.TryGetValue(@event.Id, out GanttEvent? laneOwner);
+            laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
 
         if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
@@ -373,7 +489,13 @@ public static class SceneBuilder
         }
 
         List<ScenePrimitive> primitives = [];
-        List<SceneWarning> warnings = [.. laneLayout.Warnings, .. placements.Warnings];
+        // LaneEventLayout passes `layout.Warnings` through by design, so taking both
+        // lists here would add every lane warning twice. SceneValidator keys
+        // duplicates by (owner, code) and would report each one as a
+        // DuplicateWarning finding against a correct scene. The layout is the
+        // authoritative source for lane warnings; the placement feed adds none of
+        // its own.
+        List<SceneWarning> warnings = [.. laneLayout.Warnings];
 
         // The critical overlay clips to the parent's post-plot-clip visible span, so
         // the map is filled over the span events before any overlay is built.
@@ -487,30 +609,33 @@ public static class SceneBuilder
 
             if (@event.Type is GanttEntityType.CriticalInterval)
             {
-                // A critical interval whose parent emitted no visible span has
-                // nothing to clip against, so the plot is the outer bound and the
-                // builder refuses rather than drawing a full-width overlay.
-                RectD parentBounds = @event.ParentId is { } parentId
-                    && parentVisibleBounds.TryGetValue(parentId, out RectD found)
-                        ? found
-                        : plotBounds;
-
+                // Owner ruling 2026-09-30: the critical interval is an ordinary
+                // span. Its horizontal extent comes from its own dates and its
+                // vertical placement from its own slot, so there is no parent lookup
+                // here at all. `parentVisibleBounds` is still built for span bars,
+                // but the critical path does not read it.
+                //
+                // The slot centre is lane-relative and the overlay is placed in chart
+                // coordinates, so the plot top is added here exactly as the span pass
+                // and the milestone pass add it. Omitting it drew the critical bar
+                // `plotBounds.Top` points above its own lane -- outside the plot, and
+                // in the header bands -- which the committed golden recorded rather
+                // than caught, because the golden pinned the wrong Y faithfully.
                 CriticalOverlayCreationOutcome overlay = CriticalOverlayBuilder.TryBuild(
                     new CriticalOverlayRequest(
                         @event,
                         resolved.Style,
-                        parentBounds,
-                        request.CriticalLinePt,
+                        resolved.HeightPt,
+                        placement.SlotCentreY + plotBounds.Top,
                         placement.LaneOrder,
                         placement.EffectiveStackIndex),
-                    timeScale,
-                    parentVisibleBounds);
+                    timeScale);
                 if (overlay.Result is not { } overlayResult)
                 {
                     warnings.Add(new SceneWarning(
                         SceneOwnerId.ForRow(@event.Id),
-                        "CriticalOverlayRefused",
-                        "The critical interval could not be overlaid on its parent."));
+                        "CriticalIntervalNotDrawn",
+                        "The critical interval could not be drawn."));
                     continue;
                 }
 

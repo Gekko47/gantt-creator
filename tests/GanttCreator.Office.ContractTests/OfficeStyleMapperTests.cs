@@ -46,6 +46,10 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
             { "BaselineFill", "#00B050", 0x50B000 },
             { "BaselineOutline", "#006100", 0x006100 },
             { "CriticalStroke", "#FF0000", 0x0000FF },
+            // R4.7C / ADR-0027 D2: CriticalFill shares CriticalStroke's value but
+            // differs by role, so the catalogue never carries a stroke token used
+            // as a fill. Its host value is therefore identical.
+            { "CriticalFill", "#FF0000", 0x0000FF },
             { "CriticalOutline", "#C00000", 0x0000C0 },
             { "DelayFill", "#FF0000", 0x0000FF },
             { "DelayText", "#FFFFFF", 0xFFFFFF },
@@ -145,7 +149,12 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
             { "AsPlannedActivity", "PlannedFill", "PlannedOutline", "#92D050|#548235" },
             { "AsBuiltActivity", "ActualFill", "ActualOutline", "#00B0F0|#0070C0" },
             { "BaselineActivity", "BaselineFill", "BaselineOutline", "#00B050|#006100" },
-            { "CriticalInterval", "(none)", "CriticalStroke", "|#FF0000" },
+            // ADR-0027 D2/D5: the critical overlay is a FILLED rectangle, so its
+            // visual contract is the CriticalFill token. It previously read "(none) /
+            // CriticalStroke", which described the rejected line representation: a
+            // filled rect with no fill carried no visual meaning at all, and the
+            // stroke row is what the entity used to be drawn as.
+            { "CriticalInterval", "CriticalFill", "CriticalStroke", "#FF0000|#FF0000" },
             { "DelayEvent", "DelayFill", "CriticalOutline", "#FF0000|#C00000" },
             { "AsPlannedProcurement", "PlannedFill", "PlannedOutline", "#92D050|#548235" },
             { "AsBuiltProcurement", "ActualFill", "ActualOutline", "#00B0F0|#0070C0" },
@@ -184,14 +193,18 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
 
     /// <summary>
     /// The guide's metric tokens that reach a style property, with the exact host
-    /// value. Section 16 fixes the critical overlay at <c>CriticalLinePt</c> and
-    /// the standard outline at <c>StandardOutlinePt</c>.
+    /// value. Section 16 fixes the standard outline at <c>StandardOutlinePt</c>.
     /// </summary>
+    /// <remarks>
+    /// <c>CriticalLinePt</c> is deliberately absent: ADR-0027 D4 retired it from
+    /// <c>GanttCatalogues.Metrics</c> when the overlay became a filled rectangle, since
+    /// a line thickness is no longer an input to anything. Leaving it here would assert
+    /// that a retired token still maps to a host property.
+    /// </remarks>
     public static TheoryData<string, double> GuideStrokeWidths =>
         new()
         {
             { "StandardOutlinePt", 0.75 },
-            { "CriticalLinePt", 2.25 },
             { "GridLinePt", 0.5 },
             { "MajorBoundaryPt", 1.0 },
             { "DelineatorLinePt", 0.75 },
@@ -414,7 +427,7 @@ public class OfficeStyleMapperTests(ITestOutputHelper output)
     [Fact]
     public void The_matrix_covers_every_colour_token_the_catalogue_publishes()
     {
-        // The completeness guard for D4: if a twenty-second colour token is added
+        // The completeness guard for D4: if a twenty-third colour token is added
         // to the guide's table, this fails until a row is transcribed for it.
         // Without it, "the full matrix" would silently become "the matrix as it
         // was when it was written".

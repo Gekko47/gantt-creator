@@ -34,8 +34,6 @@ public static class EntityTypeCatalog
             GanttLabelPosition.Left,
             GanttLabelPosition.Right,
             GanttLabelPosition.Inside,
-            GanttLabelPosition.Above,
-            GanttLabelPosition.Below,
             GanttLabelPosition.None,
         ]);
 
@@ -45,8 +43,6 @@ public static class EntityTypeCatalog
             GanttLabelPosition.Auto,
             GanttLabelPosition.Left,
             GanttLabelPosition.Right,
-            GanttLabelPosition.Above,
-            GanttLabelPosition.Below,
             GanttLabelPosition.None,
         ]);
 
@@ -129,7 +125,12 @@ public static class EntityTypeCatalog
             EntityKind.Span,
             EntityDateMode.StartFinish,
             "CriticalInterval",
-            EntityColourCapability.Stroke,
+            // ADR-0027 D5: the entity is a FILLED rectangle, so a user FillColour
+            // override is now permitted. This flip, the validator's acceptance of
+            // that override, and checklist §C land together (D6) — a style that
+            // fills while the validator refuses the user's own fill is a defect
+            // that looks like a rendering choice.
+            EntityColourCapability.Fill | EntityColourCapability.Stroke,
             requiresStyleKey: false,
             OnlyLabelPositions(GanttLabelPosition.None)),
         new(

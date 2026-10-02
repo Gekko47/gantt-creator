@@ -364,15 +364,33 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Field == "Finish" && i.Code == GanttValidationCodes.NotUsedByType);
     }
 
+    /// <summary>
+    /// A blank <c>LaneId</c> is the normal state of a user-authored row and must not
+    /// be a blocking error.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite. <c>LaneId</c> is
+    /// <c>EngineHidden</c> (ADR-0029 D8) and <c>GanttRowDefaults</c> scaffolds it
+    /// blank, so requiring it made every Add-Row activity fail validation with a
+    /// blocking error on a cell the user cannot see or edit -- found during live F5
+    /// testing, where the Refresh was refused outright. ADR-0012 and R4.7B already
+    /// made the cell optional: the render lane is derived in Core by
+    /// <c>ProjectionResolver</c>, and <c>LaneOrdering.LaneKey</c> returns a
+    /// row-scoped key when it is null. A blank cell must therefore reach
+    /// <see cref="GanttValidationOutcome.Events"/> as a null <c>LaneId</c> -- not
+    /// merely stop being reported, because a silent drop would be the same class of
+    /// defect as the refusal.
+    /// </remarks>
     [Fact]
-    public void Span_missing_lane_is_a_blocking_error()
+    public void Span_missing_lane_is_valid_and_yields_a_null_lane()
     {
         GanttRowDto row = ValidSpan() with { LaneIdCell = GanttCells.Empty<string>() };
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "LaneId");
+        Assert.Null(Assert.Single(outcome.Events).LaneId);
     }
 
     [Fact]
@@ -386,19 +404,122 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Field == "LaneId" && i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
     }
 
+    /// <summary>
+    /// A blank <c>StackIndex</c> is valid, for the same reason a blank
+    /// <c>LaneId</c> is: the cell is engine-owned compatibility data that ADR-0012
+    /// explicitly made untrusted and unrequired.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite and was the second half of the live
+    /// F5 refusal. <c>LaneLayoutBuilder</c> derives the effective stack from
+    /// deterministic row/parent-child position, so the blank cell is correct rather
+    /// than missing, and the derived value reaches the layout as
+    /// <c>LaneEventInput.EffectiveStackIndex == null</c>.
+    /// </remarks>
     [Fact]
-    public void Span_missing_stack_is_a_blocking_error()
+    public void Span_missing_stack_is_valid_and_yields_a_null_stack()
     {
         GanttRowDto row = ValidSpan(stackIndex: null);
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexRequired);
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "StackIndex");
+        Assert.Null(Assert.Single(outcome.Events).StackIndex);
     }
 
+    /// <summary>
+    /// A supplied NEGATIVE <c>StackIndex</c> is still a blocking error. The cell
+    /// became optional, not unvalidated, and this is the positive test that keeps
+    /// <see cref="GanttValidationCodes.StackIndexNegative"/> reachable.
+    /// </summary>
+    /// <remarks>
+    /// No test exercised this branch before. With the requirement removed,
+    /// <c>StackIndexNegative</c> is the only remaining stack-index fault, so without
+    /// this case the code would be dead and the removal above unprovable.
+    /// </remarks>
     [Fact]
-    public void Critical_interval_without_parent_is_a_blocking_error()
+    public void Negative_stack_is_a_blocking_error()
+    {
+        GanttRowDto row = ValidSpan(stackIndex: -1);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.Field == "StackIndex"
+                && i.Code == GanttValidationCodes.StackIndexNegative
+                && i.Severity == GanttValidationSeverity.Error);
+    }
+
+    /// <summary>
+    /// The exact live scenario: a row as <c>GanttRowDefaults.Build</c> scaffolds it --
+    /// <c>Id</c>, <c>Type</c> and <c>StyleKey</c> populated, every engine column
+    /// blank -- becomes valid once the user supplies the authoring dates.
+    /// </summary>
+    /// <remarks>
+    /// This is the F5 regression test. The refusal was only reproducible through a
+    /// real Add Row, because the defect is the interaction between two contracts:
+    /// <c>GanttRowDefaults</c> deliberately leaves <c>LaneId</c>/<c>StackIndex</c>
+    /// blank, and the validator demanded both. Constructing the DTO directly is what
+    /// makes it a fast unit test rather than an Office-only one; the values are the
+    /// ones the builder writes, placed by column name.
+    /// </remarks>
+    [Fact]
+    public void A_scaffolded_add_row_with_dates_is_valid()
+    {
+        // GanttRowDefaults.Build writes exactly these three columns for an
+        // As-Planned Activity. Every other engine column is blank.
+        GanttRowDto scaffolded = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "As-Planned Activity",
+            null,
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 5),
+            null,
+            "AsPlannedActivity",
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([scaffolded]);
+
+        Assert.True(
+            outcome.IsValid,
+            "Unexpected errors: " + string.Join(
+                " | ",
+                outcome.Issues
+                    .Where(issue => issue.Severity == GanttValidationSeverity.Error)
+                    .Select(issue => $"{issue.RowNumber} {issue.Field}/{issue.Code}")));
+        Assert.Empty(outcome.Issues);
+        Assert.Single(outcome.Events);
+    }
+
+    /// <summary>
+    /// A Critical Interval with a blank <c>ParentId</c> is a valid TOP-LEVEL row, not
+    /// a blocking error.
+    /// </summary>
+    /// <remarks>
+    /// This test previously asserted the opposite -- that a parentless interval was
+    /// refused with <c>ParentMissingOrMalformed</c>. That requirement contradicted
+    /// <c>EntityHierarchyCatalog</c>, which lists <c>CriticalInterval</c> among the
+    /// types that may own children precisely so a level-1 interval can own a level-2
+    /// child, and contradicted <c>EntityProjection</c>, which resolves such a child's
+    /// render lane. With the requirement in place the catalogue's entry and the
+    /// projection's top-level boundary were both unreachable: no such hierarchy could
+    /// ever validate. The depth rule is now the single authority on what an interval
+    /// may parent, and it is pinned by
+    /// <c>GanttHierarchyLimitsTests.A_top_level_critical_interval_may_own_a_child</c>
+    /// and <c>A_nested_critical_interval_cannot_own_a_child</c>.
+    /// </remarks>
+    [Fact]
+    public void A_critical_interval_without_a_parent_is_a_valid_top_level_row()
     {
         var row = new GanttRowDto(
             2,
@@ -410,6 +531,45 @@ public class GanttRowValidatorTests
             new DateOnly(2026, 9, 2),
             new DateOnly(2026, 9, 3),
             null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null
+        );
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentMissingOrMalformed);
+
+        // And it must reach Events as a real event, not merely stop being an error:
+        // a silent drop would be the same class of defect as a silent refusal.
+        GanttEvent resolved = Assert.Single(outcome.Events);
+        Assert.Equal(GanttEntityType.CriticalInterval, resolved.Type);
+        Assert.Null(resolved.ParentId);
+    }
+
+    /// <summary>
+    /// The validator-side companion to the row above: a MALFORMED <c>ParentId</c> is
+    /// still a blocking error for a Critical Interval. Blank is now legal, so this
+    /// case is what keeps <c>ParentMissingOrMalformed</c> reachable at all --
+    /// without it the code would be dead and the positive test would pass vacuously.
+    /// </summary>
+    [Fact]
+    public void A_critical_interval_with_a_malformed_parent_is_a_blocking_error()
+    {
+        var row = new GanttRowDto(
+            2,
+            NewId(),
+            NewLaneId(),
+            0,
+            "Critical Interval",
+            "Critical part",
+            new DateOnly(2026, 9, 2),
+            new DateOnly(2026, 9, 3),
+            "not-a-row-id",
             null,
             null,
             null,
@@ -538,17 +698,126 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Parent_on_non_critical_row_is_a_warning()
+    public void Parent_on_a_child_capable_span_is_resolved_not_ignored()
     {
+        // R4.7A D9 replaced this test's contract. A `ParentId` on an
+        // As-Planned Activity used to be a NotUsedByType warning, because only a
+        // Critical Interval could carry one. ParentId is now authoritative for
+        // general hierarchy, so this row is a real child whose parent does not
+        // exist -- which is a blocking error, not a warning. The superseded
+        // NotUsedByType case is still covered for structural types by
+        // `Parent_on_a_structural_type_is_a_not_used_warning`.
         GanttRowDto row = ValidSpan(parentId: NewId());
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Field == "ParentId" && i.Severity == GanttValidationSeverity.Error);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.NotUsedByType);
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_resolvable_parent_validates_as_a_child()
+    {
+        // The positive case for D9: an As-Planned Activity carrying a ParentId
+        // that resolves to a real parent must be VALID and produce an event whose
+        // ParentId is preserved. Without this, the widening would only be proven
+        // by the absence of a warning, which a later change could reintroduce.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, start: new DateOnly(2026, 1, 1), finish: new DateOnly(2026, 12, 31));
+        GanttRowDto child = ValidSpan(rowNumber: 3, id: NewId(), parentId: parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid, "A resolved child must validate.");
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "ParentId");
+
+        GanttRowId childId = GanttRowId.Parse(child.Id);
+        GanttEvent childEvent = Assert.Single(outcome.Events, e => e.Id == childId);
+        Assert.Equal(parentId, childEvent.ParentId!.Value);
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_blank_parent_is_top_level_and_valid()
+    {
+        // Blank ParentId on a child-capable type is the promoted state: after a
+        // parent is deleted its children become top-level, so this must be valid
+        // rather than reported as a missing required field.
+        GanttRowDto row = ValidSpan(parentId: null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
         Assert.True(outcome.IsValid);
+        Assert.DoesNotContain(outcome.Issues, i => i.Field == "ParentId");
+    }
+
+    [Fact]
+    public void Child_capable_span_with_a_malformed_parent_is_blocked()
+    {
+        GanttRowDto row = ValidSpan(parentId: "not-an-id");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
         Assert.Contains(
             outcome.Issues,
-            i => i.Field == "ParentId" && i.Code == GanttValidationCodes.NotUsedByType && i.Severity == GanttValidationSeverity.Warning
-        );
+            i => i.Field == "ParentId" && i.Code == GanttValidationCodes.ParentMissingOrMalformed && i.Severity == GanttValidationSeverity.Error);
+    }
+
+    [Fact]
+    public void Child_of_a_type_that_may_not_own_children_is_blocked()
+    {
+        // A milestone is child-capable but may not own children, so a child
+        // naming a milestone parent is refused with ParentNotSpan. This is the
+        // widened replacement for the old Span-only test, and it proves the
+        // matrix -- not a hard-coded Span check -- is the authority.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(
+            rowNumber: 2,
+            id: parentId,
+            typeText: "As-Planned Milestone",
+            stackIndex: null,
+            finish: new DateOnly(2026, 9, 5));
+        GanttRowDto child = ValidSpan(rowNumber: 3, id: NewId(), parentId: parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentNotSpan);
+    }
+
+    [Fact]
+    public void Parent_on_a_structural_type_is_a_not_used_warning()
+    {
+        // The D9 guarantee that nothing becomes silently permitted: a type the
+        // matrix does not classify as child-capable still reports NotUsedByType
+        // rather than being accepted as a child or blocked as an unresolvable one.
+        foreach (string typeText in new[] { "Splitter", "Spacer", "Delineator" })
+        {
+            GanttRowDto row = new(
+                2,
+                NewId(),
+                null,
+                null,
+                typeText,
+                "Section",
+                new DateOnly(2026, 9, 1),
+                new DateOnly(2026, 9, 5),
+                NewId(),
+                null,
+                null,
+                null,
+                null,
+                true,
+                null
+            );
+
+            GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+            Assert.Contains(
+                outcome.Issues,
+                i => i.Field == "ParentId" && i.Code == GanttValidationCodes.NotUsedByType && i.Severity == GanttValidationSeverity.Warning);
+        }
     }
 
     [Fact]
@@ -601,7 +870,11 @@ public class GanttRowValidatorTests
         GanttRowDto badLabel = ValidSpan(
             typeText: "Custom Activity",
             styleKey: "MyStyle",
-            labelPositionText: "Above");
+            // A position that parses but is outside the style's set. It used to be
+            // "Above", which the owner ruling retired: an unparseable name can
+            // only ever produce UnknownLabelPosition, so it no longer exercises
+            // the capability check this test is about.
+            labelPositionText: nameof(GanttLabelPosition.TopLeft));
         GanttRowDto badColour = ValidSpan(
             typeText: "Custom Activity",
             styleKey: "MyStyle",
@@ -612,6 +885,32 @@ public class GanttRowValidatorTests
 
         Assert.Contains(labelOutcome.Issues, i => i.Code == GanttValidationCodes.LabelNotAllowedForType);
         Assert.Contains(colourOutcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_retired_label_position_is_reported_and_never_coerced()
+    {
+        // ADR-0029 D6 (owner ruling 2026-09-30): a stored "Above"/"Below" is
+        // REPORTED, never coerced to a neighbouring position. This is the validator
+        // half of the removal, and it is the reason the enum members were deleted
+        // rather than merely denied: there is nothing left to silently substitute.
+        foreach (string stored in new[] { "Above", "Below" })
+        {
+            GanttRowDto row = ValidSpan(
+                typeText: "As-Planned Activity",
+                labelPositionText: stored);
+
+            GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+            Assert.False(outcome.IsValid);
+            GanttValidationIssue issue = Assert.Single(
+                outcome.Issues,
+                i => i.Code == GanttValidationCodes.UnknownLabelPosition);
+            Assert.Equal("LabelPosition", issue.Field);
+            // Reported verbatim: the message names the stored value so the analyst
+            // can see which cell needs changing.
+            Assert.Contains(stored, issue.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -711,8 +1010,11 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Fill_on_critical_interval_is_a_capability_error()
+    public void Fill_on_critical_interval_is_accepted()
     {
+        // ADR-0027 D5 inverted this rule. It is kept as its own test rather than
+        // deleted so the inversion stays visible: the identical row that was a
+        // blocking error now validates, and the fill reaches the event.
         var parentId = NewId();
         GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId);
         var child = new GanttRowDto(
@@ -735,11 +1037,9 @@ public class GanttRowValidatorTests
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(
-            outcome.Issues,
-            i => i.RowNumber == 3 && i.Field == "FillColour" && i.Code == GanttValidationCodes.ColourNotAllowedForType
-        );
+        Assert.True(outcome.IsValid);
+        GanttEvent resolved = Assert.Single(outcome.Events, e => e.Type == GanttEntityType.CriticalInterval);
+        Assert.Equal("#FF0000", resolved.FillColour);
     }
 
     [Fact]
@@ -903,28 +1203,40 @@ public class GanttRowValidatorTests
         Assert.Null(Assert.Single(outcome.Events).Finish);
     }
 
+    /// <summary>
+    /// A child whose parent row does not validate as a usable event is a blocking
+    /// <c>ParentInvalid</c>, and the child never reaches <c>Events</c>.
+    /// </summary>
+    /// <remarks>
+    /// The parent is made invalid by <c>Start</c> after <c>Finish</c>, not by a blank
+    /// <c>LaneId</c>. It previously carried a blank lane for that reason, so the test
+    /// was passing because of the very requirement this change removes: once a blank
+    /// lane became legal the parent validated and the child had no reason to be
+    /// refused. The fault under test is the parent relationship, so the parent now
+    /// carries a real, unrelated date fault.
+    /// </remarks>
     [Fact]
     public void Critical_interval_with_invalid_parent_event_is_a_blocking_parent_invalid_issue()
     {
         var parentId = NewId();
-        GanttRowDto parent = ValidSpan(rowNumber: 2, id: parentId, laneId: null);
+        GanttRowDto parent = ValidSpan(
+            rowNumber: 2,
+            id: parentId,
+            start: new DateOnly(2026, 9, 5),
+            finish: new DateOnly(2026, 9, 1));
         GanttRowDto child = ValidSpan(
             rowNumber: 3,
             typeText: "Critical Interval",
             id: NewId(),
-            laneId: null,
-            stackIndex: 0,
             start: new DateOnly(2026, 9, 2),
             finish: new DateOnly(2026, 9, 3),
             parentId: parentId
-        ) with
-        {
-            LaneIdCell = GanttCells.Empty<string>(),
-        };
+        );
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
 
         Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.StartAfterFinish);
         Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
         Assert.DoesNotContain(outcome.Events, e => e.RowNumber == 3);
     }
@@ -944,14 +1256,24 @@ public class GanttRowValidatorTests
         Assert.DoesNotContain(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.StyleKeyRequired);
     }
 
+    /// <summary>
+    /// Every independent fault on one row is reported, not just the first.
+    /// </summary>
+    /// <remarks>
+    /// <c>LaneId</c> and <c>StackIndex</c> are SUPPLIED as malformed/negative values
+    /// rather than left blank. Both cells are now optional -- blank is the normal
+    /// scaffolded state and is not a fault -- so blanking them here would have
+    /// quietly reduced this test's coverage of the lane/stack codes to nothing while
+    /// it still passed.
+    /// </remarks>
     [Fact]
     public void All_errors_returns_every_independent_fault()
     {
         var row = new GanttRowDto(
             7,
             "BAD",
-            null,
-            null,
+            "NOT-AN-ID",
+            -1,
             "As-Planned Activity",
             null,
             new DateOnly(2026, 9, 5),
@@ -971,7 +1293,7 @@ public class GanttRowValidatorTests
         Assert.Empty(outcome.Events);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.IdMissingOrMalformed);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.LaneIdMissingOrMalformed);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexRequired);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StackIndexNegative);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StartAfterFinish);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.UnknownLabelPosition);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.BadColourFormat);
@@ -1166,18 +1488,69 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Fill_on_a_critical_interval_is_accepted_and_reaches_the_event()
+    {
+        // ADR-0027 D5/D6. The entity renders as a filled rectangle, so a user
+        // FillColour override is now permitted. This is the POSITIVE test for the
+        // changed path: before the capability flip this row was a blocking error,
+        // and a preset that fills while the validator refuses the user's own fill
+        // is a defect that looks like a rendering choice.
+        string parentId = NewId();
+        string childId = NewId();
+        GanttRowDto parent = ValidSpan(typeText: "As-Planned Activity") with { IdCell = GanttCells.Value(parentId) };
+        GanttRowDto child = CriticalIntervalRow(2, childId, parentId, "#0000FF");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid, "A fill override on a critical interval is now legal.");
+
+        // And it must actually REACH the event, not merely stop being an error: a
+        // silent drop here would be the same class of defect as a silent refusal.
+        GanttEvent resolved = Assert.Single(outcome.Events, e => e.Id.Value == childId);
+        Assert.Equal("#0000FF", resolved.FillColour);
+    }
+
+    [Fact]
+    public void Stroke_on_a_critical_interval_stays_allowed()
+    {
+        // The capability gained Fill; Stroke must not have been lost in the flip.
+        string parentId = NewId();
+        GanttRowDto parent = ValidSpan(typeText: "As-Planned Activity") with { IdCell = GanttCells.Value(parentId) };
+        GanttRowDto child = CriticalIntervalRow(2, NewId(), parentId) with
+        {
+            StrokeColourCell = GanttCells.Value("#FF00FF"),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
+
+        Assert.True(outcome.IsValid);
+    }
+
+    [Fact]
     public void Critical_interval_cycle_member_with_a_field_error_is_not_reported_as_a_cycle()
     {
         string firstId = NewId();
         string secondId = NewId();
         GanttValidationOutcome outcome = GanttRowValidator.Validate([
-            CriticalIntervalRow(2, firstId, secondId, "#ff0000"),
+            // The field error this test needs used to be a FillColour override on a
+            // critical interval, which ADR-0027 D5 made LEGAL. LabelPosition is
+            // used instead: a critical interval still permits only `None`, so
+            // "Left" is a real field error that must suppress the cycle report
+            // without being misreported as one.
+            CriticalIntervalRow(2, firstId, secondId) with
+            {
+                LabelPositionCell = GanttCells.Value("Left"),
+            },
             CriticalIntervalRow(3, secondId, firstId),
         ]);
 
         Assert.False(outcome.IsValid);
-        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentCycle);
-        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.RowNumber == 2 && i.Code == GanttValidationCodes.LabelNotAllowedForType);
+        Assert.DoesNotContain(
+            outcome.Issues,
+            i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentCycle);
         Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentInvalid);
     }
 

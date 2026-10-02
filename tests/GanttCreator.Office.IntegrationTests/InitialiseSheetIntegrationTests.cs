@@ -93,8 +93,15 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
 
             var anchor = workbook.Names.Item(GanttWorkbookContract.PlotAnchorDefinedName);
             Assert.NotNull(anchor);
+            // The anchor is the first column PAST the table, so its address is
+            // derived from the live column count rather than written as a literal
+            // column letter. A literal went stale when R4.7A added SiblingOrder
+            // (O -> P) and only the live Office gate caught it. Reading the real
+            // address back off the worksheet also checks the anchor lands beside
+            // the table rather than merely that some string was written.
+            Excel.Range anchorCell = active.Cells[1, table.ListColumns.Count + 1];
             Assert.Equal(
-                $"='{GanttWorkbookContract.GanttSheetLabel}'!$O$1",
+                $"='{GanttWorkbookContract.GanttSheetLabel}'!{anchorCell.Address[External: false]}",
                 anchor.RefersTo,
                 StringComparer.Ordinal);
 
@@ -309,7 +316,9 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
                     StringComparison.OrdinalIgnoreCase));
             Excel.ListObject table = ganttSheet.ListObjects[GanttTableSchema.TableName];
             Assert.Equal(GanttTableSchema.TableName, table.Name, StringComparer.Ordinal);
-            Assert.Equal(14, table.ListColumns.Count);
+            // Derived from the schema, not hard-coded -- see the note on the
+            // matching assertion in AddRowIntegrationTests.
+            Assert.Equal(GanttTableSchema.Default.Columns.Count, table.ListColumns.Count);
 
             var visibleSheets = workbook.Sheets
                 .Cast<Excel.Worksheet>()

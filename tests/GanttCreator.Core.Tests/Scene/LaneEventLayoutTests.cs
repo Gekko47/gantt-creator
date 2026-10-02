@@ -37,18 +37,21 @@ public sealed class LaneEventLayoutTests
     }
 
     [Fact]
-    public void Grows_the_lane_when_stacked_content_exceeds_the_minimum_height()
+    public void The_lane_height_is_fixed_when_stacked_content_exceeds_it()
     {
+        // R4.7D / ADR-0026 D7. This previously asserted the lane grew from an
+        // 18pt minimum to 34pt. Growth is removed: the height is the managed row
+        // height, and the overflow is reported instead of accommodated. Every
+        // event still receives a placement, so the feed stays complete.
         LaneEventInput[] events = [Input(1, 1), Input(2, 2), Input(3, 3)];
 
         LaneLayoutResult layout = Lane(events);
         LaneEventLayoutResult result = Layout(events, layout);
 
-        // Three 8pt slots plus two 2pt gaps and 6pt of padding is 34pt, so the
-        // lane grew past the 18pt minimum rather than compressing the events.
         LaneGeometry lane = Assert.Single(layout.Lanes);
-        Assert.Equal(34, lane.Height);
+        Assert.Equal(_metrics.LaneHeightPt, lane.Height);
         Assert.Equal(3, result.Placements.Count);
+        Assert.Contains(layout.Warnings, w => w.Code == LaneLayoutBuilder.LaneContentExceedsLaneHeightCode);
     }
 
     [Fact]
@@ -294,6 +297,57 @@ public sealed class LaneEventLayoutTests
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(LaneEventLayoutRefusal.InvalidSlotIndex, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// A projected child ordered ABOVE its parent still resolves to the owner's
+    /// slot, exactly as the lane builder numbered it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The regression this guards: the effective index used to be the position of
+    /// the event in the lane's whole event array, and a projected child took its
+    /// owner's position <em>in that array</em>. With the child above the parent the
+    /// child is at index 0 and the owner at index 1, so the child resolved to slot
+    /// 1 while <c>LaneLayoutBuilder.BuildEventLane</c> -- which numbers only the
+    /// non-projected events and then assigns each child its owner's index -- put
+    /// both on slot 0. The two passes disagreed about which slots exist, and the
+    /// feed refused the scene as <c>MissingLayout</c> rather than reporting a
+    /// placement.
+    /// </para>
+    /// <para>
+    /// The child is authored above the parent deliberately, because that is the
+    /// ordering the previous implementation got wrong. A child authored below its
+    /// parent passed by accident: the array position and the non-projected position
+    /// coincide whenever every projected child follows its owner.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_projected_child_above_its_parent_resolves_to_the_owners_slot()
+    {
+        GanttEvent owner = Event(9);
+        GanttEvent child = Event(2);
+
+        // Both share the owner's lane key, so the builder groups them into one lane.
+        LaneEventInput[] events =
+        [
+            new(child, 8, RenderLaneOwner: owner),
+            new(owner, 8),
+        ];
+
+        LaneLayoutResult lane = Lane(events);
+        LaneEventLayoutResult result = Layout(events, lane);
+
+        Assert.Equal(2, result.Placements.Count);
+
+        LaneEventPlacement childPlacement = Assert.Single(result.Placements, p => p.Event.Id == child.Id);
+        LaneEventPlacement ownerPlacement = Assert.Single(result.Placements, p => p.Event.Id == owner.Id);
+
+        // One slot, one centre: the child overlaps its parent rather than taking a
+        // slot of its own, which is what ADR-0026 D7 requires of a projected child.
+        Assert.Equal(ownerPlacement.VisualSlotIndex, childPlacement.VisualSlotIndex);
+        Assert.Equal(ownerPlacement.SlotCentreY, childPlacement.SlotCentreY);
+        Assert.Equal(ownerPlacement.EffectiveStackIndex, childPlacement.EffectiveStackIndex);
     }
 
     private static LaneEventLayoutResult Layout(

@@ -33,6 +33,121 @@ public sealed class RepresentativeAcceptanceFixtureTests
 
     private static DateOnly Day(int day) => new(2026, 9, day);
 
+    /// <summary>
+    /// A style definition for the vertical scene test. Only the fields the scene
+    /// builder reads are supplied; the rest fall to their defaults.
+    /// </summary>
+    private static GanttStyleDefinition Style(string key, double height) =>
+        new(
+            key,
+            new HashSet<GanttLabelPosition>
+            {
+                GanttLabelPosition.None,
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.Inside,
+            },
+            EntityColourCapability.Fill | EntityColourCapability.Stroke,
+            GanttLabelPosition.Inside,
+            FillColour: "#92D050",
+            StrokeColour: "#404040",
+            TextColour: "#000000",
+            HatchPattern: GanttHatchPattern.None,
+            HatchPitchPt: 0,
+            HatchLinePt: 0,
+            StandardOutlinePt: 0.5,
+            ActivityHeightPt: height,
+            MilestoneSizePt: 8);
+
+    /// <summary>
+    /// The styles the representative rows actually reference, built with
+    /// <c>ActivityHeightPt</c> 8 so the critical overlay's half-height is the
+    /// predetermined 4 rather than a derived parent height.
+    /// </summary>
+    private static readonly GanttStyleRegistry SceneRegistry = new(
+    [
+        Style("AsPlannedActivity", 8),
+        Style("AsBuiltActivity", 8),
+        Style("AsPlannedMilestone", 8),
+        Style("AsBuiltMilestone", 8),
+        Style("CriticalInterval", 8),
+        Style("DefaultDelineator", 8),
+    ]);
+
+    /// <summary>
+    /// One measured panel height per body row, matching the panel's positional
+    /// requirement (see <c>SceneBuilderTests</c>). The representative set has nine
+    /// body rows (worksheet rows 2-10).
+    /// </summary>
+    private static PanelCellGrid Grid(int rowCount) =>
+        PanelCellGrid.TryCreate(
+            [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+            [.. Enumerable.Repeat(10.0, rowCount)],
+            10,
+            ["Id", "Description"]).Grid!;
+
+    private static FrameBandsTheme FrameTheme() =>
+        new(
+            new SceneStyle("Background"),
+            new SceneStyle("AlternateBand"),
+            new SceneStyle("MinorGrid"),
+            new SceneStyle("MajorGrid"),
+            new SceneStyle("YearHeader"),
+            new SceneStyle("PeriodHeader"),
+            new SceneStyle("Title"));
+
+    /// <summary>
+    /// Builds a real scene from the representative fixture's parent and its critical
+    /// child, driven through the real <c>SceneBuilder</c>. This is the vertical
+    /// integration seam the R4.7E work item requires: the same rows the fixture
+    /// validates must also project into a scene, so the critical child is proven
+    /// present in a BUILT scene rather than only in a hand-assembled primitive list.
+    /// </summary>
+    /// <remarks>
+    /// The pair is selected from the full fixture rather than re-declared, so this
+    /// cannot drift from the rows the validation tests assert on. The slice is
+    /// deliberate: the fixture's nine rows share one lane and deliberately overlap
+    /// at the same stack (that is what the stacking assertion must be able to see
+    /// fail), which the lane layout refuses as a single build. The critical-child
+    /// question does not depend on those cases, and <c>SceneBuilderTests</c> already
+    /// drives the full multi-stack lane layouts through the real builder.
+    /// </remarks>
+    private static SceneBuildOutcome BuildRepresentativeCriticalScene()
+    {
+        GanttValidationOutcome validated = GanttRowValidator.Validate(BuildRepresentativeRows());
+        GanttEvent child = Assert.Single(
+            validated.Events,
+            e => e.Type == GanttEntityType.CriticalInterval);
+        GanttEvent parent = Assert.Single(validated.Events, e => e.Id == child.ParentId);
+        GanttEvent[] pair = [parent, child];
+        return SceneBuilder.TryBuild(
+            new SceneBuildRequest
+            {
+                Events = pair,
+                Registry = SceneRegistry,
+                Grid = Grid(pair.Length),
+                PlotBounds = new RectD(200, 60, 300, 140),
+                Metrics = new FakeTextMetrics(_ => 8.0, 10.0),
+                LaneMetrics = new LaneLayoutMetrics(40, 3, 3, 2, 18, 9),
+                FrameTheme = FrameTheme(),
+                PlotStart = Day(1),
+                PlotFinish = Day(30),
+                GridLinePt = 0.5,
+                MajorBoundaryPt = 1,
+                MilestoneSizePt = 8,
+                TitleBandHeightPt = 14,
+                YearBandHeightPt = 16,
+                PeriodBandHeightPt = 20,
+                DelineatorLinePt = 1,
+                DelineatorStackGapPt = 10,
+                LabelGapPt = 2,
+                LabelHeightPt = 8,
+                ChartOuterPaddingPt = 0,
+                MinimumHeaderLabelWidthPt = 0,
+            });
+    }
+
     private static GanttRowDto Row(
         int rowNumber,
         string id,
@@ -253,6 +368,107 @@ public sealed class RepresentativeAcceptanceFixtureTests
         Assert.Equal(
             first.Events.Select(@event => @event.Id.Value),
             second.Events.Select(@event => @event.Id.Value));
+    }
+
+    /// <summary>
+    /// The vertical integration proof the R4.7E work item requires: the fixture's
+    /// critical child — which sits INSIDE its parent's span (row 2 is Sep 1-10, the
+    /// child is Sep 6-9) — reaches a scene built by the REAL <c>SceneBuilder</c>, is
+    /// present as a filled critical overlay, and is centred on its own slot at half
+    /// the predetermined height. This is deliberately not satisfied by the
+    /// hand-assembled primitive list above, which never consults the overlay builder
+    /// and so cannot regress if the overlay stops being emitted at all.
+    /// </summary>
+    [Fact]
+    public void The_critical_child_is_present_in_the_built_scene_as_a_filled_half_height_overlay()
+    {
+        SceneBuildOutcome outcome = BuildRepresentativeCriticalScene();
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneRect overlay = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.CriticalOverlay);
+
+        // ADR-0027 D2: the overlay carries a FILL. An outline-only or null-fill rect
+        // is the defect the ADR removes, so it is asserted, not assumed.
+        Assert.NotNull(overlay.Style.FillColour);
+
+        // ADR-0027 D3 as amended: half the PREDETERMINED ActivityHeightPt (8 in this
+        // fixture), not half the parent's resolved height and not the parent's own
+        // bounds. It consumes no lane height, so its height is style-driven.
+        Assert.Equal(4, overlay.Bounds.Height, precision: 6);
+
+        // It is drawn, not deleted: the interval's own Sep 6-9 lies inside the
+        // parent's Sep 1-10 and inside the Sep 1-30 plot, so a regression that
+        // silently dropped the primitive would leave no overlay to assert on.
+        Assert.True(overlay.Bounds.Width > 0, "A critical overlay inside its parent must still be drawn.");
+    }
+
+    /// <summary>
+    /// The critical child consumes no lane height and does not move its parent (ADR-0027
+    /// D7 / R4.7B projection). The fixture places the child at stack 3 while its parent
+    /// is at stack 0, so they share the parent's LANE but sit in different stack bands —
+    /// being in the same lane does not mean being in the same band, and this test must not
+    /// assert that it does. The meaningful contract is that adding the child leaves the
+    /// parent's geometry untouched.
+    /// </summary>
+    [Fact]
+    public void The_critical_child_consumes_no_lane_height_and_does_not_move_its_parent()
+    {
+        GanttValidationOutcome validated = GanttRowValidator.Validate(BuildRepresentativeRows());
+        GanttEvent child = Assert.Single(validated.Events, e => e.Type == GanttEntityType.CriticalInterval);
+        GanttEvent parent = Assert.Single(validated.Events, e => e.Id == child.ParentId);
+
+        SceneBuildOutcome withChild = BuildRepresentativeCriticalScene();
+        Assert.True(withChild.Succeeded, "Scene build refused: " + withChild.Refusal);
+
+        // The parent alone, built through the same seam.
+        SceneBuildOutcome parentOnly = SceneBuilder.TryBuild(
+            new SceneBuildRequest
+            {
+                Events = [parent],
+                Registry = SceneRegistry,
+                Grid = Grid(1),
+                PlotBounds = new RectD(200, 60, 300, 140),
+                Metrics = new FakeTextMetrics(_ => 8.0, 10.0),
+                LaneMetrics = new LaneLayoutMetrics(40, 3, 3, 2, 18, 9),
+                FrameTheme = FrameTheme(),
+                PlotStart = Day(1),
+                PlotFinish = Day(30),
+                GridLinePt = 0.5,
+                MajorBoundaryPt = 1,
+                MilestoneSizePt = 8,
+                TitleBandHeightPt = 14,
+                YearBandHeightPt = 16,
+                PeriodBandHeightPt = 20,
+                DelineatorLinePt = 1,
+                DelineatorStackGapPt = 10,
+                LabelGapPt = 2,
+                LabelHeightPt = 8,
+                ChartOuterPaddingPt = 0,
+                MinimumHeaderLabelWidthPt = 0,
+            });
+        Assert.True(parentOnly.Succeeded, "Parent-only build refused: " + parentOnly.Refusal);
+
+        // The parent's own bar is byte-for-byte identical with and without the child:
+        // the overlay is additive and consumes no lane height.
+        SceneRect parentWithChild = Assert.Single(
+            withChild.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.ActivityBody);
+        SceneRect parentAlone = Assert.Single(
+            parentOnly.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.ActivityBody);
+
+        Assert.Equal(parentAlone.Bounds, parentWithChild.Bounds);
+
+        // And the chart bounds are unchanged too, proving the child added no height.
+        Assert.Equal(parentOnly.Result!.Scene.ChartBounds, withChild.Result!.Scene.ChartBounds);
+
+        // The child itself is present as an overlay.
+        Assert.Single(
+            withChild.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.CriticalOverlay);
     }
 
     [Fact]

@@ -25,6 +25,19 @@ internal static class RibbonControlIds
     /// <summary>The Validate button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string ValidateSheet = "btnValidateSheet";
 
+    /// <summary>
+    /// The Refresh chart button (<c>getEnabled</c> driven by workbook presence).
+    /// </summary>
+    /// <remarks>
+    /// Gated on workbook presence alone, exactly as Validate is. A stricter gate —
+    /// "an initialised table exists" — was considered and rejected: it would grey the
+    /// button on a workbook the user is halfway through setting up, and the command
+    /// already refuses with an actionable message when the table is missing. A
+    /// button that is enabled and explains itself beats a button that silently
+    /// disables itself for a condition the user cannot see.
+    /// </remarks>
+    internal const string RefreshSheet = "btnRefreshSheet";
+
     /// <summary>The Repair configuration button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string RepairConfig = "btnRepairConfig";
 

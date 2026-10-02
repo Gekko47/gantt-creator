@@ -33,6 +33,20 @@ public static class LaneOrdering
     public static string LaneKey(LaneEventInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
+
+        // R4.7B: a projected child draws on its lane owner's lane, not on one
+        // derived from its own row. The owner is always top-level, so resolving to
+        // it is one hop and cannot cycle. Recursion on the owner is what makes the
+        // child's own LaneId irrelevant: a child that happens to carry a LaneId
+        // would otherwise be grouped separately and grow the lane the projection
+        // was resolved to prevent.
+        if (input.RenderLaneOwner is { } owner)
+        {
+            return LaneKey(new LaneEventInput(owner, input.ResolvedHeightPt));
+        }
+
+        // A Splitter or Spacer always gets a row-scoped key even when the row carries
+        // a LaneId; see OwnsItsOwnLane.
         return OwnsItsOwnLane(input.Event) || input.Event.LaneId is null
             ? $"row:{input.Event.Id.Value}"
             : input.Event.LaneId.Value;

@@ -223,23 +223,22 @@ internal static class EquivalenceFields
             ]);
 
     /// <summary>
-    /// The critical-interval row. The scene primitive is a thin <see cref="SceneRect"/>
-    /// but the host object is a <em>line</em> in all three renderers, so the fields
-    /// state the overlay's height and the guide's translation column carries the rest -
-    /// that translation is the reason the column exists.
+    /// The critical-interval row. ADR-0027 replaced the earlier line
+    /// reinterpretation: the scene primitive is a filled <see cref="SceneRect"/> and
+    /// that rect is what every renderer draws, so this row asserts the fill rather
+    /// than a stroke/width pair.
     /// </summary>
     public static EquivalenceRow CriticalInterval { get; } =
         new(
             "critical interval overlay",
             "Critical interval",
-            $"{_fieldTable}, row 'Critical interval' (line 724); geometry from §11 'Critical interval'. The guide states the scene rect is not the host object: a renderer draws a line along its top edge",
+            $"{_fieldTable}, row 'Critical interval' (line 724); geometry from §11 'Critical interval'. Per ADR-0027 the scene rect IS the host object: a renderer fills it, with no line reinterpretation",
             [new("overlay", ScenePrimitive.CreateId(SceneOwnerId.ForRow(SceneBuilderTests.CriticalProbeRow), "critical"))],
             [
-                EquivalenceFieldChecks.Kind("overlay", "rect", $"{EquivalenceFieldChecks.Shared} - point-based geometry. §11 models the overlay as a thin rectangle in the scene; the *host* object is a line"),
-                EquivalenceFieldChecks.CriticalLineHeight("overlay", "Entity guide §11 and the 'Critical interval' row: the overlay is CriticalLinePt tall, so a renderer can read the top edge as the line"),
+                EquivalenceFieldChecks.Kind("overlay", "rect", $"{EquivalenceFieldChecks.Shared} - point-based geometry. §11 models the overlay as a thin filled rectangle in the scene, and that rect is what the host draws (ADR-0027 D2)"),
+                EquivalenceFieldChecks.CriticalLineHeight("overlay", "Entity guide §11 and the 'Critical interval' row: the overlay is half the predetermined ActivityHeightPt tall (owner ruling 2026-09-30), so a renderer fills the rect it is handed rather than deriving a line thickness"),
                 EquivalenceFieldChecks.AtLayer("overlay", ZLayer.CriticalOverlay, $"{EquivalenceFieldChecks.ZOrder} - critical interval overlays sit at layer 50"),
-                EquivalenceFieldChecks.StrokeResolved("overlay", "Entity guide §11 'Style': the overlay resolves the standard outline, which is the line thickness a renderer draws"),
-                EquivalenceFieldChecks.OutlineWidthResolved("overlay", "Entity guide §11 'Style': the resolved outline is the resolved line width"),
+                EquivalenceFieldChecks.FillResolved("overlay", "Entity guide §11 'Style' and ADR-0027 D5: the overlay resolves the CriticalFill fill (or a permitted user FillColour override). The fill, not a stroke, is the critical interval's visual contract"),
                 EquivalenceFieldChecks.OrderKeys("overlay", "Entity guide 'Z-order contract' (line 272): after subtype priority, order by lane, stack, SortOrder, and stable ID"),
                 EquivalenceFieldChecks.RoleDerivedId("overlay", "critical", "Entity guide §11 with the R3.8 role-derived ':critical' identifier"),
                 EquivalenceFieldChecks.RowOwned("overlay", "Entity guide §11: a critical overlay is owned by its own row"),

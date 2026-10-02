@@ -20,12 +20,69 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Metrics_contains_exactly_the_23_entity_guide_tokens() =>
-        Assert.Equal(23, GanttCatalogues.Metrics.Count);
+    public void Metrics_contains_exactly_the_22_entity_guide_tokens() =>
+        // R4.7C retired CriticalLinePt (ADR-0027 D4) and renamed LaneHeightPt to
+        // GanttRowHeightPt (ADR-0026 D1). A rename keeps the count; the retirement
+        // is what took it from 23 to 22.
+        Assert.Equal(22, GanttCatalogues.Metrics.Count);
 
     [Fact]
-    public void Colours_contains_exactly_the_21_entity_guide_tokens() =>
-        Assert.Equal(21, GanttCatalogues.Colours.Count);
+    public void Colours_contains_exactly_the_22_entity_guide_tokens() =>
+        // R4.7C added CriticalFill (ADR-0027 D2), taking 21 to 22.
+        Assert.Equal(22, GanttCatalogues.Colours.Count);
+
+    [Fact]
+    public void CriticalLinePt_is_absent_from_the_catalogue()
+    {
+        // ADR-0027 D4 retires the token. A leftover entry would keep materialising
+        // a row on the VeryHidden sheet that nothing consumes, and would leave the
+        // CriticalInterval preset resolving a thickness the scene no longer uses.
+        Assert.DoesNotContain(GanttCatalogues.Metrics, metric => metric.Name == "CriticalLinePt");
+    }
+
+    [Fact]
+    public void LaneHeightPt_is_absent_and_replaced_by_GanttRowHeightPt()
+    {
+        // ADR-0026 D1: one normal-row metric is the authority for both the Excel
+        // row height and the Core lane height. Keeping both would restore the
+        // two-authority ambiguity ADR-0023 removed for panel bounds.
+        Assert.DoesNotContain(GanttCatalogues.Metrics, metric => metric.Name == "LaneHeightPt");
+
+        GanttMetricToken rowHeight = Assert.Single(
+            GanttCatalogues.Metrics,
+            metric => metric.Name == "GanttRowHeightPt");
+        Assert.Equal(18, rowHeight.DefaultValue);
+        Assert.True(rowHeight.Minimum > 0);
+        Assert.True(rowHeight.Maximum >= rowHeight.DefaultValue);
+    }
+
+    [Fact]
+    public void CriticalFill_is_present_with_the_specified_red()
+    {
+        // ADR-0027 D2: same value as CriticalStroke, different role, so the
+        // catalogue never carries a stroke token used as a fill.
+        GanttColourToken fill = Assert.Single(
+            GanttCatalogues.Colours,
+            token => token.Name == "CriticalFill");
+        Assert.Equal("#FF0000", fill.HexValue);
+
+        GanttColourToken stroke = Assert.Single(
+            GanttCatalogues.Colours,
+            token => token.Name == "CriticalStroke");
+        Assert.Equal(stroke.HexValue, fill.HexValue);
+    }
+
+    [Fact]
+    public void The_critical_interval_preset_fills_with_CriticalFill_and_carries_no_line_thickness()
+    {
+        // The preset must resolve: an unknown metric token throws at resolution
+        // time, so retiring CriticalLinePt and leaving the preset referencing it
+        // would be a runtime failure rather than a compile error.
+        GanttStylePreset critical = GanttCatalogues.GetPreset("CriticalInterval");
+        Assert.Equal("#FF0000", critical.FillColour);
+        Assert.Equal(0, critical.StandardOutlinePt);
+        Assert.Equal(8, critical.ActivityHeightPt);
+    }
 
     [Fact]
     public void Typography_contains_exactly_the_6_entity_guide_tokens() =>
@@ -49,9 +106,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_13_approved_keys()
+    public void Settings_contains_exactly_the_15_approved_keys()
     {
-        Assert.Equal(13, GanttCatalogues.Settings.Count);
+        Assert.Equal(15, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -73,6 +130,8 @@ public class GanttConfigCatalogueTests
         "ShowMinorGrid",
         "ShowMajorGrid",
         "DateDisplayFormat",
+        "SizePreset",
+        "RangePaddingDays",
     ];
 
     [Fact]
@@ -234,7 +293,7 @@ public class GanttConfigCatalogueTests
 
         GanttStylePreset critical = GanttCatalogues.GetPreset("CriticalInterval");
         Assert.Equal(GanttLabelPosition.None, critical.DefaultLabelPosition);
-        Assert.Equal(EntityColourCapability.Stroke, critical.ColourCapability);
+        Assert.Equal(EntityColourCapability.Fill | EntityColourCapability.Stroke, critical.ColourCapability);
 
         GanttStylePreset delay = GanttCatalogues.GetPreset("DelayEvent");
         Assert.Equal(GanttLabelPosition.Inside, delay.DefaultLabelPosition);
@@ -502,9 +561,27 @@ public class GanttConfigCatalogueTests
     /// <c>DateDisplayFormat</c> setting and D6 advances the schema version, so
     /// the hash change here is the recorded, expected consequence of that ADR
     /// rather than unapproved catalogue drift.
+    /// <para>
+    /// Advanced again by R4.7A: the hash's first line is
+    /// <c>schema|{CurrentSchemaVersion}</c>, so the 3 -&gt; 4 bump for the
+    /// <c>SiblingOrder</c> column changes it necessarily. This test failing on the
+    /// version bump is the guard working, not a regression -- it is the mechanism
+    /// that makes an unrecorded schema change visible.
+    /// Advanced again by R4.7C: the 4 -&gt; 5 bump for the <c>Duration</c> column
+    /// changes it necessarily, as do the <c>GanttRowHeightPt</c> rename, the
+    /// retired <c>CriticalLinePt</c>, and the added <c>CriticalFill</c>. This test
+    /// failing on those changes is the guard working, not a regression -- it is
+    /// the mechanism that makes an unrecorded schema change visible.
+    /// Advanced again by R4.7E: granting <c>CriticalInterval</c> the
+    /// <c>Fill</c> colour capability (ADR-0027 D5) changes the type catalogue
+    /// and therefore this hash. A user workbook written before this change
+    /// carries the older hash, which <c>ExcelConfigCatalogueReader</c> reports
+    /// as an actionable mismatch rather than silently rendering a Critical
+    /// Interval the validator would now accept a fill for.
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "fb7c3299fcf37475be7ac958ce08a9f9e0fd589846b8d5daaa4af7577400013c";
+        "bcc3f102370ee56dd01080ff8a6ba04c00714ddc7e0f8186e7ee77066ed55fac";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

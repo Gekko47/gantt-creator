@@ -12,34 +12,61 @@ public sealed class CriticalOverlayBuilderTests
     private static readonly GanttRowId _parentId = GanttRowId.New();
     private static readonly GanttRowId _childId = GanttRowId.New();
 
-    // The parent's visible bar: 5 Jan to 15 Jan, so 40..150pt.
-    private static readonly RectD _parentBounds = new(40, 56, 110, 8);
-
-    private static Dictionary<GanttRowId, RectD> Parents() => new() { [_parentId] = _parentBounds };
+    // The visual slot this interval occupies: centre Y 60, so a bar of the default
+    // 8pt predetermined height draws 56..64. There is no parent bar here at all
+    // (owner ruling 2026-09-30) — the entity's geometry is its dates and its slot.
+    private const double SlotCentreY = 60;
 
     [Fact]
-    public void Clips_an_interval_fully_inside_the_parent_without_warning()
+    public void An_interval_spans_its_own_dates_without_warning()
     {
         CriticalOverlayCreationOutcome outcome = Build(5, 9);
 
         Assert.True(outcome.Succeeded);
-        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
-        // 5 Jan is 40 and 9 Jan is 80, so the overlay spans 40..90.
-        Assert.Equal(40, overlay.Bounds.Left);
-        Assert.Equal(90, overlay.Bounds.Right, 10);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // 5 Jan is 40 and 9 Jan ends at 90, purely from its own dates.
+        Assert.Equal(40, bar.Bounds.Left);
+        Assert.Equal(90, bar.Bounds.Right, 10);
         Assert.False(outcome.Result.WasClipped);
         Assert.Empty(outcome.Result.Warnings);
     }
 
     [Fact]
-    public void Sits_on_the_parent_top_edge_with_the_documented_thickness()
+    public void The_bar_height_is_half_the_predetermined_height()
     {
-        CriticalOverlayCreationOutcome outcome = Build(5, 9, thickness: 2.25);
+        // Owner ruling 2026-09-30 / ADR-0027 D3: the drawn height is HALF the
+        // predetermined ActivityHeightPt. The retired CriticalLinePt thickness is
+        // gone, so a caller cannot express an arbitrary overlay thickness at all.
+        CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: 2.25);
 
-        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
-        // §16: the stroke stays inside the body, centred on the parent top edge.
-        Assert.Equal(56, overlay.Bounds.Top);
-        Assert.Equal(2.25, overlay.Bounds.Height, 10);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(1.125, bar.Bounds.Height, 10);
+    }
+
+    [Fact]
+    public void The_bar_is_centred_on_its_own_slot()
+    {
+        // Centred exactly as an ordinary span bar is, rather than top-aligned to a
+        // parent's bar that no longer participates.
+        CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: 8);
+
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(4, bar.Bounds.Height, 10);
+        Assert.Equal(58, bar.Bounds.Top, 10);
+        Assert.Equal(60, bar.Bounds.Top + (bar.Bounds.Height / 2), 10);
+    }
+
+    [Fact]
+    public void A_non_positive_predetermined_height_is_refused()
+    {
+        // The validator ships with this positive test: 0 was the silent value a
+        // caller that forgot the retired CriticalLinePt used to pass, and it
+        // refused the overlay, dropping the entity from the chart.
+        CriticalOverlayCreationOutcome outcome =
+            Build(5, 9, predeterminedHeightPt: 0);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(CriticalOverlayRefusal.InvalidGeometry, outcome.Refusal);
     }
 
     [Fact]
@@ -53,38 +80,60 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
-    public void Clips_a_child_wider_than_its_parent_and_warns()
+    public void An_interval_wider_than_its_parent_is_NOT_clipped()
     {
+        // The decisive rule (owner ruling 2026-09-30): the critical interval may
+        // NOT be for the full duration of its parent, and it is not limited to it
+        // either. Its horizontal bounds come from its own dates like any other
+        // activity, so 1-20 Jan draws 0..200pt even though the parent's bar was
+        // 40..150pt. This is the exact case that used to emit ClippedToParent.
         CriticalOverlayCreationOutcome outcome = Build(1, 20);
 
         Assert.True(outcome.Succeeded);
-        SceneRect? overlay = outcome.Result!.Primitive;
-        Assert.NotNull(overlay);
-        // The overlay never extends past the parent's visible span.
-        Assert.Equal(40, overlay!.Bounds.Left);
-        Assert.Equal(150, overlay.Bounds.Right, 10);
-        Assert.True(outcome.Result.WasClipped);
-        Assert.Equal(CriticalOverlayBuilder.ClippedToParentCode, Assert.Single(outcome.Result.Warnings).Code);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(0, bar.Bounds.Left, 10);
+        Assert.Equal(200, bar.Bounds.Right, 10);
+        Assert.False(outcome.Result.WasClipped);
+        Assert.Empty(outcome.Result.Warnings);
     }
 
     [Fact]
-    public void Emits_no_overlay_and_one_warning_when_the_child_is_entirely_before_the_parent()
+    public void An_interval_shorter_than_its_parent_is_drawn_at_its_own_width()
     {
+        // The converse: 5-7 Jan inside a 5-15 Jan parent draws its own 30pt, not
+        // the parent's full width.
+        CriticalOverlayCreationOutcome outcome = Build(5, 7);
+
+        Assert.True(outcome.Succeeded);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(40, bar.Bounds.Left, 10);
+        Assert.Equal(70, bar.Bounds.Right, 10);
+    }
+
+    [Fact]
+    public void An_interval_entirely_before_its_parent_is_still_drawn()
+    {
+        // Under the old rule this emitted no overlay at all. Now the parent is not
+        // consulted, so 1-3 Jan is simply a bar in its own right.
         CriticalOverlayCreationOutcome outcome = Build(1, 3);
 
         Assert.True(outcome.Succeeded);
-        Assert.Null(outcome.Result!.Primitive);
-        Assert.Equal(CriticalOverlayBuilder.OutsideParentCode, Assert.Single(outcome.Result.Warnings).Code);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(0, bar.Bounds.Left, 10);
+        Assert.Equal(30, bar.Bounds.Right, 10);
+        Assert.Empty(outcome.Result.Warnings);
     }
 
     [Fact]
-    public void Emits_no_overlay_and_one_warning_when_the_child_is_entirely_after_the_parent()
+    public void An_interval_entirely_after_its_parent_is_still_drawn()
     {
         CriticalOverlayCreationOutcome outcome = Build(20, 25);
 
         Assert.True(outcome.Succeeded);
-        Assert.Null(outcome.Result!.Primitive);
-        Assert.Equal(CriticalOverlayBuilder.OutsideParentCode, Assert.Single(outcome.Result.Warnings).Code);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(190, bar.Bounds.Left, 10);
+        Assert.Equal(250, bar.Bounds.Right, 10);
+        Assert.Empty(outcome.Result.Warnings);
     }
 
     [Fact]
@@ -129,79 +178,49 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
-    public void Clips_to_a_parent_that_was_itself_plot_clipped()
+    public void An_interval_starting_before_the_plot_is_clipped_to_the_plot_only()
     {
-        // The parent bar starts before the plot, so R3.6 clips it to 0..90. The
-        // overlay must clip to that *visible* span, not the parent's raw dates.
-        var clippedParent = new RectD(0, 56, 90, 8);
-        SpanBarResult bar = SpanBarBuilder
-            .TryBuild(
-                new SpanBarRequest(ParentEvent(new DateOnly(2023, 12, 28), new DateOnly(2024, 1, 8)), _style, 60, 8),
-                _scale
-            )
-            .Result!;
-        RectD visible = bar.VisibleBounds!.Value;
-
-        Assert.Equal(0, visible.Left);
-        CriticalOverlayCreationOutcome overlay = Build(
-            1,
-            4,
-            parentBounds: visible,
-            parents: new Dictionary<GanttRowId, RectD> { [_parentId] = clippedParent }
-        );
-
-        // The child runs 0..40 but the parent's visible span ends at 90, so the
-        // overlay is confined to the visible parent and not to the raw parent.
-        Assert.Equal(0, overlay.Result!.VisibleBounds!.Value.Left);
-        Assert.Equal(40, overlay.Result.VisibleBounds!.Value.Right, 10);
-    }
-
-    [Fact]
-    public void Emits_the_visible_overlap_for_a_child_starting_before_the_plot()
-    {
-        // The child starts 28 Dec, four days before the plot opens, but finishes
-        // on 8 Jan inside the parent. Only the visible overlap may be emitted, and
-        // it must be emitted: dropping it would lose real schedule information.
+        // The child starts 28 Dec, four days before the plot opens. Only the
+        // visible portion may be emitted, and it must be emitted: dropping it
+        // would lose real schedule information. There is no parent edge to clip to
+        // as well, so the start collapses onto the plot's left edge and stays.
         var outcome = CriticalOverlayBuilder.TryBuild(
             new CriticalOverlayRequest(
                 ChildOn(new DateOnly(2023, 12, 28), new DateOnly(2024, 1, 8)),
                 _style,
-                _parentBounds,
-                2.25
+                8,
+                SlotCentreY
             ),
-            _scale,
-            Parents()
-        );
+            _scale);
 
         Assert.True(outcome.Succeeded);
-        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
-        // The start collapses onto the plot's left edge (0) and is then clipped to
-        // the parent's left edge (40); 8 Jan is the inclusive right edge at 80.
-        Assert.Equal(40, overlay.Bounds.Left);
-        Assert.Equal(80, overlay.Bounds.Right, 10);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // The start collapses onto 0 and 8 Jan is the inclusive right edge at 80.
+        Assert.Equal(0, bar.Bounds.Left, 10);
+        Assert.Equal(80, bar.Bounds.Right, 10);
+        Assert.True(outcome.Result.WasClipped);
+        Assert.Equal(CriticalOverlayBuilder.ClippedToPlotCode, Assert.Single(outcome.Result.Warnings).Code);
     }
 
     [Fact]
-    public void Emits_the_visible_overlap_for_a_child_finishing_after_the_plot()
+    public void An_interval_finishing_after_the_plot_is_clipped_to_the_plot_only()
     {
-        // The mirror case: the child ends 5 Feb, well after the plot closes, and
-        // must be clipped to the plot and then to the parent's visible right edge.
+        // The mirror case: the child ends 5 Feb, well after the plot closes.
         var outcome = CriticalOverlayBuilder.TryBuild(
             new CriticalOverlayRequest(
                 ChildOn(new DateOnly(2024, 1, 12), new DateOnly(2024, 2, 5)),
                 _style,
-                _parentBounds,
-                2.25
+                8,
+                SlotCentreY
             ),
-            _scale,
-            Parents()
-        );
+            _scale);
 
         Assert.True(outcome.Succeeded);
-        SceneRect overlay = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
-        // 12 Jan is 110 and the parent's visible span ends at 150.
-        Assert.Equal(110, overlay.Bounds.Left);
-        Assert.Equal(150, overlay.Bounds.Right, 10);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // 12 Jan is 110 and the plot's right edge is 310.
+        Assert.Equal(110, bar.Bounds.Left, 10);
+        Assert.Equal(310, bar.Bounds.Right, 10);
+        Assert.True(outcome.Result.WasClipped);
     }
 
     [Fact]
@@ -215,8 +234,16 @@ public sealed class CriticalOverlayBuilderTests
     }
 
     [Fact]
-    public void Refuses_an_orphan_with_a_typed_outcome_rather_than_throwing()
+    public void An_orphan_is_drawn_rather_than_refused()
     {
+        // The old builder refused an orphan with UnresolvedParent because it needed
+        // the parent's bar to clip against. With no parent in the request there is
+        // nothing left to refuse on, so the entity draws from its dates alone.
+        // This path is REACHABLE, not defence in depth: a top-level Critical
+        // Interval with a blank ParentId is valid since R4.7A made the parent
+        // optional for every child-capable type, and the owner ruling then made the
+        // overlay's geometry parent-independent. Such a row is the ordinary
+        // top-level case, not a damaged one.
         CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
             new CriticalOverlayRequest(
                 new GanttEvent(
@@ -237,28 +264,15 @@ public sealed class CriticalOverlayBuilderTests
                     null
                 ),
                 _style,
-                _parentBounds,
-                2.25
+                8,
+                SlotCentreY
             ),
-            _scale,
-            Parents()
-        );
+            _scale);
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(CriticalOverlayRefusal.UnresolvedParent, outcome.Refusal);
-    }
-
-    [Fact]
-    public void Refuses_a_parent_that_resolves_to_no_bar()
-    {
-        CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
-            new CriticalOverlayRequest(Child(5, 9), _style, _parentBounds, 2.25),
-            _scale,
-            new Dictionary<GanttRowId, RectD>()
-        );
-
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(CriticalOverlayRefusal.UnresolvedParent, outcome.Refusal);
+        Assert.True(outcome.Succeeded);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        Assert.Equal(40, bar.Bounds.Left, 10);
+        Assert.Equal(90, bar.Bounds.Right, 10);
     }
 
     [Fact]
@@ -277,43 +291,41 @@ public sealed class CriticalOverlayBuilderTests
             new CriticalOverlayRequest(
                 new GanttEvent(1, _childId, null, null, GanttEntityType.AsPlannedActivity, "x", new DateOnly(2024, 1, 5), new DateOnly(2024, 1, 9), _parentId, null, null, null, null, true, null),
                 _style,
-                _parentBounds,
-                2.25
+                8,
+                SlotCentreY
             ),
-            _scale,
-            Parents()
-        );
+            _scale);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(CriticalOverlayRefusal.NotACriticalInterval, outcome.Refusal);
     }
 
     [Fact]
-    public void Clips_to_the_requested_parent_bounds_not_the_dictionary_entry()
+    public void There_is_no_second_source_of_truth_for_the_span()
     {
-        // The request's ParentVisibleBounds is the single source of the parent's
-        // visible span, so it wins even when the dictionary holds a different
-        // rect for the same parent row. Two sources of truth for one span could
-        // disagree silently; pinning the request here proves which one is used.
-        CriticalOverlayCreationOutcome outcome = Build(
-            1,
-            20,
-            parentBounds: new RectD(60, 56, 40, 8),
-            parents: new Dictionary<GanttRowId, RectD> { [_parentId] = new RectD(0, 56, 310, 8) }
-        );
+        // The old builder took the parent's visible span TWICE — once in the request
+        // and once in a dictionary — and a test proved the request won. With no
+        // parent in the request there is no second source to disagree with, so the
+        // only inputs are the interval's own dates and its slot.
+        CriticalOverlayCreationOutcome outcome = Build(5, 9, slotCentreY: 100);
 
         Assert.True(outcome.Succeeded);
-        // The requested parent spans 60..100, so the overlay is confined to that
-        // rather than stretching to the dictionary entry's 0..310.
-        Assert.Equal(60, outcome.Result!.VisibleBounds!.Value.Left);
-        Assert.Equal(100, outcome.Result.VisibleBounds!.Value.Right, 10);
-        Assert.Equal(CriticalOverlayBuilder.ClippedToParentCode, Assert.Single(outcome.Result.Warnings).Code);
+        SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
+        // Same dates as the default build; only the slot moved, so only Y moved.
+        Assert.Equal(40, bar.Bounds.Left, 10);
+        Assert.Equal(90, bar.Bounds.Right, 10);
+        Assert.Equal(98, bar.Bounds.Top, 10);
     }
 
     [Fact]
-    public void Refuses_a_zero_thickness_overlay()
+    public void A_negative_predetermined_height_is_refused()
     {
-        CriticalOverlayCreationOutcome outcome = Build(5, 9, thickness: 0);
+        // A DISTINCT boundary from the zero case above, which is what the zero case is
+        // for: 0 was the silent value a caller that forgot the retired CriticalLinePt
+        // used to pass, and it refused the overlay, dropping the entity from the chart.
+        // This row pins the negative side of the same rule so deleting either leaves the
+        // other still covering the validator.
+        CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: -4);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(CriticalOverlayRefusal.InvalidGeometry, outcome.Refusal);
@@ -322,7 +334,7 @@ public sealed class CriticalOverlayBuilderTests
     [Fact]
     public void Refuses_a_null_request()
     {
-        CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(null, _scale, Parents());
+        CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(null, _scale);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(CriticalOverlayRefusal.NullRequest, outcome.Refusal);
@@ -332,9 +344,8 @@ public sealed class CriticalOverlayBuilderTests
     public void Refuses_a_null_time_scale()
     {
         CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
-            new CriticalOverlayRequest(Child(5, 9), _style, _parentBounds, 2.25),
-            null,
-            Parents()
+            new CriticalOverlayRequest(Child(5, 9), _style, 8, SlotCentreY),
+            null
         );
 
         Assert.False(outcome.Succeeded);
@@ -355,20 +366,17 @@ public sealed class CriticalOverlayBuilderTests
     private static CriticalOverlayCreationOutcome Build(
         int startDay,
         int finishDay,
-        double thickness = 2.25,
-        RectD? parentBounds = null,
-        Dictionary<GanttRowId, RectD>? parents = null
+        double predeterminedHeightPt = 8,
+        double slotCentreY = SlotCentreY
     ) =>
         CriticalOverlayBuilder.TryBuild(
             new CriticalOverlayRequest(
                 Child(startDay, finishDay),
                 _style,
-                parentBounds ?? _parentBounds,
-                thickness
+                predeterminedHeightPt,
+                slotCentreY
             ),
-            _scale,
-            parents ?? Parents()
-        );
+            _scale);
 
     private static GanttEvent Child(int startDay, int finishDay, GanttRowId? parentId = null) =>
         new(

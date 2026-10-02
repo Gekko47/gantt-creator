@@ -166,7 +166,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             // Every band height must be strictly positive, and the three bands must
             // fit above the plot: 14 + 16 + 20 = 50, leaving 110 of plot height.
             TitleBandHeightPt = 14,
@@ -313,6 +312,10 @@ public sealed class SceneBuilderTests
                     new SceneStyle("HeaderFill"),
                     new SceneStyle("HeaderText"),
                     new SceneStyle("Border")),
+                // A drawn panel belongs to a profile whose destination has no cells of
+                // its own. The live profile is refused a panel (R4.8A D4), so a
+                // panel-bearing test must name the profile it is really exercising.
+                Profile = SceneCompositionProfile.Raster,
             });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
@@ -655,8 +658,53 @@ public sealed class SceneBuilderTests
         Assert.Contains(outcome.Result!.Scene.Primitives, p => p.ZLayer == ZLayer.Milestone);
     }
 
+    /// <summary>
+    /// A critical interval is clipped to the PLOT, not to its parent (owner ruling
+    /// 2026-09-30). This test used to be named and commented as proving parent
+    /// clipping, but its only assertion — that the overlay is narrower than the
+    /// plot — is satisfied by any child that fits inside the plot, so it proved
+    /// nothing about the parent at all. It is restated here to discriminate: the
+    /// child's OWN dates run past the plot finish and past its parent's finish,
+    /// and the overlay must stop exactly at the plot edge.
+    /// </summary>
     [Fact]
-    public void A_critical_interval_clips_to_its_parents_visible_span()
+    public void A_critical_interval_clips_to_the_plot_and_not_to_its_parent()
+    {
+        GanttEvent parent = Event(1, finish: new DateOnly(2024, 1, 10));
+        GanttEvent child = Event(
+            2,
+            GanttEntityType.CriticalInterval,
+            // Starts before the plot opens and finishes well after both the plot
+            // and the parent end, so any of the three could be the clip source.
+            new DateOnly(2023, 12, 20),
+            new DateOnly(2024, 2, 20),
+            "CriticalInterval",
+            parentId: parent.Id);
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneRect overlay = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
+            rect => rect.ZLayer == ZLayer.CriticalOverlay);
+
+        // Clipped to the plot on both edges, and not to the shorter parent.
+        Assert.Equal(_plotBounds.Left, overlay.Bounds.Left, precision: 6);
+        Assert.Equal(_plotBounds.Right, overlay.Bounds.Right, precision: 6);
+        Assert.Equal(_plotBounds.Width, overlay.Bounds.Width, precision: 6);
+        Assert.True(
+            overlay.Bounds.Width > _plotBounds.Width * 0.9,
+            "The overlay must span the plot, proving it was NOT clipped to the parent's shorter span.");
+    }
+
+    /// <summary>
+    /// ADR-0027 D2/D5: the overlay is a FILLED rectangle. A renderer receives the
+    /// primitive and paints it, so the scene must actually carry a fill — an
+    /// unfilled or outline-only rect here is the defect the ADR removes, not a
+    /// variant. This asserts the fill the catalogue preset resolves.
+    /// </summary>
+    [Fact]
+    public void A_critical_interval_overlay_resolves_a_fill_not_just_an_outline()
     {
         GanttEvent parent = Event(1);
         GanttEvent child = Event(
@@ -670,21 +718,24 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        // The overlay must be narrower than the plot, proving it was clipped to the
-        // parent rather than spanning the whole plot.
         SceneRect overlay = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             rect => rect.ZLayer == ZLayer.CriticalOverlay);
-        Assert.True(
-            overlay.Bounds.Width < _plotBounds.Width,
-            "A critical overlay must clip to its parent, not span the full plot.");
+
+        Assert.NotNull(overlay.Style.FillColour);
+        // Half the predetermined ActivityHeightPt (8 in this fixture), per D3.
+        Assert.Equal(4, overlay.Bounds.Height, precision: 6);
     }
 
     [Fact]
-    public void A_critical_interval_whose_parent_is_invisible_emits_no_overlay()
+    public void A_critical_interval_whose_parent_is_invisible_is_still_drawn()
     {
-        // A hidden parent is not rendered, so no visible span exists to clip
-        // against; an overlay must not appear without one.
+        // This used to assert that NO overlay is emitted, because the builder
+        // clipped to the parent's visible bar and a hidden parent emitted none.
+        // Owner ruling 2026-09-30 removes that dependency: the interval draws from
+        // its OWN dates in its own lane, so a hidden parent does not erase it. The
+        // parent still governs LANE membership via R4.7B projection — it just no
+        // longer governs whether the entity is drawn.
         GanttEvent parent = Event(1, visible: false);
         GanttEvent child = Event(
             2,
@@ -697,9 +748,11 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(parent, child));
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        Assert.DoesNotContain(
-            outcome.Result!.Scene.Primitives,
+        SceneRect bar = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             primitive => primitive.ZLayer == ZLayer.CriticalOverlay);
+        // Half the parent's activity height, from the child's own dates.
+        Assert.Equal(4, bar.Bounds.Height, 10);
     }
 
     [Fact]
@@ -737,6 +790,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
                 new SceneStyle("HeaderText", bold: true),
                 new SceneStyle("Border")),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
@@ -974,6 +1030,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill"),
                 new SceneStyle("HeaderText"),
                 new SceneStyle("Border")),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
@@ -1022,6 +1081,7 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill"),
                 new SceneStyle("HeaderText"),
                 new SceneStyle("Border")),
+            Profile = SceneCompositionProfile.Raster,
         };
         GanttEvent @event = request.Events[0];
 
@@ -1519,7 +1579,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             // The three header bands total 50pt and stack above the plot, which
             // starts at 110 so they all fit inside the chart. FrameBandsBuilder does
             // not itself check this fit (an R3.5 finding recorded in the work item),
@@ -1620,7 +1679,6 @@ public sealed class SceneBuilderTests
             GridLinePt = 0.5,
             MajorBoundaryPt = 1,
             MilestoneSizePt = 8,
-            CriticalLinePt = 1,
             TitleBandHeightPt = 14,
             YearBandHeightPt = 16,
             PeriodBandHeightPt = 20,
@@ -1635,6 +1693,9 @@ public sealed class SceneBuilderTests
                 new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
                 new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
                 new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5)),
+            // A drawn panel belongs to a profile whose destination has no cells of
+            // its own; the live profile is refused one (R4.8A D4).
+            Profile = SceneCompositionProfile.Raster,
         };
 
         SceneBuildOutcome build = SceneBuilder.TryBuild(request);

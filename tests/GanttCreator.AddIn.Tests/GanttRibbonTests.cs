@@ -365,6 +365,7 @@ public class GanttRibbonTests
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
+                RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
             ],
@@ -391,6 +392,7 @@ public class GanttRibbonTests
             RibbonControlIds.AddActivity,
             RibbonControlIds.AddMilestone,
             RibbonControlIds.AddDelineator,
+            RibbonControlIds.RefreshSheet,
         })
         {
             var matches = doc.Descendants(ns + "button")
@@ -649,6 +651,67 @@ public class GanttRibbonTests
 
         var record = Assert.Single(written);
         Assert.Contains("command=btnValidateSheet", record, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// R4.9: the Refresh callback routes across the one boundary, names the command
+    /// it ran, and refreshes the ribbon state afterwards.
+    /// </summary>
+    /// <remarks>
+    /// The command is injected as a throwing delegate so this test exercises the
+    /// <em>routing</em> — that the exception crossed <see cref="CommandBoundary"/>
+    /// rather than escaping the callback — without a real workbook behind it. A
+    /// separate test covers the command's own behaviour.
+    /// </remarks>
+    [Fact]
+    public void OnRefreshSheetClick_routes_across_the_boundary_and_refreshes_state()
+    {
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log.Object);
+
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.RefreshSheet);
+        var stateRefreshed = 0;
+
+        GanttRibbon.OnRefreshSheetClick(
+            control.Object,
+            boundary,
+            () => throw new InvalidOperationException("simulated"),
+            () => stateRefreshed++);
+
+        var record = Assert.Single(written);
+        Assert.Contains("command=btnRefreshSheet", record, StringComparison.Ordinal);
+
+        // The state refresh is what re-evaluates every getEnabled, so a button that
+        // changed availability during the command must be re-queried afterwards.
+        Assert.Equal(1, stateRefreshed);
+    }
+
+    /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
+    [Fact]
+    public void OnRefreshSheetClick_throws_for_a_null_boundary_or_command()
+    {
+        var written = new List<string>();
+        var log = new Mock<IRollingLog>();
+        log
+            .Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>(
+                (fmt, args) => written.Add(string.Format(CultureInfo.InvariantCulture, fmt, args)));
+        var boundary = new CommandBoundary(presenter: _ => { });
+        boundary.SetLog(log.Object);
+
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnRefreshSheetClick(control.Object, null!, () => { }));
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnRefreshSheetClick(control.Object, boundary, null!));
     }
 
     [Fact]

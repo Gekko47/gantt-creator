@@ -38,10 +38,14 @@ internal static class EquivalenceFieldChecks
     /// Gets the critical-interval overlay height the reference scene is built with.
     /// </summary>
     /// <remarks>
-    /// The <c>CriticalLinePt</c> token, repeated for the same reason as
-    /// <see cref="MilestoneSizePt"/>: §11 makes it a caller-supplied token.
+    /// HALF the predetermined <c>ActivityHeightPt</c> (owner ruling
+    /// 2026-09-30 / ADR-0027 D3). The old value was the retired
+    /// <c>CriticalLinePt</c> token, which this field is deliberately NOT: the
+    /// overlay height is derived, not configured, and a renderer must not be
+    /// able to read a thickness token and draw a line where the scene draws a
+    /// filled rect.
     /// </remarks>
-    internal const double CriticalLinePt = 1.0;
+    internal const double CriticalOverlayHeightPt = 4.0;
 
     internal static EquivalenceField Kind(string member, string kind, string citation) =>
         new(
@@ -130,16 +134,18 @@ internal static class EquivalenceFieldChecks
                 && GeometryMath.ApproximatelyEqual(line.To.Y, scene.PlotBounds.Bottom));
 
     /// <summary>
-    /// Asserts a critical overlay is exactly <c>CriticalLinePt</c> tall, so a renderer
-    /// reading its top edge draws a line of the resolved thickness rather than a band.
+    /// Asserts a critical overlay is exactly the derived half-height tall, so a
+    /// renderer draws the rect it is handed rather than reinterpreting it as a
+    /// line of some configured thickness.
     /// </summary>
     internal static EquivalenceField CriticalLineHeight(string member, string citation) =>
         new(
-            "the CriticalLinePt overlay height",
+            "the half predetermined overlay height",
             citation,
             member,
             (_, primitive) =>
-                primitive is SceneRect rect && GeometryMath.ApproximatelyEqual(rect.Bounds.Height, CriticalLinePt));
+                primitive is SceneRect rect
+                && GeometryMath.ApproximatelyEqual(rect.Bounds.Height, CriticalOverlayHeightPt));
 
     /// <summary>
     /// Asserts a milestone diamond's vertices are in §20's draw order, not merely

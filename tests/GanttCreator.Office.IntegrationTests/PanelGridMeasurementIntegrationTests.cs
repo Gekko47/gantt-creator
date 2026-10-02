@@ -58,6 +58,19 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// The column this suite measures. It must be a column the product leaves
+    /// VISIBLE: R4.7C initialises every engine column hidden, and Excel reports a
+    /// hidden column's width as 0, which <see cref="PanelCellGrid"/> correctly
+    /// refuses as a non-positive width. Measuring <c>Columns[0]</c> therefore
+    /// started failing for a real reason once <c>Id</c> was hidden — the panel
+    /// only ever renders visible columns, so a hidden column is the wrong input.
+    /// Derived from the classification rather than pinned to a name, so it keeps
+    /// tracking the schema.
+    /// </summary>
+    private static string MeasuredColumnName =>
+        GanttTableSchema.Default.Columns.First(column => !column.IsHidden).Name;
+
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task A_body_with_mixed_row_heights_measures_each_row_rather_than_being_refused()
@@ -83,7 +96,7 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
             Excel.ListObject table = scope.Track(ResolveGanttTable(scope, workbook));
             _output.WriteLine($"fresh table ListRows.Count={scope.Track(table.ListRows).Count}");
             PanelGridOutcome empty = new ExcelPanelGridMeasurement(fixture.Excel)
-                .Measure([GanttTableSchema.Default.Columns[0].Name]);
+                .Measure([MeasuredColumnName]);
             _output.WriteLine($"empty table: success={empty.Succeeded} reason={empty.Refusal}");
             Assert.False(empty.Succeeded, "A table with no data rows has no panel body to measure.");
             Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, empty.Refusal);
@@ -94,7 +107,7 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
             // Uniform heights first: the measurement must SUCCEED, or the per-row
             // assertions below would prove nothing about mixed heights.
             PanelGridOutcome uniform = new ExcelPanelGridMeasurement(fixture.Excel)
-                .Measure([GanttTableSchema.Default.Columns[0].Name]);
+                .Measure([MeasuredColumnName]);
             _output.WriteLine("uniform heights: success=" + uniform.Succeeded
                 + " rows=" + (uniform.Grid is null ? "-" : string.Join("/", uniform.Grid.RowHeightsPt))
                 + " header=" + (uniform.Grid is null ? "-" : uniform.Grid.HeaderHeightPt.ToString(CultureInfo.InvariantCulture)));
@@ -121,7 +134,7 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
                 + $"DataBodyRange.RowHeight = {(reported is null ? "null" : reported.GetType().Name + " '" + reported + "'")}");
 
             PanelGridOutcome mixed = new ExcelPanelGridMeasurement(fixture.Excel)
-                .Measure([GanttTableSchema.Default.Columns[0].Name]);
+                .Measure([MeasuredColumnName]);
 
             _output.WriteLine("mixed heights: success=" + mixed.Succeeded
                 + " rows=" + (mixed.Grid is null ? "-" : string.Join("/", mixed.Grid.RowHeightsPt)));
@@ -147,7 +160,7 @@ public class PanelGridMeasurementIntegrationTests(ITestOutputHelper output)
             try
             {
                 PanelGridOutcome outcome = new ExcelPanelGridMeasurement(fixture.Excel)
-                    .Measure([GanttTableSchema.Default.Columns[0].Name]);
+                    .Measure([MeasuredColumnName]);
 
                 _output.WriteLine("protected-sheet measurement: success=" + outcome.Succeeded
                     + " reason=" + outcome.Refusal);

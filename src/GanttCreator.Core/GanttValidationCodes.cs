@@ -28,13 +28,14 @@ public static class GanttValidationCodes
     /// <summary>A point-event row is missing <c>Start</c>, its single date.</summary>
     public const string StartRequiredForPoint = nameof(StartRequiredForPoint);
 
-    /// <summary>A lane-bound row is missing <c>LaneId</c> or it is malformed.</summary>
+    /// <summary>
+    /// A <c>LaneId</c> value was supplied and is malformed. The cell is optional --
+    /// it is engine-generated and hidden (ADR-0012, ADR-0029 D8) -- so this fires
+    /// only on a value that is present and unusable.
+    /// </summary>
     public const string LaneIdMissingOrMalformed = nameof(LaneIdMissingOrMalformed);
 
-    /// <summary>A lane-bound row is missing <c>StackIndex</c>.</summary>
-    public const string StackIndexRequired = nameof(StackIndexRequired);
-
-    /// <summary>A <c>StackIndex</c> value is negative.</summary>
+    /// <summary>A supplied <c>StackIndex</c> value is negative.</summary>
     public const string StackIndexNegative = nameof(StackIndexNegative);
 
     /// <summary>A relevant cell contains an Excel error value.</summary>
@@ -84,4 +85,13 @@ public static class GanttValidationCodes
 
     /// <summary>A <c>SortOrder</c> value is not an invariant non-negative integer.</summary>
     public const string BadSortOrder = nameof(BadSortOrder);
+
+    /// <summary>A parent already owns the maximum permitted number of children.</summary>
+    public const string TooManyChildren = nameof(TooManyChildren);
+
+    /// <summary>A row's own parent is itself a child, which would nest beyond the supported depth.</summary>
+    public const string HierarchyTooDeep = nameof(HierarchyTooDeep);
+
+    /// <summary>A <c>SiblingOrder</c> value is not a non-negative integer.</summary>
+    public const string BadSiblingOrder = nameof(BadSiblingOrder);
 }

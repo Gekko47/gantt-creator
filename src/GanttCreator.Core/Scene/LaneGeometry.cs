@@ -1,7 +1,10 @@
 namespace GanttCreator.Core.Scene;
 
 /// <summary>Resolved metric values used by lane layout.</summary>
-/// <param name="LaneHeightPt">The minimum lane height.</param>
+/// <param name="LaneHeightPt">
+/// The lane height. Since R4.7D (ADR-0026) this is the fixed height — the
+/// managed row height — and not a minimum the layout may exceed.
+/// </param>
 /// <param name="LanePaddingTopPt">Space above the first stack slot.</param>
 /// <param name="LanePaddingBottomPt">Space below the last stack slot.</param>
 /// <param name="StackGapPt">Space between distinct effective slots.</param>
