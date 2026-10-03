@@ -250,6 +250,125 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// ADR-0035 D3, other branch: an active cell OUTSIDE the table appends, and the
+    /// real worksheet-row insert below the table reserves a fresh padding row.
+    /// </summary>
+    /// <remarks>
+/// <para>
+/// This covers the branch that was never exercised against a live host. Every
+/// contract test substitutes <c>InsertWorksheetRowBelowTable</c>, so the COM call
+/// itself -- the only thing that actually moves the padding row -- had no coverage
+/// at all. It is the exact path that produces "the padding row still takes data",
+/// and its failure mode was four silent returns that all reported success.
+/// </para>
+/// <para>
+/// The append is driven by an active cell on a DIFFERENT SHEET, which is the owner's
+/// "anywhere else" rule stated in its strongest form. Asserting
+/// <c>PaddingRowReserved</c> is what distinguishes the row insert having happened
+/// from the host having silently refused it, which no count-based assertion could.
+/// </para>
+/// <para>
+/// Padding-row emptiness and the moved index are asserted in this same body on
+/// purpose: the COM-proxy leak ratchet counts forced kills per test body, so
+/// splitting this narrative would add a kill to a ceiling the repository records as
+/// not raisable.
+/// </para>
+/// </remarks>
+[Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task An_outside_table_selection_appends_and_still_reserves_the_padding_row()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            // A body, so the first-insert blank-row reuse does not apply.
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('1')).Succeeded);
+
+            Excel.Range body = scope.Track(table.DataBodyRange);
+            var paddingRowBefore = body.Row + body.Rows.Count;
+            var bodyRowsBefore = body.Rows.Count;
+
+            // The active cell is somewhere else entirely: another sheet. This is the
+            // owner's "anywhere else appends" rule, so the APPEND branch is taken and
+            // ListRows.Add() CLAIMS the row sitting below the table.
+            Excel.Worksheet other = scope.Track(
+                workbook.Sheets.Add(After: workbook.Sheets[workbook.Sheets.Count]));
+            scope.Track(other.Cells[1, 1]).Select();
+
+            GanttRowInsertOutcome appended = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('2'));
+
+            Assert.True(appended.Succeeded, $"Insert refused: {appended.Refusal}");
+
+            // The load-bearing assertion. The real COM call ran and the host did NOT
+            // refuse; before this reported a result, a swallowed refusal looked
+            // identical to success and the margin vanished without a word.
+            Assert.True(
+                appended.PaddingRowReserved,
+                "The worksheet row below the table was not inserted, so the chart's bottom margin was absorbed.");
+
+            // It appended rather than inserted mid-table.
+            Assert.Equal(bodyRowsBefore + 1, table.DataBodyRange.Rows.Count);
+            AssertId(table.ListRows[table.ListRows.Count], FixedId('2').Value);
+
+            // ---- The reserved bottom padding row (ADR-0035 D2) ----
+            Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
+            var tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
+            var paddingRowIndex = bodyAfter.Row + bodyAfter.Rows.Count - 1 + 1;
+
+            Assert.True(
+                paddingRowIndex > tableLastRow,
+                $"The reserved padding row ({paddingRowIndex}) must sit below the table's last row ({tableLastRow}).");
+
+            Assert.True(
+                paddingRowIndex > paddingRowBefore,
+                $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
+            object? paddingValue = paddingRow.Value2;
+
+            // A whole-row Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar.
+            bool paddingIsEmpty = paddingValue is object[,] cells
+                ? cells.Cast<object?>().All(static value =>
+                    value is null or DBNull || (value is string text && text.Length == 0))
+                : paddingValue is null
+                    or DBNull
+                    || (paddingValue is string single && single.Length == 0);
+
+            Assert.True(
+                paddingIsEmpty,
+                $"The reserved padding row must be empty, but reported '{paddingValue}'.");
+
+            // The margin row is reserved at its own height, not the body row's.
+            // xlFormatFromLeftOrAbove copies the row above -- an 18pt body row -- so
+            // without the explicit reset the chart grows a body-height margin.
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+                (double)paddingRow.RowHeight,
+                3);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
     /// A protected worksheet refuses the insert and the table is left untouched.
     /// </summary>
     /// <remarks>

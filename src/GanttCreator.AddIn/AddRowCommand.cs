@@ -42,14 +42,40 @@ internal static class AddRowCommand
         if (outcome.Succeeded)
         {
             SelectInsertedRow(selector, outcome.BodyIndex!.Value);
+
+            // The row is written either way, but a lost padding row is a visible
+            // defect the user cannot diagnose from the sheet alone. ADR-0008 rules
+            // out passing over it silently.
+            if (!outcome.PaddingRowReserved)
+            {
+                Present(presenter, PaddingRowLostMessage);
+            }
+
             return;
         }
 
         // CA1031: presenter failure is outside command behaviour; it degrades to no dialog.
+        Present(presenter, TranslateRefusal(outcome.Refusal!.Value));
+    }
+
+    /// <summary>The message shown when the append consumed the chart's bottom margin.</summary>
+    internal const string PaddingRowLostMessage =
+        "Gantt Creator added the row, but could not reserve the blank row below the table, "
+        + "so the chart's bottom margin has been lost. Refresh the chart, or undo the row and try again.";
+
+    /// <summary>
+    /// Shows a message, degrading to silence when the host refuses to present it. A
+    /// dialog failure must never turn a completed insert into an escaping exception.
+    /// </summary>
+    /// <param name="presenter">The user-safe message presenter.</param>
+    /// <param name="message">The message to present.</param>
+    private static void Present(Action<string> presenter, string message)
+    {
+        // CA1031: presenter failure is outside command behaviour.
 #pragma warning disable CA1031
         try
         {
-            presenter(TranslateRefusal(outcome.Refusal!.Value));
+            presenter(message);
         }
         catch
         {

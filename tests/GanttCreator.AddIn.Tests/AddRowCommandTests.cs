@@ -63,6 +63,51 @@ public class AddRowCommandTests
             () => AddRowCommand.Run(inserter.Object, FixedId, null!, _ => { }, GanttEntityType.AsPlannedActivity));
     }
 
+    /// <summary>
+    /// A lost padding row is told to the user even though the row was added.
+    /// </summary>
+    /// <remarks>
+    /// This is the user-visible half of the fix. The inserter now reports whether the
+    /// chart's bottom margin survived; the command's job is to not swallow it. The
+    /// selection still moves, because the row genuinely exists.
+    /// </remarks>
+    [Fact]
+    public void Run_tells_the_user_when_the_padding_row_was_not_reserved()
+    {
+        Mock<IGanttRowInserter> inserter =
+            InserterWith(GanttRowInsertOutcome.Ok(4, paddingRowReserved: false));
+
+        var presented = new List<string>();
+        RecordingSelector selector = NoopSelector();
+
+        AddRowCommand.Run(inserter.Object, FixedId, selector, presented.Add, GanttEntityType.AsPlannedActivity);
+
+        string message = Assert.Single(presented);
+        Assert.Equal(AddRowCommand.PaddingRowLostMessage, message);
+        Assert.Contains("bottom margin", message, StringComparison.OrdinalIgnoreCase);
+
+        // The row exists, so the cursor still belongs on it.
+        Assert.Equal([4], selector.Selected);
+    }
+
+    /// <summary>
+    /// A healthy insert says nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the test above. A warning shown on every successful insert
+    /// would train the user to dismiss the one time it mattered.
+    /// </remarks>
+    [Fact]
+    public void Run_is_silent_when_the_padding_row_was_reserved()
+    {
+        Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(4));
+
+        var presented = new List<string>();
+        AddRowCommand.Run(inserter.Object, FixedId, NoopSelector(), presented.Add, GanttEntityType.AsPlannedActivity);
+
+        Assert.Empty(presented);
+    }
+
     [Fact]
     public void Run_throws_for_a_null_presenter()
     {

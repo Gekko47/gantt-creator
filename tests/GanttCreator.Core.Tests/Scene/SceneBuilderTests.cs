@@ -920,6 +920,62 @@ public sealed class SceneBuilderTests
             $"A label must fill the free gap, not stop at the retired 144pt cap (was {description.TextBounds.Width}pt).");
     }
 
+    /// <summary>
+    /// A long label in one row does NOT govern the width of a label in another row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the reported symptom -- "one row's text length may be governing them
+    /// all" -- as a property, exercised through <see cref="SceneBuilder"/> because
+    /// that is the only path the product uses. Testing <see cref="LabelPlanner"/>
+    /// directly with a hand-built occupant list proved nothing: the planner trusts
+    /// the list it is handed and <c>SceneBuilder.VerticalBand</c> is what filters
+    /// it, so a direct-planner test "reproduces" a symptom the product cannot
+    /// produce.
+    /// </para>
+    /// <para>
+    /// Row 1's description is 60 characters; row 2's is 6. Each label's box is
+    /// asserted against its OWN text, so a shared width cannot pass.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_long_label_in_one_row_does_not_govern_another_rows_label()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                    with { LabelPosition = GanttLabelPosition.Right, Description = new string('a', 60) },
+                Event(2, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                    with { LabelPosition = GanttLabelPosition.Right, Description = "bbbbbb" })
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        List<SceneText> labels = outcome.Result!.Scene.Primitives
+            .OfType<SceneText>()
+            .Where(text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Equal(2, labels.Count);
+
+        SceneText longest = Assert.Single(labels, text => text.Text.StartsWith("aaaaa", StringComparison.Ordinal));
+        SceneText shortest = Assert.Single(labels, text => text.Text == "bbbbbb");
+
+        // Each label's box tracks ITS OWN text. A shared width would make these
+        // equal, which is the whole claim.
+        Assert.True(
+            longest.TextBounds.Width > shortest.TextBounds.Width * 3,
+            $"Each label must be sized from its own text ({longest.TextBounds.Width:0.###} vs {shortest.TextBounds.Width:0.###}).");
+
+        // The short label is never squeezed by the long one: it keeps its full
+        // natural width and stays inside its own row's band.
+        Assert.Equal(6 * 8, shortest.TextBounds.Width, 1);
+        Assert.True(
+            shortest.TextBounds.Top > longest.TextBounds.Bottom,
+            "A label must not borrow vertical space from another row.");
+    }
+
     [Fact]
     public void Every_bar_and_marker_lies_inside_the_plot_bounds()
     {

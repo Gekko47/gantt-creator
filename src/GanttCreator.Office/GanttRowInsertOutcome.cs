@@ -20,15 +20,26 @@ public enum GanttRowInsertRefusalReason
 /// <param name="Succeeded">Whether a row was appended.</param>
 /// <param name="BodyIndex">The new row's one-based body index when successful.</param>
 /// <param name="Refusal">The refusal reason when unsuccessful.</param>
+/// <param name="PaddingRowReserved">
+/// Whether the chart's bottom padding row survived the insert. False means the table
+/// absorbed it, which is a visible defect rather than a cosmetic one.
+/// </param>
 public sealed record GanttRowInsertOutcome(
     bool Succeeded,
     int? BodyIndex,
-    GanttRowInsertRefusalReason? Refusal)
+    GanttRowInsertRefusalReason? Refusal,
+    bool PaddingRowReserved = true)
 {
     /// <summary>Creates a successful insertion outcome.</summary>
     /// <param name="bodyIndex">The new row's one-based body index.</param>
+    /// <param name="paddingRowReserved">
+    /// Whether the chart's bottom padding row survived the insert. False means the
+    /// table absorbed it, which is a visible defect rather than a cosmetic one, so
+    /// it is reported instead of being passed over.
+    /// </param>
     /// <returns>A successful outcome.</returns>
-    public static GanttRowInsertOutcome Ok(int bodyIndex) => new(true, bodyIndex, null);
+    public static GanttRowInsertOutcome Ok(int bodyIndex, bool paddingRowReserved = true) =>
+        new(true, bodyIndex, null, paddingRowReserved);
 
     /// <summary>Creates a refusal outcome.</summary>
     /// <param name="refusal">The refusal reason.</param>

@@ -72,6 +72,10 @@ public class ExcelGanttRowInserter(
         // original Top when the row is deleted, so the chart tracks the sheet.
         Excel.ListRow? newRow = null;
         Excel.Range rowRange;
+
+        // Only the APPEND branch needs the push-down; a positional insert shifts the
+        // sheet by itself. Stays true unless the helper proves otherwise.
+        var paddingRowReserved = true;
         if (reusableRow is not null)
         {
             // An initialised table whose body is empty can still own one blank row
@@ -98,7 +102,7 @@ public class ExcelGanttRowInserter(
             // probe hit directly.
             if (position is null)
             {
-                InsertWorksheetRowBelowTable(table);
+                paddingRowReserved = InsertWorksheetRowBelowTable(table);
             }
         }
 
@@ -118,7 +122,7 @@ public class ExcelGanttRowInserter(
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable);
         }
 
-        return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow));
+        return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow), paddingRowReserved);
     }
 
     /// <summary>
@@ -190,21 +194,31 @@ public class ExcelGanttRowInserter(
     /// bottom padding row moves down instead of being absorbed (ADR-0035 D3).
     /// </summary>
     /// <param name="table">The Gantt table.</param>
+    /// <returns>
+    /// <see langword="true"/> when a blank row now sits below the table; otherwise
+    /// <see langword="false"/>, meaning the padding row was absorbed into the table.
+    /// </returns>
     /// <remarks>
     /// <para>
-    /// Best-effort by design. A failure here means the row could not be pushed down,
-    /// which leaves the sheet in the state the append alone would have produced --
-    /// the padding row absorbed into the table -- rather than in a worse one. It is
-    /// deliberately not allowed to fail the INSERT, because the row itself is
-    /// already written and reported; the alternative is refusing a row the user asked
-    /// for over a presentation detail the next Refresh can correct.
+    /// This used to swallow every failure and return, so a refused insert was
+    /// indistinguishable from a successful one. That is the failure mode behind "the
+    /// padding row still takes data": the append had already claimed the padding row,
+    /// the push-down silently did not happen, and the command reported success
+    /// regardless.
+    /// </para>
+    /// <para>
+    /// The outcome is reported rather than thrown because the inserted row is already
+    /// written and the user asked for it; throwing here would escape into the Ribbon
+    /// callback with a half-applied insert. Returning <see langword="false"/> lets the
+    /// caller tell the user the margin was lost, which ADR-0008 requires in place of a
+    /// silent partial mutation.
     /// </para>
     /// <para>
     /// CA1031: an Excel host refusing a row insert is a host refusal, not a bug in
     /// this adapter, and must not surface as an exception into the Ribbon callback.
     /// </para>
     /// </remarks>
-    internal virtual void InsertWorksheetRowBelowTable(Excel.ListObject table)
+    internal virtual bool InsertWorksheetRowBelowTable(Excel.ListObject table)
     {
         ArgumentNullException.ThrowIfNull(table);
 
@@ -213,13 +227,13 @@ public class ExcelGanttRowInserter(
         {
             if (table.Parent is not Excel.Worksheet worksheet || worksheet.Rows is not { } rows)
             {
-                return;
+                return false;
             }
 
             Excel.Range? tableRange = GetTableRange(table);
             if (tableRange is null)
             {
-                return;
+                return false;
             }
 
             // One past the table's last row. Reading it through the range rather than
@@ -227,11 +241,19 @@ public class ExcelGanttRowInserter(
             // different row.
             var lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
             rows[lastRow + 1].Insert(_excelShiftDown, _excelFormatFromLeftOrAbove);
+
+            // Insert copies the row above -- an 18pt body row -- so without this the
+            // new padding row is body-height until the next Refresh normalises it.
+            // The catalogue is the authority for how tall the margin is.
+            rows[lastRow + 1].RowHeight = GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
+            return true;
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException or ArgumentException)
         {
-            // Intentionally empty: see the remarks. The row is already added.
+            // Reported as "not reserved" rather than thrown; see the remarks. The row
+            // itself is already added and must not be undone here.
             _ = ex;
+            return false;
         }
 #pragma warning restore CA1031
     }

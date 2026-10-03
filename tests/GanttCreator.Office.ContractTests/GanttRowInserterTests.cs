@@ -76,16 +76,24 @@ public class GanttRowInserterTests
 
         /// <summary>
         /// The workbook-row insert below the table is a real COM call, so it is
-        /// replaced with a counter. It cannot be left to the base implementation in a
-        /// unit test: there is no host, and the base method swallows the failure, so
-        /// an un-substituted call would look like "no insert happened" and the
-        /// append branch would pass for the wrong reason.
+        /// replaced. It cannot be left to the base implementation in a unit test:
+        /// there is no host, and the base method would report "not reserved" for the
+        /// absence of a host rather than for a genuine refusal, so the append branch
+        /// would pass for the wrong reason.
         /// </summary>
-        internal override void InsertWorksheetRowBelowTable(Excel.ListObject table)
+        /// <remarks>
+        /// The recorded result is a field rather than a hardcoded success so a test
+        /// can make the host refuse and assert the command says so.
+        /// </remarks>
+        internal override bool InsertWorksheetRowBelowTable(Excel.ListObject table)
         {
             ArgumentNullException.ThrowIfNull(table);
             _insertWorksheetRow();
+            return PaddingRowReservedByHost;
         }
+
+        /// <summary>Whether the simulated host reserved the row. Defaults to success.</summary>
+        internal bool PaddingRowReservedByHost { get; set; } = true;
     }
 
     private sealed class Graph
@@ -442,6 +450,72 @@ public class GanttRowInserterTests
 
         Assert.Equal(1, middle.AddRowAtPositionCalls);
         Assert.Equal(0, middle.WorksheetRowInserts);
+    }
+
+    /// <summary>
+    /// A refused padding-row insert is reported, not swallowed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the defect behind "the padding row still takes data". The helper used
+    /// to swallow every failure and return <c>void</c>, so a refused push-down was
+    /// indistinguishable from a successful one and the command reported success
+    /// either way -- leaving the table sitting on the chart's bottom margin with
+    /// nothing said.
+    /// </para>
+    /// <para>
+    /// The row is still written when the host refuses: the user asked for it and it
+    /// is already in the table. What must not happen is silence, so the outcome
+    /// carries the fact and the command can say so.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refused_padding_row_insert_is_reported_rather_than_swallowed()
+    {
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        TestableInserter inserter = graph.Build(guard.Object);
+        inserter.PaddingRowReservedByHost = false;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        // The push-down was attempted...
+        Assert.Equal(1, graph.WorksheetRowInserts);
+
+        // ...the row was still written, so the insert is not a refusal...
+        Assert.True(outcome.Succeeded);
+
+        // ...but the lost margin is stated rather than passed over.
+        Assert.False(outcome.PaddingRowReserved);
+    }
+
+    /// <summary>
+    /// A successful push-down reports the padding row as reserved.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the refusal test. Without it the field could default to
+    /// false and every passing insert would cry wolf.
+    /// </remarks>
+    [Fact]
+    public void A_successful_padding_row_insert_reports_the_row_as_reserved()
+    {
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        GanttRowInsertOutcome outcome =
+            graph.Build(guard.Object).Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.PaddingRowReserved);
     }
 
     /// <summary>
