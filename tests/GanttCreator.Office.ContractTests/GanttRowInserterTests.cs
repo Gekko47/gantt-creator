@@ -35,6 +35,8 @@ public class GanttRowInserterTests
         Func<Excel.ListRow, int> rowIndex,
         Func<Excel.ListRow, Excel.Range> rowRange,
         Action insertWorksheetRow,
+        Action<Excel.Range, double> setRowHeight,
+        List<string> callOrder,
         ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser)
     {
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
@@ -55,6 +57,8 @@ public class GanttRowInserterTests
         private readonly Func<Excel.ListRow, int> _rowIndex = rowIndex;
         private readonly Func<Excel.ListRow, Excel.Range> _rowRange = rowRange;
         private readonly Action _insertWorksheetRow = insertWorksheetRow;
+        private readonly Action<Excel.Range, double> _setRowHeight = setRowHeight;
+        private readonly List<string> _callOrder = callOrder;
 
         internal override Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => _sheetAt(sheets, index);
         internal override Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => _tableAt(listObjects, index);
@@ -73,6 +77,11 @@ public class GanttRowInserterTests
         internal override int GetRangeRow(Excel.Range range) => _rangeRow(range);
         internal override int GetRowIndex(Excel.ListRow row) => _rowIndex(row);
         internal override Excel.Range GetRowRange(Excel.ListRow row) => _rowRange(row);
+        internal override void SetRowHeight(Excel.Range range, double heightPt)
+        {
+            _setRowHeight(range, heightPt);
+            _callOrder.Add($"SetRowHeight({heightPt})");
+        }
 
         /// <summary>
         /// The workbook-row insert below the table is a real COM call, so it is
@@ -89,6 +98,7 @@ public class GanttRowInserterTests
         {
             ArgumentNullException.ThrowIfNull(table);
             _insertWorksheetRow();
+            _callOrder.Add("InsertWorksheetRowBelowTable");
             return PaddingRowReservedByHost;
         }
 
@@ -131,6 +141,17 @@ public class GanttRowInserterTests
         /// moves the reserved bottom padding row down on the append branch.
         /// </summary>
         public int WorksheetRowInserts { get; private set; }
+
+        /// <summary>
+        /// The order in which the adapter performed its two order-sensitive calls.
+        /// The append branch is only correct when the worksheet-row insert happens
+        /// BEFORE <c>ListRows.Add()</c>, so the sequence itself is the assertion
+        /// target rather than the mere presence of either call.
+        /// </summary>
+        public List<string> CallOrder { get; } = [];
+
+        /// <summary>Every row height the adapter wrote, as (range, points).</summary>
+        public List<(Excel.Range Range, double HeightPt)> RowHeightsWritten { get; } = [];
 
         public void RecordWrittenValue(object value) => WrittenValue = value;
 
@@ -230,6 +251,7 @@ public class GanttRowInserterTests
             {
                 Assert.Same(ListRows.Object, rows);
                 AddRowCalls++;
+                CallOrder.Add("AddRow");
                 return NewRow.Object;
             },
             (rows, position) =>
@@ -237,6 +259,7 @@ public class GanttRowInserterTests
                 Assert.Same(ListRows.Object, rows);
                 AddRowAtPositionCalls++;
                 LastInsertionPosition = position;
+                CallOrder.Add($"AddRowAtPosition({position})");
                 return NewRow.Object;
             },
             _ => ActiveCell.Object,
@@ -253,6 +276,8 @@ public class GanttRowInserterTests
                 return RowRange.Object;
             },
             () => WorksheetRowInserts++,
+            (range, heightPt) => RowHeightsWritten.Add((range, heightPt)),
+            CallOrder,
             typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser());
     }
 
@@ -302,6 +327,124 @@ public class GanttRowInserterTests
         // writer coalesces a null cell value to string.Empty, so "blank" is an
         // empty string here, not null.
         Assert.Equal(string.Empty, matrix[0, Of("SiblingOrder")]);
+    }
+
+    /// <summary>
+    /// The append branch must insert the genuine worksheet row BEFORE
+    /// <c>ListRows.Add()</c>, because <c>Add()</c> with no position claims the row
+    /// already below the table -- the 6pt reserved padding row -- as a body row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the regression test for the reported defect. Measured 2026-10-03
+    /// (<c>scripts/probe-rowinsert-anchoring.ps1</c> Q4): with the insert AFTER
+    /// <c>Add()</c>, the new body row measured <strong>6pt</strong> and stayed 6pt
+    /// even after the compensating insert, because that insert created a fresh row
+    /// BELOW the table while the claimed row remained a squashed body row. The same
+    /// probe's Q3 shows the reversed order yields 18pt.
+    /// </para>
+    /// <para>
+    /// The assertion is on the ORDER, not on both calls having happened. The previous
+    /// code made both calls and was still wrong, so a presence check would have
+    /// passed straight through the defect.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_append_branch_inserts_the_worksheet_row_before_claiming_it_with_ListRows()
+    {
+        var graph = new Graph();
+        var guard = NotProtected();
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => id);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, graph.AddRowCalls);
+        Assert.Equal(1, graph.WorksheetRowInserts);
+
+        int insertAt = graph.CallOrder.IndexOf("InsertWorksheetRowBelowTable");
+        int addAt = graph.CallOrder.IndexOf("AddRow");
+        Assert.True(insertAt >= 0 && addAt >= 0, $"Call order was: {string.Join(" -> ", graph.CallOrder)}");
+        Assert.True(
+            insertAt < addAt,
+            $"The worksheet row must be inserted BEFORE ListRows.Add(); order was: {string.Join(" -> ", graph.CallOrder)}");
+    }
+
+    /// <summary>
+    /// The row handed back by <c>ListRows.Add()</c> must be written to the body-row
+    /// height token, so a body row cannot be left at the padding row's 6pt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Excel's own inheritance already yields the right height (probe Q3), so this
+    /// write is belt-and-braces. It is asserted anyway because the inheritance is a
+    /// host behaviour rather than a stated invariant, and the defect it guards was
+    /// invisible to every existing test: the integration suite asserted the PADDING
+    /// row's height, never the body row's, which is precisely the row that broke.
+    /// </para>
+    /// <para>
+    /// The expected value comes from the token catalogue, never a literal, so a
+    /// retuned token cannot leave this test pinning 18pt as if it were the contract.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_appended_body_row_is_written_to_the_body_row_height_token()
+    {
+        var graph = new Graph();
+        var guard = NotProtected();
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => id);
+
+        Assert.True(outcome.Succeeded);
+        (Excel.Range Range, double HeightPt) written = Assert.Single(graph.RowHeightsWritten);
+        Assert.Same(graph.RowRange.Object, written.Range);
+        Assert.Equal(GanttCatalogues.MetricDefault("GanttRowHeightPt"), written.HeightPt);
+    }
+
+    /// <summary>
+    /// A POSITIONAL insert must not also push a worksheet row in from below: the
+    /// positional <c>Add(position)</c> already shifts the sheet, so a second insert
+    /// would displace everything twice for one activity.
+    /// </summary>
+    [Fact]
+    public void The_positional_branch_does_not_also_insert_a_worksheet_row_from_below()
+    {
+        var graph = new Graph();
+
+        // Make the table ACTIVE and the active cell INSIDE the body so the inserter
+        // takes the positional branch rather than the append branch.
+        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+        _ = graph.TableRows.SetupGet(r => r.Count).Returns(4);
+
+        var guard = NotProtected();
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => id);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, graph.WorksheetRowInserts);
+        Assert.DoesNotContain("InsertWorksheetRowBelowTable", graph.CallOrder);
+
+        // The body row is still normalised to the body height on this branch.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            Assert.Single(graph.RowHeightsWritten).HeightPt);
+    }
+
+    private static Mock<IWorksheetProtectionGuard> NotProtected()
+    {
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        return guard;
     }
 
     [Fact]

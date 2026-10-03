@@ -366,11 +366,23 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 $"The reserved padding row must be empty, but reported '{paddingValue}'.");
 
             // The margin row is reserved at its own height, not the body row's.
-            // xlFormatFromLeftOrAbove copies the row above -- an 18pt body row -- so
-            // without the explicit reset the chart grows a body-height margin.
+            // It carries that height down with it when the insert displaces it.
             Assert.Equal(
                 GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
                 (double)paddingRow.RowHeight,
+                3);
+
+            // The load-bearing assertion, and the one this whole defect slipped past:
+            // the APPENDED BODY row must be a body row's height. The padding row is
+            // 6pt, ListRows.Add() with no position claims it, and before the ordering
+            // fix the new activity therefore landed at 6pt with its text colliding
+            // with the row beneath it. Every assertion above this one -- including
+            // the padding height -- passed while the sheet was visibly broken.
+            Excel.Range bodyAfterAppend = scope.Track(
+                table.ListRows[appended.BodyIndex!.Value].Range);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                (double)bodyAfterAppend.RowHeight,
                 3);
         }
         finally

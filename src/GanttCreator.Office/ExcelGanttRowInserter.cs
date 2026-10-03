@@ -63,18 +63,22 @@ public class ExcelGanttRowInserter(
 
         // ADR-0035 D3 (superseding the append-only form): the new row goes
         // immediately BELOW the active cell when the active cell is inside the table,
-        // and APPENDS before the padding row otherwise. The append-only rule this
-        // replaces was correct about the push-down being noisy but wrong about the
-        // cause: `ListRows.Add(position)` inserts a real worksheet row, which shifts
-        // everything below -- including the bottom padding row and the bottom of the
-        // chart frame. A live probe confirmed a shape straddling the insertion point
-        // moves down exactly one row height (15pt) and returns exactly to its
-        // original Top when the row is deleted, so the chart tracks the sheet.
+        // and APPENDS before the padding row otherwise.
+        //
+        // Shape tracking needs NO write from this adapter. Measured 2026-10-03
+        // (scripts/probe-rowinsert-anchoring.ps1): all four creation families the
+        // renderer uses -- AddShape, AddLine, AddTextbox, and the milestone diamond --
+        // report Placement = xlMoveAndSize straight out of Excel, and inserting a
+        // worksheet row moved every one of them down exactly one body row height with
+        // TopLeftCell following. ADR-0035 reached the same conclusion from an
+        // AddTextbox-only probe; this probe closes the AddShape/AddLine gap that
+        // probe left open.
         Excel.ListRow? newRow = null;
         Excel.Range rowRange;
 
-        // Only the APPEND branch needs the push-down; a positional insert shifts the
-        // sheet by itself. Stays true unless the helper proves otherwise.
+        // Only the APPEND branch can lose the padding row, because only it depends on
+        // the insert below the table having succeeded. A positional insert shifts the
+        // sheet by itself, so its padding row is displaced by definition.
         var paddingRowReserved = true;
         if (reusableRow is not null)
         {
@@ -87,23 +91,41 @@ public class ExcelGanttRowInserter(
         else
         {
             var position = GetInsertionPosition(application!, table, rows);
-            newRow = position is null ? AddRow(rows) : AddRowAtPosition(rows, position.Value);
-            rowRange = GetRowRange(newRow);
-
-            // An APPEND does not shift anything: ListRows.Add() with no position
-            // claims the row already sitting below the table -- which is the RESERVED
-            // BOTTOM PADDING ROW -- and turns it into a body row. That is why the
-            // chart appeared not to move. Inserting a genuine worksheet row below the
-            // table restores it: the padding row moves down one row and, because the
-            // chart frame straddles that row, the frame grows with it.
-            //
-            // The row is inserted BELOW the table, never inside its range: Excel
-            // REFUSES a worksheet row inserted inside a ListObject, which the live
-            // probe hit directly.
             if (position is null)
             {
+                // ORDER IS LOAD-BEARING. ListRows.Add() with NO position does not
+                // shift the sheet: it CLAIMS the row already sitting below the table
+                // -- the RESERVED BOTTOM PADDING ROW -- and turns it into a body row.
+                // That row is 6pt, so the new activity lands squashed and its text
+                // collides with the row beneath it.
+                //
+                // The compensating insert that used to follow could not repair it.
+                // Measured 2026-10-03 (scripts/probe-rowinsert-anchoring.ps1, Q4):
+                // it creates a NEW blank row below the table, so the claimed body row
+                // stays at 6pt permanently. The margin was restored and the body row
+                // was left broken.
+                //
+                // Inserting the genuine worksheet row FIRST inverts that: the padding
+                // row is displaced downward carrying its own 6pt, and ListRows.Add()
+                // then claims the FRESH row, which inherited 18pt from the body row
+                // above it. Measured Q3 of the same probe: body 18pt, padding 6pt,
+                // correct with no height write at all.
                 paddingRowReserved = InsertWorksheetRowBelowTable(table);
+                newRow = AddRow(rows);
             }
+            else
+            {
+                newRow = AddRowAtPosition(rows, position.Value);
+            }
+
+            rowRange = GetRowRange(newRow);
+
+            // The heights are already correct, but they are correct by Excel's
+            // format-inheritance, which is a host behaviour rather than a stated
+            // invariant. Writing the token makes the row's height this add-in's
+            // decision, so a host that inherited differently could not silently
+            // squash a body row again.
+            SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
         }
 
         WriteRow(rowRange, values, columnMap);
@@ -217,6 +239,11 @@ public class ExcelGanttRowInserter(
     /// CA1031: an Excel host refusing a row insert is a host refusal, not a bug in
     /// this adapter, and must not surface as an exception into the Ribbon callback.
     /// </para>
+    /// <para>
+    /// This must run BEFORE <c>ListRows.Add()</c>. Called after, it cannot repair the
+    /// damage: it would insert a fresh row below the table while the already-claimed
+    /// padding row stayed stuck at 6pt as a body row.
+    /// </para>
     /// </remarks>
     internal virtual bool InsertWorksheetRowBelowTable(Excel.ListObject table)
     {
@@ -242,10 +269,14 @@ public class ExcelGanttRowInserter(
             var lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
             rows[lastRow + 1].Insert(_excelShiftDown, _excelFormatFromLeftOrAbove);
 
-            // Insert copies the row above -- an 18pt body row -- so without this the
-            // new padding row is body-height until the next Refresh normalises it.
-            // The catalogue is the authority for how tall the margin is.
-            rows[lastRow + 1].RowHeight = GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
+            // Deliberately NO height write here. The row just created at lastRow + 1
+            // is the one ListRows.Add() is about to claim as a BODY row, so writing
+            // ChartPaddingRowHeightPt to it would reproduce the very defect this
+            // method exists to prevent. Its body height is written by the caller.
+            //
+            // The padding row needs no write either: a row displaced by an insert
+            // carries its own height down with it, so it is still 6pt where it now
+            // sits. Measured 2026-10-03 (probe Q3): body 18pt, padding 6pt.
             return true;
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException or ArgumentException)
@@ -406,6 +437,12 @@ public class ExcelGanttRowInserter(
     internal virtual object? GetRangeValue2(Excel.Range range) => range.Value2;
 
     internal virtual void ClearRange(Excel.Range range) => range.ClearContents();
+
+    /// <summary>Writes a row height in points. Test seam over <c>Range.RowHeight</c>.</summary>
+    /// <param name="range">The row range.</param>
+    /// <param name="heightPt">The height to write, in points.</param>
+    internal virtual void SetRowHeight(Excel.Range range, double heightPt) =>
+        range.RowHeight = heightPt;
 
     internal virtual Excel.ListRow AddRow(Excel.ListRows rows) => rows.Add(Type.Missing);
 

@@ -5,6 +5,11 @@
 - **Relates to:** entity guide §3, §22; ADR-0015; ADR-0026 D3/D4; ADR-0029 D5/D6; ADR-0030; ADR-0031 D1/D2; R2.8; R4.7D; R4.8A
 - **Decided by:** product owner, 2026-10-02
 - **Supersedes:** nothing. **Amends:** ADR-0031 D1/D2 (the bottom padding row becomes *reserved* rather than merely *named*) and the R2.8 active-cell-relative insertion rule.
+- **Amended by:** [ADR-0036](0036-append-inserts-the-worksheet-row-before-claiming-it.md) (2026-10-03) — D3's operation ORDER was wrong, and two recorded claims in this ADR are falsified by a four-family probe.
+
+## Amendment log
+
+- **2026-10-03, [ADR-0036](0036-append-inserts-the-worksheet-row-before-claiming-it.md).** D3 is corrected: the append branch must insert the genuine worksheet row **before** `ListRows.Add()`, not after. As written here, D3 said the explicit insert *followed* the append, and that order cannot repair the damage — see ADR-0036 for the measurements. This ADR's rejection of writing `Shape.Placement` is **confirmed** and is no longer resting on a one-family probe. Its recorded claim that Excel refuses a worksheet row inserted inside a `ListObject` is **withdrawn as wrong**; it does not refuse.
 
 ## Context
 
