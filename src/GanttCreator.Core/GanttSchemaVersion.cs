@@ -33,29 +33,22 @@ public static class GanttSchemaVersion
     /// workbook's <c>tblGanttMetrics</c> carries a row the running add-in no longer
     /// knows and its stored catalogue hash no longer matches. (2) The chart's
     /// bottom margin becomes a <em>reserved</em> worksheet row below the table
-    /// rather than whatever row happened to follow it, so a workbook written by
-    /// version 9 may have user content sitting in the row version 10 treats as
-    /// the margin. As with versions 8 and 9 there is no migration (ADR-0029 D6):
-    /// a version-9 workbook reports a mismatch and the remedy is Initialise, which
-    /// is also what reserves the padding row.
+    /// rather than whatever row happened to follow it — a change to what a bottom
+    /// margin <em>is</em>. Version 9 merely *named* the row below the last activity
+    /// row without reserving it, so it stayed an ordinary worksheet row the user
+    /// could type into and the add-in would silently resize it. Version 10 reserves
+    /// it: Initialise guarantees the row directly below the table exists and is
+    /// empty, and both the row-height normaliser and the panel measurement refuse
+    /// rather than write to a row that is not the reserved one. So a workbook
+    /// written by version 9 may have user content sitting in the row version 10
+    /// treats as the margin. As with versions 8 and 9 there is no migration
+    /// (ADR-0029 D6): a version-9 workbook reports a mismatch and the remedy is
+    /// Initialise, which is also what reserves the padding row.
     /// </para>
     /// <para>
     /// ADR-0029 D5 requires the bump to be the <em>last</em> change in the row's
     /// commit sequence: every other change lands first, so the integrity checker
     /// — not a manual review — is what notices a partial landing.
-    /// </para>
-    /// <para>
-    /// <b>Version 10 is ADR-0035, and it changes what a bottom margin <em>is</em>.</b>
-    /// Version 9 named the row below the last activity row as the chart's bottom
-    /// padding but never reserved it, so the row was an ordinary worksheet row the
-    /// user could type into and the add-in would silently resize it. Version 10
-    /// reserves it: Initialise guarantees the row directly below the table exists
-    /// and is empty, and both the row-height normaliser and the panel measurement
-    /// refuse rather than write to a row that is not the reserved one. The metric
-    /// catalogue simultaneously loses <c>MaximumExternalLabelWidthPt</c>, so a
-    /// version-9 workbook also reports a catalogue-hash mismatch. There is no
-    /// migration (ADR-0029 D6); the remedy is Initialise, which is what performs
-    /// the reservation.
     /// </para>
     /// <para>
     /// <b>Version 9 adds the chart padding rows.</b> A row is reserved above the

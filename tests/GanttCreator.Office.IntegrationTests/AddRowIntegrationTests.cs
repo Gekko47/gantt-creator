@@ -384,8 +384,10 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     /// </summary>
     /// <remarks>
     /// Unrelated to ADR-0035. The live coverage for the reserved bottom padding row
-    /// lives in <c>Every_insert_appends_and_shifts_no_following_row</c>, which is
-    /// where the append that used to consume the margin row is performed.
+    /// lives in <c>An_in_table_selection_inserts_below_it_and_the_padding_row_still_moves_down</c>
+    /// (the positional branch) and <c>An_outside_table_selection_appends_and_still_reserves_the_padding_row</c>
+    /// (the append branch), which is where the append that used to consume the
+    /// margin row is performed.
     /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
