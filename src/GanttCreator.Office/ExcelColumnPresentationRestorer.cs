@@ -107,17 +107,32 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         // to the wrong column — hiding `Description` and leaving `Id` visible, with
         // no refusal and no warning. A name that the schema declares but the live
         // table lacks is a typed refusal rather than a silent skip.
+        //
+        // RESOLUTION IS A SEPARATE PASS, and it must be. The loop below writes as it
+        // classifies, so resolving inside it meant a missing column discovered at
+        // position N refused *after* positions 1..N-1 had already been written: the
+        // refusal said "nothing was restored" while the worksheet carried a partial
+        // classification, and a Refresh could repeat the half-write on every pass.
+        // Resolving every required column first makes the refusal genuinely precede
+        // any mutation, which is the ADR-0008 D4 contract the rest of the adapter
+        // already follows.
+        List<Excel.ListColumn> resolved = new(schema.Count);
         for (var index = 0; index < schema.Count; index++)
         {
-            GanttTableColumn column = schema[index];
-
-            if (!TryFindColumnByName(columns, column.Name, out Excel.ListColumn? live))
+            if (!TryFindColumnByName(columns, schema[index].Name, out Excel.ListColumn? live) || live is null)
             {
                 return ColumnPresentationOutcome.Refused(
                     ColumnPresentationRefusalReason.SchemaColumnMissing);
             }
 
-            Excel.Range columnRange = live!.Range;
+            resolved.Add(live);
+        }
+
+        for (var index = 0; index < schema.Count; index++)
+        {
+            GanttTableColumn column = schema[index];
+
+            Excel.Range columnRange = resolved[index].Range;
 
             // The desired value is computed ONCE and used for both the comparison and
             // the assignment. Reading `IsLocked` twice would be correct only while the
@@ -130,9 +145,15 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             // unboxed before comparison for exactly the reason `Hidden` is. Comparing
             // a boxed value with `!=` against a bool compares references and is always
             // true, which would rewrite every column on every Refresh and dirty the
-            // workbook. A null or non-boolean value is treated as drifted, so an
-            // unknown state is corrected rather than preserved.
-            if (ReadLockedFlag(columnRange) != wantedLocked)
+            // workbook.
+            //
+            // The comparison is EXPLICIT about drift rather than relying on the lifted
+            // `bool? != bool` operator. ReadLockedFlag reports an unrecognised host
+            // value as null, and null must differ from BOTH desired states — otherwise
+            // a mixed-lock authoring column reads as already-correct and the adapter
+            // reports success over a range it never repaired.
+            var liveLocked = ReadLockedFlag(columnRange);
+            if (liveLocked is not { } current || current != wantedLocked)
             {
                 columnRange.Locked = wantedLocked;
                 restored++;
@@ -194,23 +215,33 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
     /// Reads <c>Range.Locked</c> as a real <see cref="bool"/>.
     /// </summary>
     /// <param name="range">The column range.</param>
-    /// <returns>The unwrapped lock flag; <see langword="false"/> when unreadable.</returns>
+    /// <returns>
+    /// The unwrapped lock flag, or <see langword="null"/> when the host reported
+    /// something that is not a lock state at all.
+    /// </returns>
     /// <remarks>
     /// The same unboxing <see cref="ReadHiddenFlag"/> performs, applied to the other
-    /// boxed PIA property this adapter writes. A null or non-boolean value reads as
-    /// <see langword="false"/>, which is the correct direction: an unknown state is
-    /// written, and writing makes the column match the schema. Note that this makes a
-    /// genuine <see langword="false"/> indistinguishable from an unreadable one, so a
-    /// schema column that must be unlocked is rewritten rather than skipped — a
-    /// redundant assignment, never a missed one.
+    /// boxed PIA property this adapter writes.
+    /// <para>
+    /// <b>An unknown value is <see langword="null"/>, not <see langword="false"/>.</b>
+    /// This method used to default to <see langword="false"/>, which is correct for
+    /// every LOCKED schema column (false differs from true, so the column is written)
+    /// but silently wrong for an AUTHORING column, whose desired state *is* false. A
+    /// mixed-lock range — which is exactly what a user produces by locking some cells
+    /// of a column — is reported by Excel as null, so it read as false, matched the
+    /// desired false, and the adapter reported success while leaving the range mixed.
+    /// <see langword="null"/> is not equal to either desired state, so the drift is
+    /// corrected by writing, and the redundant assignment a genuinely-false authoring
+    /// column used to incur is gone.
+    /// </para>
     /// </remarks>
-    private static bool ReadLockedFlag(Excel.Range range) =>
+    private static bool? ReadLockedFlag(Excel.Range range) =>
         range.Locked switch
         {
             bool value => value,
             int value => value != 0,
             double value => value != 0,
-            _ => false,
+            _ => null,
         };
 
     /// <summary>

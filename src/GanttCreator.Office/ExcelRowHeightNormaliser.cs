@@ -131,13 +131,48 @@ public class ExcelRowHeightNormaliser(
                     : RowHeightNormalisationRefusalReason.TargetProtected);
         }
 
-        // The layout rows are normalised FIRST, and before the body's zero-row early
-        // return, because they exist independently of whether the table has any data
-        // yet: the header row is the period band's row (D5), the reserved row carries
-        // the title and year band (D4), and the top padding row is the chart's top
-        // margin (ADR-0031 D2). A freshly initialised table has a header and no body,
-        // and returning early on the body would leave them all at Excel's default and
-        // the first lane misaligned again.
+        // The layout rows exist independently of whether the table has any data yet:
+        // the header row is the period band's row (D5), the reserved row carries the
+        // title and year band (D4), and the top padding row is the chart's top margin
+        // (ADR-0031 D2). A freshly initialised table has a header and no body, and
+        // returning early on the body would leave them all at Excel's default and the
+        // first lane misaligned again. So they are normalised on every path.
+        //
+        // They are written AFTER the padding-row resolution, not before it. This used
+        // to normalise them first and comment that the refusal check came "before the
+        // body rows are written, so a workbook in this state is not half-normalised" --
+        // which was true of the body rows and false of the layout rows: a
+        // PaddingRowNotOwned refusal already returned with three rows resized. The
+        // refusal is the adapter's statement that the sheet is not in the layout the
+        // add-in believes in, and a statement like that must be made before mutating
+        // anything, not after. Ordering the resolution first costs nothing: the
+        // layout rows still land on the same paths, and the zero-body path still
+        // normalises them because it never needs a padding row to resolve.
+        Excel.Range? body = GetTableBody(table);
+        var rowCount = body is null ? 0 : GetBodyRowCount(body);
+
+        int? bottomPaddingRow = null;
+        // MUTATION PROBE: restore the pre-fix ordering (layout rows first).
+        if (body is not null && rowCount > 0)
+        {
+            // ADR-0035 D2: the bottom padding row is now RESOLVED AND VERIFIED against
+            // the body's measured worksheet span rather than derived from the row count
+            // on trust. The old arithmetic (`FirstBodyRowIndex + rowCount`) was correct
+            // only while the table sat exactly where the layout authority assumed; a
+            // table that had moved made this adapter write the chart's margin height to
+            // an arbitrary user row. Refusing is the honest outcome -- the sheet does
+            // not have the layout the add-in believes in, and Initialise/Repair is the
+            // remedy.
+            BottomPaddingResolution padding = ResolveBottomPaddingRow(worksheet, table, body, rowCount);
+            if (!padding.Succeeded)
+            {
+                return RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
+            }
+
+            bottomPaddingRow = padding.Row;
+        }
+
         var written = 0;
         written += NormaliseLayoutRow(
             worksheet,
@@ -151,39 +186,19 @@ public class ExcelRowHeightNormaliser(
 
         written += NormaliseLayoutRow(worksheet, GanttSheetLayout.HeaderRowIndex, headerHeightPt);
 
-        Excel.Range? body = GetTableBody(table);
-        if (body is null)
+        // Normalised after the body rows are MEASURED for the same reason the others
+        // exist at all: a user who drags it is asking for a different margin, and
+        // restoring it is the whole point of this adapter. Skipped when there is no
+        // body, because then no padding row was resolved and none may be written.
+        if (bottomPaddingRow is { } resolvedPaddingRow)
+        {
+            written += NormaliseLayoutRow(worksheet, resolvedPaddingRow, paddingRowHeightPt);
+        }
+
+        if (body is null || rowCount == 0)
         {
             return RowHeightNormalisationOutcome.Ok(written);
         }
-
-        var rowCount = GetBodyRowCount(body);
-        if (rowCount == 0)
-        {
-            return RowHeightNormalisationOutcome.Ok(written);
-        }
-
-        // ADR-0035 D2: the bottom padding row is now RESOLVED AND VERIFIED against the
-        // body's measured worksheet span rather than derived from the row count on
-        // trust. The old arithmetic (`FirstBodyRowIndex + rowCount`) was correct only
-        // while the table sat exactly where the layout authority assumed; a table
-        // that had moved made this adapter write the chart's margin height to an
-        // arbitrary user row. Refusing is the honest outcome -- the sheet does not
-        // have the layout the add-in believes in, and Initialise/Repair is the remedy.
-        //
-        // It is checked BEFORE the body rows are written, so a workbook in this
-        // state is not half-normalised.
-        BottomPaddingResolution padding = ResolveBottomPaddingRow(worksheet, table, body, rowCount);
-        if (!padding.Succeeded)
-        {
-            return RowHeightNormalisationOutcome.Refused(
-                RowHeightNormalisationRefusalReason.PaddingRowNotOwned);
-        }
-
-        // Normalised BEFORE the body rows themselves for the same reason they are: a
-        // user who drags it is asking for a different margin, and restoring it is the
-        // whole point of this adapter.
-        written += NormaliseLayoutRow(worksheet, padding.Row!.Value, paddingRowHeightPt);
 
         // Each row's KIND is read from its own Type cell, because the height policy
         // differs by kind: a Splitter follows `SplitterPt` and a Spacer `SpacerPt`,

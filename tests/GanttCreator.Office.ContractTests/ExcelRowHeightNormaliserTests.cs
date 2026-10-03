@@ -203,6 +203,56 @@ public sealed class ExcelRowHeightNormaliserTests
     }
 
     /// <summary>
+    /// A refused padding row writes NOTHING at all -- not even the layout rows.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the positive test for the ordering guarantee, and it is what the
+    /// pre-fix code failed. The layout rows were normalised BEFORE the padding row
+    /// was resolved, so a <c>PaddingRowNotOwned</c> refusal returned with the top
+    /// padding row, the reserved row and the header row already resized -- a refusal
+    /// that mutated the worksheet, which is the one thing a refusal must never do.
+    /// </para>
+    /// <para>
+    /// The fixture is arranged so the old ordering produced three writes: every
+    /// layout row starts away from its token, so a layout pass running first would
+    /// correct all three. Under the fixed ordering the resolution refuses first and
+    /// the write log is empty. Non-vacuity: the same fixture with an EMPTY padding
+    /// row does write those rows, which <c>The_layout_row_targets_reach_the_rows</c>
+    /// already pins.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refused_padding_row_writes_nothing_including_the_layout_rows()
+    {
+        (TestableNormaliser normaliser, List<int> written, Dictionary<int, double> layout) = Build(
+            bodyHeights: [45],
+            layoutHeights: new Dictionary<int, double>
+            {
+                // Every layout row starts away from its token, so a layout write
+                // before the refusal would be visible in both logs.
+                [GanttSheetLayout.TopPaddingRowIndex] = 45d,
+                [GanttSheetLayout.ReservedRowIndex] = 45d,
+                [GanttSheetLayout.HeaderRowIndex] = 45d,
+            });
+        normaliser.PaddingRowOccupied = true;
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(RowHeightNormalisationRefusalReason.PaddingRowNotOwned, outcome.Refusal);
+        Assert.Equal(0, outcome.RowsWritten);
+
+        // The load-bearing assertion: a refusal mutates nothing, so the dragged
+        // layout rows are left exactly as the user left them.
+        Assert.Empty(written);
+        Assert.Equal(45d, layout[GanttSheetLayout.TopPaddingRowIndex]);
+        Assert.Equal(45d, layout[GanttSheetLayout.ReservedRowIndex]);
+        Assert.Equal(45d, layout[GanttSheetLayout.HeaderRowIndex]);
+    }
+
+    /// <summary>
     /// The refusal is <b>typed and distinct</b> from a measurement failure, so the
     /// caller can tell "the sheet is in an unexpected state" from "the host would
     /// not report a height".

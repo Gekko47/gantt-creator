@@ -429,7 +429,206 @@ public sealed class ExcelColumnPresentationRestorerTests
     }
 
     /// <summary>
-    /// A live column the SCHEMA does not declare is left alone, not refused.
+    /// A restorer whose AUTHORING column carries a mixed lock state, which Excel
+    /// reports as null.
+    /// </summary>
+/// <param name="application">The application object.</param>
+/// <param name="guard">The protection guard.</param>
+/// <param name="table">The table.</param>
+/// <param name="worksheet">The resolved worksheet.</param>
+/// <param name="recorded">The flag writes recorded.</param>
+/// <remarks>
+/// The mixed-lock fixture. Excel returns null from <c>Range.Locked</c> for a range
+/// whose cells do not agree, which is what a user produces by locking part of a
+/// column. An AUTHORING column is the case that matters: its desired state is
+/// <see langword="false"/>, so a reader that defaults an unknown value to false
+/// matches, skips the write, and reports success over a range it never repaired.
+/// </remarks>
+private sealed class TestableRestorerMixedLockAuthoringColumn(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        Excel.ListObject table,
+        Excel.Worksheet worksheet,
+        List<string> recorded)
+        : TestableRestorer(application, guard, table, worksheet, recorded)
+    {
+        internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index)
+        {
+            GanttTableColumn definition = GanttTableSchema.Default.Columns[index - 1];
+            if (!definition.IsLocked)
+            {
+                Mock<Excel.Range> entire = new();
+                entire.SetupGet(c => c.Hidden).Returns(definition.IsHidden);
+                entire.SetupSet(c => c.Hidden = It.IsAny<object>())
+                    .Callback((object value) => Recorded.Add($"Hidden:{definition.Name}={value}"));
+
+                Mock<Excel.Range> range = new();
+                // The mixed state, exactly as Excel reports it. The PIA declares
+                // `Locked` as a non-nullable `object` even though Excel genuinely
+                // returns null for a range whose cells disagree, so the null has to
+                // be forced here rather than passed naturally.
+#pragma warning disable CS8625 // Deliberate: the host returns null for a mixed range.
+                range.SetupGet(r => r.Locked).Returns((object?)null);
+#pragma warning restore CS8625
+                range.SetupSet(r => r.Locked = It.IsAny<object>())
+                    .Callback((object value) => Recorded.Add($"Locked:{definition.Name}={value}"));
+                range.SetupGet(r => r.EntireColumn).Returns(entire.Object);
+
+                Mock<Excel.ListColumn> column = new();
+                column.SetupGet(c => c.Range).Returns(range.Object);
+                column.SetupGet(c => c.Name).Returns(definition.Name);
+                return column.Object;
+            }
+
+            return base.GetColumnAt(columns, index);
+        }
+    }
+
+    /// <summary>
+    /// A mixed lock state on an AUTHORING column is repaired, not reported as correct.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The positive test for the <see langword="null"/> lock state. <c>ReadLockedFlag</c>
+    /// used to default an unrecognised host value to <see langword="false"/>. For a
+    /// LOCKED column that defaulted to drift and was written, which is why the defect
+    /// stayed invisible: the authoring columns are the only ones whose desired state is
+    /// <see langword="false"/>, and only they could report success over a mixed range.
+    /// </para>
+    /// <para>
+    /// Every authoring column is made mixed, so the assertion is on the count as well as
+    /// the content. Non-vacuity: <c>An_already_correct_sheet_writes_nothing</c> pins
+    /// zero writes when the same columns report genuine booleans, so a write here can
+    /// only come from the null state.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_mixed_lock_state_on_an_authoring_column_is_repaired_not_reported_correct()
+    {
+        List<string> recorded = [];
+        TestableRestorerMixedLockAuthoringColumn restorer = new(
+            Application().Object,
+            Guard(ProtectionGuardOutcome.NotProtected).Object,
+            new Mock<Excel.ListObject>().Object,
+            Worksheet(),
+            recorded);
+
+        ColumnPresentationOutcome outcome = restorer.EnsureClassification();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        // Non-vacuity: the fixture really did leave authoring columns mixed.
+        GanttTableColumn[] authoring =
+        [
+            .. GanttTableSchema.Default.Columns.Where(c => !c.IsLocked),
+        ];
+        Assert.NotEmpty(authoring);
+        Assert.Equal(authoring.Length, outcome.ColumnsRestored);
+
+        // Each one is written with its schema's UNLOCKED state, and the locked engine
+        // columns are untouched -- an unknown state is drift, not "make everything locked".
+        Assert.All(authoring, column => Assert.Contains($"Locked:{column.Name}=False", recorded));
+        Assert.Equal(
+            authoring.Length,
+            recorded.Count(entry => entry.StartsWith("Locked:", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// A missing schema column found BEFORE a drifted one writes nothing (ADR-0008 D4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The positive test for the two-pass ordering. The pre-fix adapter resolved and
+    /// wrote inside one loop, so a column missing at position <em>N</em> refused only
+    /// after positions 1..N-1 had been corrected -- reporting "nothing restored" over a
+    /// worksheet it had already half-classified, and repeating the half-write on every
+    /// Refresh. The fixture makes both drifted flags on the FIRST column differ from the
+    /// schema, so a single-pass adapter records two writes before the refusal.
+    /// </para>
+    /// <para>
+    /// Non-vacuity: the dropped-last-column fixture above takes the same path with
+    /// nothing to write, and <c>A_drifted_hidden_flag_is_restored</c> shows the same
+    /// drift is written when every column resolves.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_missing_column_refuses_before_writing_any_drifted_column()
+    {
+        List<string> recorded = [];
+        TestableRestorerMissingMiddleColumn restorer = new(
+            Application().Object,
+            Guard(ProtectionGuardOutcome.NotProtected).Object,
+            new Mock<Excel.ListObject>().Object,
+            Worksheet(),
+            recorded);
+
+        ColumnPresentationOutcome outcome = restorer.EnsureClassification();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ColumnPresentationRefusalReason.SchemaColumnMissing, outcome.Refusal);
+        Assert.Equal(0, outcome.ColumnsRestored);
+        Assert.Empty(recorded);
+    }
+
+    /// <summary>
+    /// A restorer whose live table is missing a column that is NOT the last one, and
+    /// whose FIRST column has drifted.
+    /// </summary>
+/// <param name="application">The application object.</param>
+/// <param name="guard">The protection guard.</param>
+/// <param name="table">The table.</param>
+/// <param name="worksheet">The resolved worksheet.</param>
+/// <param name="recorded">The flag writes recorded.</param>
+/// <remarks>
+/// The ordering fixture. <c>TestableRestorerMissingColumn</c> drops the LAST schema
+/// column, which is the one case a resolve-inside-the-write-loop handles correctly
+/// by accident: nothing precedes it, so nothing had been written yet. Dropping an
+/// EARLY column while a later one has drifted is the case that exposes the defect.
+/// </remarks>
+private sealed class TestableRestorerMissingMiddleColumn(
+        object? application,
+        IWorksheetProtectionGuard guard,
+        Excel.ListObject table,
+        Excel.Worksheet worksheet,
+        List<string> recorded)
+        : TestableRestorer(application, guard, table, worksheet, recorded)
+    {
+        /// <summary>Two live columns: the first, and one the schema does not name.</summary>
+        internal override int LiveColumnCount => 2;
+
+        internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index)
+        {
+            if (index != 1)
+            {
+                Mock<Excel.ListColumn> unrecognised = new();
+                unrecognised.SetupGet(c => c.Name).Returns("NotASchemaColumn");
+                return unrecognised.Object;
+            }
+
+            // The first schema column, DRIFTED on both flags, so resolving and
+            // writing in a single pass would mutate it before the refusal.
+            GanttTableColumn definition = GanttTableSchema.Default.Columns[0];
+            Mock<Excel.Range> entire = new();
+            entire.SetupGet(c => c.Hidden).Returns(false);
+            entire.SetupSet(c => c.Hidden = It.IsAny<object>())
+                .Callback((object value) => Recorded.Add($"Hidden:{definition.Name}={value}"));
+
+            Mock<Excel.Range> range = new();
+            range.SetupGet(r => r.Locked).Returns(!definition.IsLocked);
+            range.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Callback((object value) => Recorded.Add($"Locked:{definition.Name}={value}"));
+            range.SetupGet(r => r.EntireColumn).Returns(entire.Object);
+
+            Mock<Excel.ListColumn> column = new();
+            column.SetupGet(c => c.Range).Returns(range.Object);
+            column.SetupGet(c => c.Name).Returns(definition.Name);
+            return column.Object;
+        }
+    }
+
+    /// <summary>
+/// A restorer whose live table carries every schema column PLUS a user column
+/// the schema does not declare.
     /// </summary>
     /// <remarks>
     /// The counterweight to the refusal above, so the two cannot be confused. The
