@@ -178,15 +178,39 @@ public static class FrameBandsBuilder
             unionBounds.Height + padding.TopPt + padding.BottomPt
         );
         ChartFrameGeometry geometry = new(chartBounds, contentBounds, titleBounds, yearBounds, periodBounds);
+
+        // ADR-0037 D1: the vertical extent every PLOT-SPANNING shape shares --
+        // background, alternate bands, vertical grid lines.
+        //
+        // Its top is lifted PlotBandHeaderOverlapPt ABOVE the plot's own top edge,
+        // into the header row, and its height grows by the same amount so the bottom
+        // is unchanged. Excel resizes a shape on a row insert only when the insertion
+        // point is strictly below the shape's TopLeftCell row; with the top exactly on
+        // the header/body boundary, a row added at the TOP of the body left the shape
+        // sliding instead of stretching (measured 2026-10-03,
+        // scripts/probe-frame-stretch.ps1) and the plot stayed unpainted there. Half a
+        // point resolves TopLeftCell to the HEADER row, so every body insert is now
+        // strictly below the anchor. The header paints at ZLayer.Frame, over these, so
+        // the overlap is invisible; and export, which has no rows to anchor to, is
+        // unaffected because the geometry it reads is unchanged.
+        //
+        // Zero reproduces the previous behaviour exactly, so this is a retunable
+        // mechanism rather than an irreversible one.
+        RectD plotSpanBounds = PlotSpanGeometry.LiftTopIntoHeader(request.PlotBounds, request.PlotBandHeaderOverlapPt);
+
         List<ScenePrimitive> primitives =
         [
+            // The background stays chartBounds, NOT plotSpanBounds. It spans the whole
+            // chart including the title and panel, so its top already sits above the
+            // header row and every body insert is strictly below its anchor -- it needs
+            // no overlap, and shrinking it to the plot would leave the headers unpainted.
             new SceneRect("chart:background", SceneOwnerId.Chart, ZLayer.Background, chartBounds, request.Theme.Background),
         ];
         List<SceneWarning> warnings = [];
-        AddBands(primitives, request, sequence);
+        AddBands(primitives, request, sequence, plotSpanBounds);
         AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
-        AddGrid(primitives, request, sequence);
+        AddGrid(primitives, request, sequence, plotSpanBounds);
         AddOuterFrame(primitives, request, chartBounds);
         if (sequence.Periods.Count > 0 && sequence.Periods.All(period => !period.ShowLabel))
         {
@@ -196,7 +220,11 @@ public static class FrameBandsBuilder
         return new FrameBandsCreationOutcome(new FrameBandsResult(geometry, primitives, warnings), null);
     }
 
-    private static void AddBands(List<ScenePrimitive> primitives, FrameBandsRequest request, BandSequence sequence)
+    private static void AddBands(
+        List<ScenePrimitive> primitives,
+        FrameBandsRequest request,
+        BandSequence sequence,
+        RectD plotSpan)
     {
         if (!request.AlternateBanding)
         {
@@ -211,7 +239,7 @@ public static class FrameBandsBuilder
                     $"chart:band:{index}",
                     SceneOwnerId.Chart,
                     ZLayer.AlternateBand,
-                    new RectD(period.Left, request.PlotBounds.Y, period.Width, request.PlotBounds.Height),
+                    new RectD(period.Left, plotSpan.Y, period.Width, plotSpan.Height),
                     request.Theme.AlternateBand
                 )
             );
@@ -345,7 +373,11 @@ public static class FrameBandsBuilder
         );
     }
 
-    private static void AddGrid(List<ScenePrimitive> primitives, FrameBandsRequest request, BandSequence sequence)
+    private static void AddGrid(
+        List<ScenePrimitive> primitives,
+        FrameBandsRequest request,
+        BandSequence sequence,
+        RectD plotSpan)
     {
         Dictionary<double, bool> lines = [];
         if (request.ShowMajorGrid)
@@ -376,8 +408,8 @@ public static class FrameBandsBuilder
                         : $"chart:grid:{key}",
                     SceneOwnerId.Chart,
                     ZLayer.Grid,
-                    new PointD(line.Key, request.PlotBounds.Y),
-                    new PointD(line.Key, request.PlotBounds.Bottom),
+                    new PointD(line.Key, plotSpan.Y),
+                    new PointD(line.Key, plotSpan.Bottom),
                     line.Value ? request.Theme.MajorGrid : request.Theme.MinorGrid
                 )
             );
@@ -453,6 +485,7 @@ public static class FrameBandsBuilder
         && IsFinitePositive(request.YearBandHeightPt)
         && IsFinitePositive(request.PeriodBandHeightPt)
         && IsFiniteNonNegative(request.MinimumHeaderLabelWidthPt)
+        && IsFiniteNonNegative(request.PlotBandHeaderOverlapPt)
         && IsFinitePositive(request.GridLinePt)
         && IsFinitePositive(request.MajorBoundaryPt);
 
@@ -505,4 +538,38 @@ public static class FrameBandsBuilder
     }
 
     private static FrameBandsCreationOutcome Refused(FrameBandsRefusal refusal) => new(null, refusal);
+}
+
+/// <summary>
+/// Live-anchoring arithmetic for the plot-spanning shapes (ADR-0037 D1).
+/// </summary>
+public static class PlotSpanGeometry
+{
+    /// <summary>
+    /// Lifts a plot rectangle's top edge <paramref name="overlapPt"/> into the header
+    /// row and grows its height by the same amount, leaving its bottom unchanged.
+    /// </summary>
+    /// <param name="plot">The plot rectangle as measured.</param>
+    /// <param name="overlapPt">The sub-row overlap, from the catalogue token.</param>
+    /// <returns>The adjusted rectangle; unchanged when the overlap is zero.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the top edge moves up and not the bottom edge down.</b> The bottom is
+    /// the plot's own boundary and several entity contracts are stated against it; the
+    /// top is the only edge with no such meaning, so it is the only one that can absorb
+    /// the overlap without moving anything the product has an opinion about.
+    /// </para>
+    /// <para>
+    /// <b>Why not the row above.</b> A whole-row overlap would work too, but it would
+    /// paint over whatever the user replaced that row with. Half a point is enough to
+    /// resolve the shape's cell anchor to the header and cannot reach visibly.
+    /// </para>
+    /// </remarks>
+    public static RectD LiftTopIntoHeader(RectD plot, double overlapPt)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(overlapPt);
+        return overlapPt == 0
+            ? plot
+            : new RectD(plot.X, plot.Y - overlapPt, plot.Width, plot.Height + overlapPt);
+    }
 }

@@ -61,6 +61,11 @@ public sealed record FrameBandsTheme(
 /// <param name="AlternateBanding">Whether alternating plot bands are emitted.</param>
 /// <param name="ShowMinorGrid">Whether minor period grid lines are emitted.</param>
 /// <param name="ShowMajorGrid">Whether major year/plot grid lines are emitted.</param>
+/// <param name="PlotBandHeaderOverlapPt">
+/// How far the plot-spanning shapes extend UP into the header row, from the
+/// <c>PlotBandHeaderOverlapPt</c> token (ADR-0037 D1). Zero restores the prior
+/// behaviour exactly.
+/// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
@@ -80,6 +85,7 @@ public sealed record FrameBandsRequest(
     bool AlternateBanding,
     bool ShowMinorGrid,
     bool ShowMajorGrid,
+    double PlotBandHeaderOverlapPt,
     FrameBandsTheme Theme
 );
 

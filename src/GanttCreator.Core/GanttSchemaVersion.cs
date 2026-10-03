@@ -22,10 +22,19 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 10 for the reserved bottom padding row and
-    /// the retirement of the external label-width cap (owner ruling, ADR-0035 D1/D2).
+    /// monotonically, and is currently 11 for the plot band's header overlap.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 11 is ADR-0037.</b> The metric catalogue gains
+    /// <c>PlotBandHeaderOverlapPt</c>, so an existing workbook's
+    /// <c>tblGanttMetrics</c> lacks a row the running add-in reads and its stored
+    /// catalogue hash no longer matches -- the same class of change as version 10's
+    /// retirement, in the opposite direction. The value is what the plot-spanning
+    /// shapes use as their sub-row overlap into the header row, so it is a stored
+    /// measurement rather than a display name. There is no migration (ADR-0029 D6): a
+    /// version-10 workbook reports a mismatch and the remedy is Initialise.
+    /// </para>
     /// <para>
     /// <b>Version 10 is ADR-0035.</b> Two things move together, and both are
     /// contract changes rather than behaviour the add-in merely tolerates. (1) The
@@ -91,5 +100,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 }

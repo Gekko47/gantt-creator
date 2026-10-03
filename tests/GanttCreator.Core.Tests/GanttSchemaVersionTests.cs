@@ -36,7 +36,12 @@ public class GanttSchemaVersionTests
         // catalogue loses MaximumExternalLabelWidthPt. No header move this time --
         // the reservation is below the table -- but the stored catalogue hash moves,
         // so a version-9 workbook reports a mismatch and Initialise is the remedy.
-        Assert.Equal(10, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v11 is ADR-0037: the metric catalogue GAINS PlotBandHeaderOverlapPt,
+        // the sub-row amount the plot-spanning shapes extend up into the header row so
+        // Excel's cell anchoring stretches them when a row is added at the top. Same
+        // class as v10's retirement, opposite direction: the stored catalogue hash
+        // moves because a workbook written before it lacks a row the add-in reads.
+        Assert.Equal(11, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

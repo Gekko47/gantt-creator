@@ -20,7 +20,7 @@ public class GanttConfigCatalogueTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Metrics_contains_exactly_the_22_entity_guide_tokens() =>
+    public void Metrics_contains_exactly_the_23_entity_guide_tokens() =>
         // R4.7C retired CriticalLinePt (ADR-0027 D4) and renamed LaneHeightPt to
         // GanttRowHeightPt (ADR-0026 D1). A rename keeps the count; the retirement
         // is what took it from 23 to 22.
@@ -34,7 +34,35 @@ public class GanttConfigCatalogueTests
         // was wide enough to hold the text whole; the owner ruled that available
         // space is the only limit. Retiring it rather than raising its ceiling is
         // what makes the defect unrepresentable rather than merely moved.
-        Assert.Equal(22, GanttCatalogues.Metrics.Count);
+        // ADR-0037 D1 added PlotBandHeaderOverlapPt, taking 22 to 23. It is the
+        // sub-row amount the plot-spanning shapes extend up into the header row so
+        // Excel's cell anchoring makes them STRETCH when a row is added at the top,
+        // which a top-edge exactly on the header/body boundary does not.
+        Assert.Equal(23, GanttCatalogues.Metrics.Count);
+
+    /// <summary>
+    /// The overlap must be sub-row, or it becomes visible rather than structural.
+    /// </summary>
+    /// <remarks>
+    /// The whole mechanism depends on the overlap being large enough to resolve
+    /// <c>TopLeftCell</c> to the header row but far too small to be seen. A value at
+    /// or above a body row's height would paint over the header whenever the header's
+    /// own z-layer did not cover it, and the ceiling of 4pt is what makes that
+    /// unreachable through configuration rather than merely unlikely.
+    /// </remarks>
+    [Fact]
+    public void The_plot_band_header_overlap_is_sub_row()
+    {
+        GanttMetricToken token = Assert.Single(
+            GanttCatalogues.Metrics,
+            candidate => string.Equals(candidate.Name, "PlotBandHeaderOverlapPt", StringComparison.Ordinal));
+
+        Assert.Equal(0.5, token.DefaultValue);
+        Assert.Equal(0, token.Minimum);
+        Assert.True(
+            token.Maximum < GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            "The overlap must stay below one body row, or it stops being invisible.");
+    }
 
     /// <summary>
     /// The retired cap must be <b>absent</b>, not merely unused.
@@ -661,7 +689,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "4ea8b0b0cb636ff1b9e3a029b54fa9c1262cbbb512a33a7e6ca57dd06493afed";
+        "0e178de64b1964054dc4a83c7f2d938628b60d06425f4984864cfe9884d37f25";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

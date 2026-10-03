@@ -188,6 +188,7 @@ All dimensions are points. Store them once in a versioned workbook style configu
 | `YearBandHeightPt` | 18 | 10–48 | Year header height |
 | `PeriodBandHeightPt` | 16 | 10–48 | Month/period header height |
 | `MinimumHeaderLabelWidthPt` | 18 | 6–72 | Minimum visible width before suppressing a period/year label |
+| `PlotBandHeaderOverlapPt` | 0.5 | 0–4 | How far plot-spanning bands and vertical grid lines extend up into the header row (ADR-0037 D1). Live-anchoring only: Excel resizes a shape on a row insert only when the insert is strictly below its cell anchor, so the top edge must sit inside the header row for a row added at the top to stretch the bands rather than slide them. Must stay sub-row; the 4pt ceiling is what makes that structural. `0` restores the pre-ADR-0037 geometry exactly. Does not affect the chart background, which already spans above the header. |
 | `GanttRowHeightPt` | 18 | 10–72 | Normal managed row height, and the matching lane height |
 | `SplitterHeightPt` | 18 | 10–72 | Section-header lane height |
 | `SpacerHeightPt` | 9 | 0–72 | Blank separator height |

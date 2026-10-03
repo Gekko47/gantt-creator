@@ -144,6 +144,25 @@ public static class GanttCatalogues
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),
         new("MinimumHeaderLabelWidthPt", 18, 6, 72),
+
+        // ADR-0037: how far the plot-spanning shapes (plot background, alternate
+        // period bands, vertical grid lines) extend UP into the header row.
+        //
+        // Excel resizes a shape when a row is inserted only if the insertion point
+        // is STRICTLY BELOW the shape's TopLeftCell row. Measured 2026-10-03
+        // (scripts/probe-frame-stretch.ps1): with the plot top exactly on the
+        // header/body boundary, a row added at the TOP of the body moved the shape
+        // down by a full row height and left its height alone, so the plot stayed
+        // unpainted there; every other insertion point stretched correctly.
+        //
+        // Half a point is enough to resolve TopLeftCell to the HEADER row, which
+        // moves every body insertion strictly below the anchor. It is deliberately
+        // sub-row: the header paints at ZLayer.Frame (80) over the bands
+        // (AlternateBand 10) and the background (Background 0), so the overlap is
+        // invisible, and 0.5pt cannot reach far enough to be seen if a user hides
+        // the header. The minimum is 0, which restores the exact prior behaviour
+        // rather than merely reducing the overlap.
+        new("PlotBandHeaderOverlapPt", 0.5, 0, 4),
         new("GanttRowHeightPt", 18, 10, 72),
         new("SplitterHeightPt", 18, 10, 72),
         new("SpacerHeightPt", 9, 0, 72),

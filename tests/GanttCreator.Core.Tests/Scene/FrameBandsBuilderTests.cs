@@ -26,6 +26,114 @@ public sealed class FrameBandsBuilderTests
     /// 6pt all round" would pass against a builder that ignored the per-side values
     /// entirely and applied a constant.
     /// </remarks>
+    /// <summary>
+    /// The plot-spanning shapes are lifted into the header row by the configured
+    /// overlap, and the BOTTOM is left exactly where it was (ADR-0037 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The mechanism exists because Excel resizes a shape on a row insert only when
+    /// the insert is strictly below the shape's cell anchor. With the plot top exactly
+    /// on the header/body boundary, a row added at the top slid the shape down instead
+    /// of stretching it and the plot stayed unpainted there (measured 2026-10-03,
+    /// <c>scripts/probe-frame-stretch.ps1</c>). Lifting the top resolves the anchor to
+    /// the header row.
+    /// </para>
+    /// <para>
+    /// The bottom assertion is the load-bearing half. Stretching is only correct if the
+    /// shape still ENDS on the plot's own bottom edge; a naive "make it taller" that
+    /// grew downward, or that also moved the bottom, would push the bands over the
+    /// lanes they are supposed to sit behind.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_plot_spanning_shapes_lift_into_the_header_row_and_keep_their_bottom()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        FrameBandsRequest request = CreateRequest(0.5);
+        RectD plot = request.PlotBounds;
+
+        var bands = outcome.Result!.Primitives.OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(bands);
+
+        foreach (SceneRect band in bands)
+        {
+            Assert.Equal(plot.Y - 0.5, band.Bounds.Y, 6);
+            Assert.Equal(plot.Height + 0.5, band.Bounds.Height, 6);
+            Assert.Equal(plot.Bottom, band.Bounds.Bottom, 6);
+        }
+
+        // The vertical grid lines share the same span, so they stretch with the bands.
+        var gridLines = outcome.Result!.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith("chart:grid", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(gridLines);
+
+        foreach (SceneLine line in gridLines)
+        {
+            Assert.Equal(plot.Y - 0.5, line.From!.Y, 6);
+            Assert.Equal(plot.Bottom, line.To!.Y, 6);
+        }
+    }
+
+    /// <summary>
+    /// Zero overlap reproduces the previous geometry EXACTLY, so the mechanism is
+    /// retunable rather than baked in.
+    /// </summary>
+    /// <remarks>
+    /// The positive test for the retunable claim. Without it, a builder that ignored
+    /// the request and always applied the catalogue default would pass the overlap test
+    /// above while making the token a lie.
+    /// </remarks>
+    [Fact]
+    public void A_zero_overlap_reproduces_the_plot_bounds_exactly()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        RectD plot = CreateRequest(0).PlotBounds;
+
+        foreach (SceneRect band in outcome.Result!.Primitives.OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal)))
+        {
+            Assert.Equal(plot.Y, band.Bounds.Y, 9);
+            Assert.Equal(plot.Height, band.Bounds.Height, 9);
+        }
+
+        foreach (SceneLine line in outcome.Result!.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith("chart:grid", StringComparison.Ordinal)))
+        {
+            Assert.Equal(plot.Y, line.From!.Y, 9);
+            Assert.Equal(plot.Bottom, line.To!.Y, 9);
+        }
+    }
+
+    /// <summary>
+    /// The chart BACKGROUND keeps covering the whole chart, headers included.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the overlap test. An earlier draft applied the plot span
+    /// to the background too, which shrank it to the plot and would have left the
+    /// title and header rows unpainted. The background's top already sits above the
+    /// header row, so it needs no overlap at all.
+    /// </remarks>
+    [Fact]
+    public void The_background_still_spans_the_whole_chart_and_is_not_lifted()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        SceneRect background = outcome.Result!.Primitives.OfType<SceneRect>()
+            .Single(rect => rect.PrimitiveId == "chart:background");
+
+        Assert.Equal(outcome.Result.Geometry.ChartBounds.Top, background.Bounds.Top, 6);
+        Assert.Equal(outcome.Result.Geometry.ChartBounds.Height, background.Bounds.Height, 6);
+    }
+
     [Fact]
     public void Each_side_of_the_padding_is_applied_to_its_own_edge()
     {
@@ -518,7 +626,7 @@ public sealed class FrameBandsBuilderTests
     private static FrameBandsCreationOutcome Build(FrameBandsRequest request) =>
         FrameBandsBuilder.TryBuild(request, new FixedMeasurer(text => text.Length * 6.0));
 
-    private static FrameBandsRequest CreateRequest()
+    private static FrameBandsRequest CreateRequest(double plotBandHeaderOverlapPt = 0.5)
     {
         TimeScale scale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400).Scale!;
         return new FrameBandsRequest(
@@ -539,6 +647,7 @@ public sealed class FrameBandsBuilderTests
             true,
             true,
             true,
+            plotBandHeaderOverlapPt,
             _theme
         );
     }

@@ -200,6 +200,20 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the major boundary/frame line width.</summary>
     public double MajorBoundaryPt { get; init; }
 
+    /// <summary>
+    /// Gets how far the plot-spanning shapes extend up into the header row so Excel's
+    /// cell anchoring stretches them when a row is added at the top (ADR-0037 D1).
+    /// </summary>
+    /// <remarks>
+    /// The default is the code-owned <c>PlotBandHeaderOverlapPt</c> catalogue value
+    /// rather than zero, for the same reason <see cref="RowHeightPt"/> defaults rather
+    /// than zero: a caller that forgot this would silently get the unpainted-plot
+    /// behaviour back, which is exactly the defect this exists to remove. Zero is still
+    /// a legal value and reproduces the prior geometry exactly.
+    /// </remarks>
+    public double PlotBandHeaderOverlapPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "PlotBandHeaderOverlapPt").DefaultValue;
+
     /// <summary>Gets the milestone diamond tip-to-tip size.</summary>
     public double MilestoneSizePt { get; init; }
 
@@ -862,6 +876,7 @@ public static class SceneBuilder
                 request.AlternateBanding,
                 request.ShowMinorGrid,
                 request.ShowMajorGrid,
+                request.PlotBandHeaderOverlapPt,
                 frameTheme),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
