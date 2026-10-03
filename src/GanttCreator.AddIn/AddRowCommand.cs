@@ -119,6 +119,9 @@ internal static class AddRowCommand
             "The worksheet or workbook is protected, so no Gantt row was added. Remove protection and try again.",
         GanttRowInsertRefusalReason.TypeOptionsUnavailable =>
             "The row was not added because the Type dropdown could not be prepared. Repair the configuration and try again.",
+        GanttRowInsertRefusalReason.RowWriteRefused =>
+            "Gantt Creator added the row, but Excel refused a follow-up write, so the row may be "
+            + "incomplete. Undo it and try again; if it keeps failing, see the Diagnostics dialog.",
         _ => "Gantt Creator could not add the row. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 }

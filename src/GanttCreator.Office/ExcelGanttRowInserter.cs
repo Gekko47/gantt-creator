@@ -135,7 +135,24 @@ public class ExcelGanttRowInserter(
             SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
         }
 
-        WriteRow(rowRange, values, columnMap);
+        try
+        {
+            WriteRow(rowRange, values, columnMap);
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            // The worksheet row is ALREADY inserted at this point. Reporting this as
+            // "the row was not added" would be a claim the user can disprove by looking
+            // at the sheet, so it is reported as added-but-not-completed instead.
+            //
+            // This is the guard the sibling helper has always had (ADR-0008 D4: a host
+            // refusal is reported, never thrown into the Ribbon callback). GetListRowAt,
+            // AddRow and SetRowHeight were left unguarded, and a live workbook produced
+            // exactly that: the insert sequence aborted partway and the plot was left
+            // at its old extent, which reads as "the bands did not stretch".
+            _ = ex;
+            return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
+        }
         TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
         if (!typeOptions.Succeeded)
         {

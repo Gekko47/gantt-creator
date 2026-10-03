@@ -14,6 +14,19 @@ public enum GanttRowInsertRefusalReason
 
     /// <summary>Type validation could not be prepared after the row was added.</summary>
     TypeOptionsUnavailable = 3,
+
+    /// <summary>
+    /// The worksheet row was inserted, but the host refused a later call that writes
+    /// the row's content, its height, or the list row itself.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately NOT one of the "nothing happened" refusals above. By the
+    /// time this is reported the row is already in the worksheet, so reporting the
+    /// insert as failed would be a lie the user can disprove by looking at the sheet.
+    /// The message says the row was added and not completed, which is the only honest
+    /// description of the state.
+    /// </remarks>
+    RowWriteRefused = 4,
 }
 
 /// <summary>The typed result of a row insertion.</summary>

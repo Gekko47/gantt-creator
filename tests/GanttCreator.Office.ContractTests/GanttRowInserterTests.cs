@@ -486,6 +486,60 @@ public class GanttRowInserterTests
             Assert.Single(graph.RowHeightsWritten).HeightPt);
     }
 
+    /// <summary>
+    /// A host refusal while writing the row is REPORTED, not thrown, and is reported
+    /// honestly as added-but-not-completed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the positive test for the guard (AGENTS.md validator rule). The insert
+    /// path's COM calls were unguarded, so a live workbook produced a
+    /// <see cref="System.Runtime.InteropServices.COMException"/> that escaped into the
+    /// Ribbon callback and aborted the sequence after the worksheet row already
+    /// existed -- leaving the plot at its old extent, which reads as "the bands did not
+    /// stretch".
+    /// </para>
+    /// <para>
+    /// The refusal reason is checked as well as the absence of an exception, because a
+    /// bare "did not throw" would also pass if the adapter reported
+    /// <c>TargetProtected</c> and pretended nothing had been written -- a claim the user
+    /// can disprove by looking at the sheet, because the row is really there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_host_refusal_writing_the_row_is_reported_rather_than_thrown()
+    {
+        var graph = new Graph();
+        var guard = NotProtected();
+
+        // The host refuses the bulk value write, exactly as Excel does on a locked or
+        // otherwise hostile range.
+        _ = graph.RowRange
+            .SetupSet(r => r.Value2 = It.IsAny<object>())
+            .Throws(RefusedComException());
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => GanttRowId.Parse("G-0123456789abcdef0123456789abcdef"));
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowWriteRefused, outcome.Refusal);
+        Assert.Null(outcome.BodyIndex);
+    }
+
+    /// <summary>
+    /// Produces the exception a host actually throws for a refused write, without
+    /// constructing the runtime-reserved <c>COMException</c> directly (CA2201).
+    /// </summary>
+    private static System.Runtime.InteropServices.COMException RefusedComException()
+    {
+        var exception = (System.Runtime.InteropServices.COMException?)
+            System.Runtime.InteropServices.Marshal.GetExceptionForHR(unchecked((int)0x800A03EC));
+
+        return exception ?? throw new InvalidOperationException(
+            "The runtime did not produce a COMException for HRESULT 0x800A03EC.");
+    }
+
     private static Mock<IWorksheetProtectionGuard> NotProtected()
     {
         var guard = new Mock<IWorksheetProtectionGuard>();
