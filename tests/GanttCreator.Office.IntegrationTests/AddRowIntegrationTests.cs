@@ -200,12 +200,25 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             AssertId(table.ListRows[3], FixedId('2').Value);
             AssertId(table.ListRows[4], FixedId('3').Value);
 
+            // The inserted row is a real BODY row at the body height. A worksheet row
+            // inserted inside the table inherits the row above it, but the adapter
+            // writes the token explicitly rather than trusting that inheritance.
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                (double)scope.Track(table.ListRows[2].Range).RowHeight,
+                3);
+
             // ---- The reserved bottom padding row (ADR-0035 D2) ----
             //
-            // ListRows.Add(position) inserts a REAL worksheet row, so everything
+            // ADR-0036 D5: the positional branch inserts a real WORKSHEET row
+            // inside the table's range, and the ListObject absorbs it. So everything
             // below shifts: the padding row must have moved down by one row. This is
-            // the behaviour the append-only rule lost, because ListRows.Add() with no
-            // position CLAIMS the padding row instead of pushing it.
+            // what moves the Gantt shapes, which anchor to cells.
+            //
+            // The comment this replaces claimed ListRows.Add(position) already
+            // inserted a real worksheet row. Measured 2026-10-03
+            // (probe-positional-insert.ps1 Q1) it does not: that call moved every
+            // probe shape by delta=0 and consumed the row below the table.
             Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
             int lastBodyRow = bodyAfter.Row + bodyAfter.Rows.Count - 1;
             int tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
