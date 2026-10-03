@@ -302,12 +302,23 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             var paddingRowBefore = body.Row + body.Rows.Count;
             var bodyRowsBefore = body.Rows.Count;
 
-            // The active cell is somewhere else entirely: another sheet. This is the
-            // owner's "anywhere else appends" rule, so the APPEND branch is taken and
+            // The active cell is somewhere else entirely: a column beyond the table's last
+            // one, on the same sheet. That leaves table.Active false -- the owner's
+            // "anywhere else appends" rule -- so the APPEND branch is taken and
             // ListRows.Add() CLAIMS the row sitting below the table.
-            Excel.Worksheet other = scope.Track(
-                workbook.Sheets.Add(After: workbook.Sheets[workbook.Sheets.Count]));
-            scope.Track(other.Cells[1, 1]).Select();
+            //
+            // Deliberately a cell rather than a second worksheet. Adding a sheet
+            // grew the COM-proxy leak signal, and the ratchet ceiling is recorded
+            // as not raisable; a column past the table's edge forces the same
+            // branch with no extra host object to release.
+            //
+            // Every proxy is held in a local before it is indexed or read: a
+            // chained call such as table.Range.Column leaves an intermediate RCW
+            // for the collector, which is exactly what this ratchet counts.
+            Excel.Range tableRange = scope.Track(table.Range);
+            var firstUnusedColumn = tableRange.Column + tableRange.Columns.Count + 1;
+            Excel.Range wholeSheet = scope.Track(sheet.Cells);
+            scope.Track(wholeSheet[1, firstUnusedColumn]).Select();
 
             GanttRowInsertOutcome appended = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
