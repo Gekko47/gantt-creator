@@ -35,7 +35,6 @@ $xlFormatFromLeftOrAbove = -4142
 $bodyHeightPt = 18.0
 $padHeightPt = 5.0
 $frameWidthPt = 1.0
-$overhangPt = 0.5
 $headerHeightPt = 16.0
 
 $headerFormat = '{0,-14} {1,-10} {2,-10} {3,-12} {4,-12}'

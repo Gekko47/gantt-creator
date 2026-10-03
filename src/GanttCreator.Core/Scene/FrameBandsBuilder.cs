@@ -198,6 +198,30 @@ public static class FrameBandsBuilder
         // mechanism rather than an irreversible one.
         RectD plotSpanBounds = PlotSpanGeometry.LiftTopIntoHeader(request.PlotBounds, request.PlotBandHeaderOverlapPt);
 
+        // ADR-0038 D2: the vertical extent every PLOT-SPANNING shape shares --
+        // background, alternate bands, vertical grid lines -- now also extends DOWN
+        // through the reserved anchor row and half the closing line.
+        //
+        // The top is lifted (ADR-0037 D1) because a body insert at or above a shape's
+        // TopLeftCell row makes Excel SLIDE it; the bottom is extended because every
+        // insert the add-in performs targets one row past the body, so the bottom edge
+        // needs a cell anchor strictly below that point or the same shape slides
+        // instead of stretching. Measured 2026-10-03
+        // (scripts/probe-anchor-row-height.ps1 Q2): an insert at the anchor row gives
+        // HeightDelta = 18, a full body row.
+        //
+        // The two are NOT symmetric, and this is the asymmetry: the top is a sub-row
+        // overlap into the header, the bottom is a reserved row of its own. "Symmetrising"
+        // them -- mirroring one onto the other -- re-breaks the bottom, because no
+        // overlap can create a row for an edge to anchor into.
+        //
+        // Zero reproduces the previous behaviour exactly, so this is retunable rather
+        // than baked in.
+        plotSpanBounds = PlotSpanGeometry.ExtendBottomIntoAnchorRow(
+            plotSpanBounds,
+            request.ChartAnchorRowHeightPt,
+            request.MajorBoundaryPt);
+
         List<ScenePrimitive> primitives =
         [
             // The background stays chartBounds, NOT plotSpanBounds. It spans the whole
@@ -211,6 +235,7 @@ public static class FrameBandsBuilder
         AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
         AddGrid(primitives, request, sequence, plotSpanBounds);
+        AddClosingLine(primitives, request);
         AddOuterFrame(primitives, request, chartBounds);
         if (sequence.Periods.Count > 0 && sequence.Periods.All(period => !period.ShowLabel))
         {
@@ -416,6 +441,56 @@ public static class FrameBandsBuilder
         }
     }
 
+    /// <summary>
+    /// Emits the closing line at the plot's data boundary (ADR-0038 D3).
+    /// </summary>
+    /// <param name="primitives">The primitive list to append to.</param>
+    /// <param name="request">The frame/band request.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>It is not the bottom frame.</b> <c>chart:frame:bottom</c> closes the chart at
+    /// the bottom of its padding row and stays exactly where ADR-0031 D2 put it; this
+    /// line closes the plot at the boundary of the data. Two lines are the intent, not
+    /// an artefact of two code paths writing to the same edge: the rejected
+    /// alternative was a single frame line at <c>plotBottom + extension</c>, which
+    /// would have made the chart's bottom margin 0.75pt instead of the padding row's
+    /// 5.75pt and broken ADR-0031 D2 in the process.
+    /// </para>
+    /// <para>
+    /// <b>Its job is also to cover the overhang.</b> The bands now reach
+    /// <c>plotBottom + anchor + w/2</c>, which is the line's own centre, so the band
+    /// bottom lands under the stroke rather than beside it. <see cref="ZLayer.Frame"/>
+    /// (80) puts it above the bands (10) and the grid (20), so the join reads as one
+    /// terminated stack instead of bands fading out mid-cell.
+    /// </para>
+    /// </remarks>
+    private static void AddClosingLine(List<ScenePrimitive> primitives, FrameBandsRequest request)
+    {
+        // With no anchor row there is no overhang and nothing to terminate, so no line
+        // is emitted at all. Emitting one would draw a stroke across the plot's own
+        // bottom edge with no band behind it -- a visible rule that closes nothing.
+        if (!PlotSpanGeometry.HasAnchorRow(request.ChartAnchorRowHeightPt))
+        {
+            return;
+        }
+
+        var closingPt = PlotSpanGeometry.ClosingLineBottomPt(
+            request.PlotBounds.Bottom,
+            request.ChartAnchorRowHeightPt,
+            request.MajorBoundaryPt);
+
+        primitives.Add(
+            new SceneLine(
+                "chart:plot-closing",
+                SceneOwnerId.Chart,
+                ZLayer.Frame,
+                new PointD(request.PlotBounds.Left, closingPt),
+                new PointD(request.PlotBounds.Right, closingPt),
+                request.Theme.MajorGrid
+            )
+        );
+    }
+
     private static void AddGridLine(Dictionary<double, bool> lines, double x, bool major)
     {
         if (lines.TryGetValue(x, out var existingMajor))
@@ -486,6 +561,7 @@ public static class FrameBandsBuilder
         && IsFinitePositive(request.PeriodBandHeightPt)
         && IsFiniteNonNegative(request.MinimumHeaderLabelWidthPt)
         && IsFiniteNonNegative(request.PlotBandHeaderOverlapPt)
+        && IsFiniteNonNegative(request.ChartAnchorRowHeightPt)
         && IsFinitePositive(request.GridLinePt)
         && IsFinitePositive(request.MajorBoundaryPt);
 
@@ -572,4 +648,131 @@ public static class PlotSpanGeometry
             ? plot
             : new RectD(plot.X, plot.Y - overlapPt, plot.Width, plot.Height + overlapPt);
     }
+
+    /// <summary>
+    /// Extends a plot rectangle's bottom edge down through the reserved anchor row and
+    /// half the closing line, growing its height and leaving its top unchanged
+    /// (ADR-0038 D2).
+    /// </summary>
+    /// <param name="plot">The plot rectangle as measured.</param>
+    /// <param name="anchorRowHeightPt">
+    /// The reserved anchor row's measured height, from the <c>ChartAnchorRowHeightPt</c>
+    /// token. Zero reproduces the pre-ADR-0038 geometry exactly.
+    /// </param>
+    /// <param name="majorBoundaryPt">The closing line's width, from <c>MajorBoundaryPt</c>.</param>
+    /// <returns>The adjusted rectangle.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This is NOT the mirror of <see cref="LiftTopIntoHeader"/>, and must not be
+    /// written as one.</b> Excel resizes a shape on a row insert only when the
+    /// insertion point is strictly below the relevant cell anchor, and the two ends
+    /// behave differently: an insert at a shape's <c>TopLeftCell</c> row SLIDES it
+    /// (<c>TopDelta</c> +18, <c>HeightDelta</c> 0), while an insert at its
+    /// <c>BottomRightCell</c> row STRETCHES it (<c>HeightDelta</c> +18). Measured
+    /// 2026-10-03, <c>scripts/probe-anchor-row-height.ps1</c> and
+    /// <c>scripts/probe-frame-stretch.ps1</c>.
+    /// </para>
+    /// <para>
+    /// <b>Why the top could be an overlap and the bottom must be a row.</b> Every
+    /// insert the add-in performs targets one row past the body, so the bottom edge
+    /// needs a cell anchor strictly BELOW that point, and only a reserved row can
+    /// create one -- lifting the edge alone cannot. That is the asymmetry this method
+    /// exists to encode, and the reason a "symmetrise the two edges" cleanup re-breaks
+    /// the bottom.
+    /// </para>
+    /// <para>
+    /// <b>Why half the line is included in the extension.</b> The closing line
+    /// (D3) is centred on the boundary with width <paramref name="majorBoundaryPt"/>,
+    /// so it covers <c>boundary - w/2 .. boundary + w/2</c>. The bands must reach that
+    /// boundary -- and stop there -- so the extension is the anchor row plus half a
+    /// line. At the defaults that is 0.25 + 0.5 = <b>0.75pt</b>, the line covers
+    /// <c>plotBottom + 0.25 .. plotBottom + 1.25</c>, and the band bottom lands on
+    /// <c>plotBottom + 0.75</c>: covered, with nothing spare.
+    /// </para>
+    /// </remarks>
+    public static RectD ExtendBottomIntoAnchorRow(
+        RectD plot,
+        double anchorRowHeightPt,
+        double majorBoundaryPt)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(anchorRowHeightPt);
+        ArgumentOutOfRangeException.ThrowIfNegative(majorBoundaryPt);
+
+        var extensionPt = BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
+        return extensionPt == 0
+            ? plot
+            : new RectD(plot.X, plot.Y, plot.Width, plot.Height + extensionPt);
+    }
+
+    /// <summary>
+    /// Whether this composition has an anchor row, and therefore an overhang and a
+    /// closing line at all (ADR-0038 D1).
+    /// </summary>
+    /// <param name="anchorRowHeightPt">The reserved anchor row's measured height.</param>
+    /// <returns><see langword="true"/> when the plot bottom is extended.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is a predicate and not merely an arithmetic outcome.</b> The
+    /// extension is <c>anchor + w/2</c>, so with an anchor row of <b>zero</b> it would
+    /// still be half a line -- 0.5pt -- and the token's "zero restores the previous
+    /// geometry exactly" claim would be false by half a point. The closing line exists
+    /// only to terminate stacks that overhang into the anchor row; with no anchor row
+    /// there is nothing to overhang and nothing to terminate, so the whole mechanism
+    /// switches off rather than leaving half of itself applied.
+    /// </para>
+    /// <para>
+    /// The alternative -- treating half a line as a legitimate zero-anchor extension --
+    /// would make the retunable claim untrue and leave a closing line drawn across the
+    /// plot's own bottom edge with no band under it.
+    /// </para>
+    /// </remarks>
+    public static bool HasAnchorRow(double anchorRowHeightPt)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(anchorRowHeightPt);
+        return anchorRowHeightPt > 0;
+    }
+
+    /// <summary>
+    /// The Y coordinate of the closing line: the plot's bottom edge plus the anchor
+    /// row and half the line (ADR-0038 D3).
+    /// </summary>
+    /// <param name="plotBottomPt">The plot's own bottom edge.</param>
+    /// <param name="anchorRowHeightPt">The reserved anchor row's measured height.</param>
+    /// <param name="majorBoundaryPt">The closing line's width.</param>
+    /// <returns>The closing line's centre Y.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The same arithmetic as the extension, read once.</b> The line's centre must
+    /// equal the bands' bottom or the overhang is either uncovered or painted past the
+    /// line, and two independent expressions of "plotBottom + anchor + w/2" are two
+    /// chances to disagree. The extension and this coordinate therefore both call
+    /// <see cref="BottomExtensionPt"/>.
+    /// </para>
+    /// <para>
+    /// <b>Coverage is arithmetic, never measurement.</b> An Excel <c>AddLine</c> has a
+    /// degenerate bounding box -- its <c>Top + Height</c> is a point, not the stroke --
+    /// so a test that measures whether the band is "covered" by reading the line's
+    /// bounds reports <c>False</c> for a correctly drawn chart. Coverage comes from
+    /// <c>Line.Weight</c>, which is why the assertion is this subtraction.
+    /// </para>
+    /// </remarks>
+    public static double ClosingLineBottomPt(
+        double plotBottomPt,
+        double anchorRowHeightPt,
+        double majorBoundaryPt) =>
+        plotBottomPt + BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
+
+    /// <summary>
+    /// How far the plot-spanning shapes extend below the plot's bottom edge: the anchor
+    /// row plus half the closing line.
+    /// </summary>
+    /// <param name="anchorRowHeightPt">The reserved anchor row's measured height.</param>
+    /// <param name="majorBoundaryPt">The closing line's width.</param>
+    /// <returns>The extension in points.</returns>
+    /// <remarks>
+    /// Private because both callers above are the contract. Publishing it would invite
+    /// a fourth expression of the same sum to be written somewhere it can drift.
+    /// </remarks>
+    private static double BottomExtensionPt(double anchorRowHeightPt, double majorBoundaryPt) =>
+        HasAnchorRow(anchorRowHeightPt) ? anchorRowHeightPt + (majorBoundaryPt / 2) : 0d;
 }

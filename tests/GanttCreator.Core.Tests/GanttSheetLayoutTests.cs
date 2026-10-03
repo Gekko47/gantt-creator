@@ -38,26 +38,68 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
-    /// The reserved bottom padding row is the row immediately below the measured
-    /// body, and nothing else (ADR-0035 D2).
+    /// The reserved bottom padding row is TWO rows below the measured body, because
+    /// the anchor row sits between them (ADR-0038 D1).
     /// </summary>
     /// <remarks>
-    /// This is the assertion whose absence caused the live defect. The two adapters
-    /// used to take <see cref="GanttSheetLayout.BottomPaddingRowIndex"/> on trust --
-    /// one writing a row height to it, one reading it as the chart's bottom margin
-    /// -- and nothing checked that the row existed, was the right one, or was empty.
+    /// <para>
+    /// This is the assertion whose absence caused the live defect, and ADR-0038 moved
+    /// the row it names. The two adapters used to take
+    /// <see cref="GanttSheetLayout.BottomPaddingRowIndex"/> on trust -- one writing a
+    /// row height to it, one reading it as the chart's bottom margin -- and nothing
+    /// checked that the row existed, was the right one, or was empty.
+    /// </para>
+    /// <para>
+    /// <b>The offset is the point of this test.</b> Body rows 4..10 put the anchor row
+    /// at 11 and the padding row at 12. Asserting 11 would name the ANCHOR row, and an
+    /// adapter resolving the anchor row as the padding row would write a 5.75pt margin
+    /// height into a 0.25pt sub-row anchor -- the defect ADR-0038 D6 exists to prevent,
+    /// reintroduced from the other direction.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void The_reserved_bottom_padding_row_is_the_row_directly_below_the_measured_body()
+    public void The_reserved_bottom_padding_row_is_two_rows_below_the_measured_body()
     {
-        // Body rows 4..10, so the padding row is 11. This agrees with the derived
-        // index for a seven-row body, which is the case where the old arithmetic
-        // happened to be right.
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow: 4,
             lastBodyRow: 10,
-            observedPaddingRow: 11,
+            observedPaddingRow: 12,
             paddingRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(12, resolved.Row);
+        Assert.Null(resolved.Refusal);
+
+        // The anchor row is NOT the padding row, stated as the relationship rather
+        // than as a literal so it survives a change to either derivation.
+        Assert.NotEqual(GanttSheetLayout.AnchorRowIndex(7), resolved.Row);
+    }
+
+    /// <summary>
+    /// The reserved anchor row is the row immediately below the measured body, and
+    /// nothing else (ADR-0038 D1/D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every insert the add-in performs targets one row past the body, so this is the
+    /// row that decides whether the plot-spanning shapes STRETCH or SLIDE. It is
+    /// resolved and verified for the same reason the padding row is: a row the add-in
+    /// writes to without proving it owns is a user row.
+    /// </para>
+    /// <para>
+    /// <b>Asserted as an explicit row number</b>, because that is the whole contract.
+    /// Deriving it from <see cref="GanttSheetLayout.AnchorRowIndex"/> would make the
+    /// test compare the layout authority with itself and always pass.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_reserved_anchor_row_is_the_row_directly_below_the_measured_body()
+    {
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedAnchorRow: 11,
+            anchorRowIsEmpty: true);
 
         Assert.True(resolved.Succeeded);
         Assert.Equal(11, resolved.Row);
@@ -80,11 +122,11 @@ public sealed class GanttSheetLayoutTests
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow: 20,
             lastBodyRow: 25,
-            observedPaddingRow: 26,
+            observedPaddingRow: 27,
             paddingRowIsEmpty: true);
 
         Assert.True(resolved.Succeeded);
-        Assert.Equal(26, resolved.Row);
+        Assert.Equal(27, resolved.Row);
 
         // The derived index would have said 11 for a six-row body -- provably not
         // the same answer, so this test discriminates rather than restating.
@@ -102,9 +144,10 @@ public sealed class GanttSheetLayoutTests
     /// reported, because both are workbook states Repair can act on.
     /// </remarks>
     [Theory]
-    [InlineData(12)] // a gap: two rows below the body
+    [InlineData(13)] // a gap: three rows below the body
     [InlineData(10)] // inside the body: the last body row itself
-    [InlineData(4)] // the first body row
+    [InlineData(4)]  // the first body row
+    [InlineData(11)] // the ANCHOR row -- the pre-ADR-0038 padding row (D6)
     public void A_padding_row_that_is_not_the_row_below_the_body_is_refused(int observed)
     {
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
@@ -116,6 +159,106 @@ public sealed class GanttSheetLayoutTests
         Assert.False(resolved.Succeeded);
         Assert.Equal(BottomPaddingRefusalReason.PaddingRowNotContiguous, resolved.Refusal);
         Assert.Null(resolved.Row);
+    }
+
+    /// <summary>
+    /// An anchor row that is not contiguous with the body is refused, and the two
+    /// reserved rows refuse INDEPENDENTLY (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Positive test for the validator.</b> The gap case is what a user gets by
+    /// deleting a worksheet row between the table and the margin.
+    /// </para>
+    /// <para>
+    /// <b>Each row refuses in its own right.</b> Proving the anchor row while the
+    /// padding row is wrong must not succeed: a caller that verified one and assumed
+    /// the other is exactly the substitution that let the padding row be consumed. The
+    /// final assertions state that independence in both directions.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(12)] // a gap: two rows below the body
+    [InlineData(10)] // inside the body: the last body row itself
+    [InlineData(4)]  // the first body row
+    public void An_anchor_row_that_is_not_the_row_below_the_body_is_refused(int observed)
+    {
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedAnchorRow: observed,
+            anchorRowIsEmpty: true);
+
+        Assert.False(resolved.Succeeded);
+        Assert.Equal(AnchorRowRefusalReason.AnchorRowNotContiguous, resolved.Refusal);
+        Assert.Null(resolved.Row);
+
+        // Independence in both directions.
+        Assert.True(GanttSheetLayout.ResolveBottomPaddingRow(4, 10, 12, true).Succeeded);
+        Assert.False(GanttSheetLayout.ResolveAnchorRow(4, 10, 11, false).Succeeded);
+    }
+
+    /// <summary>
+    /// An occupied or unverified ANCHOR row is refused, because it is the user's row
+    /// rather than the plot's bottom anchor (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the validator.</b> <see langword="null"/> is refused as well
+    /// as <see langword="false"/>: an unestablished emptiness must not be read as an
+    /// empty row, for the same reason it is not on the padding row.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void An_occupied_or_unverified_anchor_row_is_refused(bool? isEmpty)
+    {
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            firstBodyRow: 4,
+            lastBodyRow: 10,
+            observedAnchorRow: 11,
+            anchorRowIsEmpty: isEmpty);
+
+        Assert.False(resolved.Succeeded);
+        Assert.Equal(AnchorRowRefusalReason.AnchorRowOccupied, resolved.Refusal);
+        Assert.Null(resolved.Row);
+    }
+
+    /// <summary>
+    /// The anchor row's refusals are a SEPARATE TYPE from the padding row's, so a
+    /// diagnostic can name which row the user has to fix (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Folding them into one enum would leave "the padding row is wrong" as the only
+    /// message available for an anchor-row fault, sending the user to look at the wrong
+    /// row. The two enums deliberately share the same <em>numbers</em> for the
+    /// corresponding conditions -- a non-positive index and an inverted span are the
+    /// same faults on either row -- so this asserts TYPE distinctness, which is the
+    /// property that actually matters, and not numeric inequality.
+    /// </para>
+    /// <para>
+    /// The final assertions pin that the two rows are genuinely different worksheet
+    /// positions, so one value is not being reused for two separate reservations.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_anchor_row_and_padding_row_refusals_are_distinct_types()
+    {
+        Assert.True(typeof(AnchorRowRefusalReason) != typeof(BottomPaddingRefusalReason));
+        Assert.True(typeof(AnchorRowResolution) != typeof(BottomPaddingResolution));
+
+        // Distinct TYPES, and the shared members agree -- which is why the numeric
+        // values are equal and why a numeric inequality assertion would be wrong.
+        Assert.Equal(
+            (int)BottomPaddingRefusalReason.NonPositiveRowIndex,
+            (int)AnchorRowRefusalReason.NonPositiveRowIndex);
+        Assert.Equal(
+            (int)BottomPaddingRefusalReason.InvertedBodySpan,
+            (int)AnchorRowRefusalReason.InvertedBodySpan);
+
+        // Distinct worksheet positions: the anchor is lastBody + 1, the padding + 2.
+        Assert.Equal(11, GanttSheetLayout.ResolveAnchorRow(4, 10, 11, true).Row);
+        Assert.Equal(12, GanttSheetLayout.ResolveBottomPaddingRow(4, 10, 12, true).Row);
     }
 
     /// <summary>
@@ -136,7 +279,7 @@ public sealed class GanttSheetLayoutTests
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow: 4,
             lastBodyRow: 10,
-            observedPaddingRow: 11,
+            observedPaddingRow: 12,
             paddingRowIsEmpty: isEmpty);
 
         Assert.False(resolved.Succeeded);
@@ -247,16 +390,25 @@ public sealed class GanttSheetLayoutTests
     /// rather than inside the table.
     /// </remarks>
     [Fact]
-    public void The_bottom_padding_row_is_the_row_after_the_last_activity_row()
+    public void The_bottom_padding_row_is_the_row_after_the_anchor_row()
     {
-        // Body starts at row 4, so seven activity rows occupy 4..10 and the bottom
-        // padding row is 11: the row directly below the last activity row.
-        Assert.Equal(11, GanttSheetLayout.BottomPaddingRowIndex(7));
-        Assert.Equal(5, GanttSheetLayout.BottomPaddingRowIndex(1));
+        // Body starts at row 4, so seven activity rows occupy 4..10. The ANCHOR row is
+        // 11 (one past the body, ADR-0038 D1) and the padding row is 12, one below it.
+        Assert.Equal(11, GanttSheetLayout.AnchorRowIndex(7));
+        Assert.Equal(12, GanttSheetLayout.BottomPaddingRowIndex(7));
+        Assert.Equal(5, GanttSheetLayout.AnchorRowIndex(1));
+        Assert.Equal(6, GanttSheetLayout.BottomPaddingRowIndex(1));
+
+        // The relationship is what matters, so it is asserted as one: the padding row
+        // is exactly one below the anchor row, for any body length.
+        Assert.Equal(
+            GanttSheetLayout.AnchorRowIndex(7) + 1,
+            GanttSheetLayout.BottomPaddingRowIndex(7));
 
         // A table with no body has no last activity row, so there is no row to name.
         // Returning a plausible index would place the chart's bottom margin inside
-        // the table, so this is refused rather than guessed.
+        // the table, so this is refused rather than guessed -- by BOTH derivations.
+        Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.AnchorRowIndex(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => GanttSheetLayout.BottomPaddingRowIndex(0));
     }
 

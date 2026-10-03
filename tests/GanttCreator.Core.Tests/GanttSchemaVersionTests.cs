@@ -41,7 +41,13 @@ public class GanttSchemaVersionTests
         // Excel's cell anchoring stretches them when a row is added at the top. Same
         // class as v10's retirement, opposite direction: the stored catalogue hash
         // moves because a workbook written before it lacks a row the add-in reads.
-        Assert.Equal(11, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v12 is ADR-0038: the metric catalogue GAINS ChartAnchorRowHeightPt AND a
+        // NEW RESERVED ROW appears between the body and the bottom padding row, so the
+        // padding row the add-in writes to and measures is no longer the row directly
+        // below the table. Same class as v9's and v10's, both of which moved the row
+        // the padding lives in. No migration (ADR-0029 D6); Initialise is the remedy
+        // and is also what reserves the anchor row.
+        Assert.Equal(12, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

@@ -40,6 +40,20 @@ public sealed class ExcelRowHeightNormaliserTests
     private const double PaddingRowPt = 22;
 
     /// <summary>
+    /// The reserved anchor row's target (ADR-0038 D1), deliberately a THIRD distinct
+    /// value.
+    /// </summary>
+    /// <remarks>
+    /// It must differ from both the padding row's and the reserved row's. Writing the
+    /// padding height into the anchor row would put the plot-spanning shapes' bottom
+    /// cell anchor a whole margin-height below the body, which is a visible strip of
+    /// sheet rather than the sub-row anchor the closing line's arithmetic depends on --
+    /// and a fixture that reused one value could not tell that mistake from a correct
+    /// write.
+    /// </remarks>
+    private const double AnchorRowPt = 0.25;
+
+    /// <summary>
     /// Overrides the COM seams so the test can supply row heights, the per-row
     /// <c>Type</c> text, and record writes without a live Excel host.
     /// </summary>
@@ -127,10 +141,23 @@ public sealed class ExcelRowHeightNormaliserTests
     /// has its own test, which is the positive test for the validator.
     /// </remarks>
     internal override bool? IsLayoutRowEmpty(Excel.Worksheet source, int rowIndex) =>
-        PaddingRowOccupied ? false : true;
+        rowIndex == GanttSheetLayout.AnchorRowIndex(Math.Max(1, heights.Count))
+            ? AnchorRowOccupied ? false : true
+            : PaddingRowOccupied ? false : true;
 
-    /// <summary>Whether the fixture pretends the padding row carries content.</summary>
+    /// <summary>Whether the fixture pretends the PADDING row carries content.</summary>
     internal bool PaddingRowOccupied { get; set; }
+
+    /// <summary>
+    /// Whether the fixture pretends the ANCHOR row carries content (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// A separate flag from <see cref="PaddingRowOccupied"/> because the two rows must
+    /// be able to fail INDEPENDENTLY -- that independence is the whole point of
+    /// verifying them separately, and one shared flag could not express "the anchor row
+    /// is fine and the padding row is not".
+    /// </remarks>
+    internal bool AnchorRowOccupied { get; set; }
 
     /// <summary>Reads a layout row's reported <c>Value2</c> as empty for this fixture.</summary>
     internal override object? GetRangeValue2(Excel.Range range) => null;
@@ -152,6 +179,14 @@ public sealed class ExcelRowHeightNormaliserTests
         // behaviour under test. Seeding it is what makes the counts mean what they
         // say.
         LayoutHeights.TryAdd(GanttSheetLayout.BottomPaddingRowIndex(Math.Max(1, heights.Count)), 22d);
+
+        // The anchor row too (ADR-0038 D1), at ITS token rather than the padding
+        // height. Seeding it at 22 -- as the padding row is -- would make it always
+        // differ from the 0.25pt target, so every RowsWritten count in this file
+        // would be one higher than the behaviour under test.
+        LayoutHeights.TryAdd(
+            GanttSheetLayout.AnchorRowIndex(Math.Max(1, heights.Count)),
+            AnchorRowPt);
 
         var row = new Mock<Excel.Range>();
         _ = row.SetupGet(r => r.RowHeight)
@@ -190,7 +225,7 @@ public sealed class ExcelRowHeightNormaliserTests
         layout[paddingRow] = 45d;
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.PaddingRowNotOwned, outcome.Refusal);
@@ -238,7 +273,7 @@ public sealed class ExcelRowHeightNormaliserTests
         normaliser.PaddingRowOccupied = true;
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.PaddingRowNotOwned, outcome.Refusal);
@@ -253,8 +288,145 @@ public sealed class ExcelRowHeightNormaliserTests
     }
 
     /// <summary>
-    /// The refusal is <b>typed and distinct</b> from a measurement failure, so the
-    /// caller can tell "the sheet is in an unexpected state" from "the host would
+    /// The anchor row is restored to its OWN sub-row token, never the padding row's
+    /// (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The fixture's three reserved-row tokens are deliberately different values, so
+    /// writing the padding height into the anchor row would fail here rather than pass
+    /// unnoticed. That distinction is the whole point: the anchor row is a sub-row
+    /// ANCHOR, and a margin-height row there is a visible strip of blank sheet between
+    /// the last activity row and the chart's bottom.
+    /// </para>
+    /// <para>
+    /// The padding row is asserted alongside it, because the two rows moved apart in
+    /// ADR-0038 and a change that normalised one while skipping the other would leave
+    /// the sheet with a 0.25pt row where its margin should be.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_dragged_anchor_row_is_restored_to_the_anchor_token_not_the_padding_token()
+    {
+        var (normaliser, written, layout) = Build(
+            bodyHeights: [ManagedPt],
+            layoutHeights: new Dictionary<int, double>
+            {
+                [GanttSheetLayout.TopPaddingRowIndex] = PaddingRowPt,
+                [GanttSheetLayout.ReservedRowIndex] = ReservedRowPt,
+                [GanttSheetLayout.HeaderRowIndex] = HeaderPt,
+                [GanttSheetLayout.BottomPaddingRowIndex(1)] = PaddingRowPt,
+            });
+        layout[GanttSheetLayout.AnchorRowIndex(1)] = 40d;
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        var anchorRow = GanttSheetLayout.AnchorRowIndex(1);
+        Assert.Contains(anchorRow, written);
+        Assert.Equal(AnchorRowPt, layout[anchorRow]);
+
+        // And NOT the padding height, which is the mistake this test exists for.
+        Assert.NotEqual(PaddingRowPt, layout[anchorRow]);
+
+        // The padding row is one below it and still holds the padding token. Seeded at that
+        // token already, so it is correctly NOT rewritten -- which is the "already at
+        // the token, so no write" rule that keeps Refresh from dirtying the workbook.
+        Assert.DoesNotContain(GanttSheetLayout.BottomPaddingRowIndex(1), written);
+        Assert.Equal(PaddingRowPt, layout[GanttSheetLayout.BottomPaddingRowIndex(1)]);
+        Assert.NotEqual(anchorRow, GanttSheetLayout.BottomPaddingRowIndex(1));
+    }
+
+    /// <summary>
+    /// An OCCUPIED anchor row refuses rather than being resized (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the new validator, and the mirror of the padding
+    /// row's.</b> Without it the new <c>AnchorRowNotOwned</c> reason would be unreachable
+    /// code, and the reported defect's twin -- the add-in resizing a row the user typed
+    /// in -- would still be live one row higher than before.
+    /// </para>
+    /// <para>
+    /// The refusal is typed DISTINCTLY from the padding row's so a diagnostic can name
+    /// which row the user has to fix. The user row is left untouched and no write of any
+    /// kind occurs.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void An_occupied_anchor_row_is_refused_and_never_resized()
+    {
+        var (normaliser, written, layout) = Build();
+        normaliser.AnchorRowOccupied = true;
+
+        var anchorRow = GanttSheetLayout.AnchorRowIndex(1);
+        layout[anchorRow] = 45d;
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(RowHeightNormalisationRefusalReason.AnchorRowNotOwned, outcome.Refusal);
+        Assert.NotEqual(RowHeightNormalisationRefusalReason.PaddingRowNotOwned, outcome.Refusal);
+        Assert.Equal(0, outcome.RowsWritten);
+
+        Assert.Equal(45d, layout[anchorRow]);
+        Assert.DoesNotContain(anchorRow, written);
+    }
+
+    /// <summary>
+    /// The two reserved rows below the body are verified INDEPENDENTLY, and an anchor
+    /// refusal writes nothing at all (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Two claims in one test, because they are one behaviour.</b> First, the anchor
+    /// row resolves on its own: the padding row here is fine and the refusal still fires.
+    /// A single combined "reserved rows" check would have passed this test while being
+    /// unable to say which row was wrong.
+    /// </para>
+    /// <para>
+    /// Second, the refusal MUTATES NOTHING -- not even the layout rows above the table.
+    /// The anchor row is resolved after the padding row but still before any write, so a
+    /// refusal is a statement about the sheet rather than a partial edit. Every layout
+    /// row is seeded away from its token so a premature write would show.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_anchor_row_is_verified_independently_and_its_refusal_writes_nothing()
+    {
+        (TestableNormaliser normaliser, List<int> written, Dictionary<int, double> layout) = Build(
+            bodyHeights: [45],
+            layoutHeights: new Dictionary<int, double>
+            {
+                [GanttSheetLayout.TopPaddingRowIndex] = 45d,
+                [GanttSheetLayout.ReservedRowIndex] = 45d,
+                [GanttSheetLayout.HeaderRowIndex] = 45d,
+                [GanttSheetLayout.BottomPaddingRowIndex(1)] = 45d,
+            });
+
+        // Only the ANCHOR row is occupied; the padding row below it is left fine.
+        normaliser.AnchorRowOccupied = true;
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(RowHeightNormalisationRefusalReason.AnchorRowNotOwned, outcome.Refusal);
+        Assert.Equal(0, outcome.RowsWritten);
+
+        Assert.Empty(written);
+        Assert.Equal(45d, layout[GanttSheetLayout.TopPaddingRowIndex]);
+        Assert.Equal(45d, layout[GanttSheetLayout.ReservedRowIndex]);
+        Assert.Equal(45d, layout[GanttSheetLayout.HeaderRowIndex]);
+        Assert.Equal(45d, layout[GanttSheetLayout.BottomPaddingRowIndex(1)]);
+    }
+
+    /// <summary>
+    /// The padding row refusal is <b>typed and distinct</b> from a measurement failure, so
+    /// the caller can tell "the sheet is in an unexpected state" from "the host would
     /// not report a height".
     /// </summary>
     /// <remarks>
@@ -292,7 +464,7 @@ public sealed class ExcelRowHeightNormaliserTests
         });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Contains(GanttSheetLayout.HeaderRowIndex, written);
@@ -324,7 +496,7 @@ public sealed class ExcelRowHeightNormaliserTests
             });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
 
@@ -354,7 +526,7 @@ public sealed class ExcelRowHeightNormaliserTests
         });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Contains(GanttSheetLayout.ReservedRowIndex, written);
@@ -376,7 +548,7 @@ public sealed class ExcelRowHeightNormaliserTests
         var (normaliser, written, _) = Build(bodyHeights: []);
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
 
@@ -402,7 +574,7 @@ public sealed class ExcelRowHeightNormaliserTests
             });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Equal(0, outcome.RowsWritten);
@@ -430,7 +602,7 @@ public sealed class ExcelRowHeightNormaliserTests
         });
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(
-            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+            ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Equal(HeaderPt, layout[GanttSheetLayout.HeaderRowIndex]);
@@ -508,7 +680,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45, ManagedPt, 30],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(2, outcome.RowsWritten);
@@ -532,7 +704,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [ManagedPt, ManagedPt, ManagedPt],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);
@@ -557,7 +729,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45, 45],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.TargetProtected, outcome.Refusal);
@@ -580,7 +752,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.NoActiveWorkbook, outcome.Refusal);
@@ -601,7 +773,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.NoActiveWorkbook, outcome.Refusal);
@@ -624,7 +796,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [45],
             written);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(0, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(0, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(RowHeightNormalisationRefusalReason.InvalidMeasurement, outcome.Refusal);
@@ -659,7 +831,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["As-Planned Activity", "Splitter"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         // Only the dragged managed row is written. If the splitter had been treated as
@@ -688,7 +860,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["Spacer"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);
@@ -715,7 +887,7 @@ public sealed class ExcelRowHeightNormaliserTests
             written,
             types: ["Splitter"]);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, outcome.RowsWritten);
@@ -738,7 +910,7 @@ public sealed class ExcelRowHeightNormaliserTests
             [],
             []);
 
-        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt);
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);

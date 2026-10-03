@@ -28,7 +28,7 @@ public sealed class FrameBandsBuilderTests
     /// </remarks>
     /// <summary>
     /// The plot-spanning shapes are lifted into the header row by the configured
-    /// overlap, and the BOTTOM is left exactly where it was (ADR-0037 D1).
+    /// overlap, and the TOP is the only edge that moves up (ADR-0037 D1).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -40,19 +40,23 @@ public sealed class FrameBandsBuilderTests
     /// the header row.
     /// </para>
     /// <para>
-    /// The bottom assertion is the load-bearing half. Stretching is only correct if the
-    /// shape still ENDS on the plot's own bottom edge; a naive "make it taller" that
-    /// grew downward, or that also moved the bottom, would push the bands over the
-    /// lanes they are supposed to sit behind.
+    /// <b>The height is now the sum of BOTH overlaps</b>, because ADR-0038 extends the
+    /// bottom through the anchor row as well. This test isolates the TOP by passing a
+    /// zero anchor row, and
+    /// <c>The_plot_spanning_shapes_extend_down_through_the_anchor_row_and_keep_their_top</c>
+    /// isolates the bottom. Neither alone would catch a builder that applied one edge's
+    /// adjustment to both.
     /// </para>
     /// </remarks>
     [Fact]
     public void The_plot_spanning_shapes_lift_into_the_header_row_and_keep_their_bottom()
     {
-        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5));
+        // Zero anchor row: this test is about the TOP, and ADR-0038's bottom extension
+        // is asserted separately.
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5, 0));
         Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
 
-        FrameBandsRequest request = CreateRequest(0.5);
+        FrameBandsRequest request = CreateRequest(0.5, 0);
         RectD plot = request.PlotBounds;
 
         var bands = outcome.Result!.Primitives.OfType<SceneRect>()
@@ -81,21 +85,30 @@ public sealed class FrameBandsBuilderTests
     }
 
     /// <summary>
-    /// Zero overlap reproduces the previous geometry EXACTLY, so the mechanism is
-    /// retunable rather than baked in.
+    /// Zero anchor row reproduces the previous geometry EXACTLY, so the mechanism is
+    /// retunable rather than baked in (ADR-0038 D1).
     /// </summary>
     /// <remarks>
-    /// The positive test for the retunable claim. Without it, a builder that ignored
-    /// the request and always applied the catalogue default would pass the overlap test
-    /// above while making the token a lie.
+    /// <para>
+    /// The positive test for the retunable claim, and now the COUNTERWEIGHT to the
+    /// bottom-extension test: that test asserts the bands end <em>past</em> the plot's
+    /// bottom, and this one asserts they end <em>on</em> it when the anchor row is
+    /// zero. Without the pair, a builder that ignored the request and always applied
+    /// the catalogue default would pass the first while making the token a lie.
+    /// </para>
+    /// <para>
+    /// Both edges are zeroed together so the whole plot span is the plot rectangle:
+    /// asserting them independently would let a builder that honoured the top and
+    /// ignored the bottom still pass.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void A_zero_overlap_reproduces_the_plot_bounds_exactly()
+    public void A_zero_anchor_row_reproduces_the_plot_bounds_exactly()
     {
-        FrameBandsCreationOutcome outcome = Build(CreateRequest(0));
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0, 0));
         Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
 
-        RectD plot = CreateRequest(0).PlotBounds;
+        RectD plot = CreateRequest(0, 0).PlotBounds;
 
         foreach (SceneRect band in outcome.Result!.Primitives.OfType<SceneRect>()
             .Where(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal)))
@@ -109,6 +122,58 @@ public sealed class FrameBandsBuilderTests
         {
             Assert.Equal(plot.Y, line.From!.Y, 9);
             Assert.Equal(plot.Bottom, line.To!.Y, 9);
+        }
+    }
+
+    /// <summary>
+    /// The plot-spanning shapes extend DOWN through the anchor row, and the closing
+    /// line terminates them there (ADR-0038 D2/D3).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The extension is <c>anchorHeightPt + MajorBoundaryPt / 2</c>: at the fixture's
+    /// 0.25pt anchor row and 1pt closing line that is <b>0.75pt</b>. Asserted as that
+    /// computed figure rather than a literal, so the arithmetic is pinned rather than
+    /// the constant that happens to satisfy it today.
+    /// </para>
+    /// <para>
+    /// The top is asserted unchanged in the same test. The two edges are the asymmetry
+    /// this change encodes -- top is a sub-row overlap into the header, bottom is a
+    /// reserved row -- and a test that only checked the bottom would pass a builder that
+    /// had accidentally started lifting the top edge too.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_plot_spanning_shapes_extend_down_through_the_anchor_row_and_keep_their_top()
+    {
+        const double anchorPt = 0.25;
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5, anchorPt));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        FrameBandsRequest request = CreateRequest(0.5, anchorPt);
+        RectD plot = request.PlotBounds;
+        double extensionPt = anchorPt + (request.MajorBoundaryPt / 2);
+
+        var bands = outcome.Result!.Primitives.OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(bands);
+
+        foreach (SceneRect band in bands)
+        {
+            Assert.Equal(plot.Y - 0.5, band.Bounds.Y, 6);
+            Assert.Equal(plot.Bottom + extensionPt, band.Bounds.Bottom, 6);
+        }
+
+        var gridLines = outcome.Result!.Primitives.OfType<SceneLine>()
+            .Where(line => line.PrimitiveId.StartsWith("chart:grid", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(gridLines);
+
+        foreach (SceneLine line in gridLines)
+        {
+            Assert.Equal(plot.Y - 0.5, line.From!.Y, 6);
+            Assert.Equal(plot.Bottom + extensionPt, line.To!.Y, 6);
         }
     }
 
@@ -132,6 +197,107 @@ public sealed class FrameBandsBuilderTests
 
         Assert.Equal(outcome.Result.Geometry.ChartBounds.Top, background.Bounds.Top, 6);
         Assert.Equal(outcome.Result.Geometry.ChartBounds.Height, background.Bounds.Height, 6);
+    }
+
+    /// <summary>
+    /// The closing line sits exactly on the bands' bottom edge and covers the overhang
+    /// (ADR-0038 D3).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Coverage is ARITHMETIC, never measurement.</b> An Excel <c>AddLine</c> has a
+    /// degenerate bounding box -- its <c>Top + Height</c> is a point, not the stroke --
+    /// so a test asking whether the band was "covered" by reading the line's bounds
+    /// reports <c>False</c> for a perfectly drawn chart. The live probe
+    /// (<c>scripts/probe-anchor-row-height.ps1</c>) printed <c>covered=False</c> for that
+    /// reason and it is an ARTEFACT, not a finding. Coverage comes from
+    /// <c>Line.Weight</c>, which is what the assertions below use.
+    /// </para>
+    /// <para>
+    /// The line is centred on the boundary, so it covers
+    /// <c>bottom - w/2 .. bottom + w/2</c>. The bands must END INSIDE that: stopping
+    /// short leaves the overhang visible, overshooting paints past the very line meant
+    /// to close it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_closing_line_covers_the_band_overhang_by_arithmetic_not_measurement()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5, 0.25));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        SceneLine closing = Assert.Single(
+            outcome.Result!.Primitives.OfType<SceneLine>(),
+            line => string.Equals(line.PrimitiveId, "chart:plot-closing", StringComparison.Ordinal));
+
+        // It terminates the stacks, so it sits at the FRAME layer, above the bands
+        // (AlternateBand 10) and the grid (Grid 20).
+        Assert.Equal(ZLayer.Frame, closing.ZLayer);
+
+        SceneRect band = outcome.Result!.Primitives.OfType<SceneRect>()
+            .Single(rect => rect.PrimitiveId.StartsWith("chart:band:", StringComparison.Ordinal));
+        // The line's width IS its coverage, so it is read from the resolved style rather than
+        // assumed. A style with no outline width would have no coverage at all, which is
+        // why the assertion below would then fail loudly instead of silently passing.
+        Assert.True(closing.Style.OutlineWidthPt is { } width && width > 0);
+        double halfLine = closing.Style.OutlineWidthPt!.Value / 2;
+
+        // The line's centre IS the bands' bottom: one expression of the boundary, so
+        // they cannot drift apart.
+        Assert.Equal(closing.From!.Y, closing.To!.Y, 6);
+        Assert.Equal(band.Bounds.Bottom, closing.From.Y, 6);
+
+        // The overhang is COVERED: the line reaches above AND below it.
+        Assert.True(
+            closing.From.Y - halfLine <= band.Bounds.Bottom,
+            $"The closing line stops {band.Bounds.Bottom - (closing.From.Y - halfLine)}pt above the band bottom.");
+        Assert.True(
+            closing.From.Y + halfLine >= band.Bounds.Bottom,
+            "The closing line must reach past the band bottom, or the overhang is visible.");
+
+        // It spans the PLOT's full width, not one band's: it closes the whole stack of
+        // bands and grid lines, so it is asserted against the plot bounds rather than
+        // against whichever band the Single above happened to return.
+        RectD plot = CreateRequest(0.5, 0.25).PlotBounds;
+        Assert.Equal(plot.Left, closing.From.X, 6);
+        Assert.Equal(plot.Right, closing.To!.X, 6);
+    }
+
+    /// <summary>
+    /// The bottom FRAME stays at the chart's own bottom edge, distinct from the closing
+    /// line (ADR-0038 D4/D5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Two lines is the intent, not an artefact.</b> The closing line closes the
+    /// stacks at the data boundary; the frame closes the chart at its padding-row
+    /// margin. Collapsing them into one line at the data boundary was the rejected
+    /// alternative -- it would have made the chart's bottom margin 0.75pt instead of the
+    /// padding row's height and broken ADR-0031 D2 in the process.
+    /// </para>
+    /// <para>
+    /// Asserted as an ORDERING (frame below closing) rather than as two magic numbers,
+    /// so it survives a retune of either token while still failing a collapsed frame.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_bottom_frame_and_the_closing_line_are_two_distinct_lines()
+    {
+        FrameBandsCreationOutcome outcome = Build(CreateRequest(0.5, 0.25));
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+
+        SceneLine frameBottom = outcome.Result!.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:bottom", StringComparison.Ordinal));
+        SceneLine closing = outcome.Result!.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:plot-closing", StringComparison.Ordinal));
+
+        // Unchanged: the frame closes the chart at its own bounds, not at the data.
+        Assert.Equal(outcome.Result.Geometry.ChartBounds.Bottom, frameBottom.From!.Y, 6);
+
+        // The frame closes BELOW the data boundary, or the bottom margin collapses.
+        Assert.True(
+            frameBottom.From.Y > closing.From!.Y,
+            "The chart frame must close below the plot's data boundary.");
     }
 
     [Fact]
@@ -626,7 +792,9 @@ public sealed class FrameBandsBuilderTests
     private static FrameBandsCreationOutcome Build(FrameBandsRequest request) =>
         FrameBandsBuilder.TryBuild(request, new FixedMeasurer(text => text.Length * 6.0));
 
-    private static FrameBandsRequest CreateRequest(double plotBandHeaderOverlapPt = 0.5)
+    private static FrameBandsRequest CreateRequest(
+        double plotBandHeaderOverlapPt = 0.5,
+        double chartAnchorRowHeightPt = 0.25)
     {
         TimeScale scale = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 400).Scale!;
         return new FrameBandsRequest(
@@ -648,6 +816,7 @@ public sealed class FrameBandsBuilderTests
             true,
             true,
             plotBandHeaderOverlapPt,
+            chartAnchorRowHeightPt,
             _theme
         );
     }

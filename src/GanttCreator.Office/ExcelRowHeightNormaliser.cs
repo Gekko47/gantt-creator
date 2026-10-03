@@ -29,6 +29,18 @@ public enum RowHeightNormalisationRefusalReason
     /// carries content (ADR-0035 D2).
     /// </summary>
     PaddingRowNotOwned = 4,
+
+    /// <summary>
+    /// The reserved anchor row could not be verified: the measured body span and the
+    /// row below it do not form the reserved anchor, or that row carries content
+    /// (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// Its own reason rather than a member of the padding row's, because the two rows
+    /// are separate reservations with different remedies and a diagnostic that cannot
+    /// say which row is wrong is one the user cannot act on.
+    /// </remarks>
+    AnchorRowNotOwned = 5,
 }
 
 /// <summary>The typed result of normalising managed row heights.</summary>
@@ -105,7 +117,8 @@ public class ExcelRowHeightNormaliser(
         double spacerHeightPt,
         double headerHeightPt,
         double reservedRowHeightPt,
-        double paddingRowHeightPt)
+        double paddingRowHeightPt,
+        double anchorRowHeightPt)
     {
         Excel.Application? application = _application;
         Excel.Workbook? workbook = application?.ActiveWorkbook;
@@ -152,7 +165,7 @@ public class ExcelRowHeightNormaliser(
         var rowCount = body is null ? 0 : GetBodyRowCount(body);
 
         int? bottomPaddingRow = null;
-        // MUTATION PROBE: restore the pre-fix ordering (layout rows first).
+        int? anchorRow = null;
         if (body is not null && rowCount > 0)
         {
             // ADR-0035 D2: the bottom padding row is now RESOLVED AND VERIFIED against
@@ -171,6 +184,23 @@ public class ExcelRowHeightNormaliser(
             }
 
             bottomPaddingRow = padding.Row;
+
+            // ADR-0038 D6: the anchor row is resolved and verified the same way, and
+            // BEFORE anything is written. Ordering matters here for the reason the
+            // comment above the layout rows gives: a refusal is this adapter's
+            // statement that the sheet is not in the layout the add-in believes in,
+            // and such a statement must be made before mutating, not after. Resolving
+            // it here rather than alongside the padding row is what keeps the two
+            // independently verifiable -- a caller that verified one and assumed the
+            // other is exactly the substitution that let the padding row be consumed.
+            AnchorRowResolution anchor = ResolveAnchorRow(worksheet, table, body, rowCount);
+            if (!anchor.Succeeded)
+            {
+                return RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.AnchorRowNotOwned);
+            }
+
+            anchorRow = anchor.Row;
         }
 
         var written = 0;
@@ -193,6 +223,16 @@ public class ExcelRowHeightNormaliser(
         if (bottomPaddingRow is { } resolvedPaddingRow)
         {
             written += NormaliseLayoutRow(worksheet, resolvedPaddingRow, paddingRowHeightPt);
+        }
+
+        // The anchor row takes its OWN sub-row token (ADR-0038 D1), never the padding
+        // token. Writing the padding height here would put the plot-spanning shapes'
+        // bottom cell anchor a whole margin-height below the body, which is a visible
+        // strip of blank sheet rather than the sub-row anchor the closing line's
+        // arithmetic depends on.
+        if (anchorRow is { } resolvedAnchorRow)
+        {
+            written += NormaliseLayoutRow(worksheet, resolvedAnchorRow, anchorRowHeightPt);
         }
 
         if (body is null || rowCount == 0)
@@ -292,9 +332,50 @@ public class ExcelRowHeightNormaliser(
         var lastBodyRow = rowCount > 0 && firstBodyRow > 0
             ? firstBodyRow + rowCount - 1
             : 0;
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+        // One past the reserved ANCHOR row (ADR-0038 D1). This was `lastBodyRow + 1`
+        // until the anchor row was inserted between the body and the padding row;
+        // left alone it would resolve the anchor row as the padding row and write the
+        // chart's margin height into a 0.25pt anchor.
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
 
         return GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow,
+            lastBodyRow,
+            candidate,
+            candidate is { } row ? IsLayoutRowEmpty(worksheet, row) : null);
+    }
+
+    /// <summary>
+    /// Resolves and verifies the reserved anchor row from the body's MEASURED
+    /// worksheet span (ADR-0038 D6).
+    /// </summary>
+    /// <param name="worksheet">The Gantt worksheet.</param>
+    /// <param name="table">The Gantt table, used only to reach its worksheet.</param>
+    /// <param name="body">The table's data-body range.</param>
+    /// <param name="rowCount">The measured body row count.</param>
+    /// <returns>The verified anchor row, or a typed refusal.</returns>
+    /// <remarks>
+    /// The measured span is what makes the check capable of failing, for the same
+    /// reason it is on the padding row: deriving both sides from the row count would
+    /// compare the layout authority with itself and always agree.
+    /// </remarks>
+    private AnchorRowResolution ResolveAnchorRow(
+        Excel.Worksheet worksheet,
+        Excel.ListObject table,
+        Excel.Range body,
+        int rowCount)
+    {
+        ArgumentNullException.ThrowIfNull(worksheet);
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var firstBodyRow = GetRangeRow(body);
+        var lastBodyRow = rowCount > 0 && firstBodyRow > 0
+            ? firstBodyRow + rowCount - 1
+            : 0;
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+
+        return GanttSheetLayout.ResolveAnchorRow(
             firstBodyRow,
             lastBodyRow,
             candidate,

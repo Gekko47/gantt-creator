@@ -66,6 +66,12 @@ public sealed record FrameBandsTheme(
 /// <c>PlotBandHeaderOverlapPt</c> token (ADR-0037 D1). Zero restores the prior
 /// behaviour exactly.
 /// </param>
+/// <param name="ChartAnchorRowHeightPt">
+/// The reserved anchor row's measured height, from the <c>ChartAnchorRowHeightPt</c>
+/// token (ADR-0038 D1). It is how far the plot-spanning shapes extend DOWN through
+/// that row and half the closing line, and where the closing line sits. Zero
+/// reproduces the pre-ADR-0038 geometry exactly.
+/// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
@@ -86,6 +92,7 @@ public sealed record FrameBandsRequest(
     bool ShowMinorGrid,
     bool ShowMajorGrid,
     double PlotBandHeaderOverlapPt,
+    double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme
 );
 

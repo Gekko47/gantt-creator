@@ -214,6 +214,30 @@ public sealed record SceneBuildRequest
     public double PlotBandHeaderOverlapPt { get; init; } =
         GanttCatalogues.Metrics.First(token => token.Name == "PlotBandHeaderOverlapPt").DefaultValue;
 
+    /// <summary>
+    /// Gets the reserved anchor row's height, which is how far the plot-spanning
+    /// shapes extend down so Excel's cell anchoring stretches them when a row is
+    /// added at the bottom of the body (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The default is the code-owned <c>ChartAnchorRowHeightPt</c> catalogue value for
+    /// the same reason <see cref="PlotBandHeaderOverlapPt"/> defaults rather than zero:
+    /// a caller that forgot this would silently get the unpainted-footer behaviour
+    /// back, which is exactly the defect this exists to remove. Zero is still a legal
+    /// value and reproduces the prior geometry exactly.
+    /// </para>
+    /// <para>
+    /// <b>Not the mirror of <see cref="PlotBandHeaderOverlapPt"/>, and the difference
+    /// is load-bearing.</b> The top is an overlap into the header row because a row
+    /// above the plot would paint over user content. The bottom cannot be an overlap:
+    /// every insert targets one row past the body, so the bottom edge needs a cell
+    /// anchor strictly below that point, and only a reserved row creates one.
+    /// </para>
+    /// </remarks>
+    public double ChartAnchorRowHeightPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "ChartAnchorRowHeightPt").DefaultValue;
+
     /// <summary>Gets the milestone diamond tip-to-tip size.</summary>
     public double MilestoneSizePt { get; init; }
 
@@ -877,6 +901,7 @@ public static class SceneBuilder
                 request.ShowMinorGrid,
                 request.ShowMajorGrid,
                 request.PlotBandHeaderOverlapPt,
+                request.ChartAnchorRowHeightPt,
                 frameTheme),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
@@ -971,6 +996,16 @@ public static class SceneBuilder
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
+        // ADR-0038 D2: the delineator shares the plot-spanning shapes' vertical span,
+        // so it extends to the closing line rather than stopping at the plot's own
+        // bottom edge. Its LABEL corners stay against plotBounds -- extending that box
+        // would drag every corner label down with it.
+        double? lineBottomPt = PlotSpanGeometry.HasAnchorRow(request.ChartAnchorRowHeightPt)
+            ? PlotSpanGeometry.ClosingLineBottomPt(
+                plotBounds.Bottom,
+                request.ChartAnchorRowHeightPt,
+                request.MajorBoundaryPt)
+            : null;
         // Grouping is by (date, resolved style), and the members inside a group are
         // ordered by the stable row ID. The input is not ordered -- the R3.12
         // determinism contract is that a shuffled input produces a byte-identical
@@ -994,7 +1029,8 @@ public static class SceneBuilder
                     chartBounds,
                     request.LabelGapPt,
                     request.Metrics!,
-                    @event.LabelPosition ?? GanttLabelPosition.Auto)),
+                    @event.LabelPosition ?? GanttLabelPosition.Auto,
+                    LineBottomPt: lineBottomPt)),
             ];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(

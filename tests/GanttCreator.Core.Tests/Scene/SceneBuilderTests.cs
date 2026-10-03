@@ -22,6 +22,19 @@ public sealed class SceneBuilderTests
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
 
+    /// <summary>
+    /// The major-boundary width every request in this file passes (ADR-0038 D2), named
+    /// so the closing-boundary arithmetic is asserted from one place.
+    /// </summary>
+    private const double MajorBoundaryPt = 1;
+
+    /// <summary>
+    /// The reserved anchor row's default height (ADR-0038 D1). Used to state the
+    /// expected closing boundary as <c>anchor + w/2</c> rather than as a literal, so
+    /// the arithmetic is pinned and not the constant that satisfies it today.
+    /// </summary>
+    private const double AnchorRowPt = 0.25;
+
     private static GanttStyleDefinition Style(string key, double height, string textColour = "#000000") =>
         new(
             key,
@@ -501,7 +514,7 @@ public sealed class SceneBuilderTests
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.ZLayer == ZLayer.Delineator);
         Assert.Equal(_plotBounds.Top, line.From.Y);
-        Assert.Equal(_plotBounds.Bottom, line.To.Y);
+        Assert.Equal(_plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2), line.To.Y);
     }
 
 
@@ -1031,12 +1044,20 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
 
-        // §24: the line spans PlotBounds.Top to PlotBounds.Bottom exactly.
+        // §24: the line spans PlotBounds.Top down to the plot's closing boundary (ADR-0038
+        // D2). The TOP is still the plot's own top -- §24 forbids running the line
+        // through the header bands -- while the BOTTOM extends through the reserved
+        // anchor row so the line shares the bands' stretch behaviour. Leaving it at the
+        // plot's own bottom would make this the one full-height line still stopping at
+        // the old footer.
         SceneLine line = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
         Assert.Equal(_plotBounds.Y, line.From.Y, precision: 9);
-        Assert.Equal(_plotBounds.Bottom, line.To.Y, precision: 9);
+        Assert.Equal(
+            _plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2),
+            line.To.Y,
+            precision: 9);
 
         // A delineator is not lane-bound, so the one activity bar must still be the
         // only bar: the line must not have consumed a lane.

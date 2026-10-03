@@ -139,7 +139,38 @@ public static class GanttCatalogues
         // thing - a band is drawn content, this is empty margin - and because a
         // user who wants a taller margin should not have to resize the year header
         // to get it. The minimum is 0 so the margin can be collapsed entirely.
-        new("ChartPaddingRowHeightPt", 6, 0, 72),
+        //
+        // ADR-0038 D4 REDUCES it from 6 to 5.75. The reserved strip below the body is
+        // now TWO rows - the 0.25pt anchor row and this padding row - and 0.25 + 5.75
+        // is the same 6pt of margin the single row used to reserve, so the chart's
+        // bottom margin is unchanged in SIZE while the strip below the body gains the
+        // row Excel needs to anchor the plot-spanning shapes into. Writing 6 here
+        // instead would silently make the total 6.25pt, i.e. a second, unrequested
+        // change to the margin wearing the costume of a structural one.
+        new("ChartPaddingRowHeightPt", 5.75, 0, 72),
+
+        // ADR-0038 D1: the height of the reserved ANCHOR row, immediately below the
+        // last body row. The bands, vertical grid lines, and delineators paint
+        // THROUGH it and down to the closing line, which is what makes Excel resolve
+        // their bottom cell anchor to a row BELOW the body. That is the whole point:
+        // a row inserted at the shape's TopLeftCell row SLIDES it, while one inserted
+        // at its BottomRightCell row STRETCHES it (measured 2026-10-03,
+        // scripts/probe-anchor-row-height.ps1 Q2: insert at the anchor row gives
+        // HeightDelta = 18, a full body row).
+        //
+        // So the bottom fix is deliberately NOT the mirror of ADR-0037's header
+        // overlap, and anyone who "symmetrises the two edges" re-breaks the bottom.
+        // A lifted bottom edge cannot create the row below the insertion point that
+        // the append targets, which is why this is a RESERVED ROW rather than an
+        // overlap the way the top was.
+        //
+        // Sub-row for the same reason the header overlap is: 0.25pt cannot reach far
+        // enough to be seen, and the 4pt ceiling keeps it below one body row (18pt)
+        // even if configured. Excel honours 0.25pt exactly (the same probe's Q1:
+        // 0.25 and 0.5 are read back as written; 0.6 quantises DOWN to 0.5, so
+        // there is no 0.75pt floor and no fallback is needed). Zero is legal and
+        // reproduces the pre-ADR-0038 geometry exactly.
+        new("ChartAnchorRowHeightPt", 0.25, 0, 4),
         new("TitleBandHeightPt", 24, 12, 72),
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),

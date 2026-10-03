@@ -116,7 +116,8 @@ public sealed record PanelCellGrid
         double originTopPt,
         double originLeftPt,
         double topPaddingHeightPt,
-        double bottomPaddingHeightPt)
+        double bottomPaddingHeightPt,
+        double anchorRowHeightPt)
     {
         Columns = columns;
         RowHeightsPt = rowHeightsPt;
@@ -126,6 +127,7 @@ public sealed record PanelCellGrid
         OriginLeftPt = originLeftPt;
         TopPaddingHeightPt = topPaddingHeightPt;
         BottomPaddingHeightPt = bottomPaddingHeightPt;
+        AnchorRowHeightPt = anchorRowHeightPt;
 
         // The cumulative tops are derived ONCE, here, so a lane anchor and a panel
         // row cannot disagree about where a body row starts. Entry n is
@@ -252,6 +254,38 @@ public sealed record PanelCellGrid
     /// </remarks>
     public double BottomPaddingHeightPt { get; }
 
+    /// <summary>
+    /// The measured height of the reserved anchor row, in points (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row immediately below the last body row, which the plot-spanning shapes
+    /// paint through so Excel resolves their bottom cell anchor below the insert
+    /// point. It is measured rather than assumed for the same reason
+    /// <see cref="BottomPaddingHeightPt"/> is: the scene needs the real row height to
+    /// place the closing line, and a token substituted here would put the line at a
+    /// Y that corresponds to no row the moment a user resized it.
+    /// </para>
+    /// <para>
+    /// <b>Zero is legal</b> and means "no anchor row", which is the export case: an
+    /// export has no worksheet rows to anchor to, so it paints no overhang and emits
+    /// no closing line below the plot.
+    /// </para>
+    /// </remarks>
+    public double AnchorRowHeightPt { get; }
+
+    /// <summary>
+    /// The chart's total bottom margin: the anchor row plus the padding row
+    /// (ADR-0038 D1/D4).
+    /// </summary>
+    /// <remarks>
+    /// <b>Summed rather than either row alone.</b> The strip below the body is two
+    /// rows now, and the chart frame still closes at the bottom of that whole strip
+    /// (ADR-0031 D2). Reading the padding row alone would close the frame
+    /// <c>AnchorRowHeightPt</c> too high, inside the anchor row itself.
+    /// </remarks>
+    public double TotalBottomMarginHeightPt => AnchorRowHeightPt + BottomPaddingHeightPt;
+
     /// <summary>The total body height in points, the sum of the row heights.</summary>
     public double TotalRowHeightPt
     {
@@ -307,6 +341,12 @@ public sealed record PanelCellGrid
     /// The measured bottom padding row height, in points (ADR-0031 D2). Defaults to
     /// zero on the same reasoning as <paramref name="topPaddingHeightPt"/>.
     /// </param>
+    /// <param name="anchorRowHeightPt">
+    /// The measured reserved anchor row height, in points (ADR-0038 D1) -- the row
+    /// directly below the body that the plot-spanning shapes paint through. Defaults
+    /// to zero on the same reasoning: an EXPORT composition has no worksheet rows to
+    /// anchor to, so it paints no overhang and emits no closing line.
+    /// </param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
@@ -316,7 +356,8 @@ public sealed record PanelCellGrid
         double originTopPt = 0d,
         double originLeftPt = 0d,
         double topPaddingHeightPt = 0d,
-        double bottomPaddingHeightPt = 0d)
+        double bottomPaddingHeightPt = 0d,
+        double anchorRowHeightPt = 0d)
     {
         // A padding height is a MEASUREMENT, so it is validated like every other
         // measurement here rather than defaulted when absent. Zero is a legitimate
@@ -329,6 +370,15 @@ public sealed record PanelCellGrid
         }
 
         if (!double.IsFinite(bottomPaddingHeightPt) || bottomPaddingHeightPt < 0)
+        {
+            return Refused(PanelCellGridRefusal.InvalidPaddingHeight);
+        }
+
+        // The anchor row is validated on the SAME rule as the padding rows, and with
+        // its own check rather than folded into one of theirs. Folding it in would
+        // have made a negative anchor row indistinguishable from a negative padding
+        // row in the refusal a user sees, and the two are fixed by different actions.
+        if (!double.IsFinite(anchorRowHeightPt) || anchorRowHeightPt < 0)
         {
             return Refused(PanelCellGridRefusal.InvalidPaddingHeight);
         }
@@ -408,7 +458,8 @@ public sealed record PanelCellGrid
                     originTopPt,
                     originLeftPt,
                     topPaddingHeightPt,
-                    bottomPaddingHeightPt),
+                    bottomPaddingHeightPt,
+                    anchorRowHeightPt),
                 null)
             : Refused(PanelCellGridRefusal.InvalidOrigin);
     }

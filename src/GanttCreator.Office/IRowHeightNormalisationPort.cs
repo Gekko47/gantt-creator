@@ -42,9 +42,16 @@ public interface IRowHeightNormalisationPort
     /// instead of borrowing the year band's: a user who wants a taller margin
     /// should not have to resize a header to get it.
     /// </param>
+    /// <param name="anchorRowHeightPt">
+    /// The target height for the reserved anchor row below the body (ADR-0038 D1).
+    /// It is a THIRD reserved row with its own sub-row token, distinct from the
+    /// padding rows: writing the padding height into it would put the plot-spanning
+    /// shapes' bottom anchor a whole margin-height down, which is a visible strip of
+    /// sheet rather than the sub-row anchor the geometry depends on.
+    /// </param>
     /// <returns>How many rows were written, or the refusal reason.</returns>
     /// <remarks>
-    /// The two layout rows are separate parameters rather than members of the body
+    /// The layout rows are separate parameters rather than members of the body
     /// plan because they live <em>outside</em> <c>DataBodyRange</c>: the plan's
     /// <c>RowNumber</c> is a body index, and mixing a worksheet row into that list
     /// would make the number mean two different things depending on which list it is
@@ -58,5 +65,6 @@ public interface IRowHeightNormalisationPort
         double spacerHeightPt,
         double headerHeightPt,
         double reservedRowHeightPt,
-        double paddingRowHeightPt);
+        double paddingRowHeightPt,
+        double anchorRowHeightPt);
 }

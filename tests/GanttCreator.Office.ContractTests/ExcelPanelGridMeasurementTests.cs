@@ -1,4 +1,5 @@
 using Excel = Microsoft.Office.Interop.Excel;
+using GanttCreator.Core;
 using GanttCreator.Office;
 using Moq;
 
@@ -37,7 +38,8 @@ public class ExcelPanelGridMeasurementTests
         double originTopPt,
         double originLeftPt,
         double topPaddingHeightPt = 18.0,
-        double bottomPaddingHeightPt = 27.5)
+        double bottomPaddingHeightPt = 27.5,
+        double anchorRowHeightPt = 0.25)
         : ExcelPanelGridMeasurement(application)
     {
         internal override Excel.ListObject? FindGanttTable(Excel.Sheets sheets) => table;
@@ -100,6 +102,15 @@ public class ExcelPanelGridMeasurementTests
                 ? base.ReadBottomPaddingHeight(candidate)
                 : bottomPaddingHeightPt;
 
+        // ADR-0038 D1: the anchor row is read and VERIFIED through the same seam on the
+        // same terms as the padding row, so its absence is what makes the measurements
+        // below refuse. Stubbed by default for the height-focused tests; the
+        // verification tests leave this on so the real path runs.
+        internal override double? ReadAnchorHeight(Excel.ListObject candidate) =>
+            VerifyAnchorRow
+                ? base.ReadAnchorHeight(candidate)
+                : anchorRowHeightPt;
+
     /// <summary>
     /// Whether the REAL verified bottom-padding path runs rather than the seeded stub.
     /// </summary>
@@ -113,6 +124,16 @@ public class ExcelPanelGridMeasurementTests
     /// </para>
     /// </remarks>
     internal bool VerifyBottomPaddingRow { get; set; }
+
+    /// <summary>
+    /// Whether the REAL verified anchor-row path runs rather than the seeded stub.
+    /// </summary>
+    /// <remarks>
+    /// <b>Off by default</b> for the same reason as the padding row's flag: the double
+    /// stubs the method it lives behind, so the real ADR-0038 D6 verification would have
+    /// no test at all while every height test still passed.
+    /// </remarks>
+    internal bool VerifyAnchorRow { get; set; }
 
     /// <summary>The body's first worksheet row, as the host reports it.</summary>
     internal int BodyFirstRow { get; set; } = 4;
@@ -486,11 +507,11 @@ public class ExcelPanelGridMeasurementTests
     {
         FakeTable table = TableReporting(64d, 15d);
 
-        // One body row starting at 4, so the reserved padding row is 5. The verified
-        // path resolves that row and then READS its height through this seam, which
-        // the plain fake cannot supply -- so it is seeded here. Without it the read
-        // is absent and the refusal branch answers, which would make this test
-        // assert the opposite of what it names.
+        // One body row starting at 4, so the ANCHOR row is 5 and the padding row is 6
+        // (ADR-0038 D1). The verified path resolves those rows and then READS their
+        // heights through this seam, which the plain fake cannot supply -- so they are
+        // seeded here. Without them the reads are absent and the refusal branch
+        // answers, which would make this test assert the opposite of what it names.
         var measurement = new TestableMeasurement(
             ActiveApplication().Object,
             table.Table,
@@ -501,10 +522,12 @@ public class ExcelPanelGridMeasurementTests
             table.OriginLeftPt)
         {
             VerifyBottomPaddingRow = true,
+            VerifyAnchorRow = true,
             BodyFirstRow = 4,
             PaddingRowEmpty = true,
         };
-        measurement.LayoutRowHeights[5] = 27.5d;
+        measurement.LayoutRowHeights[GanttSheetLayout.AnchorRowIndex(1)] = 0.25d;
+        measurement.LayoutRowHeights[GanttSheetLayout.BottomPaddingRowIndex(1)] = 27.5d;
 
         PanelGridOutcome outcome = measurement.Measure([ColumnName]);
 
@@ -514,6 +537,56 @@ public class ExcelPanelGridMeasurementTests
         // row is still the measured one -- so the check changed nothing else.
         Assert.Equal([15d], outcome.Grid?.RowHeightsPt);
         Assert.Equal(27.5d, outcome.Grid?.BottomPaddingHeightPt);
+
+        // ADR-0038 D1: the anchor row is measured SEPARATELY, and the chart's bottom
+        // margin is the SUM of the two rows so the frame still closes at the bottom of
+        // the whole strip (ADR-0031 D2).
+        Assert.Equal(0.25d, outcome.Grid?.AnchorRowHeightPt);
+        Assert.Equal(27.75d, outcome.Grid?.TotalBottomMarginHeightPt);
+    }
+
+    /// <summary>
+    /// An anchor row that cannot be VERIFIED refuses the whole measurement
+    /// (ADR-0038 D6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the new validator</b>, and the mirror of the
+    /// padding row's: without it, an adapter that resolved the anchor row with no check
+    /// at all would pass every other test in this file while the row-height normaliser
+    /// resized whatever user row happened to sit below the table.
+    /// </para>
+    /// <para>
+    /// The second case is the non-contiguous one, and it is separate on purpose: it is
+    /// the state a table that has MOVED produces, which is the defect ADR-0035 D2 was
+    /// raised for.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false, 4)]   // occupied: the user typed in the anchor row
+    [InlineData(true, 20)]   // not contiguous: the table has moved from where it was
+    public void An_unverifiable_anchor_row_refuses_the_measurement(bool isEmpty, int bodyFirstRow)
+    {
+        FakeTable table = TableReporting(64d, 15d);
+        var measurement = new TestableMeasurement(
+            ActiveApplication().Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt)
+        {
+            VerifyBottomPaddingRow = true,
+            VerifyAnchorRow = true,
+            BodyFirstRow = bodyFirstRow,
+            PaddingRowEmpty = isEmpty,
+        };
+
+        PanelGridOutcome outcome = measurement.Measure([ColumnName]);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
     }
 
     /// <summary>

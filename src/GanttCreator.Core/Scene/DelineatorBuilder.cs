@@ -11,6 +11,10 @@ namespace GanttCreator.Core.Scene;
 /// <param name="LabelPosition">The resolved label position, or <c>None</c> for no label.</param>
 /// <param name="LaneOrder">The lane ordering value, when known.</param>
 /// <param name="StackIndex">The stack ordering value, when known.</param>
+/// <param name="LineBottomPt">
+/// The line's bottom Y, or <see langword="null"/> to end it exactly at
+/// <see cref="PlotBounds"/>'s bottom edge (ADR-0038 D2).
+/// </param>
 public sealed record DelineatorRequest(
     GanttEvent Event,
     SceneStyle LineStyle,
@@ -21,7 +25,8 @@ public sealed record DelineatorRequest(
     ITextMetrics LabelMetrics,
     GanttLabelPosition LabelPosition = GanttLabelPosition.Auto,
     int? LaneOrder = null,
-    int? StackIndex = null
+    int? StackIndex = null,
+    double? LineBottomPt = null
 );
 
 /// <summary>The result of building one delineator.</summary>
@@ -196,12 +201,20 @@ public static class DelineatorBuilder
         // §24: the line spans the plot top and bottom exactly. Using the chart
         // bounds here would run the line through the title and time-header
         // bands, which §24 forbids.
+        //
+        // ADR-0038 D2: the bottom may be the CLOSING line's Y instead, so a
+        // delineator shares the plot-spanning shapes' extended vertical span. A
+        // delineator left at the plot's own bottom would be the one full-height line
+        // still stopping at the old footer after a row insert -- the same defect as
+        // the bands, one primitive out of step with them. The LABEL corners still
+        // resolve against PlotBounds, which is why this is a separate member rather
+        // than a widened PlotBounds: extending the plot box would move the labels too.
         var line = new SceneLine(
             ScenePrimitive.CreateId(owner, "delineator"),
             owner,
             ZLayer.Delineator,
             new PointD(x, request.PlotBounds.Top),
-            new PointD(x, request.PlotBounds.Bottom),
+            new PointD(x, request.LineBottomPt ?? request.PlotBounds.Bottom),
             WithWidth(request.LineStyle, request.LineWidthPt),
             @event.Type,
             request.LaneOrder,
@@ -485,7 +498,10 @@ public static class DelineatorLayout
         }
 
         DelineatorRequest first = request.Requests[0];
-        if (request.Requests.Any(item => item.PlotBounds != first.PlotBounds || item.ChartBounds != first.ChartBounds))
+        if (request.Requests.Any(item =>
+            item.PlotBounds != first.PlotBounds
+            || item.ChartBounds != first.ChartBounds
+            || item.LineBottomPt != first.LineBottomPt))
         {
             return new DelineatorGroupCreationOutcome(null, DelineatorGroupRefusal.InconsistentBounds);
         }

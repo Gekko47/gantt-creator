@@ -294,7 +294,14 @@ public sealed class GanttRefreshOrchestrator(
             // they are normalised to their own token rather than borrowing a band's
             // height. It is the LAST argument because it is the newest row, and the
             // catalogue -- not a literal -- is the authority for how tall it is.
-            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"));
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+
+            // ADR-0038 D1: the reserved anchor row below the body, which the
+            // plot-spanning shapes paint through so Excel resolves their bottom cell
+            // anchor below the insert point. A THIRD reserved-row token, not the
+            // padding height: this row is the sub-row anchor, and a margin-height row
+            // here would be a visible strip of sheet rather than an anchor.
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
         if (!heights.Succeeded)
         {
             // The Duration column has already been written at this point, so the

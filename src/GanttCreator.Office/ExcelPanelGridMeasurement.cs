@@ -166,6 +166,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         if (ReadOriginTop(table) is not { } originTop
             || ReadOriginLeft(table) is not { } originLeft
             || ReadTopPaddingHeight(table) is not { } topPaddingHeight
+            || ReadAnchorHeight(table) is not { } anchorHeight
             || ReadBottomPaddingHeight(table) is not { } bottomPaddingHeight)
         {
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -183,7 +184,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             originTop,
             originLeft,
             topPaddingHeight,
-            bottomPaddingHeight);
+            bottomPaddingHeight,
+            anchorHeight);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -239,6 +241,54 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             : ReadVerifiedBottomPaddingHeight(table, body);
 
     /// <summary>
+    /// Resolves and verifies the reserved ANCHOR row and reads its height
+    /// (ADR-0038 D6).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
+    /// <remarks>
+    /// <para>
+    /// Resolved and verified for the same reason the padding row is (ADR-0035 D2), and
+    /// verified SEPARATELY rather than as part of the padding read. A caller that
+    /// verified one row and assumed the other would put the chart's bottom margin on
+    /// a row the add-in does not own -- which is the reported defect this whole
+    /// check exists to prevent.
+    /// </para>
+    /// <para>
+    /// An absent result refuses the measurement, exactly as an unverifiable padding
+    /// row does. The scene needs this height to place the closing line, and a guessed
+    /// one would draw the line at a Y that corresponds to no row.
+    /// </para>
+    /// </remarks>
+    internal virtual double? ReadAnchorHeight(Excel.ListObject table) =>
+        table.DataBodyRange is not { } body
+            ? null
+            : ReadVerifiedAnchorHeight(table, body);
+
+    /// <summary>
+    /// Resolves the reserved anchor row from the body's MEASURED span and reads its
+    /// height, refusing to read a row the add-in does not own (ADR-0038 D6).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="body">The table's data-body range.</param>
+    /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
+    private double? ReadVerifiedAnchorHeight(Excel.ListObject table, Excel.Range body)
+    {
+        var firstBodyRow = GetRangeRow(body);
+        var rowCount = GetBodyRowCount(body);
+        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            firstBodyRow,
+            lastBodyRow,
+            candidate,
+            candidate is { } row ? IsLayoutRowEmpty(table, row) : null);
+
+        return resolved.Succeeded ? ReadRowHeightAt(table, resolved.Row!.Value) : null;
+    }
+
+    /// <summary>
     /// Resolves the reserved bottom padding row from the body's MEASURED span and
     /// reads its height, refusing to read a row the add-in does not own
     /// (ADR-0035 D2).
@@ -256,6 +306,12 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// resized or typed into silently changed the chart's geometry.
     /// </para>
     /// <para>
+    /// <b>The candidate row moved down one in ADR-0038.</b> It is now the row below
+    /// the reserved anchor row, not the row directly below the body. Passing
+    /// <c>lastBodyRow + 1</c> would resolve the ANCHOR row as the padding row and
+    /// report a 0.25pt margin for a chart whose bottom margin is 6pt.
+    /// </para>
+    /// <para>
     /// Returning <see langword="null"/> here is deliberate: the caller already maps
     /// an absent measurement to the typed
     /// <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal, so an
@@ -268,7 +324,11 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         var firstBodyRow = GetRangeRow(body);
         var rowCount = GetBodyRowCount(body);
         var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+
+        // One past the anchor row, which is itself one past the body. Expressed as
+        // anchor + 1 rather than lastBodyRow + 2 so the relationship between the two
+        // reserved rows is the visible fact.
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
 
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow,

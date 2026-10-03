@@ -22,9 +22,22 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 11 for the plot band's header overlap.
+    /// monotonically, and is currently 12 for the reserved anchor row below the body.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 12 is ADR-0038.</b> Two things move together, and neither is a
+    /// behaviour the add-in merely tolerates. (1) The metric catalogue gains
+    /// <c>ChartAnchorRowHeightPt</c>, so a version-11 workbook's
+    /// <c>tblGanttMetrics</c> lacks a row the running add-in reads and its stored
+    /// catalogue hash no longer matches. (2) A NEW RESERVED ROW appears between the
+    /// last body row and the bottom padding row, so the padding row the add-in writes
+    /// to and measures as the chart's bottom margin is no longer the row directly
+    /// below the table. Both are the same class of change as version 9's and
+    /// version 10's, which moved the row the padding lives in. There is no migration
+    /// (ADR-0029 D6): a version-11 workbook reports a mismatch and the remedy is
+    /// Initialise, which is also what reserves the anchor row.
+    /// </para>
     /// <para>
     /// <b>Version 11 is ADR-0037.</b> The metric catalogue gains
     /// <c>PlotBandHeaderOverlapPt</c>, so an existing workbook's
@@ -100,5 +113,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 11;
+    public const int CurrentSchemaVersion = 12;
 }

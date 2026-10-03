@@ -94,6 +94,14 @@ internal sealed class RefreshFakes
     /// </summary>
     public double? LastPaddingRowHeightPt { get; set; }
 
+    /// <summary>
+    /// The reserved anchor-row target the orchestrator last passed (ADR-0038 D1), or
+    /// null if never called. This row is the plot-spanning shapes' bottom cell anchor,
+    /// so it must be a sub-row height and must NOT equal the padding-row height -- a
+    /// margin-height anchor row would be a visible strip of sheet.
+    /// </summary>
+    public double? LastAnchorRowHeightPt { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -380,7 +388,8 @@ internal sealed class RefreshFakes
             double spacer,
             double header,
             double reservedRow,
-            double paddingRow)
+            double paddingRow,
+            double anchorRow)
         {
             owner.Steps.Add("RowHeights");
 
@@ -399,6 +408,10 @@ internal sealed class RefreshFakes
             owner.LastHeaderHeightPt = header;
             owner.LastReservedRowHeightPt = reservedRow;
             owner.LastPaddingRowHeightPt = paddingRow;
+
+            // The anchor row is recorded for the same reason, and it is the one figure
+            // that must differ from the padding height (ADR-0038 D1).
+            owner.LastAnchorRowHeightPt = anchorRow;
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)

@@ -123,6 +123,40 @@ internal static class EquivalenceFieldChecks
     /// Asserts a delineator line spans the plot's full height, which is §24's defining
     /// property and what distinguishes it from a lane-bound entity.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The bottom may pass <c>PlotBounds.Bottom</c> by a bounded overhang</b>
+    /// (ADR-0038 D2). The line shares the plot-spanning shapes' vertical span so it
+    /// stretches with them on a bottom row insert, which puts its lower end at the
+    /// closing boundary: <c>PlotBounds.Bottom + anchorHeightPt + MajorBoundaryPt / 2</c>.
+    /// The scene carries no anchor-row measurement, so the bound is expressed as a
+    /// RANGE -- from exactly the plot bottom up to the largest overhang the token
+    /// catalogue permits -- rather than as one number.
+    /// </para>
+    /// <para>
+    /// The range still fails a line that stops short, which is the defect this field
+    /// exists to catch: shortening the line moves its end ABOVE the plot bottom and out
+    /// of the range. Widening it the other way is bounded so a line cannot run away
+    /// down the sheet.
+    /// </para>
+    /// </remarks>
+    /// <summary>
+    /// The largest plot overhang the token catalogue permits: the anchor row's ceiling
+    /// plus half the widest major boundary (ADR-0038 D1/D2).
+    /// </summary>
+    /// <remarks>
+    /// Derived from the catalogue rather than written as a literal, so retuning either
+    /// token moves this bound with it. A hard-coded maximum would silently become a
+    /// looser field check than the author intended on the day a token was retuned.
+    /// </remarks>
+    private static readonly double MaximumPlotOverhangPt =
+        GanttCatalogues.Metrics.First(token => token.Name == "ChartAnchorRowHeightPt").Maximum
+        + (GanttCatalogues.Metrics.First(token => token.Name == "MajorBoundaryPt").Maximum / 2);
+
+    /// <summary>
+    /// Asserts a delineator line spans the plot's full height, which is §24's defining
+    /// property and what distinguishes it from a lane-bound entity.
+    /// </summary>
     internal static EquivalenceField FullPlotHeight(string member, string citation) =>
         new(
             "the line spans the plot's full height",
@@ -131,7 +165,8 @@ internal static class EquivalenceFieldChecks
             (scene, primitive) =>
                 primitive is SceneLine line
                 && GeometryMath.ApproximatelyEqual(line.From.Y, scene.PlotBounds.Top)
-                && GeometryMath.ApproximatelyEqual(line.To.Y, scene.PlotBounds.Bottom));
+                && line.To.Y >= scene.PlotBounds.Bottom - GeometryMath.Epsilon
+                && line.To.Y <= scene.PlotBounds.Bottom + MaximumPlotOverhangPt);
 
     /// <summary>
     /// Asserts a critical overlay is exactly the derived half-height tall, so a

@@ -180,7 +180,11 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 () => FixedId('3')).Succeeded);
 
             Excel.Range body = scope.Track(table.DataBodyRange);
-            int paddingRowBefore = body.Row + body.Rows.Count;
+
+            // ADR-0038: the padding row is TWO rows below the body now -- one past it is
+            // the ANCHOR row -- so the baseline is moved down one to keep naming the
+            // same physical row before and after the insert.
+            int paddingRowBefore = body.Row + body.Rows.Count + 1;
 
             // Select the FIRST body row: the new activity belongs immediately below it,
             // NOT at the top and NOT appended.
@@ -208,11 +212,11 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 (double)scope.Track(table.ListRows[2].Range).RowHeight,
                 3);
 
-            // ---- The reserved bottom padding row (ADR-0035 D2) ----
+            // ---- The reserved rows below the body (ADR-0035 D2, ADR-0038 D1) ----
             //
             // ADR-0036 D5: the positional branch inserts a real WORKSHEET row
             // inside the table's range, and the ListObject absorbs it. So everything
-            // below shifts: the padding row must have moved down by one row. This is
+            // below shifts: BOTH reserved rows must have moved down by one row. This is
             // what moves the Gantt shapes, which anchor to cells.
             //
             // The comment this replaces claimed ListRows.Add(position) already
@@ -222,23 +226,38 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
             int lastBodyRow = bodyAfter.Row + bodyAfter.Rows.Count - 1;
             int tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
-            int paddingRowIndex = lastBodyRow + 1;
+
+            // ADR-0038: two reserved rows now sit below the body. The ANCHOR row is one
+            // past it and the padding row one past that.
+            int anchorRowIndex = lastBodyRow + 1;
+            int paddingRowIndex = anchorRowIndex + 1;
 
             // The margin row is genuinely OUTSIDE the table. This is the load-bearing
             // check, and it is stated against the TABLE'S OWN RANGE rather than
             // against lastBodyRow -- an earlier version compared the derived index
             // with itself and was a tautology that could never fail.
             Assert.True(
-                paddingRowIndex > tableLastRow,
-                $"The reserved padding row ({paddingRowIndex}) must sit below the table's last row ({tableLastRow}).");
+                anchorRowIndex > tableLastRow,
+                $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
 
-            // And it MOVED DOWN rather than being absorbed. Before ADR-0035 the
+            Assert.True(
+                paddingRowIndex > tableLastRow,
+                $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
+
+            // And BOTH MOVED DOWN rather than being absorbed. Before ADR-0035 the
             // append claimed this row and turned it into a body row; a positional
             // insert shifts it, and the new row below the table restores the same for
             // the append branch.
             Assert.True(
                 paddingRowIndex > paddingRowBefore,
                 $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            // The anchor row keeps its own sub-row height as it is displaced.
+            Excel.Range anchorRow = scope.Track(sheet.Rows[anchorRowIndex]);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
+                (double)anchorRow.RowHeight,
+                3);
 
             Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
             object? paddingValue = paddingRow.Value2;
@@ -312,7 +331,10 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 () => FixedId('1')).Succeeded);
 
             Excel.Range body = scope.Track(table.DataBodyRange);
-            var paddingRowBefore = body.Row + body.Rows.Count;
+
+            // ADR-0038: the padding row is two rows below the body now; see the note on
+            // the positional branch's baseline.
+            var paddingRowBefore = body.Row + body.Rows.Count + 1;
             var bodyRowsBefore = body.Rows.Count;
 
             // The active cell is somewhere else entirely: a column beyond the table's last
@@ -350,18 +372,37 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             Assert.Equal(bodyRowsBefore + 1, table.DataBodyRange.Rows.Count);
             AssertId(table.ListRows[table.ListRows.Count], FixedId('2').Value);
 
-            // ---- The reserved bottom padding row (ADR-0035 D2) ----
+            // ---- The reserved rows below the body (ADR-0035 D2, ADR-0038 D1) ----
             Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
             var tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
-            var paddingRowIndex = bodyAfter.Row + bodyAfter.Rows.Count - 1 + 1;
+
+            // ADR-0038: the strip below the body is TWO rows. The ANCHOR row is one
+            // past the body and the padding row is one past THAT -- reading the padding
+            // row as lastBody + 1 would name the anchor row and assert its 0.25pt height
+            // is the chart's margin.
+            var anchorRowIndex = bodyAfter.Row + bodyAfter.Rows.Count - 1 + 1;
+            var paddingRowIndex = anchorRowIndex + 1;
+
+            Assert.True(
+                anchorRowIndex > tableLastRow,
+                $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
 
             Assert.True(
                 paddingRowIndex > tableLastRow,
-                $"The reserved padding row ({paddingRowIndex}) must sit below the table's last row ({tableLastRow}).");
+                $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
 
             Assert.True(
                 paddingRowIndex > paddingRowBefore,
                 $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            // The anchor row exists, is empty, and holds its OWN sub-row height. It is
+            // what the plot-spanning shapes paint through so their bottom cell anchor
+            // resolves below the insert point and they STRETCH rather than slide.
+            Excel.Range anchorRow = scope.Track(sheet.Rows[anchorRowIndex]);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
+                (double)anchorRow.RowHeight,
+                3);
 
             Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
             object? paddingValue = paddingRow.Value2;

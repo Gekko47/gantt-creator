@@ -38,7 +38,11 @@ public class GanttConfigCatalogueTests
         // sub-row amount the plot-spanning shapes extend up into the header row so
         // Excel's cell anchoring makes them STRETCH when a row is added at the top,
         // which a top-edge exactly on the header/body boundary does not.
-        Assert.Equal(23, GanttCatalogues.Metrics.Count);
+        // ADR-0038 D1 added ChartAnchorRowHeightPt, taking 23 to 24. It is the height of
+        // the reserved anchor row below the body that the plot-spanning shapes paint
+        // through so Excel's cell anchoring STRETCHES them on a bottom insert, where a
+        // sub-row overlap into the header could not.
+        Assert.Equal(24, GanttCatalogues.Metrics.Count);
 
     /// <summary>
     /// The overlap must be sub-row, or it becomes visible rather than structural.
@@ -92,23 +96,68 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void The_padding_row_default_matches_the_chrome_margin_it_replaced()
+    public void The_reserved_below_the_body_strip_totals_the_chrome_margin_it_replaced()
     {
         // ADR-0031 D2: the padding ROWS exist to replace the 6pt sub-row sliver of
-        // chart chrome with something the user can see. They must therefore be the
-        // SAME height as the margin they replaced -- a taller default would be a
-        // second, unrequested change to how much breathing room the chart has,
-        // wearing the costume of a structural one. The owner corrected an 18pt
-        // default to 6pt on exactly this point.
-        Assert.Equal(
-            GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+        // chart chrome with something the user can see. The strip below the body must
+        // therefore still be the SAME 6pt the chrome was -- a taller total would be a
+        // second, unrequested change to how much breathing room the chart has, wearing
+        // the costume of a structural one. The owner corrected an 18pt default to 6pt
+        // on exactly this point.
+        //
+        // ADR-0038 D4 changed the SHAPE of the strip, not its size. It is now two rows
+        // -- the anchor row and the padding row -- so the invariant is the SUM, not
+        // either token alone. Asserting the padding token against the chrome margin
+        // directly would now fail by 0.25pt, which is the arithmetic being corrected
+        // here rather than a regression.
+        double total =
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt")
+            + GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt");
+        Assert.Equal(GanttCatalogues.MetricDefault("ChartOuterPaddingPt"), total, 6);
+
+        // The two rows are deliberately DISTINCT. An anchor row as tall as the padding
+        // row would be a visible strip of blank sheet rather than a sub-row anchor, so
+        // this is a relationship rather than a restatement of the sum above.
+        Assert.NotEqual(
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
             GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"));
 
-        // A zero is still legal, so the margin can be collapsed entirely: the token's
-        // minimum is 0 rather than some positive floor.
+        // A zero is still legal on BOTH, so the margin can be collapsed entirely: each
+        // token's minimum is 0 rather than some positive floor.
         GanttMetricToken padding = GanttCatalogues.Metrics
             .First(token => token.Name == "ChartPaddingRowHeightPt");
         Assert.Equal(0d, padding.Minimum);
+        Assert.Equal(
+            0d,
+            GanttCatalogues.Metrics
+                .First(token => token.Name == "ChartAnchorRowHeightPt").Minimum);
+    }
+
+    /// <summary>
+    /// The anchor row must stay sub-row, or it becomes a visible strip of sheet
+    /// rather than an invisible anchor (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// The ceiling is what makes that structural rather than conventional: it cannot
+    /// reach one body row (18pt) even if a user configures it there. The 4pt ceiling
+    /// matches the header overlap's for the same reason -- both exist only to resolve a
+    /// cell anchor, never to be seen.
+    /// </remarks>
+    [Fact]
+    public void The_anchor_row_height_is_sub_row()
+    {
+        GanttMetricToken token = Assert.Single(
+            GanttCatalogues.Metrics,
+            candidate => string.Equals(candidate.Name, "ChartAnchorRowHeightPt", StringComparison.Ordinal));
+
+        // 0.25 is what the live probe measured Excel honouring EXACTLY (read back as
+        // written), and it is the value that keeps the reserved strip at 6pt alongside
+        // the reduced padding row (D4).
+        Assert.Equal(0.25, token.DefaultValue);
+        Assert.Equal(0, token.Minimum);
+        Assert.True(
+            token.Maximum < GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            "The anchor row must stay below one body row, or it stops being invisible.");
     }
 
     [Fact]
@@ -687,9 +736,20 @@ public class GanttConfigCatalogueTests
     /// schema version move together. A version-9 workbook reports a mismatch and
     /// the remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Advanced again to 12 by ADR-0038</b>: the metric catalogue gains
+    /// <c>ChartAnchorRowHeightPt</c> and <c>ChartPaddingRowHeightPt</c> changes
+    /// from 6 to 5.75, and the workbook's structural contract gains a SECOND
+    /// reserved row below the body -- the anchor row -- so the padding row the
+    /// add-in writes to and measures is no longer the row directly under the
+    /// table. Both move the hash, because the hash covers the catalogue's contents
+    /// and the schema version that names them. A version-11 workbook carries the
+    /// older hash and is reported as a mismatch; the remedy is Initialise
+    /// (ADR-0029 D6, no migration), which is also what reserves the anchor row.
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "0e178de64b1964054dc4a83c7f2d938628b60d06425f4984864cfe9884d37f25";
+        "1a09dbf5171fd1d022c3e0f6812736a7a7c5de931bfd295cef8cab5f2d353740";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

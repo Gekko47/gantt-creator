@@ -179,11 +179,17 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // visible channel of nothing between two things that are one object. The
         // right margin is untouched: the plot's right edge abuts the sheet edge and
         // the frame's right padding is what stops the last period label touching it.
+        //
+        // The BOTTOM margin is the TOTAL of the two reserved rows below the body
+        // (ADR-0038 D1/D4): the anchor row plus the padding row. The strip below the
+        // body is now two rows, and ADR-0031 D2's contract is that the chart frame
+        // closes at the bottom of that whole strip. Reading the padding row alone
+        // would close the frame 0.25pt too high, inside the anchor row.
         var padding = new ChartPaddingPt(
             LeftPt: 0,
             TopPt: measuredGrid.TopPaddingHeightPt,
             RightPt: chrome,
-            BottomPt: measuredGrid.BottomPaddingHeightPt);
+            BottomPt: measuredGrid.TotalBottomMarginHeightPt);
 
         // The header band heights are NOT read here any more. They used to be summed into
         // the plot's top offset; that sum was the page-coordinate origin ADR-0030
@@ -355,6 +361,15 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // wrong. A label has no fill and no stroke - owner ruling - so both are
             // left null rather than defaulted to white.
             LabelStyle = new SceneStyle("DefaultText", textColour: ResolveDefaultTextColour()),
+
+            // ADR-0038 D1: the MEASURED anchor row, not the token. The scene needs the
+            // height the row actually has to place the closing line on a real row
+            // boundary; a user who dragged the anchor row would otherwise get a line
+            // floating between rows. The token remains the authority for what the row
+            // SHOULD be -- the row-height normaliser restores it -- exactly as the
+            // padding rows are read here.
+            ChartAnchorRowHeightPt = measuredGrid.AnchorRowHeightPt,
+
             MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
             GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
             MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
