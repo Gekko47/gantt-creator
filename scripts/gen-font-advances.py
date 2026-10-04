@@ -71,12 +71,35 @@ def unicode_to_glyph(data: bytes, tables: dict[str, tuple[int, int]]) -> dict[in
     base, _ = tables["cmap"]
     num_tables = struct.unpack(">H", data[base + 2 : base + 4])[0]
     subtable = None
+    fallback = None
     for index in range(num_tables):
         platform, encoding, offset = struct.unpack(">HHI", data[base + 4 + index * 8 : base + 12 + index * 8])
-        if (platform, encoding) in ((3, 1), (3, 10), (0, 3), (0, 4)):
-            subtable = base + offset
+        if (platform, encoding) not in ((3, 1), (3, 10), (0, 3), (0, 4)):
+            continue
+
+        # The FORMAT is read, not inferred from the platform/encoding pair. (3, 10) is
+        # Windows UCS-4 and is normally a format-12 subtable, whose layout is entirely
+        # different; decoding one as format 4 reads segment counts and offsets out of
+        # unrelated fields and produces a plausible, wrong advance table. Every
+        # candidate is inspected and only format 4 is considered.
+        candidate = base + offset
+        if struct.unpack(">H", data[candidate : candidate + 2])[0] != 4:
+            continue
+
+        # (3, 1) is the Windows BMP table and is preferred; (0, 3)/(0, 4) are the
+        # Unicode-platform equivalents of the same thing and are taken only when no
+        # Windows one is present.
+        if (platform, encoding) == (3, 1):
+            subtable = candidate
+            break
+
+        if fallback is None:
+            fallback = candidate
+
     if subtable is None:
-        raise RuntimeError("no BMP cmap subtable")
+        subtable = fallback
+    if subtable is None:
+        raise RuntimeError("no format-4 (BMP) cmap subtable")
 
     seg_x2 = struct.unpack(">H", data[subtable + 6 : subtable + 8])[0]
     segments = seg_x2 // 2
