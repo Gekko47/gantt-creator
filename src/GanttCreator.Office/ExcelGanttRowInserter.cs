@@ -12,13 +12,40 @@ namespace GanttCreator.Office;
 public class ExcelGanttRowInserter(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
-    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : IGanttRowInserter
+    ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
+    IRowHeightNormalisationPort? rowHeightNormaliser = null) : IGanttRowInserter
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
     private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
         typeOptionsMaterialiser ?? new ExcelTypeOptionsMaterialiser(application);
+
+    /// <summary>
+    /// The verified row-height normaliser, which owns the reserved rows below the body.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the inserter normalises at all (ADR-0038 D1).</b> The reserved rows below
+    /// the body were only ever touched through Refresh, so on the Add-Activity path they
+    /// kept Excel's default height. Measured live 2026-10-03: after Initialise plus
+    /// three appends every row below the table read <b>15pt</b> -- so the anchor row was
+    /// a 15pt strip instead of 0.25pt and the chart's bottom margin was ~30pt instead
+    /// of 6pt. The anchor still worked as a cell anchor, so the bands stretched, which
+    /// is exactly why the defect survived a green suite: it was invisible to every
+    /// geometry assertion and obvious on screen.
+    /// </para>
+    /// <para>
+    /// <b>Why this port rather than writing heights here.</b> The inserter performs the
+    /// worksheet-row insert, so it is the component that knows which rows moved -- but it
+    /// does not own row heights, and re-deriving "the row below the body" here would be
+    /// the second authority ADR-0035 D2 was raised to remove. The normaliser resolves
+    /// both rows from the body's MEASURED span and REFUSES rather than writing a row it
+    /// cannot verify, which is the discipline this needs.
+    /// </para>
+    /// </remarks>
+    private readonly IRowHeightNormalisationPort _rowHeightNormaliser =
+        rowHeightNormaliser ?? new ExcelRowHeightNormaliser(application);
 
     /// <inheritdoc />
     public GanttRowInsertOutcome Insert(GanttEntityType type, Func<GanttRowId> nextId)
@@ -168,7 +195,28 @@ public class ExcelGanttRowInserter(
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable);
         }
 
-        return GanttRowInsertOutcome.Ok(newRow is null ? 1 : GetRowIndex(newRow), paddingRowReserved);
+        // ADR-0038 D1: restore the reserved rows below the body NOW, not at the next
+        // Refresh. Every insert displaces them, so this is the point at which their
+        // heights are wrong; leaving it to Refresh meant the sheet sat wrong for as
+        // long as the user did not refresh, which the live gate caught as 15pt rows.
+        //
+        // Deliberately AFTER WriteRow and the Type options: the body must already
+        // include the new row, because the normaliser derives the anchor and padding
+        // rows from the MEASURED body span. Doing it earlier would resolve them
+        // against the pre-insert body and write to the wrong rows.
+        var reservedRowsNormalised = _rowHeightNormaliser.Normalise(
+            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            GanttCatalogues.MetricDefault("SplitterHeightPt"),
+            GanttCatalogues.MetricDefault("SpacerHeightPt"),
+            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+            GanttCatalogues.MetricDefault("YearBandHeightPt"),
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt")).Succeeded;
+
+        return GanttRowInsertOutcome.Ok(
+            newRow is null ? 1 : GetRowIndex(newRow),
+            paddingRowReserved,
+            reservedRowsNormalised);
     }
 
     /// <summary>

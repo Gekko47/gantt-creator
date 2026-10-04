@@ -14,6 +14,52 @@ public class GanttRowInserterTests
         public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
+    /// <summary>
+    /// A successful row-height normalisation, with the targets recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The inserter now normalises the reserved rows below the body after every insert
+    /// (ADR-0038 D1), and these tests fake the COM seams on the INSERTER only. Left
+    /// unstubbed, the real <see cref="ExcelRowHeightNormaliser"/> would run against
+    /// this file's bare <see cref="Moq"/> workbook and throw out of
+    /// <c>Insert</c> -- which is not what these tests are about and not a behaviour the
+    /// inserter may have: a helper on the Ribbon path must never escape into the
+    /// callback (ADR-0008).
+    /// </para>
+    /// <para>
+    /// Recording the targets is what lets
+    /// <c>The_appended_row_normalises_the_reserved_rows_below_the_body</c> assert the
+    /// anchor and padding tokens actually reach the normaliser rather than merely that
+    /// something was called.
+    /// </para>
+    /// </remarks>
+    private sealed class StubRowHeightNormaliser : IRowHeightNormalisationPort
+    {
+        public bool Succeeds { get; set; } = true;
+
+        public double? AnchorRowHeightPt { get; private set; }
+
+        public double? PaddingRowHeightPt { get; private set; }
+
+        public RowHeightNormalisationOutcome Normalise(
+            double managedHeightPt,
+            double splitterHeightPt,
+            double spacerHeightPt,
+            double headerHeightPt,
+            double reservedRowHeightPt,
+            double paddingRowHeightPt,
+            double anchorRowHeightPt)
+        {
+            PaddingRowHeightPt = paddingRowHeightPt;
+            AnchorRowHeightPt = anchorRowHeightPt;
+            return Succeeds
+                ? RowHeightNormalisationOutcome.Ok(2)
+                : RowHeightNormalisationOutcome.Refused(
+                    RowHeightNormalisationRefusalReason.AnchorRowNotOwned);
+        }
+    }
+
     private sealed class TestableInserter(
         Excel.Application application,
         IWorksheetProtectionGuard guard,
@@ -39,7 +85,9 @@ public class GanttRowInserterTests
         Action<Excel.ListObject, int> insertWorksheetRowAt,
         Func<Excel.ListRows, int, Excel.ListRow> listRowAt,
         List<int> insertedWorksheetRows,
-        ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser)
+        ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
+        IRowHeightNormalisationPort? rowHeightNormaliser = null)
+        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser)
     {
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
         private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt = tableAt;
@@ -183,6 +231,12 @@ public class GanttRowInserterTests
         /// <summary>Body-row indexes the adapter read back after inserting.</summary>
         public List<int> ListRowAtCalls { get; } = [];
 
+        /// <summary>
+        /// The stub normaliser handed to every built inserter unless a test passes its
+        /// own, so the reserved rows can be asserted without driving real COM.
+        /// </summary>
+        public StubRowHeightNormaliser RowHeightNormaliser { get; } = new();
+
         public void RecordWrittenValue(object value) => WrittenValue = value;
 
         public void RecordAddRow() => AddRowCalls++;
@@ -229,7 +283,8 @@ public class GanttRowInserterTests
 
         public TestableInserter Build(
             IWorksheetProtectionGuard guard,
-            ITypeOptionsMaterialiser? typeOptionsMaterialiser = null) => new(
+            ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
+            StubRowHeightNormaliser? rowHeightNormaliser = null) => new(
             Application.Object,
             guard,
             (_, _) => Worksheet.Object,
@@ -301,7 +356,8 @@ public class GanttRowInserterTests
                 return NewRow.Object;
             },
             InsertedWorksheetRows,
-            typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser());
+            typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser(),
+            rowHeightNormaliser ?? RowHeightNormaliser);
     }
 
     [Fact]
@@ -754,6 +810,104 @@ public class GanttRowInserterTests
 
         // ...but the lost margin is stated rather than passed over.
         Assert.False(outcome.PaddingRowReserved);
+    }
+
+    /// <summary>
+    /// The appended row normalises the reserved rows below the body, with the anchor
+    /// row's OWN token (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the behaviour the live gate demanded.</b> The
+    /// reserved rows were only ever normalised through Refresh, so on the Add-Activity
+    /// path they kept Excel's default height: measured live, every row below the table
+    /// read <b>15pt</b> after Initialise plus three appends, leaving the chart's bottom
+    /// margin at ~30pt of visible sheet instead of the 6pt the layout reserves.
+    /// </para>
+    /// <para>
+    /// Asserted on the VALUES the stub received, not merely that normalisation was
+    /// called: an inserter that passed the padding height for both rows would satisfy a
+    /// presence check while making the anchor a 5.75pt strip rather than a sub-row
+    /// anchor.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_appended_row_normalises_the_reserved_rows_below_the_body()
+    {
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.ReservedRowsNormalised);
+
+        // The two reserved rows are distinguished, not given one shared height.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
+            graph.RowHeightNormaliser.AnchorRowHeightPt);
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+            graph.RowHeightNormaliser.PaddingRowHeightPt);
+        Assert.NotEqual(
+            graph.RowHeightNormaliser.AnchorRowHeightPt,
+            graph.RowHeightNormaliser.PaddingRowHeightPt);
+
+        // And the strip they reserve is still the designed total, so this cannot be
+        // satisfied by two rows that happen to sum correctly by accident.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("ChartOuterPaddingPt"),
+            (graph.RowHeightNormaliser.AnchorRowHeightPt ?? 0d)
+                + (graph.RowHeightNormaliser.PaddingRowHeightPt ?? 0d),
+            6);
+    }
+
+    /// <summary>
+    /// A REFUSED normalisation is reported without undoing the insert, because the row
+    /// is already in the sheet (ADR-0008, ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// Reporting the whole insert as failed would be a lie the user can disprove by
+    /// looking at the sheet -- the same reasoning as the existing
+    /// <c>RowWriteRefused</c> case. The outcome carries the fact so
+    /// <c>AddRowCommand</c> can say the margin may be the wrong size and that a Refresh
+    /// corrects it.
+    /// </remarks>
+    [Fact]
+    public void A_refused_reserved_row_normalisation_is_reported_and_the_row_keeps_its_data()
+    {
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+        graph.RowHeightNormaliser.Succeeds = false;
+
+        TestableInserter inserter = graph.Build(guard.Object);
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        // The insert stands: the row was written and nothing was rolled back...
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, outcome.BodyIndex);
+        Assert.NotNull(graph.WrittenValue);
+
+        // ...and the un-normalised margin is stated rather than passed over.
+        Assert.False(outcome.ReservedRowsNormalised);
+
+        // A refusal is not silently "mostly fine": it must not read as the success
+        // case, which is what the padding-row tests above guard against for their own
+        // field.
+        Assert.True(outcome.PaddingRowReserved);
     }
 
     /// <summary>

@@ -51,6 +51,16 @@ internal static class AddRowCommand
                 Present(presenter, PaddingRowLostMessage);
             }
 
+            // The reserved rows below the body carry the chart's bottom margin and
+            // the plot's bottom anchor. If they were not restored, the row IS in the
+            // sheet but the margin is the wrong size, which the user cannot diagnose
+            // from the sheet alone -- so it is reported rather than left to the next
+            // Refresh to surprise them with (ADR-0008, ADR-0038 D1).
+            if (!outcome.ReservedRowsNormalised)
+            {
+                Present(presenter, ReservedRowsNotNormalisedMessage);
+            }
+
             return;
         }
 
@@ -62,6 +72,27 @@ internal static class AddRowCommand
     internal const string PaddingRowLostMessage =
         "Gantt Creator added the row, but could not reserve the blank row below the table, "
         + "so the chart's bottom margin has been lost. Refresh the chart, or undo the row and try again.";
+
+    /// <summary>
+    /// The message shown when the reserved rows below the body were not restored to
+    /// their tokens (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="PaddingRowLostMessage"/> because the two are different
+    /// failures with different remedies: one means the row was ABSORBED by the table
+    /// and the margin is gone, the other means the rows are still there but at the
+    /// wrong height, which a Refresh repairs.
+    /// </para>
+    /// <para>
+    /// The remedy really is Refresh, which is why this is a message rather than a
+    /// refusal -- the row was added, the sheet is cosmetically wrong, and nothing was
+    /// lost. Saying so is what stops the user hunting for a missing row.
+    /// </para>
+    /// </remarks>
+    internal const string ReservedRowsNotNormalisedMessage =
+        "Gantt Creator added the row, but could not set the height of the blank rows below the table, "
+        + "so the chart's bottom margin may be the wrong size. Refresh the chart to correct it.";
 
     /// <summary>
     /// Shows a message, degrading to silence when the host refuses to present it. A

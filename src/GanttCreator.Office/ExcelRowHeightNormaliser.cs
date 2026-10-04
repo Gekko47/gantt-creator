@@ -625,6 +625,15 @@ public class ExcelRowHeightNormaliser(
     /// comparison reads <see cref="GanttTableSchema.TableName"/> and is
     /// case-insensitive, because Excel preserves whatever case a table was created
     /// with.
+    /// <para>
+    /// <b>A null <c>ListObjects</c> collection is skipped, not dereferenced.</b> The
+    /// host does not return null there, but this method is now reached through the
+    /// Add-Activity path (ADR-0038), and a throw from a helper on that path would
+    /// escape into the Ribbon callback -- which ADR-0008 forbids. Degrading to "not
+    /// found" turns an unexpected collection into the typed
+    /// <see cref="RowHeightNormalisationRefusalReason.TableMissing"/> refusal, which
+    /// the caller already knows how to report.
+    /// </para>
     /// </remarks>
     internal virtual bool TryFindTable(
         Excel.Sheets sheets,
@@ -635,12 +644,12 @@ public class ExcelRowHeightNormaliser(
         table = null;
         foreach (var entry in sheets)
         {
-            if (entry is not Excel.Worksheet candidate)
+            if (entry is not Excel.Worksheet candidate || candidate.ListObjects is not { } listObjects)
             {
                 continue;
             }
 
-            foreach (Excel.ListObject candidateTable in candidate.ListObjects)
+            foreach (Excel.ListObject candidateTable in listObjects)
             {
                 if (string.Equals(
                     candidateTable.Name,

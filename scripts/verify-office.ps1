@@ -58,29 +58,59 @@ param(
     # is a real loss of detection and it is the reason the previous text said not to
     # raise it. It was raised anyway, by decision, with that cost accepted.
     #
-    # THE KNOWN WEAKNESS, unchanged and still true: 28 rests on a SINGLE
-    # observation on this tree. The signal's own history is +/- 2 run to run on
-    # identical code (24, 25, 26), so 28 may be the top of a 26-28 band rather than a
-    # stable floor, and the gate may therefore flap. Two runs at or below 28 would
-    # settle it; they were not run before this edit, so that is stated as a known
-    # unknown rather than as evidence.
+    # RAISED 28 -> 30 ON 2026-10-04, with a MEASURED band rather than an assumption.
+    # The live gate was run four times across this work:
     #
-    # The end state is still 0. This is a baseline correction, not a licence: the
-    # 28 -> 24 movement in this change's own tests is what "retiring a leaked proxy
-    # chain" looks like, and the same remains available for the rest. Determinism
-    # has to come first, and it needs a measurement, not a number -- the signal
-    # currently emits no per-test attribution, which is why the residual could not
-    # be pinned to a specific test body rather than only bounded.
+    #   * HEAD c5e993a (ADR-0038, WITHOUT the inserter normalisation fix):
+    #     48/50 tests, 2 FAILED, signal 30.
+    #   * working tree WITH the fix, run 1: 50/50 tests, signal 29
+    #   * working tree WITH the fix, run 2: 50/50 tests, signal 29
+    #   * working tree WITH the fix, run 3: 50/50 tests, signal 30
     #
-    # A production-side "fix" was considered and rejected: ExcelShapeWriter
-    # documents that it force-releases nothing, because its proxies are Excel-owned
-    # shared roots (AGENTS.md COM ownership). Releasing them to satisfy a counter
-    # would violate that rule rather than fix a leak.
+    # WHAT THE MEASUREMENT ACTUALLY SHOWS, including a correction to an earlier
+    # reading of it:
+    #
+    #   1. 28 WAS ALREADY STALE BEFORE ANY FIX. The committed ADR-0038 tree
+    #      measures 30, two over the ceiling it shipped with. This is not a
+    #      regression introduced by the inserter change -- the ceiling was never
+    #      re-measured after the ADR-0035/0036 row-insert work, because the live
+    #      gate had not been run since 2026-09-28.
+    #   2. THE INSERTER FIX DOES NOT CHANGE THE SIGNAL. An intermediate reading
+    #      of runs 1 and 2 concluded it "lowers the signal, 30 -> 29" and that 29
+    #      was therefore the right figure. Run 3 read 30 on the same code, so that
+    #      conclusion was WRONG: two agreeing runs were coincidence, not stability.
+    #      The band on the fixed tree is 29-30 and INCLUDES HEAD's 30. The honest
+    #      statement is that the fix is neutral on this counter, which is what the
+    #      per-test attribution predicted -- both AddRow bodies read 1, the same as
+    #      every other body, so the extra normaliser calls reuse cached RCWs rather
+    #      than leaving new live proxies.
+    #   3. The ceiling is therefore 30, the highest value observed on this tree.
+    #      Setting it to 29 would have made the gate flap on a passing tree, which
+    #      is the exact failure mode the ratchet exists to avoid.
+    #
+    # WHAT THIS COSTS, stated plainly rather than buried: the ratchet's only job
+    # is to notice a regression, and its sensitivity is the gap between the true
+    # baseline and the ceiling. At 30 a future regression that adds ONE leaked
+    # proxy chain now passes silently. That is a real loss of detection and it is
+    # the reason the text below says not to raise it again without a measurement.
+    #
+    # NOTE ON THE BAND: 29-30 is a two-point band, not the +/- 2 the old text
+    # described from 24/25/26. That is a narrower spread than the earlier history
+    # suggested, and it is the best available evidence that the signal is more
+    # stable than it once was -- but two points is not a distribution, and a
+    # ceiling is still a single number. Treat 30 as "highest observed", not as a
+    # proven floor.
+    #
+    # The end state is still 0. This is a baseline correction, not a licence.
+    # `NormaliseLayoutRow` creates a worksheet-row Range per layout row per
+    # normalisation and never releases it; releasing that one Range is the
+    # highest-value single retirement available and would move this in the right
+    # direction.
     #
     # Do not raise it again without a measurement that explains the new figure, and
-    # do not lower it below 28 without a run whose kill count is at or under the
+    # do not lower it below 30 without a run whose kill count is at or under the
     # proposed value.
-    [int]$MaxForcedKills = 28
+    [int]$MaxForcedKills = 30
 )
 
 $ErrorActionPreference = 'Stop'

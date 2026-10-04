@@ -37,11 +37,17 @@ public enum GanttRowInsertRefusalReason
 /// Whether the chart's bottom padding row survived the insert. False means the table
 /// absorbed it, which is a visible defect rather than a cosmetic one.
 /// </param>
+/// <param name="ReservedRowsNormalised">
+/// Whether the reserved rows below the body were restored to their tokens after the
+/// insert (ADR-0038 D1). False means they still carry whatever height they had, which
+/// leaves the chart's bottom margin the wrong size.
+/// </param>
 public sealed record GanttRowInsertOutcome(
     bool Succeeded,
     int? BodyIndex,
     GanttRowInsertRefusalReason? Refusal,
-    bool PaddingRowReserved = true)
+    bool PaddingRowReserved = true,
+    bool ReservedRowsNormalised = true)
 {
     /// <summary>Creates a successful insertion outcome.</summary>
     /// <param name="bodyIndex">The new row's one-based body index.</param>
@@ -50,9 +56,15 @@ public sealed record GanttRowInsertOutcome(
     /// table absorbed it, which is a visible defect rather than a cosmetic one, so
     /// it is reported instead of being passed over.
     /// </param>
+    /// <param name="reservedRowsNormalised">
+    /// Whether the reserved rows below the body were restored to their tokens.
+    /// </param>
     /// <returns>A successful outcome.</returns>
-    public static GanttRowInsertOutcome Ok(int bodyIndex, bool paddingRowReserved = true) =>
-        new(true, bodyIndex, null, paddingRowReserved);
+    public static GanttRowInsertOutcome Ok(
+        int bodyIndex,
+        bool paddingRowReserved = true,
+        bool reservedRowsNormalised = true) =>
+        new(true, bodyIndex, null, paddingRowReserved, reservedRowsNormalised);
 
     /// <summary>Creates a refusal outcome.</summary>
     /// <param name="refusal">The refusal reason.</param>
