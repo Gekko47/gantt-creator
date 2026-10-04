@@ -362,6 +362,33 @@ public class WorkbookInitialiserTests
                 times);
 
         /// <summary>
+        /// Makes the table's NAME write throw, as a host that refuses the rename does.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The window is between <c>ListObjects.Add</c> and the presentation writes: the
+        /// table exists and is not yet named <c>tblGanttData</c>, so it is invisible to
+        /// the rollback's name lookup. That is the state this fake has to produce for the
+        /// by-reference rollback to be observable at all.
+        /// </para>
+        /// <para>
+        /// The exception is produced from an HRESULT rather than constructed, because
+        /// <c>COMException</c> has no public constructor (CA2201).
+        /// </para>
+        /// </remarks>
+        internal void FailTableNameWrite()
+        {
+            var exception = (System.Runtime.InteropServices.COMException?)
+                System.Runtime.InteropServices.Marshal.GetExceptionForHR(unchecked((int)0x800A03EC))
+                ?? throw new InvalidOperationException(
+                    "The runtime did not produce a COMException for HRESULT 0x800A03EC.");
+
+            // Re-point the setter at a throwing one. The `Name` GETTER keeps returning
+            // null here, which is precisely the unnamed-table state being simulated.
+            _ = Table.SetupSet(t => t.Name = It.IsAny<string>()).Throws(exception);
+        }
+
+        /// <summary>
         /// Verifies the sheet-scoped plot-anchor defined-name write: when
         /// <paramref name="expectedRefersTo"/> is non-null it must have been
         /// written with exactly that <c>refersTo</c>, the given number of
@@ -934,6 +961,45 @@ public class WorkbookInitialiserTests
 
         // The table was created, so the rollback had something to remove — and it did.
         // Without the fix this Delete is never called and the table survives.
+        active.Table.Verify(t => t.Delete(), Times.Once);
+    }
+
+    /// <summary>
+    /// A host that refuses the table's RENAME still rolls the table back, even though it
+    /// never received the name the rollback used to look it up by.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the positive test for recording the creation immediately after
+    /// <c>ListObjects.Add</c>, and the rename is the only step that can fail
+    /// <em>between</em> the Add and the first presentation write.
+    /// </para>
+    /// <para>
+    /// Two things have to hold, and the second is the one a boolean alone cannot give.
+    /// The <c>createdTable</c> flag must be set before the rename is attempted, or the
+    /// catch block never rolls the table back at all. And the rollback must delete the
+    /// table it was HANDED rather than searching for one named
+    /// <c>tblGanttData</c> — a table whose rename never landed still carries a
+    /// host-assigned name, so the lookup finds nothing and silently keeps it. That
+    /// surviving table is what makes the next Initialise meet a table the user never
+    /// asked for.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refused_table_rename_still_rolls_back_the_table_that_never_got_its_name()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        // The host refuses the rename: the table exists, but under a name of its own.
+        active.FailTableNameWrite();
+
+        Assert.Throws<System.Runtime.InteropServices.COMException>(() => graph.Build(active).Initialise());
+
+        // Removed by reference, so the name never having landed cannot hide it. Without
+        // the by-reference rollback the name lookup finds nothing and this is zero.
         active.Table.Verify(t => t.Delete(), Times.Once);
     }
 

@@ -205,6 +205,7 @@ public class ExcelWorkbookInitialiser(
         var wroteTitle = false;
         var wroteHeader = false;
         var createdTable = false;
+        ListObject? createdDataTable = null;
         var createdConfigSheet = false;
         var wrotePlotAnchor = false;
 
@@ -222,16 +223,22 @@ public class ExcelWorkbookInitialiser(
             WriteHeaderRow(target);
             wroteHeader = true;
 
-            // The table is split into "create" and "present" so `createdTable` can be
-            // set BETWEEN them. ApplyColumnPresentation hides and locks the table's
-            // columns, and a host that refuses one of those writes throws from inside
-            // it — while `createdTable` was still false, so the catch block rolled back
-            // only the header row and left a real, half-presented `tblGanttData` on the
-            // sheet behind a refusal that promised no mutation. Recording the creation
-            // first makes that path roll the table back too.
-            ListObject table = CreateDataTable(target);
+            // The table is split into "add" and "present" so `createdTable` can be set
+            // BETWEEN them. Everything after `ListObjects.Add` can throw -- the host
+            // refuses a rename or a presentation write on a locked or otherwise hostile
+            // target -- and each of those throws while `createdTable` was still false,
+            // so the catch block rolled back only the header row and left a real
+            // `tblGanttData` on the sheet behind a refusal that promised no mutation.
+            // Recording the creation immediately after the Add makes every one of those
+            // paths roll the table back too.
+            //
+            // The reference itself is recorded as well, because a table whose rename
+            // never landed is not findable by name and the rollback must still remove
+            // it -- see RollBackDataTable.
+            createdDataTable = AddDataTable(target);
             createdTable = true;
-            ApplyColumnPresentation(table);
+            PresentDataTable(createdDataTable);
+            ApplyColumnPresentation(createdDataTable);
 
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
@@ -245,7 +252,8 @@ public class ExcelWorkbookInitialiser(
                     wroteHeader,
                     wroteTitle,
                     createdTable,
-                    createdConfigSheet);
+                    createdConfigSheet,
+                    createdDataTable);
 
                 // Map each reason explicitly. A catch-all "everything else is
                 // TargetProtected" would tell the user their sheet is protected
@@ -276,7 +284,7 @@ public class ExcelWorkbookInitialiser(
             {
                 RollBackPlotAnchorName(target);
                 RollBackConfigurationSheet(sheets);
-                RollBackDataTable(target);
+                RollBackDataTable(target, createdDataTable);
                 RollBackHeaderRow(target);
                 RollBackTitleRow(target);
                 return typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.NoActiveWorkbook
@@ -300,7 +308,7 @@ public class ExcelWorkbookInitialiser(
 
             if (createdTable)
             {
-                RollBackDataTable(target);
+                RollBackDataTable(target, createdDataTable);
             }
 
             if (wroteHeader)
@@ -334,6 +342,10 @@ public class ExcelWorkbookInitialiser(
     /// <param name="wroteTitle">Whether the reserved title row was written.</param>
     /// <param name="createdTable">Whether the data table was created.</param>
     /// <param name="createdConfigSheet">Whether the configuration sheet was created.</param>
+    /// <param name="createdDataTable">
+    /// The table returned by <see cref="AddDataTable"/>, so a table that never received
+    /// its name is still removed rather than looked up and missed.
+    /// </param>
     private void RollBackForCatalogueRefusal(
         Worksheet target,
         Sheets sheets,
@@ -341,7 +353,8 @@ public class ExcelWorkbookInitialiser(
         bool wroteHeader,
         bool wroteTitle,
         bool createdTable,
-        bool createdConfigSheet)
+        bool createdConfigSheet,
+        ListObject? createdDataTable)
     {
         // The refusal is translated by the caller; the parameter keeps the
         // refusal's evidence attached to the rollback for debugging.
@@ -353,7 +366,7 @@ public class ExcelWorkbookInitialiser(
 
         if (createdTable)
         {
-            RollBackDataTable(target);
+            RollBackDataTable(target, createdDataTable);
         }
 
         if (wroteHeader)
@@ -638,12 +651,29 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Deletes the table named <c>GanttTableSchema.TableName</c> on
-    /// <paramref name="target"/>, if it exists. Used to roll back
-    /// <see cref="CreateDataTable"/> when a later mutation fails.
+    /// Deletes the add-in's own table on <paramref name="target"/>. Used to roll back
+    /// <see cref="AddDataTable"/> when a later mutation fails.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void RollBackDataTable(Worksheet target)
+    /// <param name="created">
+    /// The table returned by <see cref="AddDataTable"/>, or <see langword="null"/> to
+    /// look the table up by name.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The reference is what makes a PARTIAL table removable. The lookup matches on
+    /// <c>GanttTableSchema.TableName</c>, so a table whose rename never landed -- still
+    /// carrying a host-assigned name -- is invisible to it, and the rollback would
+    /// silently keep it. That is the exact state a refused
+    /// <c>table.Name</c> write leaves behind, and it is what makes a retry then meet a
+    /// table the user never asked for.
+    /// </para>
+    /// <para>
+    /// The lookup remains the fallback for the callers that reach this without a
+    /// reference, so the behaviour is unchanged where the table is fully named.
+    /// </para>
+    /// </remarks>
+    private void RollBackDataTable(Worksheet target, ListObject? created = null)
     {
         if (_application is null)
         {
@@ -658,7 +688,7 @@ public class ExcelWorkbookInitialiser(
             // worksheet column behind it, so restoring afterwards would find no
             // table to read the columns from and would leave the user's engine
             // columns hidden after a refused Initialise.
-            if (FindDataTable(target) is { } owned)
+            if ((created ?? FindDataTable(target)) is { } owned)
             {
                 RestoreColumnVisibility(owned);
                 owned.Delete();
@@ -849,35 +879,50 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Creates the <c>tblGanttData</c> table over the header row with
-    /// header-name behaviour, then names it from the Core schema constant.
-    /// The R2.7 appearance settings (no autofilter dropdowns, no banded
-    /// rows) keep the data panel visually neutral for the live Gantt
-    /// (ADR-0007 D8).
+    /// Adds the <c>tblGanttData</c> table over the header row, and returns it
+    /// WITHOUT naming or presenting it.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    /// <returns>The created table, so the caller can present it.</returns>
+    /// <returns>The added table.</returns>
     /// <remarks>
-    /// Returns the table rather than presenting it. The caller must set its
-    /// <c>createdTable</c> rollback flag before <c>ApplyColumnPresentation</c> runs,
-    /// which is only possible if the two are separate steps.
+    /// <para>
+    /// Deliberately stops at the Add. Everything after it can throw, and the caller
+    /// must be able to record the creation before any of it runs -- otherwise a
+    /// refused rename leaves a real table on a sheet whose rollback promised no
+    /// mutation, and the retry then finds a table the user never asked for.
+    /// </para>
+    /// <para>
+    /// Splitting here is what makes the partial state <em>findable</em> as well:
+    /// <see cref="RollBackDataTable(Worksheet, ListObject?)"/> takes the returned
+    /// reference rather than searching by name, so a table whose rename never landed
+    /// is still removed.
+    /// </para>
     /// </remarks>
-    private ListObject CreateDataTable(Worksheet target)
+    private ListObject AddDataTable(Worksheet target)
     {
         var columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
         ListObjects listObjects = target.ListObjects;
-        ListObject table = listObjects.Add(
+        return listObjects.Add(
             XlListObjectSourceType.xlSrcRange,
             tableRange,
             Type.Missing,
             XlYesNoGuess.xlYes,
             Type.Missing);
+    }
+
+    /// <summary>
+    /// Names the table from the Core schema constant and applies the R2.7 appearance
+    /// settings (no autofilter dropdowns, no banded rows) that keep the data panel
+    /// visually neutral for the live Gantt (ADR-0007 D8).
+    /// </summary>
+    /// <param name="table">The added table.</param>
+    private static void PresentDataTable(ListObject table)
+    {
         table.Name = GanttTableSchema.TableName;
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
-        return table;
     }
 
     /// <summary>
