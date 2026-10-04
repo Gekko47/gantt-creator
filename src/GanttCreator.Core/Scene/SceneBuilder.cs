@@ -1000,12 +1000,30 @@ public static class SceneBuilder
         // so it extends to the closing line rather than stopping at the plot's own
         // bottom edge. Its LABEL corners stay against plotBounds -- extending that box
         // would drag every corner label down with it.
+        //
+        // ADR-0037 D1, applied here for the same reason it is applied to the bands:
+        // the line's top is lifted into the header row so a body insert at the top
+        // STRETCHES it rather than sliding it. Measured live 2026-10-04
+        // (scripts/probe-delineator-top.ps1): unlifted, TopDelta +15.75 with
+        // HeightDelta 0 and the anchor walking D2 -> D3; lifted 0.5pt, TopDelta 0
+        // with HeightDelta +15.75 and the anchor holding at D1.
+        //
+        // THE TWO ARE DELIBERATELY INDEPENDENT, and that is the asymmetry this whole
+        // mechanism exists to encode. The top lift is UNCONDITIONAL: it reaches into
+        // an existing row, so it needs no reservation and works with no anchor row at
+        // all. The bottom extension IS conditional on the anchor row, because only a
+        // reserved row can create the cell anchor below the insert point it needs.
+        // Tying the top to the anchor row would leave the line sliding again whenever
+        // the anchor row is configured to zero -- the opposite of what that token is for.
         double? lineBottomPt = PlotSpanGeometry.HasAnchorRow(request.ChartAnchorRowHeightPt)
             ? PlotSpanGeometry.ClosingLineBottomPt(
                 plotBounds.Bottom,
                 request.ChartAnchorRowHeightPt,
                 request.MajorBoundaryPt)
             : null;
+        var lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
+            plotBounds,
+            request.PlotBandHeaderOverlapPt).Y;
         // Grouping is by (date, resolved style), and the members inside a group are
         // ordered by the stable row ID. The input is not ordered -- the R3.12
         // determinism contract is that a shuffled input produces a byte-identical
@@ -1030,7 +1048,8 @@ public static class SceneBuilder
                     request.LabelGapPt,
                     request.Metrics!,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
-                    LineBottomPt: lineBottomPt)),
+                    LineBottomPt: lineBottomPt,
+                    LineTopPt: lineTopPt)),
             ];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(

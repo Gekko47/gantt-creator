@@ -35,6 +35,17 @@ public sealed class SceneBuilderTests
     /// </summary>
     private const double AnchorRowPt = 0.25;
 
+    /// <summary>
+    /// The header-row overlap the plot-spanning shapes are lifted by (ADR-0037 D1).
+    /// </summary>
+    /// <remarks>
+    /// Named so the delineator's lifted top is asserted as the computed overlap rather
+    /// than as a literal that happens to match today. The delineator's top was left
+    /// unlifted until a live probe on 2026-10-04 showed it sliding where the bands
+    /// beside it stretched.
+    /// </remarks>
+    private const double TopOverlapPt = 0.5;
+
     private static GanttStyleDefinition Style(string key, double height, string textColour = "#000000") =>
         new(
             key,
@@ -513,8 +524,73 @@ public sealed class SceneBuilderTests
         SceneLine line = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.ZLayer == ZLayer.Delineator);
-        Assert.Equal(_plotBounds.Top, line.From.Y);
+        Assert.Equal(_plotBounds.Top - TopOverlapPt, line.From.Y);
         Assert.Equal(_plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2), line.To.Y);
+    }
+
+    /// <summary>
+    /// The delineator's top lift is INDEPENDENT of the anchor row, and both ends are
+    /// asserted together (ADR-0037 D1 / ADR-0038 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the test for the asymmetry, which is the finding most likely to be
+    /// re-broken by a well-meaning cleanup. The two ends work for DIFFERENT reasons
+    /// and are therefore configured by DIFFERENT tokens: the top reaches into an
+    /// existing header row and needs no reservation, while the bottom needs the
+    /// reserved anchor row because only a reserved row can create the cell anchor
+    /// below the insert point.
+    /// </para>
+    /// <para>
+    /// <b>The zero-anchor-row case is the load-bearing half.</b> It sets the anchor row
+    /// to zero -- removing the bottom extension entirely -- and asserts the top is
+    /// STILL lifted. A "symmetrisation" that tied the top to the anchor row, or a
+    /// builder that simply extended the plot box at both ends, would leave the
+    /// delineator sliding again the moment the anchor row is configured away, which is
+    /// the opposite of what that token is for.
+    /// </para>
+    /// <para>
+    /// The label corners are asserted NOT to move with the line: §22/§24 place them
+    /// against <c>PlotBounds</c>, so widening the plot box to carry the overhang would
+    /// drag every corner label with it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_delineator_lifts_into_the_header_independently_of_the_anchor_row()
+    {
+        GanttEvent only = Event(
+            1,
+            GanttEntityType.Delineator,
+            new DateOnly(2024, 1, 8),
+            null,
+            styleKey: null);
+
+        // No anchor row: the bottom extension is off entirely.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(only) with { ChartAnchorRowHeightPt = 0 });
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
+
+        // The TOP is lifted even with no anchor row -- this is the assertion that
+        // fails if the two ends are ever coupled.
+        Assert.Equal(_plotBounds.Y - TopOverlapPt, line.From.Y, precision: 9);
+
+        // ...and the bottom is back on the plot's own edge, because the anchor row
+        // that would have carried it past is not there.
+        Assert.Equal(_plotBounds.Bottom, line.To.Y, precision: 9);
+
+        // The closing line is not emitted either, so the two switch off as a package.
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Primitives.OfType<SceneLine>(),
+            candidate => string.Equals(candidate.PrimitiveId, "chart:plot-closing", StringComparison.Ordinal));
+
+        // The label corner stays against PlotBounds: a lifted TOP must not drag it up.
+        SceneText label = Assert.Single(
+            outcome.Result.Scene.Primitives.OfType<SceneText>(),
+            candidate => candidate.PrimitiveId.EndsWith(":delineator-label", StringComparison.Ordinal));
+        Assert.Equal(_plotBounds.Y, label.TextBounds.Y, precision: 9);
     }
 
 
@@ -1044,16 +1120,19 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
 
-        // §24: the line spans PlotBounds.Top down to the plot's closing boundary (ADR-0038
-        // D2). The TOP is still the plot's own top -- §24 forbids running the line
-        // through the header bands -- while the BOTTOM extends through the reserved
-        // anchor row so the line shares the bands' stretch behaviour. Leaving it at the
-        // plot's own bottom would make this the one full-height line still stopping at
-        // the old footer.
+        // §24: the line spans PlotBounds.Top lifted into the header row (ADR-0037 D1) down
+        // to the plot's closing boundary (ADR-0038 D2). The TOP is asserted too: the
+        // delineator was originally left unlifted, and a live probe
+        // (scripts/probe-delineator-top.ps1) showed that geometry SLID on a top insert
+        // (TopDelta +15.75, HeightDelta 0) while the bands beside it stretched. It is
+        // the one plot-spanning shape that had been left on the header/body boundary.
+        //
+        // Both ends are asserted, so a builder that lifted one and not the other cannot
+        // pass -- and the lift is asserted as the computed overlap, not a literal.
         SceneLine line = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
-        Assert.Equal(_plotBounds.Y, line.From.Y, precision: 9);
+        Assert.Equal(_plotBounds.Y - TopOverlapPt, line.From.Y, precision: 9);
         Assert.Equal(
             _plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2),
             line.To.Y,
