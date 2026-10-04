@@ -27,6 +27,28 @@ public enum GanttRowInsertRefusalReason
     /// description of the state.
     /// </remarks>
     RowWriteRefused = 4,
+
+    /// <summary>
+    /// The host refused the worksheet-row insert on the POSITIONAL branch, so no row
+    /// was added and nothing was written.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is deliberately separate from <see cref="RowWriteRefused"/>, and the
+    /// distinction is the whole point. On the positional branch the adapter reads the
+    /// row back by index (<c>GetListRowAt</c>), so continuing past a refused insert
+    /// would aim the scaffold write at the user's <em>existing</em> row at that
+    /// position — silent data loss reported as success. Refusing first is the only
+    /// honest outcome, and it means "nothing happened", which is what the other
+    /// refusals above already say.
+    /// </para>
+    /// <para>
+    /// The append branch never produces this: its <c>AddRow</c> creates a genuine new
+    /// row even when the push-down below the table failed, so the row exists and the
+    /// lost padding row is reported through <c>PaddingRowReserved</c> instead.
+    /// </para>
+    /// </remarks>
+    RowInsertRefused = 5,
 }
 
 /// <summary>The typed result of a row insertion.</summary>

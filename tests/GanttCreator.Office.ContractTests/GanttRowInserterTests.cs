@@ -7,6 +7,26 @@ namespace GanttCreator.Office.ContractTests;
 /// <summary>Contract tests for the R2.8 row insertion adapter.</summary>
 public class GanttRowInserterTests
 {
+    /// <summary>
+    /// Which of the row-creation seams the host refuses, so the guards around them have
+    /// positive tests. All off by default.
+    /// </summary>
+    /// <remarks>
+    /// These three calls are guarded on the same terms as <c>WriteRow</c> and were
+    /// unguarded while it was not, so each needs its own case: a guard tested only
+    /// through one of its three sites would pass with the other two removed.
+    /// </remarks>
+    /// <param name="graph">The fake to arm.</param>
+    /// <param name="seam">Which seam refuses.</param>
+    private static void RefuseRowCreationSeam(Graph graph, string seam) =>
+        graph.Refusal = seam switch
+        {
+            "AddRow" => Graph.HostRefusal.AddRow,
+            "GetListRowAt" => Graph.HostRefusal.GetListRowAt,
+            "SetRowHeight" => Graph.HostRefusal.SetRowHeight,
+            _ => Graph.HostRefusal.None,
+        };
+
     private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
     {
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
@@ -36,7 +56,23 @@ public class GanttRowInserterTests
     /// </remarks>
     private sealed class StubRowHeightNormaliser : IRowHeightNormalisationPort
     {
+        /// <summary>Creates the stub, optionally refusing through a thrown exception.</summary>
+        /// <param name="succeeds">Whether <c>Normalise</c> returns a successful outcome.</param>
+        /// <param name="throwsComException">
+        /// Whether <c>Normalise</c> throws instead of returning. The guard under test is
+        /// the <c>catch</c> around the call, and a typed refusal exercises the callee's own
+        /// return path rather than that guard — so the exception needs its own case.
+        /// </param>
+        public StubRowHeightNormaliser(bool succeeds = true, bool throwsComException = false)
+        {
+            Succeeds = succeeds;
+            ThrowsComException = throwsComException;
+        }
+
         public bool Succeeds { get; set; } = true;
+
+        /// <summary>Whether <c>Normalise</c> throws the COMException a host refusal produces.</summary>
+        public bool ThrowsComException { get; set; }
 
         public double? AnchorRowHeightPt { get; private set; }
 
@@ -53,6 +89,11 @@ public class GanttRowInserterTests
         {
             PaddingRowHeightPt = paddingRowHeightPt;
             AnchorRowHeightPt = anchorRowHeightPt;
+            if (ThrowsComException)
+            {
+                throw RefusedComException();
+            }
+
             return Succeeds
                 ? RowHeightNormalisationOutcome.Ok(2)
                 : RowHeightNormalisationOutcome.Refused(
@@ -181,6 +222,26 @@ public class GanttRowInserterTests
 
     private sealed class Graph
     {
+        /// <summary>
+        /// Which of the row-creation seams the host refuses, if any.
+        /// </summary>
+        internal enum HostRefusal
+        {
+            /// <summary>The host behaves normally.</summary>
+            None = 0,
+
+            /// <summary><c>AddRow</c> throws.</summary>
+            AddRow = 1,
+
+            /// <summary><c>GetListRowAt</c> throws.</summary>
+            GetListRowAt = 2,
+
+            /// <summary><c>SetRowHeight</c> throws.</summary>
+            SetRowHeight = 3,
+        }
+
+        /// <summary>Which row-creation seam refuses, if any.</summary>
+        internal HostRefusal Refusal { get; set; } = HostRefusal.None;
         public Mock<Excel.Application> Application { get; } = new();
         public Mock<Excel.Workbook> Workbook { get; } = new();
         public Mock<Excel.Sheets> Sheets { get; } = new();
@@ -231,8 +292,7 @@ public class GanttRowInserterTests
         /// <summary>Body-row indexes the adapter read back after inserting.</summary>
         public List<int> ListRowAtCalls { get; } = [];
 
-        /// <summary>
-        /// The stub normaliser handed to every built inserter unless a test passes its
+        /// <summary>The stub normaliser handed to every built inserter unless a test passes its
         /// own, so the reserved rows can be asserted without driving real COM.
         /// </summary>
         public StubRowHeightNormaliser RowHeightNormaliser { get; } = new();
@@ -325,6 +385,11 @@ public class GanttRowInserterTests
             rows =>
             {
                 Assert.Same(ListRows.Object, rows);
+                if (Refusal == HostRefusal.AddRow)
+                {
+                    throw RefusedComException();
+                }
+
                 AddRowCalls++;
                 CallOrder.Add("AddRow");
                 return NewRow.Object;
@@ -343,7 +408,15 @@ public class GanttRowInserterTests
                 return RowRange.Object;
             },
             () => WorksheetRowInserts++,
-            (range, heightPt) => RowHeightsWritten.Add((range, heightPt)),
+            (range, heightPt) =>
+            {
+                if (Refusal == HostRefusal.SetRowHeight)
+                {
+                    throw RefusedComException();
+                }
+
+                RowHeightsWritten.Add((range, heightPt));
+            },
             CallOrder,
             (table, row) =>
             {
@@ -352,6 +425,11 @@ public class GanttRowInserterTests
             },
             (rows, index) =>
             {
+                if (Refusal == HostRefusal.GetListRowAt)
+                {
+                    throw RefusedComException();
+                }
+
                 ListRowAtCalls.Add(index);
                 return NewRow.Object;
             },
@@ -907,6 +985,178 @@ public class GanttRowInserterTests
         // A refusal is not silently "mostly fine": it must not read as the success
         // case, which is what the padding-row tests above guard against for their own
         // field.
+        Assert.True(outcome.PaddingRowReserved);
+    }
+
+    /// <summary>
+    /// A REFUSED positional insert refuses the whole insert, before the adapter reads
+    /// back the row that now occupies the target position.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the guard, and it is the only path that can
+    /// corrupt.</b> The positional branch finds its row with
+    /// <c>GetListRowAt(rows, position)</c>, which returns whatever row already sits
+    /// there. So when the worksheet-row insert is refused, continuing would read the
+    /// USER'S EXISTING ROW and hand the bulk write a scaffold payload aimed at it: the
+    /// Id, Type, dates, and style of the new row would overwrite real schedule data,
+    /// and the command would report success.
+    /// </para>
+    /// <para>
+    /// Asserted on the absence of the read and the write, not only on the refusal: a
+    /// refusal raised <em>after</em> <c>GetListRowAt</c> would leave the data already
+    /// overwritten, so the ordering is the behaviour under test.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refused_positional_insert_refuses_before_reading_or_writing_the_existing_row()
+    {
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        TestableInserter inserter = graph.Build(NotProtected().Object);
+        inserter.PaddingRowReservedByHost = false;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowInsertRefused, outcome.Refusal);
+
+        // The dangerous read never happened, so no existing row was ever in scope for
+        // a write...
+        Assert.Empty(graph.ListRowAtCalls);
+
+        // ...and nothing was written, not even to a row the adapter would have had to
+        // guess at.
+        Assert.Null(graph.WrittenValue);
+        Assert.Empty(graph.RowHeightsWritten);
+    }
+
+    /// <summary>
+    /// The APPEND branch is unchanged by that guard: a refused push-down still adds a
+    /// row, and reports only the lost padding row.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart that stops the guard from being "refuse whenever the insert
+    /// fails". <c>AddRow</c> creates a genuine new row below the table, so the row
+    /// exists and the user asked for it; the only casualty is the chart's bottom
+    /// margin, which <c>PaddingRowReserved</c> already carries (ADR-0035 D3).
+    /// </remarks>
+    [Fact]
+    public void A_refused_append_still_adds_its_row_and_reports_only_the_lost_padding_row()
+    {
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        TestableInserter inserter = graph.Build(NotProtected().Object);
+        inserter.PaddingRowReservedByHost = false;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, graph.AddRowCalls);
+        Assert.NotNull(graph.WrittenValue);
+        Assert.False(outcome.PaddingRowReserved);
+    }
+
+    /// <summary>
+    /// A host refusal while CREATING or SIZING the row is reported, not thrown.
+    /// </summary>
+    /// <remarks>
+    /// The three sites — <c>GetListRowAt</c>, <c>AddRow</c>, <c>SetRowHeight</c> — were
+    /// unguarded while the bulk <c>WriteRow</c> beside them was guarded, so a refusal
+    /// escaped into the Ribbon callback with the worksheet row already inserted and the
+    /// sequence stopped partway. Each site is its own case: a guard tested through only
+    /// one of them would still pass with the other two removed.
+    /// </remarks>
+    [Theory]
+    [InlineData("AddRow", false)]
+    [InlineData("SetRowHeight", false)]
+    [InlineData("GetListRowAt", true)]
+    [InlineData("SetRowHeight", true)]
+    public void A_host_refusal_creating_or_sizing_the_row_is_reported_rather_than_thrown(
+        string seam,
+        bool positional)
+    {
+        var graph = new Graph();
+        RefuseRowCreationSeam(graph, seam);
+        _ = graph.Table.SetupGet(t => t.Active).Returns(positional);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        Exception? escaped = Record.Exception(() => graph.Build(NotProtected().Object)
+            .Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New));
+
+        Assert.Null(escaped);
+    }
+
+    /// <summary>
+    /// The same refusals report <c>RowWriteRefused</c>: not a throw, and not a success.
+    /// </summary>
+    /// <remarks>
+    /// The reason is load-bearing rather than cosmetic. <c>RowWriteRefused</c> is the
+    /// member that means "the row IS in the worksheet, so do not say the insert
+    /// failed" — and by this point the worksheet row really has been inserted. A
+    /// "nothing happened" reason would be a claim the user can disprove by looking at
+    /// the sheet.
+    /// </remarks>
+    [Theory]
+    [InlineData("AddRow", false)]
+    [InlineData("SetRowHeight", false)]
+    [InlineData("GetListRowAt", true)]
+    public void A_host_refusal_creating_or_sizing_the_row_is_reported_as_added_but_unfinished(
+        string seam,
+        bool positional)
+    {
+        var graph = new Graph();
+        RefuseRowCreationSeam(graph, seam);
+        _ = graph.Table.SetupGet(t => t.Active).Returns(positional);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+
+        GanttRowInsertOutcome outcome = graph.Build(NotProtected().Object)
+            .Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowWriteRefused, outcome.Refusal);
+        Assert.Null(outcome.BodyIndex);
+    }
+
+    /// <summary>
+    /// A host refusal while normalising the reserved rows leaves the insert standing and
+    /// is reported as an un-normalised margin.
+    /// </summary>
+    /// <remarks>
+    /// This call runs LAST, after the row is written, so a thrown refusal here escaped a
+    /// completed insert into the Ribbon callback. Reporting the whole insert as failed
+    /// would be the same lie as elsewhere — the row is on the sheet — and
+    /// <c>ReservedRowsNormalised</c> is exactly the field that says "the margin may be
+    /// the wrong size", which a Refresh repairs.
+    /// </remarks>
+    [Fact]
+    public void A_refused_normalisation_leaves_the_insert_successful_with_the_margin_flagged()
+    {
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+        graph.RowHeightNormaliser.ThrowsComException = true;
+
+        Exception? escaped = Record.Exception(() => graph.Build(NotProtected().Object)
+            .Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New));
+
+        Assert.Null(escaped);
+
+        // And the outcome is the success-with-a-flag one, not a refusal.
+        GanttRowInsertOutcome outcome = graph.Build(NotProtected().Object)
+            .Insert(GanttEntityType.AsPlannedActivity, GanttRowId.New);
+        Assert.True(outcome.Succeeded);
+        Assert.False(outcome.ReservedRowsNormalised);
+
+        // The row still holds its scaffold values: nothing was rolled back.
+        Assert.NotNull(graph.WrittenValue);
         Assert.True(outcome.PaddingRowReserved);
     }
 

@@ -71,7 +71,7 @@ internal static class AddRowCommand
     /// <summary>The message shown when the append consumed the chart's bottom margin.</summary>
     internal const string PaddingRowLostMessage =
         "Gantt Creator added the row, but could not reserve the blank row below the table, "
-        + "so the chart's bottom margin has been lost. Refresh the chart, or undo the row and try again.";
+        + "so the chart's bottom margin has been lost. Delete the row you just added, then add it again.";
 
     /// <summary>
     /// The message shown when the reserved rows below the body were not restored to
@@ -152,7 +152,10 @@ internal static class AddRowCommand
             "The row was not added because the Type dropdown could not be prepared. Repair the configuration and try again.",
         GanttRowInsertRefusalReason.RowWriteRefused =>
             "Gantt Creator added the row, but Excel refused a follow-up write, so the row may be "
-            + "incomplete. Undo it and try again; if it keeps failing, see the Diagnostics dialog.",
+            + "incomplete. Delete the row and add it again; if it keeps failing, see the Diagnostics dialog.",
+        GanttRowInsertRefusalReason.RowInsertRefused =>
+            "Gantt Creator could not add the row because Excel refused the insert, so no row was added. "
+            + "Try again; if it keeps failing, see the Diagnostics dialog.",
         _ => "Gantt Creator could not add the row. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 }

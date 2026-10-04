@@ -146,20 +146,54 @@ public class ExcelGanttRowInserter(
             // displaced rather than consumed -- Q4 measured that a row inserted below
             // the table does NOT auto-expand it, which is why the append branch still
             // follows its insert with ListRows.Add().
-            paddingRowReserved = insideTable
+            var inserted = insideTable
                 ? InsertWorksheetRow(
                     table,
                     GetRangeRow(GetTableRange(table)) + position!.Value)
                 : InsertWorksheetRowBelowTable(table);
 
-            newRow = insideTable ? GetListRowAt(rows, position!.Value) : AddRow(rows);
+            // A REFUSED POSITIONAL insert is not a degraded insert, it is the wrong
+            // row. `GetListRowAt(rows, position)` reads whatever row already occupies
+            // that position, so continuing would hand the host a bulk write aimed at
+            // the USER'S EXISTING ROW: the scaffold values would overwrite real
+            // schedule data and report success. This is the only path where a refusal
+            // can corrupt, so it refuses before the read.
+            //
+            // The append branch deliberately does NOT refuse here (ADR-0035 D3): its
+            // `AddRow` creates a genuine new row even when the push-down below the
+            // table failed, so the row exists and only the padding row was lost --
+            // which `paddingRowReserved` reports instead.
+            if (insideTable && !inserted)
+            {
+                return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowInsertRefused);
+            }
 
-            rowRange = GetRowRange(newRow);
+            paddingRowReserved = insideTable || inserted;
 
-            // The height is already right by Excel's format inheritance, but that is a
-            // host behaviour rather than a stated invariant. Writing the token makes it
-            // this add-in's decision.
-            SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
+            try
+            {
+                newRow = insideTable ? GetListRowAt(rows, position!.Value) : AddRow(rows);
+
+                rowRange = GetRowRange(newRow);
+
+                // The height is already right by Excel's format inheritance, but that is a
+                // host behaviour rather than a stated invariant. Writing the token makes it
+                // this add-in's decision.
+                SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                // Creating or sizing the row is the same class of host refusal as
+                // writing it, and it is guarded on the same terms (ADR-0008 D4). These
+                // three calls were unguarded while `WriteRow` was not, so a refusal
+                // here escaped into the Ribbon callback with the worksheet row already
+                // inserted -- the sequence stopped partway and nothing said so.
+                //
+                // `RowWriteRefused` is the honest reason: the row IS in the worksheet,
+                // because the insert that precedes these calls succeeded.
+                _ = ex;
+                return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
+            }
         }
 
         try
@@ -204,14 +238,29 @@ public class ExcelGanttRowInserter(
         // include the new row, because the normaliser derives the anchor and padding
         // rows from the MEASURED body span. Doing it earlier would resolve them
         // against the pre-insert body and write to the wrong rows.
-        var reservedRowsNormalised = _rowHeightNormaliser.Normalise(
-            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
-            GanttCatalogues.MetricDefault("SplitterHeightPt"),
-            GanttCatalogues.MetricDefault("SpacerHeightPt"),
-            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
-            GanttCatalogues.MetricDefault("YearBandHeightPt"),
-            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
-            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt")).Succeeded;
+        //
+        // A COMException here is a host refusal, not a fault: the row is written and
+        // must not be reported as a failed insert. It is caught here and reported as an
+        // un-normalised margin -- the same fact the normaliser's own typed refusal
+        // produces -- so a refusal cannot escape `Insert` after the row is on the
+        // sheet.
+        bool reservedRowsNormalised;
+        try
+        {
+            reservedRowsNormalised = _rowHeightNormaliser.Normalise(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                GanttCatalogues.MetricDefault("SplitterHeightPt"),
+                GanttCatalogues.MetricDefault("SpacerHeightPt"),
+                GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+                GanttCatalogues.MetricDefault("YearBandHeightPt"),
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt")).Succeeded;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _ = ex;
+            reservedRowsNormalised = false;
+        }
 
         return GanttRowInsertOutcome.Ok(
             newRow is null ? 1 : GetRowIndex(newRow),
