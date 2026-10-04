@@ -1010,6 +1010,108 @@ public sealed class SceneBuilderTests
     }
 
     /// <summary>
+    /// A label in the FINAL lane is still contained: an 18pt box on a two-slot lane
+    /// hangs below the plot, so the box is clamped up into the chart bounds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The label box is one worksheet row tall (ADR-0033 D3) and centred on its
+    /// shape's own band. On the LAST lane the second slot's bar sits within half a
+    /// row of the plot's bottom edge, so a centred 18pt box extends past it — and past
+    /// <c>ChartBounds</c>, which is the plot plus only <c>ChartOuterPaddingPt</c>. The
+    /// containment check then refused the candidate, the widest-gap fallback measured
+    /// the same out-of-bounds box, and the label was suppressed or ellipsised for
+    /// being too tall rather than too narrow. Nothing said so: the symptom was a
+    /// missing description on the bottom row.
+    /// </para>
+    /// <para>
+    /// <b>Why the box moves rather than shrinks.</b> The height is one row by owner
+    /// ruling, so it is a contract rather than something to fit; only the top moves,
+    /// and only as far as containment requires. Every other row in the fixture fits
+    /// untouched, so the change is confined to the box that would otherwise escape.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_label_in_a_two_slot_final_lane_is_contained_by_the_chart_bounds()
+    {
+        // Seven single-event lanes, then a FINAL lane holding two stacked events. The
+        // lane heights are seeded explicitly because ADR-0034 anchors each lane to its
+        // measured worksheet row, and the last row is what puts the second slot against
+        // the plot's bottom edge.
+        GanttRowId finalLane = GanttRowId.New();
+        GanttEvent[] events =
+        [
+            .. Enumerable.Range(1, 7).Select(row => Event(row) with { LaneId = GanttRowId.New() }),
+            Event(8) with { LaneId = finalLane },
+            Event(9) with { LaneId = finalLane },
+        ];
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(events) with
+            {
+                // The production token value: one worksheet row (ADR-0033 D3).
+                RowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                PlotBounds = new RectD(200, 60, 300, 132),
+                LabelStyle = new SceneStyle("DefaultText"),
+                Grid = PanelCellGrid.TryCreate(
+                    [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+                    [.. Enumerable.Repeat(18.0, 6), 24.0],
+                    18,
+                    ["Id", "Description"]).Grid!,
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The FINAL lane's second slot is the lowest bar in the chart. Located through
+        // its bar rather than by row number, so the assertion follows the geometry
+        // instead of the fixture.
+        SceneRect finalBar = scene.Primitives
+            .OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal))
+            .MaxBy(rect => rect.Bounds.Bottom)!;
+
+        SceneText finalLabel = Assert.Single(
+            scene.Primitives.OfType<SceneText>(),
+            text => text.OwnerId == finalBar.OwnerId
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        double rowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt");
+        RectD bounds = finalLabel.TextBounds;
+
+        // The height is preserved exactly; only the position moves.
+        Assert.Equal(rowHeightPt, bounds.Height);
+
+        // Non-vacuity, as arithmetic rather than a hard-coded number: the UNCLAMPED
+        // position is the box centred on its own bar, and on this final lane that box
+        // hangs below the chart. So the placed box must sit strictly higher than the
+        // centred one — Y grows downwards, so containing an overhanging box moves its
+        // top up — and the fixture must be one where the centred box really would have
+        // been refused.
+        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - rowHeightPt) / 2);
+        Assert.True(
+            centredTop + rowHeightPt > scene.ChartBounds.Bottom,
+            $"fixture does not exercise the clamp: the centred box already fits "
+            + $"({centredTop}..{centredTop + rowHeightPt} within {scene.ChartBounds.Bottom}).");
+        Assert.True(
+            bounds.Top < centredTop,
+            $"clamping must move the box UP into the chart, not down: {bounds.Top} vs centred {centredTop}.");
+
+        // Contained on every edge — the containment rule is what previously refused
+        // this candidate outright, and the reason the label vanished.
+        Assert.True(bounds.Top >= scene.ChartBounds.Top, $"label top {bounds.Top} above {scene.ChartBounds.Top}.");
+        Assert.True(
+            bounds.Bottom <= scene.ChartBounds.Bottom,
+            $"label bottom {bounds.Bottom} below {scene.ChartBounds.Bottom}.");
+
+        // The horizontal anchor is untouched by a vertical clamp: the box still hugs
+        // the bar it belongs to, so this is not a repositioning of the label itself.
+        Assert.True(
+            bounds.Left >= finalBar.Bounds.Right,
+            $"a vertical clamp must not move the label horizontally: {bounds.Left} vs bar right {finalBar.Bounds.Right}.");
+    }
+
+    /// <summary>
     /// A long label in one row does NOT govern the width of a label in another row.
     /// </summary>
     /// <remarks>

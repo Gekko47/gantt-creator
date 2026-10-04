@@ -688,8 +688,11 @@ public static class LabelPlanner
         // still correct: a bar, a milestone, and a critical overlay are each built
         // centred on their own slot, so the shape's centre IS the row's centre, and
         // a stacked event still centres on its own slot rather than the whole lane.
-        var top = shape.Top + ((shape.Height - metrics.RowHeightPt) / 2);
         var height = metrics.RowHeightPt;
+        var top = ClampInsideChart(
+            shape.Top + ((shape.Height - height) / 2),
+            height,
+            metrics.ChartBounds);
 
         switch (position)
         {
@@ -769,6 +772,47 @@ public static class LabelPlanner
         && candidate.Top >= bounds.Top - GeometryMath.Epsilon
         && candidate.Right <= bounds.Right + GeometryMath.Epsilon
         && candidate.Bottom <= bounds.Bottom + GeometryMath.Epsilon;
+
+    /// <summary>
+    /// Moves a label box vertically so the WHOLE box lies inside the chart bounds,
+    /// leaving a box that already fits exactly where it was.
+    /// </summary>
+    /// <param name="top">The box top, centred on its shape's band.</param>
+    /// <param name="height">The box height, which is never altered.</param>
+    /// <param name="chart">The chart bounds that must contain the box.</param>
+    /// <returns>The box top to use.</returns>
+    /// <remarks>
+    /// <para>
+    /// A one-row box centred on the lowest bar in the chart hangs below
+    /// <c>ChartBounds</c>, because that is the plot plus only
+    /// <c>ChartOuterPaddingPt</c>. Without this clamp the box was not merely
+    /// misplaced — <see cref="WithinBounds"/> refused the candidate, the widest-gap
+    /// fallback measured the same out-of-bounds box, and the label was suppressed
+    /// with no warning about a vertical cause. The symptom was a missing description
+    /// on the bottom row of the chart.
+    /// </para>
+    /// <para>
+    /// <b>The height is a contract, not a variable.</b> The box is one worksheet row
+    /// by owner ruling (ADR-0033 D3), so a box that does not fit is not shrunk or
+    /// reflowed; only its top moves, and only as far as containment requires. A box
+    /// that already fits is returned unchanged, so no existing placement moves.
+    /// </para>
+    /// <para>
+    /// A box taller than the chart cannot be contained by moving it, so it is left
+    /// where the centring rule put it and the existing containment check refuses it as
+    /// before — inventing a clamp here would hide the real problem instead.
+    /// </para>
+    /// </remarks>
+    private static double ClampInsideChart(double top, double height, RectD chart)
+    {
+        if (height > chart.Height + GeometryMath.Epsilon)
+        {
+            return top;
+        }
+
+        var highest = chart.Bottom - height;
+        return Math.Clamp(top, chart.Top, highest);
+    }
 
     /// <summary>Measures the free space running left from a right edge to the nearest obstruction.</summary>
     private static double FreeLeft(double right, RectD plot, IReadOnlyList<LabelOccupant> blocked)
