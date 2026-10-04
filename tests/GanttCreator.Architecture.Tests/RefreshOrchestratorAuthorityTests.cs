@@ -60,12 +60,9 @@ public sealed class RefreshOrchestratorAuthorityTests
     /// necessarily names both the class it declares and the interface it implements.
     /// </description></item>
     /// <item><description>
-    /// <c>RefreshSheetCommand.cs</c> — <b>the composition root</b>, and the one
-    /// allowed caller. D1 requires the Ribbon command to construct the live
-    /// orchestrator and its collaborators; that is where the single instance is
-    /// assembled, and it is stated in the command's own remarks. It is allowlisted
-    /// rather than left undetected, so the exemption is visible and a THIRD caller
-    /// still fails this test.
+    /// <c>RefreshSheetCommand.cs</c> is the composition root, and it is handled by
+    /// <see cref="ComposesTheFactoryWithoutDrivingIt"/> rather than by this list —
+    /// see <see cref="CompositionRootPath"/> for why a blanket exemption is too much.
     /// </description></item>
     /// </list>
     /// </remarks>
@@ -73,7 +70,32 @@ public sealed class RefreshOrchestratorAuthorityTests
     [
         "src/GanttCreator.Office/ISceneBuildRequestFactory.cs",
         "src/GanttCreator.Office/ExcelSceneBuildRequestFactory.cs",
-        "src/GanttCreator.AddIn/RefreshSheetCommand.cs",
+    ];
+
+    /// <summary>
+    /// The composition root: the one file permitted to name the factory without
+    /// being the orchestrator.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// D1 requires the Ribbon command to construct the live orchestrator and its
+    /// collaborators, so it must construct the factory. It must not <em>drive</em> it:
+    /// a Ribbon callback that called <c>Create</c> would decide the preset, the plot
+    /// bounds, and the range itself, which is the second authority D5 exists to
+    /// prevent, and it would sit in the file people edit when adding a feature.
+    /// </para>
+    /// <para>
+    /// A whole-file exemption could not tell those two apart, so the composition root
+    /// gets its own check: every mention must be the type of an object creation, and
+    /// no member of the factory may be invoked.
+    /// </para>
+    /// </remarks>
+    private const string CompositionRootPath = "src/GanttCreator.AddIn/RefreshSheetCommand.cs";
+
+    /// <summary>The factory members that would make the command a second pipeline.</summary>
+    private static readonly string[] FactoryMembers =
+    [
+        "Create",
     ];
 
     /// <summary>
@@ -126,6 +148,19 @@ public sealed class RefreshOrchestratorAuthorityTests
         {
             foreach (string file in EnumerateProductionFiles(repositoryRoot, root))
             {
+                // The composition root is allowed to CONSTRUCT the factory and nothing
+                // more, so it is checked rather than skipped: a blanket exemption would
+                // also permit `factory.Create(...)`, which is the second pipeline.
+                if (file == CompositionRootPath)
+                {
+                    if (!ComposesTheFactoryWithoutDrivingIt(file))
+                    {
+                        callers.Add(file);
+                    }
+
+                    continue;
+                }
+
                 if (file == FactoryPath || FactoryDeclarationPaths.Contains(file, StringComparer.Ordinal))
                 {
                     continue;
@@ -183,6 +218,50 @@ public sealed class RefreshOrchestratorAuthorityTests
             MentionsIn(root, "ExcelSceneBuildRequestFactory")
                 || MentionsIn(root, "ISceneBuildRequestFactory"),
             "the matcher missed a plain type reference in: " + source);
+    }
+
+    /// <summary>
+    /// The composition root may CONSTRUCT the factory and may not DRIVE it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the positive test for the narrowed exemption.</b> The composition
+    /// root used to be skipped wholesale, which permitted it to call
+    /// <c>Create</c> — a second authority for the plot bounds, the preset, and the
+    /// range, in the file people edit when adding a feature. Constructing the factory
+    /// is required by D1 and stays permitted; calling it does not.
+    /// </para>
+    /// <para>
+    /// Both directions are asserted, so a check that simply reported "false" would
+    /// fail the first case and one that reported "true" would fail the others.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    // Permitted: construction, including the real command's nested collaborator.
+    [InlineData("class C { void M() { var f = new ExcelSceneBuildRequestFactory(); } }", true)]
+    [InlineData("class C { void M() { var f = new ISceneBuildRequestFactory(); } }", true)]
+    // Refused: driving the factory is the orchestrator's job alone.
+    [InlineData("class C { void M() { var f = new ExcelSceneBuildRequestFactory(); f.Create(null, null, null, null); } }", false)]
+    [InlineData("class C { void M() { var f = new ISceneBuildRequestFactory(); f.Create(null, null, null, null); } }", false)]
+    [InlineData("class C { void M() { ISceneBuildRequestFactory f; f.Create(null, null, null, null); } }", false)]
+    public void The_composition_root_may_construct_the_factory_but_may_not_drive_it(string source, bool expected)
+    {
+        SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
+
+        Assert.Equal(expected, ComposesFactoryWithoutDrivingIt(root));
+    }
+
+    /// <summary>
+    /// The real composition root passes the narrowed check, so the guard above is not
+    /// green because it examines nothing.
+    /// </summary>
+    [Fact]
+    public void The_real_composition_root_only_constructs_the_factory()
+    {
+        Assert.True(
+            ComposesTheFactoryWithoutDrivingIt(CompositionRootPath),
+            CompositionRootPath + " names the factory somewhere other than an object creation, "
+            + "or invokes a factory member. Constructing it is D1's composition root; driving it is not.");
     }
 
     /// <summary>
@@ -316,6 +395,160 @@ public sealed class RefreshOrchestratorAuthorityTests
     /// the reason the check is syntactic at all.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// Whether the composition root may name the factory: every mention must be the
+    /// type of an <see cref="ObjectCreationExpressionSyntax"/>, and no factory member
+    /// may be invoked.
+    /// </summary>
+    /// <param name="relativePath">The repository-relative file path.</param>
+    /// <returns><see langword="true"/> when the file only constructs the factory.</returns>
+    /// <remarks>
+    /// <para>
+    /// This is a separate check rather than one more allowlisted path because the two
+    /// permissions are different. Constructing the factory is required by D1 and is a
+    /// declaration; calling <c>Create</c> on it is the scene-input authority D5 gives
+    /// to the orchestrator alone, and a whole-file exemption could not tell them apart.
+    /// </para>
+    /// <para>
+    /// A mention is treated as a construction when the identifier is the type of an
+    /// <c>ObjectCreationExpression</c>, or the type of a generic/qualified one. A
+    /// mention anywhere else — a field, a parameter, a local declaration, a cast — is
+    /// a reference the composition root has no reason to hold.
+    /// </para>
+    /// </remarks>
+    private static bool ComposesTheFactoryWithoutDrivingIt(string relativePath)
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), relativePath));
+        return ComposesFactoryWithoutDrivingIt(CSharpSyntaxTree.ParseText(source).GetRoot());
+    }
+
+    /// <summary>The syntax-level form of the composition-root check, so a test can drive it inline.</summary>
+    /// <param name="root">The parsed source root.</param>
+    /// <returns><see langword="true"/> when the tree only constructs the factory.</returns>
+    private static bool ComposesFactoryWithoutDrivingIt(SyntaxNode root)
+    {
+        HashSet<string> factoryTypes =
+        [
+            "ExcelSceneBuildRequestFactory",
+            "ISceneBuildRequestFactory",
+        ];
+
+        foreach (SyntaxNode node in root.DescendantNodes())
+        {
+            if (node is not IdentifierNameSyntax identifier
+                || !factoryTypes.Contains(identifier.Identifier.ValueText))
+            {
+                continue;
+            }
+
+            if (!IsCreationType(identifier))
+            {
+                return false;
+            }
+        }
+
+        // A local, parameter, or field of the factory type is how a call would
+        // actually be written: `f.Create(...)`, not `ISceneBuildRequestFactory.Create`.
+        // The receivers are therefore resolved to their declared types rather than
+        // matched as dotted text, which a one-letter local defeats.
+        HashSet<string> factoryLocals = LocalsOfType(root, factoryTypes);
+
+        foreach (SyntaxNode node in root.DescendantNodes())
+        {
+            if (node is InvocationExpressionSyntax invocation
+                && invocation.Expression is MemberAccessExpressionSyntax access
+                && FactoryMembers.Contains(access.Name.Identifier.ValueText)
+                && IsFactoryReceiver(access.Expression, factoryTypes, factoryLocals))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Names of every local, parameter, and field declared with one of the types.</summary>
+    /// <param name="root">The parsed source root.</param>
+    /// <param name="types">The type names to look for.</param>
+    /// <returns>The declared names.</returns>
+    private static HashSet<string> LocalsOfType(SyntaxNode root, HashSet<string> types)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (SyntaxNode node in root.DescendantNodes())
+        {
+            switch (node)
+            {
+                case VariableDeclaratorSyntax declarator
+                    when declarator.Parent is VariableDeclarationSyntax declaration
+                        && (MentionsType(declaration.Type, types) || InitialisesFactory(declarator, types)):
+                    _ = names.Add(declarator.Identifier.ValueText);
+                    break;
+
+                case ParameterSyntax parameter when MentionsType(parameter.Type!, types):
+                    _ = names.Add(parameter.Identifier.ValueText);
+                    break;
+
+                case FieldDeclarationSyntax field when MentionsType(field.Declaration.Type, types):
+                    foreach (VariableDeclaratorSyntax declarator in field.Declaration.Variables)
+                    {
+                        _ = names.Add(declarator.Identifier.ValueText);
+                    }
+
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>Whether the declarator's initialiser constructs or casts one of the types.</summary>
+    /// <param name="declarator">The variable declarator.</param>
+    /// <param name="types">The factory type names.</param>
+    /// <returns><see langword="true"/> when the initialiser yields a factory.</returns>
+    /// <remarks>
+    /// <c>var</c> hides the type from the declaration, and the real command composes
+    /// through an object-creation argument rather than a local — but a <c>var</c> local
+    /// holding a factory is the ordinary way a caller would end up invoking
+    /// <c>Create</c>, so the initialiser is inspected as well.
+    /// </remarks>
+    private static bool InitialisesFactory(VariableDeclaratorSyntax declarator, HashSet<string> types) =>
+        declarator.Initializer is { } initializer
+        && initializer.DescendantNodesAndSelf()
+            .OfType<TypeSyntax>()
+            .Any(type => MentionsType(type, types));
+
+    /// <summary>Whether the given type syntax names one of the types.</summary>
+    /// <param name="type">The declared type syntax.</param>
+    /// <param name="types">The type names to look for.</param>
+    /// <returns><see langword="true"/> when the declaration names one of them.</returns>
+    private static bool MentionsType(TypeSyntax type, HashSet<string> types) =>
+        type.DescendantNodesAndSelf()
+            .OfType<IdentifierNameSyntax>()
+            .Any(identifier => types.Contains(identifier.Identifier.ValueText));
+
+    /// <summary>Whether the receiver of a member access is a factory instance.</summary>
+    /// <param name="receiver">The receiver expression.</param>
+    /// <param name="types">The factory type names.</param>
+    /// <param name="locals">Names known to hold a factory instance.</param>
+    /// <returns><see langword="true"/> when the receiver is a factory.</returns>
+    private static bool IsFactoryReceiver(
+        ExpressionSyntax receiver,
+        HashSet<string> types,
+        HashSet<string> locals) =>
+        receiver is IdentifierNameSyntax identifier && locals.Contains(identifier.Identifier.ValueText)
+        || types.Contains(receiver.ToString());
+
+    /// <summary>Whether the identifier is the type of an object creation.</summary>
+    /// <param name="identifier">The identifier naming a factory type.</param>
+    /// <returns><see langword="true"/> when it appears as a constructed type.</returns>
+    private static bool IsCreationType(IdentifierNameSyntax identifier) =>
+        identifier.Parent is ObjectCreationExpressionSyntax creation
+        && creation.Type == identifier;
+
     private static bool Mentions(string relativePath, string member)
     {
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), relativePath));

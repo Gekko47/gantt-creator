@@ -153,7 +153,19 @@ public class ExcelPanelGridMeasurementTests
     internal override double? ReadRowHeightAt(Excel.ListObject candidate, int rowIndex) =>
             LayoutRowHeights.TryGetValue(rowIndex, out double height) ? height : null;
 
-    internal override bool? IsLayoutRowEmpty(Excel.ListObject candidate, int rowIndex) => PaddingRowEmpty;
+    /// <summary>
+    /// Row-SPECIFIC emptiness, consulted before <see cref="PaddingRowEmpty"/>.
+    /// </summary>
+    /// <remarks>
+    /// The two reserved rows are verified independently, so a test that cannot say
+    /// which row is empty cannot attribute a refusal to the right one: a single flag
+    /// makes an occupied anchor row look like an occupied padding row, and the test
+    /// then passes for whichever check happens to run first.
+    /// </remarks>
+    internal Dictionary<int, bool?> LayoutRowEmptiness { get; } = [];
+
+    internal override bool? IsLayoutRowEmpty(Excel.ListObject candidate, int rowIndex) =>
+        LayoutRowEmptiness.TryGetValue(rowIndex, out bool? seeded) ? seeded : PaddingRowEmpty;
     }
 
     /// <summary>The table, its single column, and what each body row reports.</summary>
@@ -557,15 +569,16 @@ public class ExcelPanelGridMeasurementTests
     /// resized whatever user row happened to sit below the table.
     /// </para>
     /// <para>
-    /// The second case is the non-contiguous one, and it is separate on purpose: it is
-    /// the state a table that has MOVED produces, which is the defect ADR-0035 D2 was
-    /// raised for.
+    /// The second case is the row that cannot be verified at all: the host declines to
+    /// report its contents. It is separate on purpose, because "not empty" and "not
+    /// established" are different facts and treating the unknown as empty is the
+    /// substitution this check exists to prevent.
     /// </para>
     /// </remarks>
     [Theory]
-    [InlineData(false, 4)]   // occupied: the user typed in the anchor row
-    [InlineData(true, 20)]   // not contiguous: the table has moved from where it was
-    public void An_unverifiable_anchor_row_refuses_the_measurement(bool isEmpty, int bodyFirstRow)
+    [InlineData(false)]   // occupied: the user typed in the anchor row
+    [InlineData(null)]    // not established: the host would not report the anchor row
+    public void An_unverifiable_anchor_row_refuses_the_measurement(bool? anchorRowIsEmpty)
     {
         FakeTable table = TableReporting(64d, 15d);
         var measurement = new TestableMeasurement(
@@ -579,14 +592,65 @@ public class ExcelPanelGridMeasurementTests
         {
             VerifyBottomPaddingRow = true,
             VerifyAnchorRow = true,
-            BodyFirstRow = bodyFirstRow,
-            PaddingRowEmpty = isEmpty,
+            BodyFirstRow = 4,
         };
+
+        // ONE body row starting at row 4, so the anchor row is 5 and the padding row
+        // is 6 (ADR-0038 D1). Both heights are seeded, so neither refusal below can be
+        // an absent height read: the verified path resolves the row and then reads it,
+        // and an unseeded read is absent by construction.
+        measurement.LayoutRowHeights[5] = 0.25d;
+        measurement.LayoutRowHeights[6] = 27.5d;
+
+        // The padding row is verified EMPTY in both cases, so the only row that can
+        // refuse is the anchor row. With one shared emptiness flag this test could not
+        // say which row refused: an occupied anchor row also read as an occupied
+        // padding row, and whichever check ran first would have produced the same
+        // InvalidMeasurement.
+        measurement.LayoutRowEmptiness[6] = true;
+        measurement.LayoutRowEmptiness[5] = anchorRowIsEmpty;
 
         PanelGridOutcome outcome = measurement.Measure([ColumnName]);
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(PanelGridRefusalReason.InvalidMeasurement, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// The same anchor row verified, with the padding row verified beside it, measures
+    /// — so the refusal above is the ANCHOR verification and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This is the counterweight that makes the test above attributable. It differs
+    /// from it in exactly one value, the anchor row's emptiness, so a refusal that did
+    /// not depend on that value would not be about the anchor row at all.
+    /// </remarks>
+    [Fact]
+    public void A_verified_anchor_row_still_measures_with_its_padding_row_verified()
+    {
+        FakeTable table = TableReporting(64d, 15d);
+        var measurement = new TestableMeasurement(
+            ActiveApplication().Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt)
+        {
+            VerifyBottomPaddingRow = true,
+            VerifyAnchorRow = true,
+            BodyFirstRow = 4,
+        };
+        measurement.LayoutRowHeights[5] = 0.25d;
+        measurement.LayoutRowHeights[6] = 27.5d;
+        measurement.LayoutRowEmptiness[5] = true;
+        measurement.LayoutRowEmptiness[6] = true;
+
+        PanelGridOutcome outcome = measurement.Measure([ColumnName]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(0.25d, outcome.Grid?.AnchorRowHeightPt);
     }
 
     /// <summary>
