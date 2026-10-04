@@ -69,6 +69,8 @@ two of them change the visible column set.
   | 5 | R4.7I | reserved row above the table carrying the table title and year band; the header row moves from worksheet row 1 to row 2 and the plot anchor moves with it (ADR-0030 D4) | **7 → 8** |
   | 6 | R4.7I | chart padding rows above the title row and below the last activity row; the header moves from row 2 to row 3 (ADR-0031 D1) | **8 → 9** |
   | 7 | R4.7I | the bottom margin becomes a **reserved** worksheet row resolved from the body's measured span rather than derived arithmetic, and `MaximumExternalLabelWidthPt` is retired from the metric catalogue (ADR-0035 D1/D2) | **9 → 10** |
+  | 8 | R4.7I | `PlotBandHeaderOverlapPt` added to the metric catalogue, so the plot-spanning shapes lift into the header row and **stretch** rather than slide on a top insert (ADR-0037 D1/D3) | **10 → 11** |
+  | 9 | R4.7I | `ChartAnchorRowHeightPt` added to the metric catalogue **and** a second reserved row — the anchor row — appears between the body and the bottom padding row, so the row the add-in writes the margin into is no longer the row directly below the table (ADR-0038 D1/D6/D7) | **11 → 12** |
 
   **Steps 5, 6 and 7 are the R4.7I layout changes, and version 7 does NOT cover
   them.** Version 7 is the two added settings keys and nothing else. The layout is
@@ -84,6 +86,23 @@ two of them change the visible column set.
   while its plot anchor pointed at the wrong row. Recording the steps here is what
   keeps that signal readable, and D6's "reported, never coerced" is what keeps it
   safe.
+
+  **Steps 8 and 9 are the metric-catalogue ADDs that follow the layout steps**, and
+  the table now accounts for `GanttSchemaVersion.CurrentSchemaVersion` **12**. Both
+  move in the direction step 7's retirement did not: a version-10 workbook's
+  `tblGanttMetrics` **lacks** a row the running add-in reads (`PlotBandHeaderOverlapPt`,
+  then `ChartAnchorRowHeightPt`), so its stored catalogue hash no longer matches —
+  the same class of change as version 10's, in the opposite direction. Step 9 is
+  additive on **both** axes and so takes its own version rather than riding on step 8:
+  the new token, plus a NEW RESERVED ROW that moves where the bottom padding row
+  lives, which is the same "the layout under the row changed" class as steps 5-7. A
+  version-11 workbook's padding row is where version 12 treats the *anchor* row, so
+  writing to it would put a 5.75pt margin into a 0.25pt sub-row anchor. Neither step
+  is migration (D6): a version-10 or version-11 workbook reports a mismatch, and the
+  remedy is Initialise, which is also what reserves the anchor row. **Steps 8 and 9
+  were added on 2026-10-04** because the table stopped at 7 while `CurrentSchemaVersion`
+  was already 12 — the same unreadable-version defect the step-4 and step-7 gaps
+  created, and the third time it has appeared.
 
   **Step 7 is a schema change on both of its own axes**, which is why it takes its
   own version rather than riding on step 6. The reservation changes what a bottom

@@ -1,10 +1,10 @@
 # ADR-0038 — An anchor row below the body lets the plot's BOTTOM stretch, closed by its own line
 
-- **Status:** Accepted (design settled; **implementation pending**)
+- **Status:** Accepted (implemented 2026-10-03)
 - **Date:** 2026-10-03
 - **Relates to:** ADR-0037 (the top half); ADR-0031 D2 (the padding row); ADR-0036 (the insert this depends on); ADR-0026 D3
 - **Decided by:** product owner, 2026-10-03, after live-host measurement.
-- **Supersedes:** nothing. **Amends:** nothing. **Extends:** ADR-0037 (which solved only the top).
+- **Supersedes:** nothing. **Amends:** [ADR-0037](0037-plot-bands-anchored-into-the-header-row.md) D4 (the top edge is not the only one that moves). **Extends:** ADR-0037, which solved only the top.
 
 ## Context
 
@@ -46,7 +46,7 @@ This is why ADR-0037's `LiftTopIntoHeader` cannot simply be mirrored for the bot
 - **D1 — a new reserved anchor row, `ChartAnchorRowHeightPt` (0.25pt), sits immediately below the last body row.** The bands paint *through* it, so the shape's bottom anchor resolves to the row beneath and every body insert lands strictly above it. The token's range is 0–4, and `0` reproduces the pre-ADR-0038 geometry exactly.
 
   **Amended 2026-10-03 by owner ruling: the default is 0.25pt, not 0.5pt**, and `ChartPaddingRowHeightPt` reduces **6 → 5.75** so the reserved strip below the body totals the same **6pt** it reserved as one row. The probe measured 0.25pt honoured exactly, so no fallback is needed; see "Amendments" below for why the pairing matters.
-- **D2 — the bands extend `anchorHeightPt + MajorBoundaryPt / 2` below the plot's bottom edge**, which at the amended values is 0.25 + 0.5 = **0.75pt**.
+- **D2 — the bands extend `anchorHeightPt + MajorBoundaryPt / 2` below the plot's bottom edge**, which at the amended values is 0.25 + 0.5 = **0.75pt**. **This reverses ADR-0037 D4**, which held that "the top edge is the one that moves, never the bottom". D4 was right about the *method* — a sub-row overlap cannot create the row an edge anchors into — and wrong about the bottom being immovable; the reserved row is what creates one.
 - **D3 — a new closing line at that boundary**, at `ZLayer.Frame`, terminates the stacks and covers the overhang. A 1pt line centred on the boundary covers `[plotBottom + 0.25, plotBottom + 1.25]`, and the band bottom is `plotBottom + 0.75` — covered, with nothing spare.
 
   **Implemented as a package with the anchor row**: a zero anchor row emits no extension *and* no closing line. Half a line would otherwise survive on its own, making "zero restores the previous geometry exactly" false by 0.5pt and drawing a rule across the plot's bottom edge with no band behind it. `PlotSpanGeometry.HasAnchorRow` is that decision, and it is why the counterweight test can assert exact prior geometry.
