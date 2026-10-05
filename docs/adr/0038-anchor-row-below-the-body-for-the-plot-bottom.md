@@ -25,7 +25,7 @@ A probe of the bottom case (`scripts/probe-frame-bottom-anchor.ps1`) first appea
 | 0.6 | 0.5 | quantised down |
 | 0.75 / 1 / 1.5 / 2 | exact | honoured |
 
-There is **no 0.75pt floor**. The 0.5pt anchor row is achievable, so the token default is 0.5 and no fallback is needed.
+There is **no 0.75pt floor**. Both 0.5pt and **0.25pt** are read back exactly, so no fallback is needed for either. **The implemented token default is 0.25pt, not the 0.5pt this section first concluded** — see the amendment to **D1** below, which pairs the 0.25pt anchor with a 5.75pt padding row so the reserved strip below the body still totals 6pt. The Q1 and Q2 tables above are left as measured; the probe was run before that ruling and the 0.5pt figures are the ones it recorded.
 
 **Q2 — the layout stretches.** Body → anchor(0.5pt) → pad(5pt), inserting at the anchor row:
 

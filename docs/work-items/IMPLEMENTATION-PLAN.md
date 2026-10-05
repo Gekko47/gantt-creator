@@ -30,7 +30,7 @@
 > | R4.7F | **Implemented** | derived `Duration`; Office gate **not run**, so the row is not complete |
 > | R4.7G | **Landed** | horizontal-only label positions; took the schema 5 → 6 |
 > | R4.7H | **Implemented** | `SizePreset` and the single `PlotGeometryResolver` |
-> | **R4.7I** | **Source landed; coverage closed 2026-10-04** | live chart anchored to the worksheet, not the page ([ADR-0030](../adr/0030-live-chart-vertical-anchoring.md)). All five slices are in `src/`, so the guide's own "not started" header was wrong. Its lane anchoring had **zero** test coverage — mutating it off left 2,477 tests green — and is now pinned by 18 resolver tests plus 2 factory wiring/geometry tests. **Office gate still not run.** |
+> | **R4.7I** | **Source landed; coverage closed 2026-10-04** | live chart anchored to the worksheet, not the page ([ADR-0030](../adr/0030-live-chart-vertical-anchoring.md)). All five slices are in `src/`, so the guide's own "not started" header was wrong. Its lane anchoring had **zero** test coverage — mutating it off left 2,477 tests green — and is now pinned by 18 resolver tests plus 2 factory wiring/geometry tests. **Office gate PASSED 2026-10-04**, in the same human-driven F5 session that closed R4.9's. |
 > | **R4.8A** | **Implemented** | Refresh orchestration — the last row before R4.9; Office gate still outstanding |
 >
 > `R4.7A` → `R4.7B` → `R4.7D` were strictly sequential and are done; `R4.7C`,
@@ -203,8 +203,8 @@ files only; the local audit verifies every file exists.
 | R4.7 | `R4.7-refresh-idempotence.md` | **Landed** (`ShapeReconciler` + `ShapeReconcilePlan`; D1's create-only premise expired with R4.6 and **D5 was added** replacing the unachievable "zero operations" pin with a fixed-point property, both approved 2026-09-28; **L18 decided** — refuse and surface; Office gate PASS 46/46) |
 | R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
 | R4.8A | `R4.8A-refresh-orchestrator.md` | **Implemented** (`GanttRefreshOrchestrator`, `ExcelSceneBuildRequestFactory`; D8 wired; Office gate outstanding) |
-| R4.9 | `R4.9-refresh-command.md` | **Implemented; Office gate outstanding** (Tier A 2026-09-26; first live slice. D1 amended onto R4.8A D1 — the command is a thin boundary, not the pipeline) |
-| R4.7I | `R4.7I-live-chart-vertical-anchoring.md` | **Source landed**; anchoring test coverage closed 2026-10-04; **Office gate not run** |
+| R4.9 | `R4.9-refresh-command.md` | **Implemented; Office gate PASSED 2026-10-04** (Excel 16.0.20430.20032, human-driven F5 session; Tier A 2026-09-26; first live slice. D1 amended onto R4.8A D1 — the command is a thin boundary, not the pipeline) |
+| R4.7I | `R4.7I-live-chart-vertical-anchoring.md` | **Source landed**; anchoring test coverage closed 2026-10-04; **Office gate PASSED 2026-10-04** in the same session |
 | R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26) |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
