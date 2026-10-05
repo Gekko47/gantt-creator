@@ -53,7 +53,8 @@ public sealed class GanttRefreshOrchestrator(
     IShapeWritePort shapeWriter,
     IColumnPresentationPort? columnPresentation = null,
     IGanttRowIdentityRepairer? identityRepairer = null,
-    IApplicationStateScope? stateScope = null)
+    IApplicationStateScope? stateScope = null,
+    IGanttValidationReporter? validationReporter = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -108,6 +109,28 @@ public sealed class GanttRefreshOrchestrator(
     /// test that is not about restoration — does not have to construct one.
     /// </remarks>
     private readonly IApplicationStateScope? _stateScope = stateScope;
+
+    /// <summary>
+    /// The validation-notes reporter, or <see langword="null"/> to skip note
+    /// maintenance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This was missing entirely, and the omission was silent.</b> The reporter had
+    /// zero references in this class and was not a constructor parameter, while
+    /// <c>ValidateSheetCommand</c> had eleven. So Validate wrote the cell notes and
+    /// Refresh never touched them: a user who fixed a validation error and pressed
+    /// Refresh saw the stale note still there, which reads as "the fix did not
+    /// register". The capability already existed and was correct —
+    /// <see cref="ExcelGanttValidationReporter"/> deletes only the notes this add-in
+    /// owns and never user content — it simply was not wired in here.
+    /// </para>
+    /// <para>
+    /// Optional so the orchestrator still composes for a caller with no workbook to
+    /// annotate, and so the two preflight steps added by later rows stayed additive.
+    /// </para>
+    /// </remarks>
+    private readonly IGanttValidationReporter? _validationReporter = validationReporter;
 
     /// <summary>The scene-to-shape renderer, held as a field so a test can observe
     /// that the orchestrator owns the translation step rather than a caller.</summary>
@@ -240,6 +263,29 @@ public sealed class GanttRefreshOrchestrator(
         // Step 6. Validate every row. A blocking error means the refresh is not
         // attempted at all; the previous chart stays exactly as it was.
         GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows);
+
+        // Step 6b. Bring the cell notes into line with what was just found, BEFORE
+        // deciding whether to render.
+        //
+        // This runs on BOTH paths, which is the whole point. A refresh that now finds
+        // no errors must REMOVE the notes a previous Validate left behind, and a
+        // refresh that finds errors must write the current ones even though it will
+        // not render. Calling it only on the success path would leave the stale-note
+        // defect in place for the user who had just fixed their data.
+        //
+        // A refusal here is surfaced rather than swallowed: the notes are the visible
+        // evidence of why the refresh did not complete, and a silent failure would
+        // leave the sheet showing the previous report while the chart stayed put.
+        // Nothing has been mutated on the sheet at this point, so this refusal reports
+        // zero worksheet writes.
+        GanttValidationReportOutcome reported = ReportValidation(validation.Issues);
+        if (!reported.Succeeded)
+        {
+            return Refuse(
+                GanttRefreshRefusal.ValidationNotesRefused,
+                "The validation notes on the table could not be updated, so the refresh stopped before the chart was touched.");
+        }
+
         if (!validation.IsValid)
         {
             return GanttRefreshOutcome.Refused(
@@ -413,6 +459,22 @@ public sealed class GanttRefreshOrchestrator(
 
         return current;
     }
+
+    /// <summary>
+    /// Brings the add-in's own validation notes into line with the current findings.
+    /// </summary>
+    /// <param name="issues">The issues just found, already in the deterministic order.</param>
+    /// <returns>The reporter's outcome; a success with zero when no reporter is wired.</returns>
+    /// <remarks>
+    /// An EMPTY issue list is still passed through rather than skipped, because
+    /// <see cref="IGanttValidationReporter"/> clears the notes it owns on every call:
+    /// that is the call that makes a corrected row lose its note. Skipping it when the
+    /// list is empty would leave precisely the stale note this row exists to remove.
+    /// </remarks>
+    private GanttValidationReportOutcome ReportValidation(IReadOnlyList<GanttValidationIssue> issues) =>
+        _validationReporter is null
+            ? GanttValidationReportOutcome.Ok(0)
+            : _validationReporter.Report(issues);
 
     private static GanttRefreshOutcome Refuse(GanttRefreshRefusal refusal, string message) =>
         GanttRefreshOutcome.Refused(refusal, message);

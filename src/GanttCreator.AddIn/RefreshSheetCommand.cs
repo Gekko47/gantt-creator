@@ -124,6 +124,13 @@ internal static class RefreshSheetCommand
             // orchestrator, which disposes it on every path; constructing one per
             // operation would capture-and-restore the same setting several times and
             // restore the wrong value.
-            new ExcelApplicationStateScope(application));
+            new ExcelApplicationStateScope(application),
+
+            // The notes reporter. Without it here, Refresh never touched the cell notes:
+            // Validate wrote them and Refresh left them alone, so a user who fixed a
+            // validation error and pressed Refresh saw the stale note still sitting on
+            // the row. The reporter clears the notes this add-in owns on every call, so
+            // passing it here is what makes a corrected row lose its note.
+            new ExcelGanttValidationReporter(application));
 #pragma warning restore CA2000
 }

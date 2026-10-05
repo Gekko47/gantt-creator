@@ -45,6 +45,126 @@ public class GanttRefreshOrchestratorTests
     /// never reaches the scene at all. That is a real constraint of the schema, not a
     /// quirk of the test helper.
     /// </remarks>
+    /// <summary>
+    /// A successful refresh hands the reporter an EMPTY issue list, which is the call
+    /// that clears the notes a previous Validate left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect, pinned at the seam that caused it.</b> In a live F5
+    /// session on 2026-10-04 the cell notes survived a Refresh: Validate wrote them and
+    /// Refresh never touched them, because <c>IGanttValidationReporter</c> had zero
+    /// references in <c>GanttRefreshOrchestrator</c> and was not a constructor
+    /// parameter. The user fixed the row, pressed Refresh, and the stale note was still
+    /// there — which reads as the fix not having registered.
+    /// </para>
+    /// <para>
+    /// The assertion is on the LIST, not merely that the reporter was called. An empty
+    /// list is the whole mechanism, because the reporter clears the notes it owns on
+    /// every call; a refresh that reported only when it had findings would leave the
+    /// stale note exactly in place.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_successful_refresh_reports_an_empty_issue_list_so_stale_notes_are_cleared()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
+        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        Assert.Empty(reported);
+    }
+
+    /// <summary>
+    /// A refresh that finds a blocking error still writes the notes, because the notes
+    /// are how the user is told what to fix.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the empty-list assertion above, and the reason the reporter
+    /// is called before the render decision rather than after it. Calling it only on the
+    /// success path would mean a blocked refresh left the PREVIOUS report in place —
+    /// the notes would never show the current error, and the user would be chasing a
+    /// message about a problem they had already fixed.
+    /// </remarks>
+    [Fact]
+    public void A_blocked_refresh_still_reports_the_errors_it_found()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+
+        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        Assert.Equal(outcome.ValidationIssues.Count, reported.Count);
+        Assert.NotEmpty(reported);
+    }
+
+    /// <summary>
+    /// A refusal to maintain the notes stops the refresh before anything is rendered.
+    /// </summary>
+    /// <remarks>
+    /// The positive case for the new <c>ValidationNotesRefused</c> branch, in the same
+    /// commit as the branch. Swallowing this refusal would leave the sheet showing the
+    /// previous report while the chart silently stayed put, which is the least
+    /// explainable state the pipeline can produce. The zero shape calls are the point:
+    /// the user keeps their last valid chart and gets told why nothing changed.
+    /// </remarks>
+    [Fact]
+    public void A_refused_notes_update_stops_the_refresh_before_any_shape_is_touched()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.ValidationNotesRefused = true;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.ValidationNotesRefused, outcome.Refusal);
+
+        // D3: the refusal happens before the single shape-mutating step.
+        Assert.Empty(fakes.Shapes.Calls);
+        Assert.Equal(0, outcome.DurationCellsWritten);
+        Assert.Equal(0, outcome.ShapesWritten);
+    }
+
+    /// <summary>
+    /// An orchestrator with no reporter wired still refreshes, so a caller that has no
+    /// workbook to annotate is not forced to construct one.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight that keeps the new dependency additive. Every other optional
+    /// collaborator in this constructor was made optional for the same reason, and a
+    /// required parameter here would have broken each existing caller including the
+    /// composition root.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_with_no_reporter_wired_still_succeeds()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator(validationReporter: null);
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Empty(fakes.ReportedIssues);
+    }
+
     private static GanttRowDto Row(
         int rowNumber,
         string? id,
@@ -329,6 +449,12 @@ public class GanttRefreshOrchestratorTests
                 // The re-read after repair. The first snapshot is stale the moment
                 // repair writes an Id, so validation must not consume it.
                 "Read",
+
+                // The notes, maintained against the findings of the validation that
+                // follows. Placed BEFORE the render decision on purpose: a refresh that
+                // now finds no errors must clear the notes a previous Validate left
+                // behind, and that call has to happen on the blocked path too.
+                "Notes",
                 "Outline",
                 "Duration",
                 "RowHeights",

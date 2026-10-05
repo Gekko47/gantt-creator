@@ -159,8 +159,20 @@ internal sealed class RefreshFakes
     /// <summary>The row-identity repairer fake.</summary>
     public IGanttRowIdentityRepairer Identity => new FakeIdentityRepairer(this);
 
+    /// <summary>The validation-notes reporter fake.</summary>
+    public IGanttValidationReporter Notes => new FakeValidationReporter(this);
+
     /// <summary>Whether the column-classification restore refuses.</summary>
     public bool ColumnPresentationRefused { get; set; }
+
+    /// <summary>
+    /// Every issue list the reporter was handed, in call order, so a test can assert
+    /// what the orchestrator reported rather than only how many times it called.
+    /// </summary>
+    public List<IReadOnlyList<GanttValidationIssue>> ReportedIssues { get; } = [];
+
+    /// <summary>Whether the notes reporter refuses.</summary>
+    public bool ValidationNotesRefused { get; set; }
 
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
@@ -204,7 +216,9 @@ internal sealed class RefreshFakes
             Factory,
             Shapes,
             ColumnPresentation,
-            Identity);
+            Identity,
+            null,
+            Notes);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -223,6 +237,30 @@ internal sealed class RefreshFakes
             ColumnPresentation,
             Identity,
             scope);
+
+    /// <summary>
+    /// Builds the orchestrator with an explicit notes reporter, so a test can prove the
+    /// dependency is genuinely optional rather than merely defaulted.
+    /// </summary>
+    /// <param name="validationReporter">
+    /// The reporter to wire, or <see langword="null"/> to omit it entirely.
+    /// </param>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestrator(IGanttValidationReporter? validationReporter) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            validationReporter);
 
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
@@ -438,6 +476,24 @@ internal sealed class RefreshFakes
             return owner.IdentityRefused
                 ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
                 : GanttRowIdentityRepairOutcome.Ok(0);
+        }
+    }
+
+    /// <summary>
+    /// The validation-notes reporter fake. It records the issue list it was handed
+    /// rather than only a count, because the clearing defect this stands in for turns
+    /// on WHICH list arrived: a successful refresh must report an EMPTY list, and that
+    /// empty call is the one that removes a corrected row's note.
+    /// </summary>
+    private sealed class FakeValidationReporter(RefreshFakes owner) : IGanttValidationReporter
+    {
+        public GanttValidationReportOutcome Report(IReadOnlyList<GanttValidationIssue> issues)
+        {
+            owner.Steps.Add("Notes");
+            owner.ReportedIssues.Add(issues);
+            return owner.ValidationNotesRefused
+                ? GanttValidationReportOutcome.Refused(GanttValidationReportRefusalReason.TargetProtected)
+                : GanttValidationReportOutcome.Ok(issues.Count);
         }
     }
 
