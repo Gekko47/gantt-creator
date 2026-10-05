@@ -470,6 +470,16 @@ public sealed class GanttRefreshOrchestrator(
     /// <see cref="IGanttValidationReporter"/> clears the notes it owns on every call:
     /// that is the call that makes a corrected row lose its note. Skipping it when the
     /// list is empty would leave precisely the stale note this row exists to remove.
+    /// <para>
+    /// <b>The price of "always call it" is a per-Refresh scan, and it is recorded as
+    /// L21.</b> The reporter clears before it checks whether it has anything to write,
+    /// so a clean workbook still pays a <c>SpecialCells</c> pass over the table body
+    /// plus a per-cell comment read. That cost is reported live and is deliberately
+    /// accepted in exchange for the correctness above. If it ever needs addressing,
+    /// read L21 first: it names the behaviour-preserving remedy (batch the read) and
+    /// records that the cost is currently UNMEASURED, so a future attempt should
+    /// measure rather than trust this note.
+    /// </para>
     /// </remarks>
     private GanttValidationReportOutcome ReportValidation(IReadOnlyList<GanttValidationIssue> issues) =>
         _validationReporter is null
