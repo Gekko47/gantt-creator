@@ -63,6 +63,83 @@ public class AddRowCommandTests
             () => AddRowCommand.Run(inserter.Object, FixedId, null!, _ => { }, GanttEntityType.AsPlannedActivity));
     }
 
+    /// <summary>
+    /// A lost padding row is told to the user even though the row was added.
+    /// </summary>
+    /// <remarks>
+    /// This is the user-visible half of the fix. The inserter now reports whether the
+    /// chart's bottom margin survived; the command's job is to not swallow it. The
+    /// selection still moves, because the row genuinely exists.
+    /// </remarks>
+    [Fact]
+    public void Run_tells_the_user_when_the_padding_row_was_not_reserved()
+    {
+        Mock<IGanttRowInserter> inserter =
+            InserterWith(GanttRowInsertOutcome.Ok(4, paddingRowReserved: false));
+
+        var presented = new List<string>();
+        RecordingSelector selector = NoopSelector();
+
+        AddRowCommand.Run(inserter.Object, FixedId, selector, presented.Add, GanttEntityType.AsPlannedActivity);
+
+        string message = Assert.Single(presented);
+        Assert.Equal(AddRowCommand.PaddingRowLostMessage, message);
+        Assert.Contains("bottom margin", message, StringComparison.OrdinalIgnoreCase);
+
+        // The row exists, so the cursor still belongs on it.
+        Assert.Equal([4], selector.Selected);
+    }
+
+    /// <summary>
+    /// Reserved rows that were not normalised are told to the user, with the Refresh
+    /// remedy, and the padding-row message is NOT used (ADR-0038 D1, ADR-0008).
+    /// </summary>
+    /// <remarks>
+    /// The two messages are kept distinct on purpose. "the margin is lost" sends the
+    /// user looking for a missing row; "the rows are the wrong height, Refresh fixes
+    /// it" sends them to the command that actually repairs it. A single message would
+    /// make the user undo a row that is perfectly fine.
+    /// </remarks>
+    [Fact]
+    public void Run_tells_the_user_when_the_reserved_rows_were_not_normalised()
+    {
+        Mock<IGanttRowInserter> inserter = InserterWith(
+            GanttRowInsertOutcome.Ok(4, paddingRowReserved: true, reservedRowsNormalised: false));
+
+        var presented = new List<string>();
+        RecordingSelector selector = NoopSelector();
+
+        AddRowCommand.Run(inserter.Object, FixedId, selector, presented.Add, GanttEntityType.AsPlannedActivity);
+
+        string message = Assert.Single(presented);
+        Assert.Equal(AddRowCommand.ReservedRowsNotNormalisedMessage, message);
+        Assert.NotEqual(AddRowCommand.PaddingRowLostMessage, message);
+
+        // The remedy is named, because "something is wrong" is not actionable.
+        Assert.Contains("Refresh", message, StringComparison.OrdinalIgnoreCase);
+
+        // The row exists, so the cursor still belongs on it.
+        Assert.Equal([4], selector.Selected);
+    }
+
+    /// <summary>
+    /// A healthy insert says nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the test above. A warning shown on every successful insert
+    /// would train the user to dismiss the one time it mattered.
+    /// </remarks>
+    [Fact]
+    public void Run_is_silent_when_the_padding_row_was_reserved()
+    {
+        Mock<IGanttRowInserter> inserter = InserterWith(GanttRowInsertOutcome.Ok(4));
+
+        var presented = new List<string>();
+        AddRowCommand.Run(inserter.Object, FixedId, NoopSelector(), presented.Add, GanttEntityType.AsPlannedActivity);
+
+        Assert.Empty(presented);
+    }
+
     [Fact]
     public void Run_throws_for_a_null_presenter()
     {

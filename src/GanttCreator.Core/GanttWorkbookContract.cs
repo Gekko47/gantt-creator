@@ -37,4 +37,19 @@ public static class GanttWorkbookContract
     /// cells materialised in <c>tblGanttTypes</c>.
     /// </summary>
     public const string TypeOptionsDefinedName = "GanttCreator.TypeOptions";
+
+    /// <summary>
+    /// The title written into the reserved row when the settings catalogue cannot
+    /// supply one (ADR-0030 D6).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is a fallback, not an authority.</b> The live value comes from the
+    /// <c>ChartTitle</c> setting via <c>GanttCatalogues.SettingDefault</c>, which is
+    /// the same source the settings table and the export title entity use. This
+    /// constant exists only so Initialise can write a sensible title into a workbook
+    /// whose settings table has not been read yet; naming it
+    /// <c>Gantt Chart</c> matches entity guide §2's documented nonblank default so the
+    /// fallback and the catalogue agree today.
+    /// </remarks>
+    public const string DefaultChartTitle = "Gantt Chart";
 }

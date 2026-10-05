@@ -53,7 +53,8 @@ public sealed class GanttRefreshOrchestrator(
     IShapeWritePort shapeWriter,
     IColumnPresentationPort? columnPresentation = null,
     IGanttRowIdentityRepairer? identityRepairer = null,
-    IApplicationStateScope? stateScope = null)
+    IApplicationStateScope? stateScope = null,
+    IGanttValidationReporter? validationReporter = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -108,6 +109,28 @@ public sealed class GanttRefreshOrchestrator(
     /// test that is not about restoration — does not have to construct one.
     /// </remarks>
     private readonly IApplicationStateScope? _stateScope = stateScope;
+
+    /// <summary>
+    /// The validation-notes reporter, or <see langword="null"/> to skip note
+    /// maintenance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This was missing entirely, and the omission was silent.</b> The reporter had
+    /// zero references in this class and was not a constructor parameter, while
+    /// <c>ValidateSheetCommand</c> had eleven. So Validate wrote the cell notes and
+    /// Refresh never touched them: a user who fixed a validation error and pressed
+    /// Refresh saw the stale note still there, which reads as "the fix did not
+    /// register". The capability already existed and was correct —
+    /// <see cref="ExcelGanttValidationReporter"/> deletes only the notes this add-in
+    /// owns and never user content — it simply was not wired in here.
+    /// </para>
+    /// <para>
+    /// Optional so the orchestrator still composes for a caller with no workbook to
+    /// annotate, and so the two preflight steps added by later rows stayed additive.
+    /// </para>
+    /// </remarks>
+    private readonly IGanttValidationReporter? _validationReporter = validationReporter;
 
     /// <summary>The scene-to-shape renderer, held as a field so a test can observe
     /// that the orchestrator owns the translation step rather than a caller.</summary>
@@ -217,11 +240,52 @@ public sealed class GanttRefreshOrchestrator(
                     GanttRefreshRefusal.IdentityRefused,
                     "The row identifiers could not be repaired.");
             }
+
+            // The step-1 snapshot is now STALE: repair writes new Id values into the
+            // worksheet, and those writes are the whole point of the step. Validating
+            // the pre-repair rows would report the blank or malformed Ids that repair
+            // just fixed — so a workbook needing only an ID refresh refused with
+            // BlockingValidationErrors, which is both wrong and unfixable by the
+            // user. Re-read through the same port, and take the same refusal path a
+            // failed first read takes, because from here on it is indistinguishable
+            // from one.
+            rows = _tableReader.Read();
+            if (!rows.Succeeded)
+            {
+                GanttTableReadRefusalReason rereadRefusal =
+                    rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+                return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                    ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
+                    : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+            }
         }
 
         // Step 6. Validate every row. A blocking error means the refresh is not
         // attempted at all; the previous chart stays exactly as it was.
         GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows);
+
+        // Step 6b. Bring the cell notes into line with what was just found, BEFORE
+        // deciding whether to render.
+        //
+        // This runs on BOTH paths, which is the whole point. A refresh that now finds
+        // no errors must REMOVE the notes a previous Validate left behind, and a
+        // refresh that finds errors must write the current ones even though it will
+        // not render. Calling it only on the success path would leave the stale-note
+        // defect in place for the user who had just fixed their data.
+        //
+        // A refusal here is surfaced rather than swallowed: the notes are the visible
+        // evidence of why the refresh did not complete, and a silent failure would
+        // leave the sheet showing the previous report while the chart stayed put.
+        // Nothing has been mutated on the sheet at this point, so this refusal reports
+        // zero worksheet writes.
+        GanttValidationReportOutcome reported = ReportValidation(validation.Issues);
+        if (!reported.Succeeded)
+        {
+            return Refuse(
+                GanttRefreshRefusal.ValidationNotesRefused,
+                "The validation notes on the table could not be updated, so the refresh stopped before the chart was touched.");
+        }
+
         if (!validation.IsValid)
         {
             return GanttRefreshOutcome.Refused(
@@ -261,7 +325,29 @@ public sealed class GanttRefreshOrchestrator(
         RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
             GanttCatalogues.MetricDefault("GanttRowHeightPt"),
             GanttCatalogues.MetricDefault("SplitterHeightPt"),
-            GanttCatalogues.MetricDefault("SpacerHeightPt"));
+            GanttCatalogues.MetricDefault("SpacerHeightPt"),
+
+            // ADR-0030 D4/D5: the header row IS the period band's row, so its
+            // height is what makes the period band's bottom coincide with the first
+            // body row's top; the reserved row above it carries the table title and
+            // the year band. Both come from the token catalogue for the same reason
+            // the three above do -- a literal here is a second authority that can
+            // drift from the token the user retunes.
+            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+            GanttCatalogues.MetricDefault("YearBandHeightPt"),
+
+            // ADR-0031 D2: the chart's top and bottom margins are worksheet rows, so
+            // they are normalised to their own token rather than borrowing a band's
+            // height. It is the LAST argument because it is the newest row, and the
+            // catalogue -- not a literal -- is the authority for how tall it is.
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+
+            // ADR-0038 D1: the reserved anchor row below the body, which the
+            // plot-spanning shapes paint through so Excel resolves their bottom cell
+            // anchor below the insert point. A THIRD reserved-row token, not the
+            // padding height: this row is the sub-row anchor, and a margin-height row
+            // here would be a visible strip of sheet rather than an anchor.
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
         if (!heights.Succeeded)
         {
             // The Duration column has already been written at this point, so the
@@ -373,6 +459,32 @@ public sealed class GanttRefreshOrchestrator(
 
         return current;
     }
+
+    /// <summary>
+    /// Brings the add-in's own validation notes into line with the current findings.
+    /// </summary>
+    /// <param name="issues">The issues just found, already in the deterministic order.</param>
+    /// <returns>The reporter's outcome; a success with zero when no reporter is wired.</returns>
+    /// <remarks>
+    /// An EMPTY issue list is still passed through rather than skipped, because
+    /// <see cref="IGanttValidationReporter"/> clears the notes it owns on every call:
+    /// that is the call that makes a corrected row lose its note. Skipping it when the
+    /// list is empty would leave precisely the stale note this row exists to remove.
+    /// <para>
+    /// <b>The price of "always call it" is a per-Refresh scan, and it is recorded as
+    /// L21.</b> The reporter clears before it checks whether it has anything to write,
+    /// so a clean workbook still pays a <c>SpecialCells</c> pass over the table body
+    /// plus a per-cell comment read. That cost is reported live and is deliberately
+    /// accepted in exchange for the correctness above. If it ever needs addressing,
+    /// read L21 first: it names the behaviour-preserving remedy (batch the read) and
+    /// records that the cost is currently UNMEASURED, so a future attempt should
+    /// measure rather than trust this note.
+    /// </para>
+    /// </remarks>
+    private GanttValidationReportOutcome ReportValidation(IReadOnlyList<GanttValidationIssue> issues) =>
+        _validationReporter is null
+            ? GanttValidationReportOutcome.Ok(0)
+            : _validationReporter.Report(issues);
 
     private static GanttRefreshOutcome Refuse(GanttRefreshRefusal refusal, string message) =>
         GanttRefreshOutcome.Refused(refusal, message);

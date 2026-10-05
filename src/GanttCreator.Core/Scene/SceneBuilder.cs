@@ -47,6 +47,20 @@ public enum SceneBuilderRefusal
     /// condition instead.
     /// </remarks>
     LiveProfileCarriesPanel = 9,
+
+    /// <summary>
+    /// A lane could not be anchored to its measured worksheet row, so the scene cannot
+    /// place it on the row it must coincide with (ADR-0034 D1).
+    /// </summary>
+    /// <remarks>
+    /// Raised when the request asks for row anchoring
+    /// (<see cref="SceneBuildRequest.AnchorLanesToRows"/>) and the anchor resolution
+    /// refuses — a lane whose owning row is not among the supplied events, a row beyond
+    /// the measured body, or a row that measures no height. Refused rather than stacked,
+    /// because the stacking is the defect this replaces: it would produce a chart whose
+    /// bars sit a row away from their cells with nothing reporting it.
+    /// </remarks>
+    UnresolvableLaneAnchor = 10,
 }
 
 /// <summary>
@@ -77,6 +91,20 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the caller-supplied measured panel cell grid.</summary>
     public PanelCellGrid? Grid { get; init; }
+
+    /// <summary>
+    /// Gets whether a lane's vertical geometry is anchored to its measured worksheet
+    /// row (ADR-0034 D1).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/>, so every existing composition keeps the
+    /// stacking it has always had and only a caller that has measured a worksheet asks
+    /// for anchoring. The LIVE request factory sets it; an export composition has no
+    /// worksheet rows to coincide with and leaves it off. Anchoring needs
+    /// <see cref="Grid"/>, so a request that asks for it without a grid is refused
+    /// rather than silently stacked.
+    /// </remarks>
+    public bool AnchorLanesToRows { get; init; }
 
     /// <summary>
     /// Gets the caller-supplied measured plot bounds. These must be the output of
@@ -152,8 +180,16 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the title strip height.</summary>
     public double TitleBandHeightPt { get; init; }
 
-    /// <summary>Gets the padding applied once around the panel/plot union.</summary>
-    public double ChartOuterPaddingPt { get; init; }
+    /// <summary>
+    /// Gets the margin between the panel/plot union and the chart frame, per side.
+    /// </summary>
+    /// <remarks>
+    /// Per side rather than one scalar (ADR-0031 D1). A live chart passes zero on
+    /// the left so the plot sits flush against the data table, and the measured
+    /// padding row heights top and bottom. An export request passes
+    /// <see cref="ChartPaddingPt.Uniform"/> and behaves exactly as before.
+    /// </remarks>
+    public ChartPaddingPt ChartPadding { get; init; }
 
     /// <summary>Gets the minimum visible period-label width.</summary>
     public double MinimumHeaderLabelWidthPt { get; init; }
@@ -163,6 +199,44 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the major boundary/frame line width.</summary>
     public double MajorBoundaryPt { get; init; }
+
+    /// <summary>
+    /// Gets how far the plot-spanning shapes extend up into the header row so Excel's
+    /// cell anchoring stretches them when a row is added at the top (ADR-0037 D1).
+    /// </summary>
+    /// <remarks>
+    /// The default is the code-owned <c>PlotBandHeaderOverlapPt</c> catalogue value
+    /// rather than zero, for the same reason <see cref="RowHeightPt"/> defaults rather
+    /// than zero: a caller that forgot this would silently get the unpainted-plot
+    /// behaviour back, which is exactly the defect this exists to remove. Zero is still
+    /// a legal value and reproduces the prior geometry exactly.
+    /// </remarks>
+    public double PlotBandHeaderOverlapPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "PlotBandHeaderOverlapPt").DefaultValue;
+
+    /// <summary>
+    /// Gets the reserved anchor row's height, which is how far the plot-spanning
+    /// shapes extend down so Excel's cell anchoring stretches them when a row is
+    /// added at the bottom of the body (ADR-0038 D1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The default is the code-owned <c>ChartAnchorRowHeightPt</c> catalogue value for
+    /// the same reason <see cref="PlotBandHeaderOverlapPt"/> defaults rather than zero:
+    /// a caller that forgot this would silently get the unpainted-footer behaviour
+    /// back, which is exactly the defect this exists to remove. Zero is still a legal
+    /// value and reproduces the prior geometry exactly.
+    /// </para>
+    /// <para>
+    /// <b>Not the mirror of <see cref="PlotBandHeaderOverlapPt"/>, and the difference
+    /// is load-bearing.</b> The top is an overlap into the header row because a row
+    /// above the plot would paint over user content. The bottom cannot be an overlap:
+    /// every insert targets one row past the body, so the bottom edge needs a cell
+    /// anchor strictly below that point, and only a reserved row creates one.
+    /// </para>
+    /// </remarks>
+    public double ChartAnchorRowHeightPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "ChartAnchorRowHeightPt").DefaultValue;
 
     /// <summary>Gets the milestone diamond tip-to-tip size.</summary>
     public double MilestoneSizePt { get; init; }
@@ -183,28 +257,20 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the gap between a shape bound and an external label.</summary>
     public double LabelGapPt { get; init; }
 
-    /// <summary>Gets the one-line label box height.</summary>
-    public double LabelHeightPt { get; init; }
-
     /// <summary>
-    /// Gets the maximum width of an external label, transcribed from the
-    /// <c>MaximumExternalLabelWidthPt</c> metric token.
+    /// Gets the label box height, which is one worksheet row (owner ruling).
     /// </summary>
     /// <remarks>
-    /// Entity guide section 22 makes this token the maximum external width, and
-    /// <see cref="LabelPlanner"/> already honours whatever it is given. Passing the
-    /// plot width instead made the cap depend on how wide the caller happened to
-    /// draw the time axis rather than on the approved token, so a wide plot
-    /// produced a label wider than the 36-360pt the catalogue allows.
+    /// This was <c>LabelHeightPt</c>, a 10pt single-line height drawn from its own
+    /// catalogue token, inside an 18pt row - so the label box was shorter than the
+    /// row it belonged to and the text sat slightly above the bar's centre. The box
+    /// is now the row height, and the <c>LabelHeightPt</c> token no longer feeds it.
+    /// The default is the code-owned <c>GanttRowHeightPt</c> catalogue value rather
+    /// than zero: a zero height would make every label box degenerate, and the
+    /// planner accepts zero as valid rather than refusing it.
     /// </remarks>
-    /// <remarks>
-    /// The default is the code-owned catalogue value, not zero. The planner accepts
-    /// a zero maximum as valid, so a request that omitted the property would have
-    /// silently suppressed every external label rather than failing; seeding the
-    /// approved default keeps an incomplete request behaving like the catalogue.
-    /// </remarks>
-    public double MaximumExternalLabelWidthPt { get; init; } =
-        GanttCatalogues.Metrics.First(token => token.Name == "MaximumExternalLabelWidthPt").DefaultValue;
+    public double RowHeightPt { get; init; } =
+        GanttCatalogues.Metrics.First(token => token.Name == "GanttRowHeightPt").DefaultValue;
 
     /// <summary>Gets the vertical gap between stacked same-date delineator labels.</summary>
     public double DelineatorStackGapPt { get; init; }
@@ -478,7 +544,28 @@ public static class SceneBuilder
             laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
 
-        if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics).Layout is not { } laneLayout)
+        // ADR-0034 D1: a LIVE composition anchors every lane to the worksheet row it
+        // renders on, so a body row that owns no lane (a Delineator, a projected child)
+        // leaves its own band empty instead of pulling every later lane upwards. The
+        // measured grid is the anchor source and is required, so a request that asks
+        // for anchoring without one is refused rather than quietly stacked -- a silent
+        // fall back is exactly how a lane ends up one row from its row unreported.
+        LaneRowAnchorResolution? rowAnchors = null;
+        if (request.AnchorLanesToRows)
+        {
+            if (request.Grid is not { } anchorGrid)
+            {
+                return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            }
+
+            rowAnchors = LaneRowAnchorResolver.TryResolve(laneInputs, request.Events, anchorGrid);
+            if (!rowAnchors.Succeeded)
+            {
+                return Refused(SceneBuilderRefusal.UnresolvableLaneAnchor);
+            }
+        }
+
+        if (LaneLayoutBuilder.TryBuild(laneInputs, laneMetrics, rowAnchors).Layout is not { } laneLayout)
         {
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }
@@ -714,9 +801,15 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
-        // The title band is shown only when a real title exists, so a blank title
-        // never becomes a visible empty strip.
-        var showTitle = !string.IsNullOrWhiteSpace(request.Title);
+        // The title band is shown only when a real title exists AND the
+        // composition profile actually draws one. ADR-0030 D6: in the LIVE sheet the
+        // title is the table's own title cell, written into the reserved row by
+        // Initialise, so a drawn title band is not merely redundant - it is drawn
+        // over the year band and collides with it. The export profiles keep the band,
+        // which is why this is a profile check rather than removing the entity.
+        var showTitle =
+            request.Profile != SceneCompositionProfile.LiveExcel
+            && !string.IsNullOrWhiteSpace(request.Title);
 
         // The panel is built FIRST, and its derived bounds are what the frame reads.
         // This is the single-authority decision (D-B1): there is no caller-supplied
@@ -730,9 +823,21 @@ public static class SceneBuilder
         if (request.Panel is { } panelTheme)
         {
             // Section 4 fixes the header band's bottom edge to the period header's
-            // bottom, which R3.5 derives as PlotBounds.Y - YearBandHeightPt. The
-            // panel builder cannot know the plot bounds, so it is supplied here and
-            // SceneBuilderTests asserts the emitted bottom equals this value.
+            // bottom. The period band sits DIRECTLY above the plot (entity guide
+            // §6: "one clipped cell per period below the year band"), so its bottom
+            // is the plot's own top edge.
+            //
+            // This was `PlotBounds.Y - YearBandHeightPt`, which is only correct while
+            // the YEAR band is the one adjacent to the plot. R3.5 built the bands the
+            // other way round, and FrameBandsBuilder's own AddHeaders contradicted
+            // even that - so this expression, the emitted primitives, and the
+            // returned ChartFrameGeometry were three different answers to one
+            // question. It now reads the plot's top directly, which is correct under
+            // the ordering the geometry itself publishes and needs no band height at
+            // all, so a future band-height change cannot silently break it.
+            //
+            // The panel builder cannot know the plot bounds, so they are supplied
+            // here and SceneBuilderTests asserts the emitted bottom equals this value.
             //
             // Rows come from the source-row projection, not from lane placements: a
             // Splitter, Spacer, Delineator, or hidden row is a row in the table §3
@@ -752,7 +857,7 @@ public static class SceneBuilder
                     request.Grid!,
                     projected.Rows,
                     plotBounds,
-                    plotBounds.Y - request.YearBandHeightPt,
+                    plotBounds.Y,
                     panelTheme));
 
             // A panel refusal must not be dropped: an empty panel would read as a
@@ -783,7 +888,7 @@ public static class SceneBuilder
                 request.PeriodLabelFormat,
                 framePanelBounds,
                 plotBounds,
-                request.ChartOuterPaddingPt,
+                request.ChartPadding,
                 request.TitleBandHeightPt,
                 request.YearBandHeightPt,
                 request.PeriodBandHeightPt,
@@ -795,6 +900,8 @@ public static class SceneBuilder
                 request.AlternateBanding,
                 request.ShowMinorGrid,
                 request.ShowMajorGrid,
+                request.PlotBandHeaderOverlapPt,
+                request.ChartAnchorRowHeightPt,
                 frameTheme),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
@@ -889,6 +996,34 @@ public static class SceneBuilder
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
+        // ADR-0038 D2: the delineator shares the plot-spanning shapes' vertical span,
+        // so it extends to the closing line rather than stopping at the plot's own
+        // bottom edge. Its LABEL corners stay against plotBounds -- extending that box
+        // would drag every corner label down with it.
+        //
+        // ADR-0037 D1, applied here for the same reason it is applied to the bands:
+        // the line's top is lifted into the header row so a body insert at the top
+        // STRETCHES it rather than sliding it. Measured live 2026-10-04
+        // (scripts/probe-delineator-top.ps1): unlifted, TopDelta +15.75 with
+        // HeightDelta 0 and the anchor walking D2 -> D3; lifted 0.5pt, TopDelta 0
+        // with HeightDelta +15.75 and the anchor holding at D1.
+        //
+        // THE TWO ARE DELIBERATELY INDEPENDENT, and that is the asymmetry this whole
+        // mechanism exists to encode. The top lift is UNCONDITIONAL: it reaches into
+        // an existing row, so it needs no reservation and works with no anchor row at
+        // all. The bottom extension IS conditional on the anchor row, because only a
+        // reserved row can create the cell anchor below the insert point it needs.
+        // Tying the top to the anchor row would leave the line sliding again whenever
+        // the anchor row is configured to zero -- the opposite of what that token is for.
+        double? lineBottomPt = PlotSpanGeometry.HasAnchorRow(request.ChartAnchorRowHeightPt)
+            ? PlotSpanGeometry.ClosingLineBottomPt(
+                plotBounds.Bottom,
+                request.ChartAnchorRowHeightPt,
+                request.MajorBoundaryPt)
+            : null;
+        var lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
+            plotBounds,
+            request.PlotBandHeaderOverlapPt).Y;
         // Grouping is by (date, resolved style), and the members inside a group are
         // ordered by the stable row ID. The input is not ordered -- the R3.12
         // determinism contract is that a shuffled input produces a byte-identical
@@ -912,7 +1047,9 @@ public static class SceneBuilder
                     chartBounds,
                     request.LabelGapPt,
                     request.Metrics!,
-                    @event.LabelPosition ?? GanttLabelPosition.Auto)),
+                    @event.LabelPosition ?? GanttLabelPosition.Auto,
+                    LineBottomPt: lineBottomPt,
+                    LineTopPt: lineTopPt)),
             ];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
@@ -986,10 +1123,9 @@ public static class SceneBuilder
             plotBounds,
             chartBounds,
             request.LabelGapPt,
-            request.LabelHeightPt,
-            request.MaximumExternalLabelWidthPt);
+            request.RowHeightPt);
 
-        List<RectD> occupants = [];
+        List<LabelOccupant> occupants = [];
 
         // OrderBy is a stable sort, so the placement order the lane layout already
         // fixed (lane, stack, subtype, sort order, stable ID) survives within one
@@ -1012,7 +1148,7 @@ public static class SceneBuilder
             // but the free-space measure is one-dimensional, and without this filter a
             // label far to the right of another lane's bar would shrink this row's
             // measured gap and truncate or suppress a label that has room.
-            List<RectD> relevant = VerticalBand(occupants, shapeBounds);
+            List<LabelOccupant> relevant = VerticalBand(occupants, shapeBounds);
 
             // The inside label carries the row's own resolved text colour, so a
             // delay event's label is DelayText over its red body. A row whose style
@@ -1051,7 +1187,16 @@ public static class SceneBuilder
                 if (described.Primitive is { } descriptionText && described.Bounds is { } descriptionBounds)
                 {
                     primitives.Add(descriptionText);
-                    occupants.Add(descriptionBounds);
+
+                    // The lane and stack travel with the box, because ADR-0033 D2's
+                    // exemption can only recognise a stack sibling from them. Recorded
+                    // here rather than inferred later, so the identity is the one the
+                    // placement actually used.
+                    occupants.Add(
+                        new LabelOccupant(
+                            descriptionBounds,
+                            placement.LaneOrder,
+                            placement.EffectiveStackIndex));
                 }
             }
 
@@ -1084,7 +1229,9 @@ public static class SceneBuilder
                     request.Metrics!,
                     request.DateFormat,
                     outsideLabelStyle,
-                    Occupants: VerticalBand(occupants, shapeBounds)));
+                    Occupants: VerticalBand(occupants, shapeBounds),
+                    LaneOrder: placement.LaneOrder,
+                    StackIndex: placement.EffectiveStackIndex));
             if (dates.Result is not { } planned)
             {
                 // A refused date label is a broken dependency, not a placement
@@ -1102,7 +1249,12 @@ public static class SceneBuilder
             warnings.AddRange(planned.Warnings);
             foreach (SceneText dateLabel in planned.Primitives)
             {
-                occupants.Add(dateLabel.TextBounds);
+                // Same identity as the description label above, for the same reason.
+                occupants.Add(
+                    new LabelOccupant(
+                        dateLabel.TextBounds,
+                        placement.LaneOrder,
+                        placement.EffectiveStackIndex));
             }
         }
     }
@@ -1144,18 +1296,18 @@ public static class SceneBuilder
     /// <param name="occupants">Every label box placed so far, in any lane.</param>
     /// <param name="band">The row's own shape bounds.</param>
     /// <returns>The overlapping subset; the same list instance when all of them do.</returns>
-    private static List<RectD> VerticalBand(List<RectD> occupants, RectD band)
+    private static List<LabelOccupant> VerticalBand(List<LabelOccupant> occupants, RectD band)
     {
         // `skipped` is tracked separately from `relevant`: when the *first* occupant
         // is filtered out there is nothing to copy yet, so a null `relevant` alone
         // would mean "keep everything" and silently return the unfiltered list.
         var skipped = false;
-        List<RectD>? relevant = null;
+        List<LabelOccupant>? relevant = null;
         for (var i = 0; i < occupants.Count; i++)
         {
-            RectD occupant = occupants[i];
-            if (occupant.Bottom <= band.Top + GeometryMath.Epsilon
-                || occupant.Top >= band.Bottom - GeometryMath.Epsilon)
+            LabelOccupant occupant = occupants[i];
+            if (occupant.Bounds.Bottom <= band.Top + GeometryMath.Epsilon
+                || occupant.Bounds.Top >= band.Bottom - GeometryMath.Epsilon)
             {
                 skipped = true;
                 continue;

@@ -186,7 +186,7 @@ public sealed class SceneBenchmarkTests
             // would be a second way to plan nothing, so the gap and height are the
             // same non-zero values the golden fixture uses.
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
 }

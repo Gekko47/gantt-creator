@@ -43,17 +43,24 @@ public sealed class CriticalOverlayBuilderTests
         Assert.Equal(1.125, bar.Bounds.Height, 10);
     }
 
+    /// <summary>
+    /// The critical interval shares its activity shape's top edge (ADR-0034 D3,
+    /// owner ruling 2026-10-02): it is top-aligned to the top a full-height
+    /// activity in its slot would have, not centred on the slot. Every other
+    /// shape stays centred; only the critical rect is off-centre, so the two
+    /// read as one band when the child overlays its parent.
+    /// </summary>
     [Fact]
-    public void The_bar_is_centred_on_its_own_slot()
+    public void The_bar_is_top_aligned_with_its_activity_shape()
     {
-        // Centred exactly as an ordinary span bar is, rather than top-aligned to a
-        // parent's bar that no longer participates.
         CriticalOverlayCreationOutcome outcome = Build(5, 9, predeterminedHeightPt: 8);
 
         SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
         Assert.Equal(4, bar.Bounds.Height, 10);
-        Assert.Equal(58, bar.Bounds.Top, 10);
-        Assert.Equal(60, bar.Bounds.Top + (bar.Bounds.Height / 2), 10);
+
+        // The top a full-height 8pt activity in this slot would have:
+        // SlotCentreY - predetermined/2 = 60 - 4 = 56.
+        Assert.Equal(56, bar.Bounds.Top, 10);
     }
 
     [Fact]
@@ -312,9 +319,10 @@ public sealed class CriticalOverlayBuilderTests
         Assert.True(outcome.Succeeded);
         SceneRect bar = Assert.IsType<SceneRect>(outcome.Result!.Primitive);
         // Same dates as the default build; only the slot moved, so only Y moved.
+        // Top-aligned (ADR-0034 D3): slotCentre - predetermined/2 = 100 - 4 = 96.
         Assert.Equal(40, bar.Bounds.Left, 10);
         Assert.Equal(90, bar.Bounds.Right, 10);
-        Assert.Equal(98, bar.Bounds.Top, 10);
+        Assert.Equal(96, bar.Bounds.Top, 10);
     }
 
     [Fact]

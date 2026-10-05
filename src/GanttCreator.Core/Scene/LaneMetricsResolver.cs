@@ -21,8 +21,21 @@ public enum LaneMetricsRefusal
     /// <summary>The grid carried no body row heights.</summary>
     NoRows = 1,
 
-    /// <summary>A measured row height was non-finite or non-positive.</summary>
+    /// <summary>A measured row height was non-finite or negative.</summary>
     InvalidRowHeight = 2,
+
+    /// <summary>
+    /// Every measured row was hidden (zero height), so no row is available to size a
+    /// lane from (ADR-0034).
+    /// </summary>
+    /// <remarks>
+    /// Zero is a real measurement — Excel reports a hidden row's height as zero — so it
+    /// is skipped when the lane height is chosen rather than refused. That is R4.7D D8's
+    /// "measure visible lane-owning rows". A body of entirely hidden rows has no visible
+    /// row to derive a height from, so it is refused here with its own reason instead of
+    /// resolving a zero-height lane from the mode.
+    /// </remarks>
+    NoVisibleRows = 3,
 }
 
 /// <summary>
@@ -93,13 +106,24 @@ public static class LaneMetricsResolver
 
         foreach (var height in heights)
         {
-            if (!double.IsFinite(height) || height <= 0)
+            if (!double.IsFinite(height) || height < 0)
             {
                 return new LaneMetricsResolution(null, LaneMetricsRefusal.InvalidRowHeight);
             }
         }
 
-        var laneHeightPt = MostCommon(heights);
+        // ADR-0034: a hidden row measures zero, and it is NOT a row a lane is derived
+        // from -- R4.7D D8 measures the visible lane-owning rows. Zero entries are
+        // therefore skipped here (they still keep their place in the grid's row tops,
+        // where they correctly consume no space) and only a body with no visible row at
+        // all is refused.
+        List<double> visibleHeights = [.. heights.Where(static height => height > 0)];
+        if (visibleHeights.Count == 0)
+        {
+            return new LaneMetricsResolution(null, LaneMetricsRefusal.NoVisibleRows);
+        }
+
+        var laneHeightPt = MostCommon(visibleHeights);
 
         return new LaneMetricsResolution(
             new LaneLayoutMetrics(
@@ -116,7 +140,7 @@ public static class LaneMetricsResolver
     /// The most frequent height, ties broken by the first occurrence in worksheet
     /// order so the result never depends on enumeration order.
     /// </summary>
-    private static double MostCommon(IReadOnlyList<double> heights)
+    private static double MostCommon(List<double> heights)
     {
         Dictionary<double, int> counts = [];
         foreach (var height in heights)

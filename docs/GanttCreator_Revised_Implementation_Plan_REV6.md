@@ -12,7 +12,8 @@
 > | §16 — separate `HostShapeKey` from `PrimitiveId` | **Rejected.** R4.7's L18 refusal stands. |
 > | §15 — remove `Above`/`Below` | **Accepted.** Retain `Auto`, `Left`, `Right`, `Inside` (UI: Centre), `None`, the four delineator corners, and the splitter positions. |
 > | §15 — `Auto` is largest-space-that-fits | **Accepted, with the existing truncation retained.** ADR-0015's D4/D5/D6 stand; this document does not replace them. Nothing new needs to be built. |
-> | §1, §11 — `Duration` and `SiblingOrder` columns | Accepted. Schema 3 → 4, edited in place; **no migration** (no active users). |
+> | §1, §11 — `SiblingOrder` column | Accepted. Schema **3 → 4**, edited in place; **no migration** (no active users). ADR-0029 D2/D5 step 1, taken by R4.7A. |
+> | §1, §11 — `Duration` column | Accepted. Schema **4 → 5**, edited in place; **no migration**. ADR-0029 D1/D5 step 2, taken by R4.7C. |
 > | §3 — `MaxChildrenPerParent = 7` | Accepted. |
 > | §17 — size presets | Accepted; roadmap row R4.7H. |
 > | §22, §23 — Refresh orchestrator and request factory | Accepted; roadmap row R4.8A. |

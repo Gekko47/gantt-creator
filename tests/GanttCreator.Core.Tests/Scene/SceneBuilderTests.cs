@@ -22,6 +22,30 @@ public sealed class SceneBuilderTests
     // emitted above the chart's own top edge (see the R3.5 finding in the work item).
     private static readonly RectD _plotBounds = new(200, 60, 300, 140);
 
+    /// <summary>
+    /// The major-boundary width every request in this file passes (ADR-0038 D2), named
+    /// so the closing-boundary arithmetic is asserted from one place.
+    /// </summary>
+    private const double MajorBoundaryPt = 1;
+
+    /// <summary>
+    /// The reserved anchor row's default height (ADR-0038 D1). Used to state the
+    /// expected closing boundary as <c>anchor + w/2</c> rather than as a literal, so
+    /// the arithmetic is pinned and not the constant that satisfies it today.
+    /// </summary>
+    private const double AnchorRowPt = 0.25;
+
+    /// <summary>
+    /// The header-row overlap the plot-spanning shapes are lifted by (ADR-0037 D1).
+    /// </summary>
+    /// <remarks>
+    /// Named so the delineator's lifted top is asserted as the computed overlap rather
+    /// than as a literal that happens to match today. The delineator's top was left
+    /// unlifted until a live probe on 2026-10-04 showed it sliding where the bands
+    /// beside it stretched.
+    /// </remarks>
+    private const double TopOverlapPt = 0.5;
+
     private static GanttStyleDefinition Style(string key, double height, string textColour = "#000000") =>
         new(
             key,
@@ -177,8 +201,8 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
-            ChartOuterPaddingPt = 0,
+            RowHeightPt = 8,
+            ChartPadding = ChartPaddingPt.Uniform(0),
             MinimumHeaderLabelWidthPt = 0,
         };
 
@@ -305,7 +329,7 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(Event(1), Event(2, GanttEntityType.AsPlannedMilestone)) with
             {
-                ChartOuterPaddingPt = 6,
+                ChartPadding = ChartPaddingPt.Uniform(6),
                 Panel = new PanelTheme(
                     new SceneStyle("BodyFill"),
                     new SceneStyle("BodyText"),
@@ -500,8 +524,73 @@ public sealed class SceneBuilderTests
         SceneLine line = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.ZLayer == ZLayer.Delineator);
-        Assert.Equal(_plotBounds.Top, line.From.Y);
-        Assert.Equal(_plotBounds.Bottom, line.To.Y);
+        Assert.Equal(_plotBounds.Top - TopOverlapPt, line.From.Y);
+        Assert.Equal(_plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2), line.To.Y);
+    }
+
+    /// <summary>
+    /// The delineator's top lift is INDEPENDENT of the anchor row, and both ends are
+    /// asserted together (ADR-0037 D1 / ADR-0038 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the test for the asymmetry, which is the finding most likely to be
+    /// re-broken by a well-meaning cleanup. The two ends work for DIFFERENT reasons
+    /// and are therefore configured by DIFFERENT tokens: the top reaches into an
+    /// existing header row and needs no reservation, while the bottom needs the
+    /// reserved anchor row because only a reserved row can create the cell anchor
+    /// below the insert point.
+    /// </para>
+    /// <para>
+    /// <b>The zero-anchor-row case is the load-bearing half.</b> It sets the anchor row
+    /// to zero -- removing the bottom extension entirely -- and asserts the top is
+    /// STILL lifted. A "symmetrisation" that tied the top to the anchor row, or a
+    /// builder that simply extended the plot box at both ends, would leave the
+    /// delineator sliding again the moment the anchor row is configured away, which is
+    /// the opposite of what that token is for.
+    /// </para>
+    /// <para>
+    /// The label corners are asserted NOT to move with the line: §22/§24 place them
+    /// against <c>PlotBounds</c>, so widening the plot box to carry the overhang would
+    /// drag every corner label with it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_delineator_lifts_into_the_header_independently_of_the_anchor_row()
+    {
+        GanttEvent only = Event(
+            1,
+            GanttEntityType.Delineator,
+            new DateOnly(2024, 1, 8),
+            null,
+            styleKey: null);
+
+        // No anchor row: the bottom extension is off entirely.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(only) with { ChartAnchorRowHeightPt = 0 });
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        SceneLine line = Assert.Single(
+            outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
+            candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
+
+        // The TOP is lifted even with no anchor row -- this is the assertion that
+        // fails if the two ends are ever coupled.
+        Assert.Equal(_plotBounds.Y - TopOverlapPt, line.From.Y, precision: 9);
+
+        // ...and the bottom is back on the plot's own edge, because the anchor row
+        // that would have carried it past is not there.
+        Assert.Equal(_plotBounds.Bottom, line.To.Y, precision: 9);
+
+        // The closing line is not emitted either, so the two switch off as a package.
+        Assert.DoesNotContain(
+            outcome.Result.Scene.Primitives.OfType<SceneLine>(),
+            candidate => string.Equals(candidate.PrimitiveId, "chart:plot-closing", StringComparison.Ordinal));
+
+        // The label corner stays against PlotBounds: a lifted TOP must not drag it up.
+        SceneText label = Assert.Single(
+            outcome.Result.Scene.Primitives.OfType<SceneText>(),
+            candidate => candidate.PrimitiveId.EndsWith(":delineator-label", StringComparison.Ordinal));
+        Assert.Equal(_plotBounds.Y, label.TextBounds.Y, precision: 9);
     }
 
 
@@ -688,13 +777,13 @@ public sealed class SceneBuilderTests
             outcome.Result!.Scene.Primitives.OfType<SceneRect>(),
             rect => rect.ZLayer == ZLayer.CriticalOverlay);
 
-        // Clipped to the plot on both edges, and not to the shorter parent.
+        // Clipped to the plot on both edges, and not to the shorter parent. The
+        // exact equality against the plot width IS the "was not clipped to the
+        // parent" proof: a parent clip would stop the overlay short of the plot's
+        // right edge and fail the second assertion.
         Assert.Equal(_plotBounds.Left, overlay.Bounds.Left, precision: 6);
         Assert.Equal(_plotBounds.Right, overlay.Bounds.Right, precision: 6);
         Assert.Equal(_plotBounds.Width, overlay.Bounds.Width, precision: 6);
-        Assert.True(
-            overlay.Bounds.Width > _plotBounds.Width * 0.9,
-            "The overlay must span the plot, proving it was NOT clipped to the parent's shorter span.");
     }
 
     /// <summary>
@@ -777,9 +866,9 @@ public sealed class SceneBuilderTests
 
 
     [Fact]
-    public void The_panel_header_band_bottom_equals_the_R3_5_derived_period_header_bottom()
+    public void The_panel_header_band_bottom_equals_the_period_header_bottom()
     {
-        // Section 4 fixes the header bottom to PlotBounds.Y - YearBandHeightPt. The
+        // Section 4 fixes the header bottom to the period band's bottom. The
         // panel builder cannot know the plot bounds, so SceneBuilder supplies it;
         // this test proves the value arrives intact rather than being assumed.
         SceneBuildRequest request = Request(Event(1)) with
@@ -798,7 +887,14 @@ public sealed class SceneBuilderTests
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(request);
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        double expectedBottom = _plotBounds.Y - request.YearBandHeightPt;
+
+        // The period band sits DIRECTLY above the plot (entity guide §6), so its
+        // bottom - and therefore the panel header's bottom - is the plot's own top
+        // edge. This asserted `_plotBounds.Y - request.YearBandHeightPt`, which is
+        // only correct while the YEAR band is the one adjacent to the plot. That
+        // ordering was the inversion: it made the header align with a band that is
+        // not there, so the value was wrong even though the test was green.
+        double expectedBottom = _plotBounds.Y;
 
         // Filtered to the header cells specifically. The period band is also a
         // SceneRect whose bottom happens to equal expectedBottom, so an unfiltered
@@ -814,6 +910,21 @@ public sealed class SceneBuilderTests
         Assert.All(
             headers,
             header => Assert.Equal(expectedBottom, header.Bounds.Top + header.Bounds.Height, precision: 9));
+
+        // And the panel header must align with the period band the scene actually
+        // emitted, not merely with a number this test computed. That is the
+        // relationship §4 states, and computing the expectation here independently
+        // is what let the two drift apart in the first place.
+        SceneRect[] periodBands =
+        [
+            .. outcome.Result!.Scene.Primitives
+                .OfType<SceneRect>()
+                .Where(rect => rect.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)),
+        ];
+        Assert.NotEmpty(periodBands);
+        Assert.All(
+            periodBands,
+            band => Assert.Equal(expectedBottom, band.Bounds.Bottom, precision: 9));
     }
 
     [Fact]
@@ -846,29 +957,37 @@ public sealed class SceneBuilderTests
     }
 
     [Fact]
-    public void An_external_label_is_capped_by_the_configured_maximum_width_not_the_plot_width()
+    public void An_external_label_is_bounded_only_by_the_free_space_beside_its_shape()
     {
-        // The regression the request property fixes. LabelMetrics' maximum external
-        // width was the plot width, so the cap moved with the time axis rather than
-        // following the approved MaximumExternalLabelWidthPt token. Here the plot is
-        // 300pt wide but the configured cap is 36pt, so a long description must be
-        // truncated to the cap rather than allowed the whole 300pt gap.
+        // ADR-0035 D1, INVERTED. This test previously asserted the OPPOSITE -- that a
+        // label is capped by an absolute MaximumExternalLabelWidthPt -- and it stayed
+        // green straight through the live defect for the same reason the band-order
+        // test did: it pinned the produced literal rather than the relationship. The
+        // product owner ruled that available space is the only limit on label length.
+        //
+        // The fixture is chosen so the two rules give DIFFERENT answers. The bar sits
+        // at the very start of the month, so the gap to its right is roughly 270pt --
+        // far more than the retired 144pt default cap. At 4pt per character a
+        // 60-character description is 240pt: wider than 144, so the old cap would
+        // have ellipsised it, and comfortably inside the free space, so the new rule
+        // must emit it whole. A fixture with a narrow gap would have passed under
+        // BOTH rules and proved nothing.
+        const int DescriptionLength = 60;
         SceneBuildOutcome outcome = SceneBuilder.TryBuild(
             Request(
-                Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                Event(1, start: new DateOnly(2024, 1, 1), finish: new DateOnly(2024, 1, 3))
                 with
                 {
                     LabelPosition = GanttLabelPosition.Right,
-                    Description = new string('W', 60),
+                    Description = new string('W', DescriptionLength),
                 })
             with
             {
                 LabelStyle = new SceneStyle("DefaultText"),
-                MaximumExternalLabelWidthPt = 36,
+                Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             });
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
-        Assert.True(_plotBounds.Width > 36, "The plot must be wider than the cap for this test to discriminate.");
 
         // Filtered to row-owned text: the frame's own period/year labels also end in
         // ":label", so an unfiltered match would pick a chart label instead.
@@ -877,12 +996,175 @@ public sealed class SceneBuilderTests
                 .OfType<SceneText>(),
             text => text.OwnerId.Kind == SceneOwnerKind.Row
                 && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        // The whole string survives: no ellipsis, and byte-for-byte the row's text.
+        Assert.Equal(new string('W', DescriptionLength), description.Text);
+        Assert.DoesNotContain('…', description.Text);
+
+        // The measurable form of the same claim. The box is strictly wider than the
+        // 144pt the retired default cap imposed, so reinstating ANY absolute cap --
+        // at 36, 144, or 360 -- fails here rather than passing quietly.
         Assert.True(
-            description.TextBounds.Width <= 36 + 1e-9,
-            "An external label must respect the configured cap, not the plot width.");
-        Assert.Contains(
-            outcome.Result!.Scene.Warnings,
-            warning => warning.Code == LabelPlanner.TruncatedToFitCode);
+            description.TextBounds.Width > 144,
+            $"A label must fill the free gap, not stop at the retired 144pt cap (was {description.TextBounds.Width}pt).");
+    }
+
+    /// <summary>
+    /// A label in the FINAL lane is still contained: an 18pt box on a two-slot lane
+    /// hangs below the plot, so the box is clamped up into the chart bounds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The label box is one worksheet row tall (ADR-0033 D3) and centred on its
+    /// shape's own band. On the LAST lane the second slot's bar sits within half a
+    /// row of the plot's bottom edge, so a centred 18pt box extends past it — and past
+    /// <c>ChartBounds</c>, which is the plot plus only <c>ChartOuterPaddingPt</c>. The
+    /// containment check then refused the candidate, the widest-gap fallback measured
+    /// the same out-of-bounds box, and the label was suppressed or ellipsised for
+    /// being too tall rather than too narrow. Nothing said so: the symptom was a
+    /// missing description on the bottom row.
+    /// </para>
+    /// <para>
+    /// <b>Why the box moves rather than shrinks.</b> The height is one row by owner
+    /// ruling, so it is a contract rather than something to fit; only the top moves,
+    /// and only as far as containment requires. Every other row in the fixture fits
+    /// untouched, so the change is confined to the box that would otherwise escape.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_label_in_a_two_slot_final_lane_is_contained_by_the_chart_bounds()
+    {
+        // Seven single-event lanes, then a FINAL lane holding two stacked events. The
+        // lane heights are seeded explicitly because ADR-0034 anchors each lane to its
+        // measured worksheet row, and the last row is what puts the second slot against
+        // the plot's bottom edge.
+        GanttRowId finalLane = GanttRowId.New();
+        GanttEvent[] events =
+        [
+            .. Enumerable.Range(1, 7).Select(row => Event(row) with { LaneId = GanttRowId.New() }),
+            Event(8) with { LaneId = finalLane },
+            Event(9) with { LaneId = finalLane },
+        ];
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(events) with
+            {
+                // The production token value: one worksheet row (ADR-0033 D3).
+                RowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                PlotBounds = new RectD(200, 60, 300, 132),
+                LabelStyle = new SceneStyle("DefaultText"),
+                Grid = PanelCellGrid.TryCreate(
+                    [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
+                    [.. Enumerable.Repeat(18.0, 6), 24.0],
+                    18,
+                    ["Id", "Description"]).Grid!,
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The FINAL lane's second slot is the lowest bar in the chart. Located through
+        // its bar rather than by row number, so the assertion follows the geometry
+        // instead of the fixture.
+        SceneRect finalBar = scene.Primitives
+            .OfType<SceneRect>()
+            .Where(rect => rect.PrimitiveId.EndsWith(":bar", StringComparison.Ordinal))
+            .MaxBy(rect => rect.Bounds.Bottom)!;
+
+        SceneText finalLabel = Assert.Single(
+            scene.Primitives.OfType<SceneText>(),
+            text => text.OwnerId == finalBar.OwnerId
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal));
+
+        double rowHeightPt = GanttCatalogues.MetricDefault("GanttRowHeightPt");
+        RectD bounds = finalLabel.TextBounds;
+
+        // The height is preserved exactly; only the position moves.
+        Assert.Equal(rowHeightPt, bounds.Height);
+
+        // Non-vacuity, as arithmetic rather than a hard-coded number: the UNCLAMPED
+        // position is the box centred on its own bar, and on this final lane that box
+        // hangs below the chart. So the placed box must sit strictly higher than the
+        // centred one — Y grows downwards, so containing an overhanging box moves its
+        // top up — and the fixture must be one where the centred box really would have
+        // been refused.
+        double centredTop = finalBar.Bounds.Top + ((finalBar.Bounds.Height - rowHeightPt) / 2);
+        Assert.True(
+            centredTop + rowHeightPt > scene.ChartBounds.Bottom,
+            $"fixture does not exercise the clamp: the centred box already fits "
+            + $"({centredTop}..{centredTop + rowHeightPt} within {scene.ChartBounds.Bottom}).");
+        Assert.True(
+            bounds.Top < centredTop,
+            $"clamping must move the box UP into the chart, not down: {bounds.Top} vs centred {centredTop}.");
+
+        // Contained on every edge — the containment rule is what previously refused
+        // this candidate outright, and the reason the label vanished.
+        Assert.True(bounds.Top >= scene.ChartBounds.Top, $"label top {bounds.Top} above {scene.ChartBounds.Top}.");
+        Assert.True(
+            bounds.Bottom <= scene.ChartBounds.Bottom,
+            $"label bottom {bounds.Bottom} below {scene.ChartBounds.Bottom}.");
+
+        // The horizontal anchor is untouched by a vertical clamp: the box still hugs
+        // the bar it belongs to, so this is not a repositioning of the label itself.
+        Assert.True(
+            bounds.Left >= finalBar.Bounds.Right,
+            $"a vertical clamp must not move the label horizontally: {bounds.Left} vs bar right {finalBar.Bounds.Right}.");
+    }
+
+    /// <summary>
+    /// A long label in one row does NOT govern the width of a label in another row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the reported symptom -- "one row's text length may be governing them
+    /// all" -- as a property, exercised through <see cref="SceneBuilder"/> because
+    /// that is the only path the product uses. Testing <see cref="LabelPlanner"/>
+    /// directly with a hand-built occupant list proved nothing: the planner trusts
+    /// the list it is handed and <c>SceneBuilder.VerticalBand</c> is what filters
+    /// it, so a direct-planner test "reproduces" a symptom the product cannot
+    /// produce.
+    /// </para>
+    /// <para>
+    /// Row 1's description is 60 characters; row 2's is 6. Each label's box is
+    /// asserted against its OWN text, so a shared width cannot pass.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_long_label_in_one_row_does_not_govern_another_rows_label()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(
+                Event(1, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                    with { LabelPosition = GanttLabelPosition.Right, Description = new string('a', 60) },
+                Event(2, start: new DateOnly(2024, 1, 8), finish: new DateOnly(2024, 1, 12))
+                    with { LabelPosition = GanttLabelPosition.Right, Description = "bbbbbb" })
+            with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+
+        List<SceneText> labels = outcome.Result!.Scene.Primitives
+            .OfType<SceneText>()
+            .Where(text => text.OwnerId.Kind == SceneOwnerKind.Row
+                && text.PrimitiveId.EndsWith(":label", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Equal(2, labels.Count);
+
+        SceneText longest = Assert.Single(labels, text => text.Text.StartsWith("aaaaa", StringComparison.Ordinal));
+        SceneText shortest = Assert.Single(labels, text => text.Text == "bbbbbb");
+
+        // Each label's box tracks ITS OWN text. A shared width would make these
+        // equal, which is the whole claim.
+        Assert.True(
+            longest.TextBounds.Width > shortest.TextBounds.Width * 3,
+            $"Each label must be sized from its own text ({longest.TextBounds.Width:0.###} vs {shortest.TextBounds.Width:0.###}).");
+
+        // The short label is never squeezed by the long one: it keeps its full
+        // natural width and stays inside its own row's band.
+        Assert.Equal(6 * 8, shortest.TextBounds.Width, 1);
+        Assert.True(
+            shortest.TextBounds.Top > longest.TextBounds.Bottom,
+            "A label must not borrow vertical space from another row.");
     }
 
     [Fact]
@@ -940,12 +1222,23 @@ public sealed class SceneBuilderTests
 
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
 
-        // §24: the line spans PlotBounds.Top to PlotBounds.Bottom exactly.
+        // §24: the line spans PlotBounds.Top lifted into the header row (ADR-0037 D1) down
+        // to the plot's closing boundary (ADR-0038 D2). The TOP is asserted too: the
+        // delineator was originally left unlifted, and a live probe
+        // (scripts/probe-delineator-top.ps1) showed that geometry SLID on a top insert
+        // (TopDelta +15.75, HeightDelta 0) while the bands beside it stretched. It is
+        // the one plot-spanning shape that had been left on the header/body boundary.
+        //
+        // Both ends are asserted, so a builder that lifted one and not the other cannot
+        // pass -- and the lift is asserted as the computed overlap, not a literal.
         SceneLine line = Assert.Single(
             outcome.Result!.Scene.Primitives.OfType<SceneLine>(),
             candidate => candidate.PrimitiveId.EndsWith(":delineator", StringComparison.Ordinal));
-        Assert.Equal(_plotBounds.Y, line.From.Y, precision: 9);
-        Assert.Equal(_plotBounds.Bottom, line.To.Y, precision: 9);
+        Assert.Equal(_plotBounds.Y - TopOverlapPt, line.From.Y, precision: 9);
+        Assert.Equal(
+            _plotBounds.Bottom + AnchorRowPt + (MajorBoundaryPt / 2),
+            line.To.Y,
+            precision: 9);
 
         // A delineator is not lane-bound, so the one activity bar must still be the
         // only bar: the line must not have consumed a lane.
@@ -1537,6 +1830,109 @@ public sealed class SceneBuilderTests
         return SceneSnapshot.Serialize(outcome.Result!.Scene);
     }
 
+    /// <summary>
+    /// Only the LIVE profile omits the drawn title band (ADR-0030 D6); every export
+    /// profile still draws it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// D6 removed the drawn title from the live sheet only, because the title is the
+    /// table's own title cell there — and leaving the band in place drew it straight
+    /// over the year band, which is what the live screenshot showed.
+    /// </para>
+    /// <para>
+    /// <b>This is the counterweight that makes D6 safe.</b> Without the export half,
+    /// a later "the title band is never drawn" rewrite would pass the live assertion
+    /// alone and silently delete an entity the export renderers and the entity
+    /// guide's field-contract table both depend on.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(SceneCompositionProfile.LiveExcel, false)]
+    [InlineData(SceneCompositionProfile.Raster, true)]
+    [InlineData(SceneCompositionProfile.PowerPoint, true)]
+    [InlineData(SceneCompositionProfile.EditableExport, true)]
+    public void Only_the_live_profile_omits_the_drawn_title_band(
+        SceneCompositionProfile profile,
+        bool expectTitleBand)
+    {
+        SceneBuildOutcome build = SceneBuilder.TryBuild(
+            PanelSceneRequest() with
+            {
+                Profile = profile,
+
+                // A live profile must NOT carry a data panel (R4.8A D4): the live
+                // sheet's own cells ARE the panel. The panel is supplied only for the
+                // export profiles, so this test can vary the profile without the live
+                // case being refused for an unrelated reason.
+                Panel = profile == SceneCompositionProfile.LiveExcel ? null : PanelThemeValue,
+            });
+
+        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
+
+        bool hasTitle = build.Result!.Scene.Primitives
+            .Any(primitive => primitive.PrimitiveId.Contains("title", StringComparison.Ordinal));
+
+        Assert.Equal(expectTitleBand, hasTitle);
+    }
+
+    /// <summary>The panel theme the export-profile cases supply.</summary>
+    private static PanelTheme PanelThemeValue { get; } =
+        new(
+            new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),
+            new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+            new SceneStyle("HeaderFill", fillColour: ColourHex.Parse("#D9D9D9")),
+            new SceneStyle("HeaderFontSizePt", fillColour: ColourHex.Parse("#000000"), bold: true),
+            new SceneStyle("Border", strokeColour: ColourHex.Parse("#7F7F7F"), outlineWidthPt: 0.5));
+
+    /// <summary>
+    /// The panel-bearing reference request, before it is built, so a test can vary
+    /// one field (the composition profile) without duplicating the whole request.
+    /// </summary>
+    /// <returns>The request <see cref="BuildSceneWithPanel"/> builds.</returns>
+    private static SceneBuildRequest PanelSceneRequest()
+    {
+        GanttValidationOutcome outcome = ReferenceSceneFixture.LoadValidated();
+        return new SceneBuildRequest
+        {
+            Events = outcome.Events.ToList(),
+            Registry = ReferenceSceneBuilder.StyleRegistry,
+            Grid = PanelCellGrid.TryCreate(
+                [
+                    new PanelColumn("Id", 80),
+                    new PanelColumn("Type", 120),
+                    new PanelColumn("Description", 180),
+                    new PanelColumn("Start", 70),
+                    new PanelColumn("Finish", 70),
+                ],
+                [.. Enumerable.Repeat(10.0, outcome.Events.Count)],
+                10,
+                ["Id", "Type", "Description", "Start", "Finish"]).Grid,
+            Panel = PanelThemeValue,
+            PlotBounds = new RectD(520, 110, 600, 290),
+            Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
+            LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
+            FrameTheme = ReferenceSceneBuilder.FrameTheme,
+            PlotStart = ReferenceSceneFixture.PlotStart,
+            PlotFinish = ReferenceSceneFixture.PlotFinish,
+            Scale = GanttTimeScale.Month,
+            PeriodLabelFormat = GanttPeriodLabelFormat.MMM,
+            DateFormat = GanttDateDisplayFormat.DdMMyyyy,
+            Title = ReferenceSceneFixture.Title,
+            GridLinePt = 0.5,
+            MajorBoundaryPt = 1,
+            MilestoneSizePt = 8,
+            TitleBandHeightPt = 14,
+            YearBandHeightPt = 16,
+            PeriodBandHeightPt = 20,
+            DelineatorLinePt = 1,
+            DelineatorStackGapPt = 10,
+            LabelGapPt = 2,
+            RowHeightPt = 8,
+            LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
+        };
+    }
+
     /// <summary>Builds the representative scene from the committed neutral fixture.</summary>
     /// <param name="rows">
     /// The rows to build from, or <see langword="null"/> to load the committed
@@ -1570,6 +1966,15 @@ public sealed class SceneBuilderTests
             Metrics = new FakeTextMetrics(static _ => 4.0, 10.0),
             LaneMetrics = new LaneLayoutMetrics(18, 3, 3, 2, 18, 9),
             FrameTheme = ReferenceSceneBuilder.FrameTheme,
+
+            // The canonical reference scene is an EXPORT composition, not a live
+            // sheet. ADR-0030 D6 removed the drawn title band from the LIVE profile
+            // only - the title entity still exists for export - and this scene is
+            // what the entity guide's field-contract table is asserted against, so
+            // leaving it on the LiveExcel default silently dropped the title entity
+            // from every equivalence test. Stated rather than relied upon, so the
+            // choice is visible where the expectations live.
+            Profile = SceneCompositionProfile.Raster,
             PlotStart = ReferenceSceneFixture.PlotStart,
             PlotFinish = ReferenceSceneFixture.PlotFinish,
             Scale = GanttTimeScale.Month,
@@ -1592,7 +1997,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
         };
 
@@ -1685,7 +2090,7 @@ public sealed class SceneBuilderTests
             DelineatorLinePt = 1,
             DelineatorStackGapPt = 10,
             LabelGapPt = 2,
-            LabelHeightPt = 8,
+            RowHeightPt = 8,
             LabelStyle = new SceneStyle("DefaultText", fillColour: ColourHex.Parse("#000000")),
             Panel = new PanelTheme(
                 new SceneStyle("DataPanelFill", fillColour: ColourHex.Parse("#F2F2F2")),

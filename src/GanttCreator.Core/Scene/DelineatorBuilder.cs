@@ -11,6 +11,14 @@ namespace GanttCreator.Core.Scene;
 /// <param name="LabelPosition">The resolved label position, or <c>None</c> for no label.</param>
 /// <param name="LaneOrder">The lane ordering value, when known.</param>
 /// <param name="StackIndex">The stack ordering value, when known.</param>
+/// <param name="LineTopPt">
+/// The line's top Y, or <see langword="null"/> to start it exactly at
+/// <see cref="PlotBounds"/>'s top edge (ADR-0037 D1).
+/// </param>
+/// <param name="LineBottomPt">
+/// The line's bottom Y, or <see langword="null"/> to end it exactly at
+/// <see cref="PlotBounds"/>'s bottom edge (ADR-0038 D2).
+/// </param>
 public sealed record DelineatorRequest(
     GanttEvent Event,
     SceneStyle LineStyle,
@@ -21,7 +29,9 @@ public sealed record DelineatorRequest(
     ITextMetrics LabelMetrics,
     GanttLabelPosition LabelPosition = GanttLabelPosition.Auto,
     int? LaneOrder = null,
-    int? StackIndex = null
+    int? StackIndex = null,
+    double? LineBottomPt = null,
+    double? LineTopPt = null
 );
 
 /// <summary>The result of building one delineator.</summary>
@@ -196,12 +206,32 @@ public static class DelineatorBuilder
         // §24: the line spans the plot top and bottom exactly. Using the chart
         // bounds here would run the line through the title and time-header
         // bands, which §24 forbids.
+        //
+        // ADR-0038 D2: the bottom may be the CLOSING line's Y instead, so a
+        // delineator shares the plot-spanning shapes' extended vertical span. A
+        // delineator left at the plot's own bottom would be the one full-height line
+        // still stopping at the old footer after a row insert -- the same defect as
+        // the bands, one primitive out of step with them.
+        //
+        // ADR-0037 D1 EXTENDED HERE: the top is lifted into the header row for the
+        // same reason the bands are. Measured live 2026-10-04
+        // (scripts/probe-delineator-top.ps1): with the top exactly on the
+        // header/body boundary a row added at the top of the body moved the line
+        // TopDelta +15.75 with HeightDelta 0 -- it SLID, anchor D2 -> D3 -- while
+        // the bands stretched correctly beside it. Lifting the top 0.5pt gave
+        // TopDelta 0 / HeightDelta +15.75, anchor D1 -> D1. The delineator was
+        // simply never given ADR-0037's lift, so it was the last plot-spanning
+        // shape left on the boundary.
+        //
+        // THE LABEL CORNERS STILL RESOLVE AGAINST PlotBounds, at both ends. That is
+        // why the line's extent is two separate members rather than a widened
+        // PlotBounds: extending that box would drag every corner label with it.
         var line = new SceneLine(
             ScenePrimitive.CreateId(owner, "delineator"),
             owner,
             ZLayer.Delineator,
-            new PointD(x, request.PlotBounds.Top),
-            new PointD(x, request.PlotBounds.Bottom),
+            new PointD(x, request.LineTopPt ?? request.PlotBounds.Top),
+            new PointD(x, request.LineBottomPt ?? request.PlotBounds.Bottom),
             WithWidth(request.LineStyle, request.LineWidthPt),
             @event.Type,
             request.LaneOrder,
@@ -485,7 +515,11 @@ public static class DelineatorLayout
         }
 
         DelineatorRequest first = request.Requests[0];
-        if (request.Requests.Any(item => item.PlotBounds != first.PlotBounds || item.ChartBounds != first.ChartBounds))
+        if (request.Requests.Any(item =>
+            item.PlotBounds != first.PlotBounds
+            || item.ChartBounds != first.ChartBounds
+            || item.LineBottomPt != first.LineBottomPt
+            || item.LineTopPt != first.LineTopPt))
         {
             return new DelineatorGroupCreationOutcome(null, DelineatorGroupRefusal.InconsistentBounds);
         }

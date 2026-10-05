@@ -80,10 +80,20 @@ public static class OfficeStyleMapper
         // record that reported FillVisible = false while still carrying a FillRgb
         // would be a trap for the next caller, and "there is no fill colour"
         // and "the fill is switched off" are the same fact here.
-        var fillApplies = CarriesFill(request.Kind);
+        var fillApplies = CarriesFill(request.Kind) && !IsTextLabel(request.Kind);
         GanttHatchPattern? hatch = !fillApplies || request.HatchPattern == GanttHatchPattern.None
             ? null
             : request.HatchPattern;
+
+        // A text label has neither a fill nor a stroke, and that is a property of
+        // the ENTITY rather than of whatever style token happened to be resolved
+        // for it. Enforcing it here rather than trusting the token matters: a named
+        // style can legitimately carry a stroke colour (`SplitterBuilder`'s label
+        // style does), so a label built from one would acquire a border - and the
+        // default `DefaultText` style carried a black FILL, which is how every live
+        // label reached the host as a black rectangle. Relying on "the token is
+        // null" is what let that ship, so the rule is structural now.
+        var lineApplies = !IsTextLabel(request.Kind) && request.StrokeColour is not null;
 
         return new OfficeShapeStyle(
             FillVisible: fillApplies && request.FillColour is not null,
@@ -93,12 +103,12 @@ public static class OfficeStyleMapper
                 ? ToTransparency(fillAlpha)
                 : 0f,
             HatchPattern: hatch,
-            LineVisible: request.StrokeColour is not null,
-            LineRgb: request.StrokeColour is { } stroke ? ToOfficeRgb(stroke) : null,
-            LineWeightPt: request.LineWidthPt is { } width
+            LineVisible: lineApplies,
+            LineRgb: lineApplies && request.StrokeColour is { } stroke ? ToOfficeRgb(stroke) : null,
+            LineWeightPt: lineApplies && request.LineWidthPt is { } width
                 ? GeometryMath.SnapToDisplayPrecision(width)
                 : null,
-            LineTransparency: request.StrokeColour is { } strokeAlpha
+            LineTransparency: lineApplies && request.StrokeColour is { } strokeAlpha
                 ? ToTransparency(strokeAlpha)
                 : 0f,
             // The text colour is packed by the same ToOfficeRgb the fill and stroke
@@ -182,4 +192,25 @@ public static class OfficeStyleMapper
         kind is OfficeShapeKind.Rectangle
             or OfficeShapeKind.TextBox
             or OfficeShapeKind.Diamond;
+
+    /// <summary>
+    /// Determines whether a shape kind is a bare text label, which carries no fill
+    /// and no stroke.
+    /// </summary>
+    /// <param name="kind">The shape kind.</param>
+    /// <returns><see langword="true"/> for a text-only label.</returns>
+    /// <remarks>
+    /// <para>
+    /// Owner ruling: a label is text on the chart's own background. The scene
+    /// positions the box exactly, so an opaque fill would hide whatever the label
+    /// was placed over - a bar, a band, a grid line - and a border would draw a
+    /// second edge beside the shape the label describes.
+    /// </para>
+    /// <para>
+    /// This is deliberately keyed on the KIND, not on the resolved style. A label
+    /// style that names a fill or a stroke is the caller's business; whether a
+    /// label box is ever painted is not.
+    /// </para>
+    /// </remarks>
+    private static bool IsTextLabel(OfficeShapeKind kind) => kind is OfficeShapeKind.TextBox;
 }

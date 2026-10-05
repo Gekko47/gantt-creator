@@ -99,7 +99,14 @@ public class InitialiseSheetIntegrationTests(ITestOutputHelper output)
             // (O -> P) and only the live Office gate caught it. Reading the real
             // address back off the worksheet also checks the anchor lands beside
             // the table rather than merely that some string was written.
-            Excel.Range anchorCell = active.Cells[1, table.ListColumns.Count + 1];
+            // The anchor row comes from GanttSheetLayout, not from a literal. ADR-0030's
+            // reserved row moved the header from worksheet row 1 to row 2, and this
+            // expectation was still asking for row 1 -- so the live gate failed
+            // naming $Q$1 against the product's correct $Q$2. The column is derived
+            // from the live count for the reason given above; the ROW is now derived
+            // from the authority for the same reason.
+            Excel.Range anchorCell =
+                active.Cells[GanttSheetLayout.HeaderRowIndex, table.ListColumns.Count + 1];
             Assert.Equal(
                 $"='{GanttWorkbookContract.GanttSheetLabel}'!{anchorCell.Address[External: false]}",
                 anchor.RefersTo,

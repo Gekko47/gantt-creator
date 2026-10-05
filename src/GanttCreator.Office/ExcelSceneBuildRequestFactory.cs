@@ -91,8 +91,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
-    /// <summary>The default plot-range padding, in days, on each side.</summary>
-    private const int _defaultRangePaddingDays = 7;
+    /// <summary>
+    /// The default plot-range padding, in days, on each side.
+    /// </summary>
+    /// <remarks>
+    /// It was <c>7</c>. The plot extent is now snapped to whole months (owner ruling,
+    /// 2026-10-02), and a 7-day pad is wider than the gap the snap is meant to
+    /// resolve: it would push a 10 Jan start back to 27 Dec, contradicting the stated
+    /// requirement that a 10 Jan earliest date renders from 1 Jan. Three days is the
+    /// owner's figure and is what makes 10 Jan land on 1 Jan while 3 Jan escapes to
+    /// 1 Dec.
+    /// </remarks>
+    private const int _defaultRangePaddingDays = 3;
 
     // The metric tokens this factory resolves. They are named here once and
     // resolved through GanttCatalogues.MetricDefault rather than being written as
@@ -116,7 +126,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     private const string _spacerHeightToken = "SpacerHeightPt";
     private const string _milestoneSizeToken = "MilestoneSizePt";
     private const string _labelGapToken = "LabelGapPt";
-    private const string _labelHeightToken = "LabelHeightPt";
+    private const string _rowHeightToken = "GanttRowHeightPt";
 
     /// <inheritdoc />
     public SceneBuildRequestOutcome Create(
@@ -159,27 +169,67 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         var textPanelWidthPt = measuredGrid.TotalWidthPt;
         var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
 
-        var titleBandPt = GanttCatalogues.MetricDefault(_titleBandToken);
-        var yearBandPt = GanttCatalogues.MetricDefault(_yearBandToken);
-        var periodBandPt = GanttCatalogues.MetricDefault(_periodBandToken);
+        // ADR-0031 D1/D2: the chart's frame margin is per side. Top and bottom are
+        // the measured padding rows, so the chart's outer edge lands on a row
+        // boundary the user can see; the left is ZERO so the plot sits flush against
+        // the data table instead of one margin-width away from it.
+        //
+        // The left margin is not a tuning value. It is the gap between the table's
+        // right edge and the plot's left edge, and a user reading the sheet sees a
+        // visible channel of nothing between two things that are one object. The
+        // right margin is untouched: the plot's right edge abuts the sheet edge and
+        // the frame's right padding is what stops the last period label touching it.
+        //
+        // The BOTTOM margin is the TOTAL of the two reserved rows below the body
+        // (ADR-0038 D1/D4): the anchor row plus the padding row. The strip below the
+        // body is now two rows, and ADR-0031 D2's contract is that the chart frame
+        // closes at the bottom of that whole strip. Reading the padding row alone
+        // would close the frame 0.25pt too high, inside the anchor row.
+        var padding = new ChartPaddingPt(
+            LeftPt: 0,
+            TopPt: measuredGrid.TopPaddingHeightPt,
+            RightPt: chrome,
+            BottomPt: measuredGrid.TotalBottomMarginHeightPt);
 
-        // The three header bands sit ABOVE the plot, so they are the plot's top
-        // offset, and the plot's height is whatever the page has left under them.
-        // Deriving height as (page height - top offset) rather than (page height -
-        // title band alone) is what keeps the plot's bottom edge on the page: the
-        // resolver refuses a rectangle that runs past the bottom, so the
-        // under-subtraction here would be a refusal rather than a cropped chart.
-        var topPt = titleBandPt + yearBandPt + periodBandPt;
+        // The header band heights are NOT read here any more. They used to be summed into
+        // the plot's top offset; that sum was the page-coordinate origin ADR-0030
+        // removes. The bands are now positioned by the scene from the reserved and
+        // header rows the worksheet already carries (slice 1), so the factory has no
+        // band arithmetic left to get wrong.
+
+        // ADR-0030 D1/D2: the plot's vertical extent comes from the WORKSHEET, not from
+        // the paper. `topPt` is the first body row's measured top, so lane 0 begins
+        // exactly where that row does; `heightPt` is the measured total body height,
+        // so the chart ends with the last row. Both were previously the preset's page
+        // coordinates - a fixed 58pt offset and the remaining page height - which is
+        // why a live bar sat ~2.4 rows below its own row and a 7-row chart ran ~400pt
+        // past the table.
+        //
+        // The page no longer bounds the vertical extent (D7): a live sheet is as tall
+        // as the user made it, and page-bounding it would refuse to render a 40-row
+        // schedule because A4 landscape is 29 rows tall. The WIDTH budget is
+        // untouched, so the plot still refuses a panel too wide to leave a readable
+        // plot (R4.7H D4).
+        var topPt = measuredGrid.OriginTopPt;
+        var heightPt = measuredGrid.TotalRowHeightPt;
 
         // The single production call to the plot authority. PlotGeometryResolver owns
-        // the subtraction; this type supplies the measurements and consumes the result.
+        // the subtraction and the bounds; this type supplies the measurements and
+        // consumes the result.
         PlotGeometryOutcome geometry = PlotGeometryResolver.TryResolve(
             preset,
             textPanelWidthPt,
-            leftChromePt: chrome,
+
+            // ADR-0031 D2: no left chrome. The plot begins exactly where the data
+            // table ends, so the two read as one object. The RIGHT chrome is
+            // unchanged and still earns its place: the plot's right edge is the
+            // sheet's own edge, and without that margin the final period label would
+            // sit flush against it.
+            leftChromePt: 0,
             rightChromePt: chrome,
             topPt: topPt,
-            heightPt: preset!.HeightPt - topPt - chrome);
+            heightPt: heightPt,
+            boundVerticallyToPage: false);
 
         // Lane metrics are resolved from the MEASURED grid rather than from a
         // constant, because a lane's height is the row height the user can see
@@ -221,7 +271,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 periodFormat,
                 dateFormat,
                 settings,
-                chrome,
+                padding,
                 metrics,
                 laneMetrics);
 
@@ -248,7 +298,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         GanttPeriodLabelFormat periodFormat,
         GanttDateDisplayFormat dateFormat,
         IReadOnlyDictionary<string, string> settings,
-        double chrome,
+        ChartPaddingPt padding,
         ITextMetrics metrics,
         LaneLayoutMetrics laneMetrics) =>
         new()
@@ -261,6 +311,13 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             Preset = preset,
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
+
+            // ADR-0034 D1: the LIVE chart anchors every lane to its measured worksheet
+            // row, so a body row that owns no lane (a Delineator, a projected child)
+            // leaves its own band empty rather than pulling every later lane up one row.
+            // Set here, in code, for the same reason the profile is: a caller who forgot
+            // it would get silently stacked lanes, which is the reported defect.
+            AnchorLanesToRows = true,
 
             // LiveExcel, chosen in code (D4). The panel stays null because the
             // worksheet's own cells are the panel; SceneBuilder refuses a live
@@ -281,7 +338,51 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             YearBandHeightPt = GanttCatalogues.MetricDefault(_yearBandToken),
             PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
             TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
-            ChartOuterPaddingPt = chrome,
+            ChartPadding = padding,
+
+            // ADR-0032 D2: the date-label text style. `SceneBuilder` skips the WHOLE
+            // date-label pass when this is null, and it did skip it: the factory never
+            // assigned it, so every activity bar rendered with no start or finish
+            // date while a delineator label - which is built on a different path with
+            // its own metrics - still appeared. That asymmetry is the exact shape of
+            // the report ("only delineator labels generate"), and the skip is a bare
+            // `return`, not a warning, so nothing in the scene recorded it.
+            //
+            // The style is the code-owned DefaultText token, exactly as the export
+            // composition resolves its outside-label colour: the token table stays
+            // the single authority for a colour rather than a literal here.
+            //
+            // The token is the label's TEXT colour, never its fill. It was written
+            // as `fillColour: ColourHex.Parse("#000000")`, and `OfficeStyleMapper`
+            // reports a TextBox as carrying a fill, so every description and date
+            // label reached the host with an opaque black rectangle and default black
+            // text on top of it. The comment above already said "DefaultText token",
+            // so the intent was the text colour all along; only the named argument was
+            // wrong. A label has no fill and no stroke - owner ruling - so both are
+            // left null rather than defaulted to white.
+            //
+            // The font family and size are NOT optional here. They previously were,
+            // and that was a silent mismatch: the scene MEASURED this label at the
+            // 8pt Aptos advances in AptosTextMetrics while the request carried no
+            // fontSizePt, so ExcelShapeWriter's `if (request.FontSizePt is { } size)`
+            // never ran, the host rendered its own default face and size, and the box
+            // the planner sized from the measurement could not contain the text the
+            // host drew. Both values now come from the catalogue token that also
+            // sizes the measuring seam, so the two cannot drift apart again.
+            LabelStyle = new SceneStyle(
+                "DefaultText",
+                textColour: ResolveDefaultTextColour(),
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.LabelBodyFontSizePt),
+
+            // ADR-0038 D1: the MEASURED anchor row, not the token. The scene needs the
+            // height the row actually has to place the closing line on a real row
+            // boundary; a user who dragged the anchor row would otherwise get a line
+            // floating between rows. The token remains the authority for what the row
+            // SHOULD be -- the row-height normaliser restores it -- exactly as the
+            // padding rows are read here.
+            ChartAnchorRowHeightPt = measuredGrid.AnchorRowHeightPt,
+
             MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
             GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
             MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
@@ -289,8 +390,33 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             DelineatorLinePt = GanttCatalogues.MetricDefault(_delineatorLineToken),
             DelineatorStackGapPt = GanttCatalogues.MetricDefault(_stackGapToken),
             LabelGapPt = GanttCatalogues.MetricDefault(_labelGapToken),
-            LabelHeightPt = GanttCatalogues.MetricDefault(_labelHeightToken),
+            RowHeightPt = GanttCatalogues.MetricDefault(_rowHeightToken),
         };
+
+    /// <summary>
+    /// Resolves the code-owned <c>DefaultText</c> colour token, or
+    /// <see langword="null"/> when the catalogue does not publish it.
+    /// </summary>
+    /// <returns>The parsed token colour, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// The token table is the single authority for the colour; this type must not
+    /// restate <c>#000000</c> as a literal. A missing or unparseable token resolves
+    /// to <see langword="null"/>, which reaches the host as "leave the font alone"
+    /// rather than as a substituted colour.
+    /// </para>
+    /// <para>
+    /// This mirrors the outside-label lookup <c>SceneBuilder</c> performs for
+    /// section 17, so both paths resolve the same token the same way and cannot
+    /// disagree about what "default text" means.
+    /// </para>
+    /// </remarks>
+    private static ColourHex? ResolveDefaultTextColour() =>
+        GanttCatalogues.Colours.FirstOrDefault(token => token.Name == "DefaultText")
+            is { } defaultTextToken
+            && ColourHex.TryParse(defaultTextToken.HexValue, out ColourHex? parsed)
+                ? parsed
+                : null;
 
     /// <summary>
     /// The frame and band styles, which the scene requires to be non-null on every
@@ -383,8 +509,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             latest = finishes.Max();
         }
 
-        plotStart = earliest.AddDays(-padding);
-        plotFinish = latest.AddDays(padding);
+        // Month-snapped plot extent (owner ruling, 2026-10-02).
+        //
+        // The order is PADDING FIRST, THEN SNAP outward to the containing month, and
+        // that order is load-bearing. Snapping first and then padding would place the
+        // 10 Jan edge at 1 Jan minus the pad; padding first gives 10 Jan - 3 = 7 Jan,
+        // which is still inside January, so it snaps back to 1 Jan. The 3-day pad is
+        // therefore a tie-breaker for dates near a month edge, not a visible margin:
+        // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
+        // month further out to 1 Dec. Both were stated by the owner and only this
+        // order satisfies both.
+        plotStart = MonthStart(earliest.AddDays(-padding));
+        plotFinish = MonthEnd(latest.AddDays(padding));
 
         // A one-day chart is degenerate: the scale builder has no interval to divide
         // and would either refuse or emit a single unreadable column. Widening to two
@@ -397,6 +533,32 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
 
         return true;
     }
+
+    /// <summary>
+    /// Returns the first day of the month containing <paramref name="date"/>.
+    /// </summary>
+    /// <param name="date">The date whose month is wanted.</param>
+    /// <returns>The first day of that month.</returns>
+    /// <remarks>
+    /// Constructed from the date's OWN year and month parts. There is no month
+    /// arithmetic here at all — no <c>AddMonths</c>, and therefore no December or
+    /// <c>DateOnly.MinValue</c> boundary to reason about; the first day of a month is
+    /// expressible directly. The overflow that <c>MonthEnd</c> does have to avoid is
+    /// its own concern.
+    /// </remarks>
+    private static DateOnly MonthStart(DateOnly date) => new(date.Year, date.Month, 1);
+
+    /// <summary>
+    /// Returns the last day of the month containing <paramref name="date"/>.
+    /// </summary>
+    /// <param name="date">The date whose month is wanted.</param>
+    /// <returns>The last day of that month.</returns>
+    /// <remarks>
+    /// Day zero of the FOLLOWING month is the last day of this one, which avoids
+    /// both a hard-coded 28/30/31 table and the December overflow that
+    /// <c>AddMonths(1)</c> would need a range check for.
+    /// </remarks>
+    private static DateOnly MonthEnd(DateOnly date) => MonthStart(date).AddMonths(1).AddDays(-1);
 
     /// <summary>
     /// Resolves the size preset, refusing an unknown key rather than defaulting.

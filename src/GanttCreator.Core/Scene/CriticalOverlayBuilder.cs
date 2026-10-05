@@ -10,8 +10,9 @@ namespace GanttCreator.Core.Scene;
 /// </param>
 /// <param name="SlotCentreY">
 /// The centre Y of the visual slot this interval occupies, from
-/// <c>LaneEventLayout</c>. The bar is centred on it exactly as an ordinary span
-/// bar is, so the critical interval needs nothing from its parent to be placed.
+/// <c>LaneEventLayout</c>. The bar is top-aligned to the top a full-height
+/// activity in this slot would have (ADR-0034 D3, owner ruling 2026-10-02),
+/// so the critical interval needs nothing from its parent to be placed.
 /// </param>
 /// <param name="LaneOrder">The lane ordering value, when known.</param>
 /// <param name="StackIndex">The stack ordering value, when known.</param>
@@ -185,15 +186,23 @@ public static class CriticalOverlayBuilder
                     "The critical interval was clipped to the plotted range."));
         }
 
-        // ADR-0027 D1/D3, owner ruling 2026-09-30: the rect is what is drawn, it is
-        // filled, its height is HALF the predetermined ActivityHeightPt, and it
-        // is centred on its OWN visual slot — the same vertical rule an ordinary
-        // span bar follows. No parent bar and no thickness token participate, so
-        // the entity is drawable from its dates alone.
+        // ADR-0027 D1 as AMENDED by ADR-0034 D3, owner ruling 2026-10-02: the rect is
+        // what is drawn, it is filled, its height is HALF the predetermined
+        // ActivityHeightPt, and it is TOP-ALIGNED with the top of a normal activity
+        // shape in its slot rather than centred on the slot.
+        //
+        // It was centred (`SlotCentreY - height/2`), which sat it in the middle of the
+        // parent bar. The owner ruled that a critical interval is OFF-CENTRE and shares
+        // the activity shape's top edge, so the two read as one band when the child
+        // overlays its parent. Expressed as "the top a full-height activity in this
+        // slot would have" rather than as `SlotCentreY - (predetermined/2)` so it stays
+        // true when the slot is taller than the activity -- the interval then keeps the
+        // top edge the activity would have had instead of drifting with the slot.
         var height = request.PredeterminedHeightPt / 2;
+        var activityTop = request.SlotCentreY - (request.PredeterminedHeightPt / 2);
         var overlay = new RectD(
             ownLeft,
-            request.SlotCentreY - (height / 2),
+            activityTop,
             ownRight - ownLeft,
             height
         );

@@ -227,56 +227,57 @@ public sealed class GanttHierarchyLimitsTests
     }
 
     /// <summary>
-    /// A row whose parent is blocked must not also be told its nesting is too deep.
+    /// A row whose parent is blocked gets no second, misleading depth finding.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The reachable shape is a four-level chain, and it has to be this shape: a
-    /// child of a parent that was already blocked when the cross-row pass began is
-    /// skipped by <c>PropagateBlockedParents</c> before the depth rule ever sees it.
-    /// The only way a parent becomes blocked <em>while</em> the depth loop is still
-    /// running is the depth rule itself, so the parent must be a grandchild — and
-    /// that is exactly row 4 here.
+    /// The fixture is a parent refused for an <b>unrelated</b> fault — a start date
+    /// after its finish, nothing to do with hierarchy — with a child beneath it.
     /// </para>
     /// <para>
-    /// So row 5's parent (row 4) carries a depth finding. Without the skip, row 5
-    /// was told it was also too deeply nested, which points the user at
-    /// restructuring a hierarchy when the accurate finding is the blocked row 4
-    /// immediately above it. Row 5 is refused with ParentInvalid instead, which
-    /// says what is actually true.
+    /// "One fault, one finding" still holds, and it holds because the depth rule now
+    /// reads the parent's own <c>ParentId</c> rather than the parent's blocking flag:
+    /// this parent is TOP-LEVEL, so its <c>ParentId</c> is null and the depth rule
+    /// never fires. The child is refused once, by <c>PropagateBlockedParents</c>, with
+    /// <c>ParentInvalid</c> — which is what is actually true.
+    /// </para>
+    /// <para>
+    /// This test used to drive the same claim from a FOUR-level chain, on the
+    /// reasoning that the depth rule blocks row 4 mid-loop and row 5 is therefore
+    /// skipped. That only held for the top-down order: authored bottom-up, row 5 was
+    /// reached before its parent was blocked and was refused as
+    /// <c>HierarchyTooDeep</c> instead, so the same table produced two different
+    /// findings for the same row purely from the input order. Depth is now decided
+    /// from the parent's original <c>ParentId</c>, which makes it order-independent;
+    /// the four-level chain is pinned in both orders by
+    /// <c>GanttRowValidatorTests.A_four_level_chain_reports_identically_in_either_input_order</c>.
     /// </para>
     /// </remarks>
     [Fact]
     public void A_row_whose_parent_is_blocked_gets_no_second_depth_finding()
     {
-        var topId = NewId();
-        var levelTwoId = NewId();
-        var levelThreeId = NewId();
-        List<GanttRowDto> rows =
-        [
-            Parent(2, topId),
-            Child(3, levelTwoId, topId),
-            Child(4, levelThreeId, levelTwoId),
-            Child(5, NewId(), levelThreeId),
-        ];
+        var parentId = NewId();
 
-        GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
+        // Refused for a date fault alone; it is a top-level row, so nothing about its
+        // own nesting is wrong.
+        GanttRowDto parent = ValidSpan(
+            rowNumber: 2,
+            id: parentId,
+            start: new DateOnly(2026, 6, 1),
+            finish: new DateOnly(2026, 1, 1));
+        GanttRowDto child = Child(3, NewId(), parentId);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([parent, child]);
 
         Assert.False(outcome.IsValid);
 
-        // Exactly one depth finding in the whole table, on row 4 -- the first row
-        // that genuinely nests too deep.
-        GanttValidationIssue depth = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
-        Assert.Equal(4, depth.RowNumber);
-
-        // Row 5 is refused only because its parent is not a usable event.
-        Assert.DoesNotContain(
+        // The child is refused exactly once, and for the reason that is true.
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        GanttValidationIssue childIssue = Assert.Single(
             outcome.Issues,
-            i => i.Code == GanttValidationCodes.HierarchyTooDeep && i.RowNumber == 5);
-        GanttValidationIssue rowFive = Assert.Single(
-            outcome.Issues,
-            i => i.Code == GanttValidationCodes.ParentInvalid && i.RowNumber == 5);
-        Assert.Contains(levelThreeId, rowFive.Message, StringComparison.Ordinal);
+            i => i.RowNumber == 3);
+        Assert.Equal(GanttValidationCodes.ParentInvalid, childIssue.Code);
+        Assert.Contains(parentId, childIssue.Message, StringComparison.Ordinal);
     }
     [Fact]
     public void A_top_level_critical_interval_may_own_a_child()

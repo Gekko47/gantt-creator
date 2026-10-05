@@ -45,7 +45,11 @@ public sealed record FrameBandsTheme(
 /// <param name="PeriodLabelFormat">The selected period label format.</param>
 /// <param name="PanelBounds">The measured data-panel bounds supplied by the caller.</param>
 /// <param name="PlotBounds">The measured plot bounds supplied by the caller.</param>
-/// <param name="ChartOuterPaddingPt">Padding applied once around the union.</param>
+/// <param name="Padding">
+/// The margin between the content union and the chart frame, per side
+/// (ADR-0031 D1). A live chart pads top and bottom by whole measured rows and left
+/// by nothing, so this cannot be a single scalar.
+/// </param>
 /// <param name="TitleBandHeightPt">The title strip height.</param>
 /// <param name="YearBandHeightPt">The year-header height.</param>
 /// <param name="PeriodBandHeightPt">The period-header height.</param>
@@ -57,6 +61,17 @@ public sealed record FrameBandsTheme(
 /// <param name="AlternateBanding">Whether alternating plot bands are emitted.</param>
 /// <param name="ShowMinorGrid">Whether minor period grid lines are emitted.</param>
 /// <param name="ShowMajorGrid">Whether major year/plot grid lines are emitted.</param>
+/// <param name="PlotBandHeaderOverlapPt">
+/// How far the plot-spanning shapes extend UP into the header row, from the
+/// <c>PlotBandHeaderOverlapPt</c> token (ADR-0037 D1). Zero restores the prior
+/// behaviour exactly.
+/// </param>
+/// <param name="ChartAnchorRowHeightPt">
+/// The reserved anchor row's measured height, from the <c>ChartAnchorRowHeightPt</c>
+/// token (ADR-0038 D1). It is how far the plot-spanning shapes extend DOWN through
+/// that row and half the closing line, and where the closing line sits. Zero
+/// reproduces the pre-ADR-0038 geometry exactly.
+/// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
@@ -64,7 +79,7 @@ public sealed record FrameBandsRequest(
     GanttPeriodLabelFormat PeriodLabelFormat,
     RectD PanelBounds,
     RectD PlotBounds,
-    double ChartOuterPaddingPt,
+    ChartPaddingPt Padding,
     double TitleBandHeightPt,
     double YearBandHeightPt,
     double PeriodBandHeightPt,
@@ -76,6 +91,8 @@ public sealed record FrameBandsRequest(
     bool AlternateBanding,
     bool ShowMinorGrid,
     bool ShowMajorGrid,
+    double PlotBandHeaderOverlapPt,
+    double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme
 );
 

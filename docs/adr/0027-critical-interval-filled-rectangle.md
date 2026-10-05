@@ -147,5 +147,11 @@ none was false, and is corrected in the Amendment above.
   contradicts its use, and any later change to the outline colour would silently
   change the bar.
 - **Add a configurable `CriticalOverlayHeightRatio` token.** Rejected as a
-  user-facing setting: the half-height is fully determined by the parent bar, so a
-  second authority could contradict it. The ratio is derived, not configured.
+  user-facing setting: the half-height is fully determined by the interval's **own**
+  resolved `ActivityHeightPt` — the denominator D4 names — so a second, configurable
+  authority could contradict it. The ratio is derived, not configured.
+  *(Corrected 2026-09-30: this rationale originally read "fully determined by the
+  parent bar". That was true of D3 as originally written and is false of the settled
+  rule: the parent bar is never read for geometry and governs lane membership only, so
+  it could not determine anything. The conclusion is unchanged; the reason is now the
+  one the code implements.)*

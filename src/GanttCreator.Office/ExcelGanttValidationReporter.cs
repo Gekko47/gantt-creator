@@ -123,6 +123,12 @@ public class ExcelGanttValidationReporter(
         // Stale add-in sections are removed on every run, not only when there is
         // something new to write: a row that has become valid must stop showing
         // its old note. User text is never removed.
+        //
+        // This runs BEFORE the early return below, so a caller with nothing to report
+        // still pays for the scan: a SpecialCells pass over the table body plus a
+        // per-cell comment read. That is the price of clearing, recorded as L21 in
+        // docs/KNOWN-LIMITATIONS.md. Do not move this behind the empty check without
+        // reading that entry first - it names the behaviour-preserving remedy.
         if (body is not null)
         {
             RemoveOwnedSections(body);

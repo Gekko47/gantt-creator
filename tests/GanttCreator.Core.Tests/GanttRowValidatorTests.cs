@@ -1573,6 +1573,107 @@ public class GanttRowValidatorTests
         Assert.Equal(ordered.Issues, shuffled.Issues);
     }
 
+    /// <summary>
+    /// A self-reference on a child ACTIVITY is a cycle, not a depth problem.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> The cycle walk keyed on
+    /// <c>Type == CriticalInterval</c>, so a span row naming itself was never walked.
+    /// It reached the depth rule instead, whose "parent" was the row itself and whose
+    /// <c>ParentId</c> was non-null, and the user was told the row "is itself a
+    /// child" — a complaint about nesting depth on a row that is not nested at all.
+    /// </remarks>
+    [Fact]
+    public void A_self_referencing_activity_is_a_parent_cycle_not_a_depth_finding()
+    {
+        string id = NewId();
+        GanttRowDto row = ValidSpan(rowNumber: 2, id: id, parentId: id);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.ParentCycle);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        Assert.Empty(outcome.Events);
+    }
+
+    /// <summary>
+    /// A two-activity cycle reports ParentCycle on both rows, under either order.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to the self-reference case, and the one that proves the walk
+    /// follows a real cycle rather than only noticing a row pointing at itself. The
+    /// reversed table is the load-bearing half: an authoring surface may place a child
+    /// above its parent, so the findings must not depend on the order.
+    /// </remarks>
+    [Fact]
+    public void A_two_activity_cycle_is_reported_in_either_input_order()
+    {
+        string firstId = NewId();
+        string secondId = NewId();
+        List<GanttRowDto> forward =
+        [
+            ValidSpan(rowNumber: 2, id: firstId, parentId: secondId),
+            ValidSpan(rowNumber: 3, id: secondId, parentId: firstId),
+        ];
+        List<GanttRowDto> reversed = [.. Enumerable.Reverse(forward)];
+
+        GanttValidationOutcome ordered = GanttRowValidator.Validate(forward);
+        GanttValidationOutcome shuffled = GanttRowValidator.Validate(reversed);
+
+        foreach (GanttValidationOutcome outcome in new[] { ordered, shuffled })
+        {
+            Assert.False(outcome.IsValid);
+            Assert.Equal(2, outcome.Issues.Count(i => i.Code == GanttValidationCodes.ParentCycle));
+            Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+            Assert.Empty(outcome.Events);
+        }
+
+        Assert.Equal(
+            ordered.Issues.Select(i => (i.RowNumber, i.Code)).OrderBy(x => x.RowNumber),
+            shuffled.Issues.Select(i => (i.RowNumber, i.Code)).OrderBy(x => x.RowNumber));
+    }
+
+    /// <summary>
+    /// A four-level chain reports the same findings in either input order.
+    /// </summary>
+    /// <remarks>
+    /// The depth rule is order-sensitive by construction: a row whose parent is
+    /// already blocked is refused by <c>PropagateBlockedParents</c> rather than by the
+    /// depth rule, so the pass order decides which of two accurate descriptions a row
+    /// receives. This pins that the reversed table produces the same set, which is the
+    /// determinism the rest of the hierarchy contract claims.
+    /// </remarks>
+    [Fact]
+    public void A_four_level_chain_reports_identically_in_either_input_order()
+    {
+        string topId = NewId();
+        string levelTwoId = NewId();
+        string levelThreeId = NewId();
+        List<GanttRowDto> forward =
+        [
+            ValidSpan(rowNumber: 2, id: topId),
+            ValidSpan(rowNumber: 3, id: levelTwoId, parentId: topId),
+            ValidSpan(rowNumber: 4, id: levelThreeId, parentId: levelTwoId),
+            ValidSpan(rowNumber: 5, parentId: levelThreeId),
+        ];
+        List<GanttRowDto> reversed = [.. Enumerable.Reverse(forward)];
+
+        GanttValidationOutcome ordered = GanttRowValidator.Validate(forward);
+        GanttValidationOutcome shuffled = GanttRowValidator.Validate(reversed);
+
+        Assert.False(ordered.IsValid);
+        Assert.Equal(
+            ordered.Issues.Select(i => (i.RowNumber, i.Field, i.Code, i.Severity))
+                .OrderBy(x => x.RowNumber).ThenBy(x => x.Code, StringComparer.Ordinal),
+            shuffled.Issues.Select(i => (i.RowNumber, i.Field, i.Code, i.Severity))
+                .OrderBy(x => x.RowNumber).ThenBy(x => x.Code, StringComparer.Ordinal));
+
+        // The chain really does exceed the supported depth, so this is not a pair of
+        // vacuously-empty outcomes being compared.
+        Assert.Contains(ordered.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+    }
+
     private static GanttRowDto CriticalIntervalRow(int rowNumber, string id, string parentId, string? fillColourText = null) =>
         new(
             rowNumber,

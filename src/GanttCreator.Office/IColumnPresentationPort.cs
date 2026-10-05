@@ -13,6 +13,18 @@ public enum ColumnPresentationRefusalReason
 
     /// <summary>The target worksheet is protected.</summary>
     TargetProtected = 2,
+
+    /// <summary>
+    /// The live table is missing a column that <see cref="GanttTableSchema"/>
+    /// declares.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="TableMissing"/> because the table WAS found and is
+    /// usable; it is incomplete. Restoration is refused rather than continued,
+    /// because writing the remaining columns would apply a correct classification to
+    /// a table that is already wrong in a way this adapter cannot repair.
+    /// </remarks>
+    SchemaColumnMissing = 3,
 }
 
 /// <summary>The typed result of restoring the managed columns' hidden/locked state.</summary>

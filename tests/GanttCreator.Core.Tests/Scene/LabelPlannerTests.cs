@@ -16,8 +16,9 @@ public sealed class LabelPlannerTests
         new RectD(0, 0, 310, 100),
         new RectD(-6, -6, 322, 112),
         LabelGapPt: 3,
-        LabelHeightPt: 10,
-        MaximumExternalLabelWidthPt: 144
+        // One worksheet row (owner ruling). It was 10, a single-line height, which
+        // produced a label box shorter than the row it sat in.
+        RowHeightPt: 18
     );
 
     [Fact]
@@ -284,16 +285,26 @@ public sealed class LabelPlannerTests
     [Fact]
     public void The_widest_gap_fallback_anchors_a_left_label_to_the_gap_boundary()
     {
-        // A 10pt bar at 250 leaves a 247pt gap to its left, which the 144pt
-        // external maximum caps. The truncated label is anchored by its right edge
-        // to shape.left − LabelGapPt = 247, exactly as an untruncated Left label
-        // would be, rather than starting at the far end of the whole gap.
-        LabelPlanResult result = Plan(Shape(250, 20, 10), new string('x', 40));
+        // A 10pt bar at 250 leaves a 247pt gap to its left. The label is 70
+        // characters = 280pt, so it cannot fit that gap whole and the widest-gap
+        // fallback truncates it to exactly the space available.
+        //
+        // The anchoring rule is the point of this test: the truncated label is
+        // anchored by its RIGHT edge to shape.left - LabelGapPt = 247, exactly as
+        // an untruncated Left label would be, rather than starting at the far end
+        // of the whole gap. The fixture changed when ADR-0035 D1 retired the
+        // 144pt absolute cap -- the old 40-character label was 160pt and fitted
+        // comfortably, so it was only ever truncated by the cap and this test was
+        // really measuring the cap rather than the anchor.
+        LabelPlanResult result = Plan(Shape(250, 20, 10), new string('x', 70));
 
         Assert.Equal(GanttLabelPosition.Left, result.Position);
         Assert.True(result.WasTruncated);
         Assert.Equal(247, result.Bounds!.Value.Right);
-        Assert.Equal(103, result.Bounds.Value.Left);
+
+        // The whole 247pt gap is consumed, because space is now the only limit.
+        Assert.Equal(0, result.Bounds.Value.Left);
+        Assert.Equal(247, result.Bounds.Value.Width);
     }
 
     [Fact]
@@ -573,7 +584,7 @@ public sealed class LabelPlannerTests
             Request(Shape(100, 20, 50), "abcde"),
             _labelMetrics with
             {
-                LabelHeightPt = -1,
+                RowHeightPt = -1,
             }
         );
 
@@ -583,9 +594,197 @@ public sealed class LabelPlannerTests
 
     private static RectD Shape(double x, double y, double width) => new(x, y, width, 8);
 
+    /// <summary>
+    /// The label box is one worksheet row tall and centred on the row.
+    /// </summary>
+    [Fact]
+    public void The_label_box_is_one_row_tall_and_centred_on_the_shape()
+    {
+        // A bar 8pt tall inside an 18pt row, offset so centring cannot pass by
+        // coincidence. The owner ruled the box height is one row, not the 10pt
+        // single-line height it used to be.
+        RectD shape = new(100, 40, 50, 8);
+
+        LabelPlanResult result = Plan(shape, "abcde", GanttLabelPosition.Right);
+
+        Assert.Equal(18, result.Bounds!.Value.Height);
+        Assert.Equal(shape.Top + ((shape.Height - 18) / 2), result.Bounds.Value.Top);
+
+        // Centred on the shape, so it overhangs the 8pt bar by 5pt on each side.
+        // This is the intent of a row-height box, not an error to be corrected.
+        Assert.Equal(shape.Top - 5, result.Bounds.Value.Top);
+        Assert.Equal(shape.Bottom + 5, result.Bounds.Value.Bottom);
+    }
+
+    /// <summary>
+    /// A row-height box centred on an 8pt bar overhangs the bar vertically, and it
+    /// must still be placed - the overhang is the point of centring on the ROW.
+    /// </summary>
+    /// <remarks>
+    /// This is the regression test for the failure the row-height change caused. The
+    /// box is 5pt taller than the bar on each side, so a collision test that
+    /// compared the candidate against the shape's own rectangle would reject every
+    /// position and suppress the label outright. The occupants passed here are the
+    /// row's own bar bounds, which is what <c>SceneBuilder</c> seeds for a row whose
+    /// description label was placed first.
+    /// </remarks>
+    [Fact]
+    public void A_row_height_box_is_not_blocked_by_the_owning_shape_it_is_centred_on()
+    {
+        RectD shape = new(100, 40, 50, 8);
+
+        LabelPlanResult result = Plan(shape, "abcde", GanttLabelPosition.Right, [shape]);
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.False(result.WasTruncated);
+        Assert.Equal("abcde", result.Primitive!.Text);
+    }
+
+    /// <summary>
+    /// A stack sibling's label box does not block this row's label (ADR-0033 D2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reported defect: two events on one lane are stacked, each with its own
+    /// description label, and both labels came out as unreadable stubs. Once the
+    /// label box became a full row tall and centred, the two boxes necessarily
+    /// overlap - the slots are only a few points apart - so <c>Blocked</c> rejected
+    /// every candidate and both fell through to the ADR-0015 widest-gap fallback,
+    /// which ellipsised them to almost nothing.
+    /// </para>
+    /// <para>
+    /// A stack is a deliberate layout, not an overlap, so the owner's ruling is that
+    /// it must not be treated as a collision. The occupant below is in the SAME lane
+    /// and a DIFFERENT slot, and sits exactly where the candidate's box would land.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_stack_siblings_label_does_not_block_this_rows_label()
+    {
+        RectD shape = new(100, 40, 50, 8);
+
+        // The sibling's box occupies the whole Right candidate: same lane, other slot.
+        LabelOccupant sibling = new(new RectD(153, 35, 60, 18), LaneOrder: 2, StackIndex: 1);
+
+        LabelPlanResult result = PlanOutcome(
+            Request(shape, "abcde", GanttLabelPosition.Right) with
+            {
+                LaneOrder = 2,
+                StackIndex = 0,
+            },
+            [sibling]).Result!;
+
+        Assert.Equal(GanttLabelPosition.Right, result.Position);
+        Assert.False(result.WasTruncated);
+        Assert.Equal("abcde", result.Primitive!.Text);
+    }
+
+    /// <summary>
+    /// The exemption is narrow: a same-slot occupant in the same lane still blocks.
+    /// </summary>
+    [Fact]
+    public void A_same_slot_occupant_in_the_same_lane_still_blocks()
+    {
+        RectD shape = new(100, 40, 50, 8);
+        LabelOccupant sameSlot = new(new RectD(153, 35, 60, 18), LaneOrder: 2, StackIndex: 0);
+
+        LabelPlanResult result = PlanOutcome(
+            Request(shape, "abcde", GanttLabelPosition.Right) with
+            {
+                LaneOrder = 2,
+                StackIndex = 0,
+            },
+            [sameSlot]).Result!;
+
+        // A blocked candidate cannot come back clean at its own position. The exact
+        // fallback (truncated at the widest gap, or suppressed entirely) is a
+        // placement detail; what matters is that the exemption did NOT fire.
+        Assert.True(
+            result.WasTruncated || result.Position != GanttLabelPosition.Right,
+            "A same-slot collision must still prevent a clean Right placement.");
+        Assert.NotEqual("abcde", result.Primitive?.Text);
+    }
+
+    /// <summary>
+    /// The exemption is narrow: an occupant in a different lane still blocks.
+    /// </summary>
+    [Fact]
+    public void An_occupant_in_a_different_lane_still_blocks()
+    {
+        RectD shape = new(100, 40, 50, 8);
+        LabelOccupant otherLane = new(new RectD(153, 35, 60, 18), LaneOrder: 7, StackIndex: 1);
+
+        LabelPlanResult result = PlanOutcome(
+            Request(shape, "abcde", GanttLabelPosition.Right) with
+            {
+                LaneOrder = 2,
+                StackIndex = 0,
+            },
+            [otherLane]).Result!;
+
+        // Same invariant as the same-slot case: the cross-lane occupant still blocks, so
+        // the full text cannot be placed cleanly at Right.
+        Assert.True(
+            result.WasTruncated || result.Position != GanttLabelPosition.Right,
+            "A cross-lane collision must still prevent a clean Right placement.");
+        Assert.NotEqual("abcde", result.Primitive?.Text);
+    }
+
+    /// <summary>
+    /// How much a stacked lane's labels now overlap, measured rather than asserted.
+    /// </summary>
+    /// <remarks>
+    /// This is the diagnostic the owner asked for. With the box at one row tall and
+    /// centred, two stacked slots a few points apart produce boxes that overlap
+    /// VERTICALLY by design - that is what centring on the row means. What the
+    /// exemption guarantees is that this overlap no longer truncates or suppresses
+    /// anything: both labels are emitted whole. The horizontal separation is what
+    /// keeps them legible, so it is reported here rather than left implicit.
+    /// </remarks>
+    [Fact]
+    public void Stacked_labels_overlap_vertically_by_design_but_are_both_emitted_whole()
+    {
+        // A realistic 18pt row split into two slots with a 2pt gap: 5pt each, which is
+        // the geometry that produced the unreadable stubs.
+        var slotHeight = 5.0;
+        RectD upperShape = new(100, 40, 50, slotHeight);
+        RectD lowerShape = new(200, 40 + slotHeight + 2, 50, slotHeight);
+
+        LabelPlanResult upper = PlanOutcome(
+            Request(upperShape, "upper", GanttLabelPosition.Right) with { LaneOrder = 1, StackIndex = 0 },
+            []).Result!;
+        LabelPlanResult lower = PlanOutcome(
+            Request(lowerShape, "lower", GanttLabelPosition.Right) with { LaneOrder = 1, StackIndex = 1 },
+            [new LabelOccupant(upper.Bounds!.Value, LaneOrder: 1, StackIndex: 0)]).Result!;
+
+        Assert.Equal("upper", upper.Primitive!.Text);
+        Assert.Equal("lower", lower.Primitive!.Text);
+        Assert.False(upper.WasTruncated);
+        Assert.False(lower.WasTruncated);
+
+        // The overlap is real and expected; report it rather than assert it away.
+        RectD upperBox = upper.Bounds!.Value;
+        RectD lowerBox = lower.Bounds!.Value;
+        double verticalOverlap =
+            Math.Min(upperBox.Bottom, lowerBox.Bottom) - Math.Max(upperBox.Top, lowerBox.Top);
+
+        Assert.True(
+            verticalOverlap > 0,
+            "Row-height boxes in adjacent slots are expected to overlap vertically.");
+
+        // Horizontal separation is what keeps them readable, so assert it is real
+        // rather than the boxes sitting on top of each other.
+        Assert.True(
+            upperBox.Right <= lowerBox.Left || lowerBox.Right <= upperBox.Left,
+            $"Stacked labels must not share horizontal space: {upperBox} and {lowerBox}.");
+
+        System.Console.WriteLine(
+            $"stacked label boxes overlap {verticalOverlap:0.##}pt vertically and are separated horizontally");
+    }
+
     private static LabelPlanCreationOutcome PlanOutcome(
         LabelRequest request,
-        IReadOnlyList<RectD>? occupants = null
+        IReadOnlyList<LabelOccupant>? occupants = null
     ) => LabelPlanner.TryPlan(request, _labelMetrics, occupants);
 
     private static LabelPlanCreationOutcome PlanOutcome(LabelRequest request, LabelMetrics metrics) =>
@@ -594,23 +793,23 @@ public sealed class LabelPlannerTests
     private static LabelPlanCreationOutcome PlanOutcome(
         LabelRequest request,
         LabelMetrics metrics,
-        IReadOnlyList<RectD> occupants
+        IReadOnlyList<LabelOccupant> occupants
     ) => LabelPlanner.TryPlan(request, metrics, occupants);
 
-    private static LabelPlanResult Plan(LabelRequest request, IReadOnlyList<RectD>? occupants = null) =>
+    private static LabelPlanResult Plan(LabelRequest request, IReadOnlyList<LabelOccupant>? occupants = null) =>
         PlanOutcome(request, occupants).Result!;
 
     private static LabelPlanResult Plan(
         RectD shape,
         string text,
         GanttLabelPosition position = GanttLabelPosition.Auto,
-        IReadOnlyList<RectD>? occupants = null
+        IReadOnlyList<LabelOccupant>? occupants = null
     ) => Plan(Request(shape, text, position), occupants);
 
     private static LabelPlanResult Plan(
         RectD shape,
         string text,
-        IReadOnlyList<RectD>? occupants
+        IReadOnlyList<LabelOccupant>? occupants
     ) => PlanOutcome(Request(shape, text), occupants).Result!;
 
     [Theory]

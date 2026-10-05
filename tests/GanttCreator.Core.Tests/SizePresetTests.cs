@@ -129,9 +129,25 @@ public sealed class SizePresetTests
         Assert.Null(SizePresets.ByKey("PRESENTATION16X9"));
     }
 
+    /// <summary>
+    /// The no-setting fallback is A4 portrait, and it is the SAME preset the
+    /// catalogue publishes as the stored default.
+    /// </summary>
+    /// <remarks>
+    /// The two were out of step: <c>SizePresets.Default</c> returned A4 landscape
+    /// while <c>GanttCatalogues.Settings</c> stored <c>"A4Portrait"</c>. A workbook
+    /// whose setting was present therefore rendered portrait and one whose setting
+    /// was absent rendered landscape, from identical code and identical data. The
+    /// second assertion is the load-bearing one — it is what stops the two
+    /// authorities drifting apart again.
+    /// </remarks>
     [Fact]
-    public void The_default_preset_is_a4_landscape()
+    public void The_default_preset_is_a4_portrait_and_matches_the_catalogue_default()
     {
-        Assert.Same(SizePresets.A4Landscape, SizePresets.Default);
+        Assert.Same(SizePresets.A4Portrait, SizePresets.Default);
+
+        GanttSettingDefinition stored = GanttCatalogues.Settings
+            .First(setting => setting.Key == "SizePreset");
+        Assert.Same(SizePresets.ByKey(stored.DefaultValue), SizePresets.Default);
     }
 }

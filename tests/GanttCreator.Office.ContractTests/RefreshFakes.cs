@@ -74,6 +74,34 @@ internal sealed class RefreshFakes
     /// <summary>The spacer-row target the orchestrator last passed, or null if never called.</summary>
     public double? LastSpacerHeightPt { get; set; }
 
+    /// <summary>
+    /// The header-row target the orchestrator last passed (ADR-0030 D5), or null if
+    /// never called. The header row is the period band's row, so this height is what
+    /// makes the period band's bottom coincide with the first body row's top.
+    /// </summary>
+    public double? LastHeaderHeightPt { get; set; }
+
+    /// <summary>
+    /// The reserved-row target the orchestrator last passed (ADR-0030 D4), or null if
+    /// never called. That row carries the table title and the year band.
+    /// </summary>
+    public double? LastReservedRowHeightPt { get; set; }
+
+    /// <summary>
+    /// The chart-padding-row target the orchestrator last passed (ADR-0031 D2), or
+    /// null if never called. These rows are the chart's top and bottom margin, so
+    /// this figure is the height the user's chart frame ends up with.
+    /// </summary>
+    public double? LastPaddingRowHeightPt { get; set; }
+
+    /// <summary>
+    /// The reserved anchor-row target the orchestrator last passed (ADR-0038 D1), or
+    /// null if never called. This row is the plot-spanning shapes' bottom cell anchor,
+    /// so it must be a sub-row height and must NOT equal the padding-row height -- a
+    /// margin-height anchor row would be a visible strip of sheet.
+    /// </summary>
+    public double? LastAnchorRowHeightPt { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -131,11 +159,48 @@ internal sealed class RefreshFakes
     /// <summary>The row-identity repairer fake.</summary>
     public IGanttRowIdentityRepairer Identity => new FakeIdentityRepairer(this);
 
+    /// <summary>The validation-notes reporter fake.</summary>
+    public IGanttValidationReporter Notes => new FakeValidationReporter(this);
+
     /// <summary>Whether the column-classification restore refuses.</summary>
     public bool ColumnPresentationRefused { get; set; }
 
+    /// <summary>
+    /// Every issue list the reporter was handed, in call order, so a test can assert
+    /// what the orchestrator reported rather than only how many times it called.
+    /// </summary>
+    public List<IReadOnlyList<GanttValidationIssue>> ReportedIssues { get; } = [];
+
+    /// <summary>Whether the notes reporter refuses.</summary>
+    public bool ValidationNotesRefused { get; set; }
+
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
+
+    /// <summary>
+    /// The rows the table reader returns AFTER identity repair has run, or
+    /// <see langword="null"/> to leave <see cref="Rows"/> unchanged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A real repairer WRITES new Id values into the worksheet, so the table read
+    /// after it must see different rows than the read before it. A fake that changed
+    /// nothing let the orchestrator validate its stale step-1 snapshot and still pass,
+    /// which is exactly the defect the re-read after repair fixes. Setting this
+    /// models the write.
+    /// </para>
+    /// <para>
+    /// A second read can also fail, which the production code has to handle; see
+    /// <see cref="TableReadRefusedAfterRepair"/>.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<GanttRowDto>? RowsAfterRepair { get; set; }
+
+    /// <summary>Whether the table re-read performed after identity repair refuses.</summary>
+    public bool TableReadRefusedAfterRepair { get; set; }
+
+    /// <summary>How many times the table reader was called.</summary>
+    public int TableReadCount { get; private set; }
 
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
@@ -151,7 +216,9 @@ internal sealed class RefreshFakes
             Factory,
             Shapes,
             ColumnPresentation,
-            Identity);
+            Identity,
+            null,
+            Notes);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -171,11 +238,50 @@ internal sealed class RefreshFakes
             Identity,
             scope);
 
+    /// <summary>
+    /// Builds the orchestrator with an explicit notes reporter, so a test can prove the
+    /// dependency is genuinely optional rather than merely defaulted.
+    /// </summary>
+    /// <param name="validationReporter">
+    /// The reporter to wire, or <see langword="null"/> to omit it entirely.
+    /// </param>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestrator(IGanttValidationReporter? validationReporter) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            validationReporter);
+
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
         public GanttTableReadOutcome Read()
         {
             owner.Steps.Add("Read");
+            owner.TableReadCount++;
+
+            // The second and later reads happen after identity repair has written to
+            // the worksheet, so they see the REPAIRED rows and can fail independently
+            // of the first read. A first read still uses the original rows.
+            if (owner.TableReadCount > 1)
+            {
+                if (owner.TableReadRefusedAfterRepair)
+                {
+                    return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+                }
+
+                return GanttTableReadOutcome.Ok(owner.RowsAfterRepair ?? owner.Rows);
+            }
+
             return owner.TableReadRefused
                 ? GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing)
                 : GanttTableReadOutcome.Ok(owner.Rows);
@@ -314,19 +420,36 @@ internal sealed class RefreshFakes
 
     private sealed class FakeRowHeightNormaliser(RefreshFakes owner) : IRowHeightNormalisationPort
     {
-        public RowHeightNormalisationOutcome Normalise(double managed, double splitter, double spacer)
+        public RowHeightNormalisationOutcome Normalise(
+            double managed,
+            double splitter,
+            double spacer,
+            double header,
+            double reservedRow,
+            double paddingRow,
+            double anchorRow)
         {
             owner.Steps.Add("RowHeights");
 
-            // The three targets are recorded, not discarded. This fake previously
+            // The targets are recorded, not discarded. This fake previously
             // ignored all three arguments and returned Ok(0), so it could not fail on
             // a wrong value: the orchestrator's hardcoded (15, 6, 6) passed every
             // refresh test while contradicting the catalogue's 18 / 18 / 9. A fake
             // that discards the value under test is not a test double, it is a
-            // rubber stamp.
+            // rubber stamp. The layout-row targets are recorded for the same
+            // reason: the header height is what makes the period band's bottom meet
+            // the first body row's top (ADR-0030 D5), and the padding-row height is
+            // the chart's top and bottom margin (ADR-0031 D2).
             owner.LastManagedHeightPt = managed;
             owner.LastSplitterHeightPt = splitter;
             owner.LastSpacerHeightPt = spacer;
+            owner.LastHeaderHeightPt = header;
+            owner.LastReservedRowHeightPt = reservedRow;
+            owner.LastPaddingRowHeightPt = paddingRow;
+
+            // The anchor row is recorded for the same reason, and it is the one figure
+            // that must differ from the padding height (ADR-0038 D1).
+            owner.LastAnchorRowHeightPt = anchorRow;
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
@@ -353,6 +476,24 @@ internal sealed class RefreshFakes
             return owner.IdentityRefused
                 ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
                 : GanttRowIdentityRepairOutcome.Ok(0);
+        }
+    }
+
+    /// <summary>
+    /// The validation-notes reporter fake. It records the issue list it was handed
+    /// rather than only a count, because the clearing defect this stands in for turns
+    /// on WHICH list arrived: a successful refresh must report an EMPTY list, and that
+    /// empty call is the one that removes a corrected row's note.
+    /// </summary>
+    private sealed class FakeValidationReporter(RefreshFakes owner) : IGanttValidationReporter
+    {
+        public GanttValidationReportOutcome Report(IReadOnlyList<GanttValidationIssue> issues)
+        {
+            owner.Steps.Add("Notes");
+            owner.ReportedIssues.Add(issues);
+            return owner.ValidationNotesRefused
+                ? GanttValidationReportOutcome.Refused(GanttValidationReportRefusalReason.TargetProtected)
+                : GanttValidationReportOutcome.Ok(issues.Count);
         }
     }
 

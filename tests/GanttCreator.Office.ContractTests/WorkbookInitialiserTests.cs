@@ -55,6 +55,9 @@ public class WorkbookInitialiserTests
     {
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
         public Mock<Excel.Range> HeaderRange { get; } = new();
+
+        /// <summary>The reserved title cell, captured separately (ADR-0030 D4).</summary>
+        public Mock<Excel.Range> TitleCell { get; } = new();
         public Mock<Excel.Range> UsedRange { get; } = new();
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
@@ -118,6 +121,9 @@ public class WorkbookInitialiserTests
         public Mock<Excel.QueryTables> QueryTables { get; } = new();
         public Mock<Excel.Hyperlinks> Hyperlinks { get; } = new();
         public List<object> WrittenValues { get; } = new();
+
+        /// <summary>Values written to the reserved title cell, in write order.</summary>
+        public List<object> TitleWrites { get; } = [];
         public List<string> AssignedTableNames { get; } = new();
         public List<Excel.XlSheetVisibility> VisibleValues { get; } = new();
         public List<bool> AutoFilterSettings { get; } = new();
@@ -170,6 +176,12 @@ public class WorkbookInitialiserTests
 
             _ = HeaderRange.SetupSet(r => r.Value2 = It.IsAny<object>())
                 .Callback<object>(value => WrittenValues.Add(value));
+
+            // The title is a CELL, not a shape (ADR-0030 D6), so it is asserted on its
+            // own range rather than through the header's capture list. Sharing the
+            // header range here would let a title write pass as a header write.
+            _ = TitleCell.SetupSet(c => c.Value2 = It.IsAny<object>())
+                .Callback<object>(value => TitleWrites.Add(value));
 
             _ = Worksheet.SetupSet(w => w.Visible = It.IsAny<Excel.XlSheetVisibility>())
                 .Callback<Excel.XlSheetVisibility>(value => VisibleValues.Add(value));
@@ -297,6 +309,41 @@ public class WorkbookInitialiserTests
         }
 
         /// <summary>
+        /// Makes the column-PRESENTATION step throw on its first write, as a host that
+        /// refuses a hide or lock does.
+        /// </summary>
+        /// <remarks>
+        /// The callback is installed on the mocked column range's <c>Locked</c>
+        /// setter, which the presentation step writes before it hides anything, so
+        /// the fault lands inside <c>ApplyColumnPresentation</c> — after the table
+        /// exists and while the workbook is mid-Initialise. That is the window in
+        /// which the rollback ordering matters.
+        /// </remarks>
+        internal void FailColumnPresentationWrite()
+        {
+            if (Columns.Count == 0)
+            {
+                throw new InvalidOperationException("No columns are wired on this sheet.");
+            }
+
+            // The rollback's own visibility pass reads `EntireColumn.Hidden`, so a
+            // range that returns nothing for it would fault the ROLLBACK rather than
+            // the step under test. It is wired to report "visible", which is what a
+            // column the presentation step never reached actually is.
+            Mock<Excel.Range> entireColumn = new();
+            _ = entireColumn.SetupGet(r => r.Hidden).Returns(false);
+            _ = entireColumn.SetupSet(r => r.Hidden = It.IsAny<object>());
+
+            Mock<Excel.Range> range = new();
+            _ = range.SetupSet(r => r.Locked = It.IsAny<object>())
+                .Throws(new InvalidOperationException("The host refused the lock write."));
+            _ = range.SetupGet(r => r.EntireColumn).Returns(entireColumn.Object);
+
+            // Re-point the first column at a range that throws on the lock write.
+            _ = Columns[0].SetupGet(c => c.Range).Returns(range.Object);
+        }
+
+        /// <summary>
         /// Verifies the <c>tblGanttData</c> list object was created the given
         /// number of times on this sheet. Asserted through <see cref="Mock{T}.Verify"/>
         /// rather than a callback: the PIA's optional parameters carry no
@@ -313,6 +360,33 @@ public class WorkbookInitialiserTests
                     It.IsAny<Excel.XlYesNoGuess>(),
                     It.IsAny<object>()),
                 times);
+
+        /// <summary>
+        /// Makes the table's NAME write throw, as a host that refuses the rename does.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The window is between <c>ListObjects.Add</c> and the presentation writes: the
+        /// table exists and is not yet named <c>tblGanttData</c>, so it is invisible to
+        /// the rollback's name lookup. That is the state this fake has to produce for the
+        /// by-reference rollback to be observable at all.
+        /// </para>
+        /// <para>
+        /// The exception is produced from an HRESULT rather than constructed, because
+        /// <c>COMException</c> has no public constructor (CA2201).
+        /// </para>
+        /// </remarks>
+        internal void FailTableNameWrite()
+        {
+            var exception = (System.Runtime.InteropServices.COMException?)
+                System.Runtime.InteropServices.Marshal.GetExceptionForHR(unchecked((int)0x800A03EC))
+                ?? throw new InvalidOperationException(
+                    "The runtime did not produce a COMException for HRESULT 0x800A03EC.");
+
+            // Re-point the setter at a throwing one. The `Name` GETTER keeps returning
+            // null here, which is precisely the unnamed-table state being simulated.
+            _ = Table.SetupSet(t => t.Name = It.IsAny<string>()).Throws(exception);
+        }
 
         /// <summary>
         /// Verifies the sheet-scoped plot-anchor defined-name write: when
@@ -349,6 +423,7 @@ public class WorkbookInitialiserTests
             Func<Excel.Sheets, int, Excel.Worksheet> sheetAt,
             Func<Excel.ListObjects, int, Excel.ListObject> tableAt,
             Func<Excel.Worksheet, Excel.Range> headerRangeAt,
+            Func<Excel.Worksheet, Excel.Range> titleCellAt,
             Func<Excel.Range, string> usedRangeAddressAt,
             Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter,
@@ -358,6 +433,7 @@ public class WorkbookInitialiserTests
             SheetAt = sheetAt;
             TableAt = tableAt;
             HeaderRangeAt = headerRangeAt;
+            TitleCellAt = titleCellAt;
             UsedRangeAddressAt = usedRangeAddressAt;
             PivotTableCountAt = pivotTableCountAt;
         }
@@ -390,6 +466,10 @@ public class WorkbookInitialiserTests
         private Func<Excel.ListObject, Excel.ListColumns> ListColumnsAt { get; set; } =
             _ => throw new InvalidOperationException("ListColumns seam was not wired.");
 
+        /// <summary>Seam over the reserved title cell (ADR-0030 D4).</summary>
+        private Func<Excel.Worksheet, Excel.Range> TitleCellAt { get; set; } =
+            _ => throw new InvalidOperationException("GetTitleCell seam was not wired.");
+
         private Func<Excel.ListColumns, int, Excel.ListColumn> ColumnAt { get; set; } =
             (_, _) => throw new InvalidOperationException("GetColumnAt seam was not wired.");
 
@@ -401,6 +481,9 @@ public class WorkbookInitialiserTests
 
         internal override Excel.Range GetHeaderRange(Excel.Worksheet target, int columnCount)
             => HeaderRangeAt(target);
+
+        internal override Excel.Range GetTitleRange(Excel.Worksheet target)
+            => TitleCellAt(target);
 
         internal override string GetUsedRangeAddress(Excel.Range usedRange)
             => UsedRangeAddressAt(usedRange);
@@ -522,6 +605,9 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                titleCellAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -579,6 +665,9 @@ public class WorkbookInitialiserTests
                 headerRangeAt: target =>
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .HeaderRange.Object,
+                titleCellAt: target =>
+                    graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
+                        .TitleCell.Object,
                 usedRangeAddressAt: usedRange =>
                     graphs.Single(g => ReferenceEquals(g.UsedRange.Object, usedRange))
                         .UsedRangeAddress,
@@ -843,6 +932,77 @@ public class WorkbookInitialiserTests
         Assert.DoesNotContain(active.HiddenStates, hidden => hidden);
     }
 
+    /// <summary>
+    /// A failure inside column presentation still rolls the TABLE back, not just the
+    /// header row.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> <c>CreateDataTable</c> used to call
+    /// <c>ApplyColumnPresentation</c> internally, and the caller set
+    /// <c>createdTable = true</c> only once it returned. A host that refused a column
+    /// write therefore threw with <c>createdTable</c> still false, the catch block
+    /// rolled back only the header and title rows, and a real
+    /// <c>tblGanttData</c> was left on the user's sheet behind a command that reported
+    /// a refusal — and re-running Initialise would then refuse with
+    /// <c>TableExists</c>, so the workbook was wedged.
+    /// </remarks>
+    [Fact]
+    public void A_failure_during_column_presentation_still_rolls_back_the_table()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        // The fault lands inside ApplyColumnPresentation, after the table exists.
+        active.FailColumnPresentationWrite();
+
+        Assert.Throws<InvalidOperationException>(() => graph.Build(active).Initialise());
+
+        // The table was created, so the rollback had something to remove — and it did.
+        // Without the fix this Delete is never called and the table survives.
+        active.Table.Verify(t => t.Delete(), Times.Once);
+    }
+
+    /// <summary>
+    /// A host that refuses the table's RENAME still rolls the table back, even though it
+    /// never received the name the rollback used to look it up by.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the positive test for recording the creation immediately after
+    /// <c>ListObjects.Add</c>, and the rename is the only step that can fail
+    /// <em>between</em> the Add and the first presentation write.
+    /// </para>
+    /// <para>
+    /// Two things have to hold, and the second is the one a boolean alone cannot give.
+    /// The <c>createdTable</c> flag must be set before the rename is attempted, or the
+    /// catch block never rolls the table back at all. And the rollback must delete the
+    /// table it was HANDED rather than searching for one named
+    /// <c>tblGanttData</c> — a table whose rename never landed still carries a
+    /// host-assigned name, so the lookup finds nothing and silently keeps it. That
+    /// surviving table is what makes the next Initialise meet a table the user never
+    /// asked for.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_refused_table_rename_still_rolls_back_the_table_that_never_got_its_name()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        // The host refuses the rename: the table exists, but under a name of its own.
+        active.FailTableNameWrite();
+
+        Assert.Throws<System.Runtime.InteropServices.COMException>(() => graph.Build(active).Initialise());
+
+        // Removed by reference, so the name never having landed cannot hide it. Without
+        // the by-reference rollback the name lookup finds nothing and this is zero.
+        active.Table.Verify(t => t.Delete(), Times.Once);
+    }
+
     [Fact]
     public void Initialise_rolls_back_everything_when_the_catalogue_write_refuses()
     {
@@ -862,6 +1022,90 @@ public class WorkbookInitialiserTests
             WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
             outcome);
         active.VerifyAnchorName(null, Times.Never());
+    }
+
+    /// <summary>
+    /// The table title is written into the reserved row ABOVE the header, as a cell
+    /// value rather than a drawn shape (ADR-0030 D4/D6).
+    /// </summary>
+    /// <remarks>
+    /// The title comes from the <c>ChartTitle</c> setting rather than a local
+    /// literal, so the cell and the export composition's title entity cannot name
+    /// different charts. The assertion is against the settings catalogue, not the
+    /// literal <c>"Gantt Chart"</c>, so retuning the default does not require editing
+    /// this test.
+    /// </remarks>
+    [Fact]
+    public void Initialise_writes_the_title_into_the_reserved_row()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        var outcome = graph.Build(active).Initialise();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(
+            GanttCatalogues.SettingDefault("ChartTitle"),
+            Assert.Single(active.TitleWrites));
+    }
+
+    /// <summary>
+    /// The title write is a CELL, not part of the header's value assignment.
+    /// </summary>
+    /// <remarks>
+    /// <b>The counterweight for the test above.</b> If both wrote through the same
+    /// range, a title write could pass as a header write and this suite would assert
+    /// the header twice while never proving the title cell is distinct. It also pins
+    /// that the title does not disturb the header's single <c>object[,]</c> payload.
+    /// </remarks>
+    [Fact]
+    public void The_title_write_does_not_contaminate_the_header_payload()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+
+        _ = graph.Build(active).Initialise();
+
+        // The header still carries exactly one rectangular payload, and the title is
+        // not among the header's writes.
+        Assert.Single(active.WrittenValues);
+        Assert.Single(active.TitleWrites);
+        Assert.DoesNotContain(active.WrittenValues, value => value is string);
+    }
+
+    /// <summary>
+    /// A refused Initialise clears the title cell it had written, so the sheet is
+    /// left as it was found.
+    /// </summary>
+    /// <remarks>
+    /// <b>Positive test for the rollback path.</b> The reserved row is written to,
+    /// never structurally inserted, so the only thing a refusal can leave behind is
+    /// the title cell. Leaving it would mean a command that reported "refused" had
+    /// still authored content on the user's sheet — the zero-mutation guarantee the
+    /// refusals promise.
+    /// </remarks>
+    [Fact]
+    public void A_catalogue_refusal_clears_the_title_cell_it_wrote()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.Write())
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.False(outcome.Succeeded);
+
+        // The title WAS written, and the rollback cleared it.
+        Assert.Single(active.TitleWrites);
+        active.TitleCell.Verify(c => c.ClearContents(), Times.Once);
     }
 
     [Fact]

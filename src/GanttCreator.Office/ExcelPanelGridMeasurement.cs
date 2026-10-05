@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -135,6 +136,11 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                     return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
                 }
 
+                // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
+                // HIDDEN row's height as zero, and a collapsed outline group hides its
+                // child rows, so zero is a real measurement of the displayed sheet rather
+                // than a missing one. Core accepts it and the rows below share its top;
+                // a negative height is still refused there.
                 rowHeights.Add(height);
             }
         }
@@ -151,17 +157,313 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
         }
 
+        // ADR-0030 D3: the sheet's absolute origin is measured, not assumed. It is the
+        // first BODY row's top edge, so the header row's height is already included
+        // and this value IS the plot's top (D1). Refused rather than defaulted when
+        // the host reports no figure: a zero origin is exactly the page-coordinate
+        // assumption this change removes, and it would reintroduce the misalignment
+        // silently.
+        if (ReadOriginTop(table) is not { } originTop
+            || ReadOriginLeft(table) is not { } originLeft
+            || ReadTopPaddingHeight(table) is not { } topPaddingHeight
+            || ReadAnchorHeight(table) is not { } anchorHeight
+            || ReadBottomPaddingHeight(table) is not { } bottomPaddingHeight)
+        {
+            return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+        }
+
         // Core validates the grid: a non-positive or non-finite width or height, a
-        // blank or duplicated column name, and a missing required column are all
-        // refused there with their own typed reasons rather than duplicated here.
+        // blank or duplicated column name, a missing required column, and a negative
+        // or non-finite origin are all refused there with their own typed reasons
+        // rather than duplicated here.
         PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
             columns,
             rowHeights,
             headerHeight,
-            includedColumns);
+            includedColumns,
+            originTop,
+            originLeft,
+            topPaddingHeight,
+            bottomPaddingHeight,
+            anchorHeight);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+    }
+
+    /// <summary>
+    /// Reads the absolute worksheet Y of the first body row's top edge, in points
+    /// (ADR-0030 D3).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The origin, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// Read from <c>DataBodyRange</c>, not from the header range: the plot's top is
+    /// the first BODY row's top, which is the header's bottom. Reading the header's
+    /// top instead would put the plot a whole header-row too high — the same class of
+    /// off-by-one-row error ADR-0030 corrects elsewhere.
+    /// </remarks>
+    internal virtual double? ReadOriginTop(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.Range? body = table.DataBodyRange;
+        return body is null ? null : ToPoints(body.Top);
+    }
+
+    /// <summary>
+    /// Reads the height of the top padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// The row index comes from <see cref="GanttSheetLayout.TopPaddingRowIndex"/>
+    /// rather than a literal, so this adapter cannot disagree with the layout
+    /// authority about which row the chart's top margin is.
+    /// </remarks>
+    internal virtual double? ReadTopPaddingHeight(Excel.ListObject table) =>
+        ReadRowHeightAt(table, GanttSheetLayout.TopPaddingRowIndex);
+
+    /// <summary>
+    /// Reads the height of the bottom padding row, in points (ADR-0031 D2).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// This row sits below a body whose length the user controls, so its index is
+    /// derived from the measured body row count through
+    /// <see cref="GanttSheetLayout.BottomPaddingRowIndex"/>. A literal here would be
+    /// correct for exactly one table length and wrong for every other.
+    /// </remarks>
+    internal virtual double? ReadBottomPaddingHeight(Excel.ListObject table) =>
+        table.DataBodyRange is not { } body
+            ? null
+            : ReadVerifiedBottomPaddingHeight(table, body);
+
+    /// <summary>
+    /// Resolves and verifies the reserved ANCHOR row and reads its height
+    /// (ADR-0038 D6).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
+    /// <remarks>
+    /// <para>
+    /// Resolved and verified for the same reason the padding row is (ADR-0035 D2), and
+    /// verified SEPARATELY rather than as part of the padding read. A caller that
+    /// verified one row and assumed the other would put the chart's bottom margin on
+    /// a row the add-in does not own -- which is the reported defect this whole
+    /// check exists to prevent.
+    /// </para>
+    /// <para>
+    /// An absent result refuses the measurement, exactly as an unverifiable padding
+    /// row does. The scene needs this height to place the closing line, and a guessed
+    /// one would draw the line at a Y that corresponds to no row.
+    /// </para>
+    /// </remarks>
+    internal virtual double? ReadAnchorHeight(Excel.ListObject table) =>
+        table.DataBodyRange is not { } body
+            ? null
+            : ReadVerifiedAnchorHeight(table, body);
+
+    /// <summary>
+    /// Resolves the reserved anchor row from the body's MEASURED span and reads its
+    /// height, refusing to read a row the add-in does not own (ADR-0038 D6).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="body">The table's data-body range.</param>
+    /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
+    private double? ReadVerifiedAnchorHeight(Excel.ListObject table, Excel.Range body)
+    {
+        var firstBodyRow = GetRangeRow(body);
+        var rowCount = GetBodyRowCount(body);
+        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            firstBodyRow,
+            lastBodyRow,
+            candidate,
+            candidate is { } row ? IsLayoutRowEmpty(table, row) : null);
+
+        return resolved.Succeeded ? ReadRowHeightAt(table, resolved.Row!.Value) : null;
+    }
+
+    /// <summary>
+    /// Resolves the reserved bottom padding row from the body's MEASURED span and
+    /// reads its height, refusing to read a row the add-in does not own
+    /// (ADR-0035 D2).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="body">The table's data-body range.</param>
+    /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
+    /// <remarks>
+    /// <para>
+    /// This adapter previously read <c>BottomPaddingRowIndex(rowCount)</c> -- a row
+    /// derived from the body length on the assumption that the table sits exactly
+    /// where the layout authority says. It then reported that height to Core as the
+    /// chart's bottom margin. A table that had moved made this report an arbitrary
+    /// user row's height as the chart's margin, which is how a row the user had
+    /// resized or typed into silently changed the chart's geometry.
+    /// </para>
+    /// <para>
+    /// <b>The candidate row moved down one in ADR-0038.</b> It is now the row below
+    /// the reserved anchor row, not the row directly below the body. Passing
+    /// <c>lastBodyRow + 1</c> would resolve the ANCHOR row as the padding row and
+    /// report a 0.25pt margin for a chart whose bottom margin is 6pt.
+    /// </para>
+    /// <para>
+    /// Returning <see langword="null"/> here is deliberate: the caller already maps
+    /// an absent measurement to the typed
+    /// <see cref="PanelGridRefusalReason.InvalidMeasurement"/> refusal, so an
+    /// unverifiable margin is reported rather than guessed. A guessed margin would
+    /// reproduce the original defect with a number attached.
+    /// </para>
+    /// </remarks>
+    private double? ReadVerifiedBottomPaddingHeight(Excel.ListObject table, Excel.Range body)
+    {
+        var firstBodyRow = GetRangeRow(body);
+        var rowCount = GetBodyRowCount(body);
+        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+
+        // One past the anchor row, which is itself one past the body. Expressed as
+        // anchor + 1 rather than lastBodyRow + 2 so the relationship between the two
+        // reserved rows is the visible fact.
+        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
+
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            firstBodyRow,
+            lastBodyRow,
+            candidate,
+            candidate is { } row ? IsLayoutRowEmpty(table, row) : null);
+
+        return resolved.Succeeded ? ReadRowHeightAt(table, resolved.Row!.Value) : null;
+    }
+
+    /// <summary>
+    /// Reads a range's first worksheet row. Test seam over the COM
+    /// <c>Range.Row</c> property.
+    /// </summary>
+    /// <param name="range">The range whose first row index is wanted.</param>
+    /// <returns>The one-based worksheet row index.</returns>
+    internal virtual int GetRangeRow(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return range.Row;
+    }
+
+    /// <summary>
+    /// Whether the reserved padding row reads as empty.
+    /// </summary>
+    /// <param name="table">The Gantt table, used only to reach its worksheet.</param>
+    /// <param name="rowIndex">The one-based worksheet row.</param>
+    /// <returns>
+    /// <see langword="true"/> when the row was read and holds nothing;
+    /// <see langword="false"/> when it holds something; <see langword="null"/> when
+    /// the host would not report it.
+    /// </returns>
+    /// <remarks>
+    /// Three-valued on purpose: "not read" and "empty" are different facts, and
+    /// treating an unknown as empty is the substitution this whole check exists to
+    /// prevent.
+    /// </remarks>
+    internal virtual bool? IsLayoutRowEmpty(Excel.ListObject table, int rowIndex)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        if (table.Parent is not Excel.Worksheet worksheet)
+        {
+            return null;
+        }
+
+        Excel.Range? row = null;
+        try
+        {
+            row = worksheet.Rows is { } rows ? rows[rowIndex] : null;
+            if (row is null)
+            {
+                return null;
+            }
+
+            List<object?[]> values = ExcelValue2Matrix.ReadRows(row.Value2);
+            return values.Count == 1 && values[0].All(
+                static value =>
+                    value is null
+                    || value is DBNull
+                    || value is System.Reflection.Missing
+                    || (value is string text && string.IsNullOrWhiteSpace(text)));
+        }
+        finally
+        {
+            // This adapter OWNS the Range it created and no caller can release it.
+            if (row is not null && Marshal.IsComObject(row))
+            {
+                _ = Marshal.FinalReleaseComObject(row);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads one absolute worksheet row's height by its 1-based index.
+    /// </summary>
+    /// <param name="table">The Gantt table, used only to reach its worksheet.</param>
+    /// <param name="rowIndex">The 1-based worksheet row index.</param>
+    /// <returns>The height, or <see langword="null"/> when it cannot be read.</returns>
+    /// <remarks>
+    /// <b>Whole-worksheet rows, not table rows.</b> Both padding rows lie outside
+    /// <c>tblGanttData</c>, so neither is reachable through
+    /// <c>DataBodyRange</c> or <c>HeaderRowRange</c>; they are addressed through the
+    /// worksheet's own <c>Rows</c> collection by absolute index.
+    /// </remarks>
+    internal virtual double? ReadRowHeightAt(Excel.ListObject table, int rowIndex)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        // `ListObject` exposes no `Worksheet` member in this PIA, so the parent is
+        // unwrapped explicitly. `Parent` is typed `object`, so a non-worksheet parent
+        // arrives as something that will not cast; that degrades to the absent case
+        // below rather than throwing.
+        if (table.Parent is not Excel.Worksheet worksheet || worksheet.Rows is not { } rows)
+        {
+            return null;
+        }
+
+        Excel.Range? row = null;
+        try
+        {
+            row = rows[rowIndex];
+            return row is null ? null : ToPoints(row.RowHeight);
+        }
+        finally
+        {
+            // This adapter OWNS the Range it created and no caller can release it: the
+            // proxy is never returned. Without this it would survive to the finaliser
+            // and land in the Office leak ratchet, which is exactly the signal the
+            // ratchet exists to keep meaningful.
+            if (row is not null && Marshal.IsComObject(row))
+            {
+                _ = Marshal.FinalReleaseComObject(row);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads the absolute worksheet X of the panel's left edge, in points
+    /// (ADR-0030 D3).
+    /// </summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <returns>The origin, or <see langword="null"/> when the host reported none.</returns>
+    /// <remarks>
+    /// The table does not begin at column A: the engine columns before
+    /// <c>Type</c> are hidden but still occupy worksheet positions, so this is a
+    /// measurement. Reading the header row's left would give the same X — the panel's
+    /// left edge is the table's left edge — and the header range is the member this
+    /// adapter already measures through.
+    /// </remarks>
+    internal virtual double? ReadOriginLeft(Excel.ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        Excel.Range? body = table.DataBodyRange;
+        return body is null ? null : ToPoints(body.Left);
     }
 
     /// <summary>

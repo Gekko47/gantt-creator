@@ -126,10 +126,74 @@ public static class GanttCatalogues
     public static IReadOnlyList<GanttMetricToken> Metrics { get; } =
     [
         new("ChartOuterPaddingPt", 6, 0, 36),
+
+        // ADR-0031 D2: the height of the worksheet rows that form the chart's top
+        // and bottom margins. It defaults to the SAME 6pt the ChartOuterPaddingPt
+        // chrome used, at the owner's request: the row exists to replace that
+        // sub-row sliver with something the user can see, not to change how much
+        // breathing room the chart has. Making it taller would be a second,
+        // unrequested change to the margin's size wearing the costume of a
+        // structural one.
+        //
+        // It is a separate token from YearBandHeightPt because it is a different
+        // thing - a band is drawn content, this is empty margin - and because a
+        // user who wants a taller margin should not have to resize the year header
+        // to get it. The minimum is 0 so the margin can be collapsed entirely.
+        //
+        // ADR-0038 D4 REDUCES it from 6 to 5.75. The reserved strip below the body is
+        // now TWO rows - the 0.25pt anchor row and this padding row - and 0.25 + 5.75
+        // is the same 6pt of margin the single row used to reserve, so the chart's
+        // bottom margin is unchanged in SIZE while the strip below the body gains the
+        // row Excel needs to anchor the plot-spanning shapes into. Writing 6 here
+        // instead would silently make the total 6.25pt, i.e. a second, unrequested
+        // change to the margin wearing the costume of a structural one.
+        new("ChartPaddingRowHeightPt", 5.75, 0, 72),
+
+        // ADR-0038 D1: the height of the reserved ANCHOR row, immediately below the
+        // last body row. The bands, vertical grid lines, and delineators paint
+        // THROUGH it and down to the closing line, which is what makes Excel resolve
+        // their bottom cell anchor to a row BELOW the body. That is the whole point:
+        // a row inserted at the shape's TopLeftCell row SLIDES it, while one inserted
+        // at its BottomRightCell row STRETCHES it (measured 2026-10-03,
+        // scripts/probe-anchor-row-height.ps1 Q2: insert at the anchor row gives
+        // HeightDelta = 18, a full body row).
+        //
+        // So the bottom fix is deliberately NOT the mirror of ADR-0037's header
+        // overlap, and anyone who "symmetrises the two edges" re-breaks the bottom.
+        // A lifted bottom edge cannot create the row below the insertion point that
+        // the append targets, which is why this is a RESERVED ROW rather than an
+        // overlap the way the top was.
+        //
+        // Sub-row for the same reason the header overlap is: 0.25pt cannot reach far
+        // enough to be seen, and the 4pt ceiling keeps it below one body row (18pt)
+        // even if configured. Excel honours 0.25pt exactly (the same probe's Q1:
+        // 0.25 and 0.5 are read back as written; 0.6 quantises DOWN to 0.5, so
+        // there is no 0.75pt floor and no fallback is needed). Zero is legal and
+        // reproduces the pre-ADR-0038 geometry exactly.
+        new("ChartAnchorRowHeightPt", 0.25, 0, 4),
         new("TitleBandHeightPt", 24, 12, 72),
         new("YearBandHeightPt", 18, 10, 48),
         new("PeriodBandHeightPt", 16, 10, 48),
         new("MinimumHeaderLabelWidthPt", 18, 6, 72),
+
+        // ADR-0037: how far the plot-spanning shapes (plot background, alternate
+        // period bands, vertical grid lines) extend UP into the header row.
+        //
+        // Excel resizes a shape when a row is inserted only if the insertion point
+        // is STRICTLY BELOW the shape's TopLeftCell row. Measured 2026-10-03
+        // (scripts/probe-frame-stretch.ps1): with the plot top exactly on the
+        // header/body boundary, a row added at the TOP of the body moved the shape
+        // down by a full row height and left its height alone, so the plot stayed
+        // unpainted there; every other insertion point stretched correctly.
+        //
+        // Half a point is enough to resolve TopLeftCell to the HEADER row, which
+        // moves every body insertion strictly below the anchor. It is deliberately
+        // sub-row: the header paints at ZLayer.Frame (80) over the bands
+        // (AlternateBand 10) and the background (Background 0), so the overlap is
+        // invisible, and 0.5pt cannot reach far enough to be seen if a user hides
+        // the header. The minimum is 0, which restores the exact prior behaviour
+        // rather than merely reducing the overlap.
+        new("PlotBandHeaderOverlapPt", 0.5, 0, 4),
         new("GanttRowHeightPt", 18, 10, 72),
         new("SplitterHeightPt", 18, 10, 72),
         new("SpacerHeightPt", 9, 0, 72),
@@ -140,7 +204,6 @@ public static class GanttCatalogues
         new("MilestoneSizePt", 8, 3, 36),
         new("LabelGapPt", 3, 0, 18),
         new("LabelHeightPt", 10, 6, 36),
-        new("MaximumExternalLabelWidthPt", 144, 36, 360),
         new("StandardOutlinePt", 0.75, 0, 6),
         new("GridLinePt", 0.5, 0.25, 3),
         new("MajorBoundaryPt", 1, 0.25, 6),
@@ -433,6 +496,120 @@ public static class GanttCatalogues
         throw new ArgumentException(
             $"'{tokenName}' is not a metric token in the Gantt Creator catalogue.",
             nameof(tokenName));
+    }
+
+    /// <summary>The code-owned name of the label body font-size token.</summary>
+    public const string LabelBodyFontSizeTokenName = "BodyFontSizePt";
+
+    /// <summary>The code-owned name of the label font-family token.</summary>
+    public const string LabelFontFamilyTokenName = "FontFamily";
+
+    /// <summary>
+    /// The label typography's body font size, in points.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the single authority for the size a label is MEASURED at.</b> It
+    /// existed as a catalogue token nobody read: <c>AptosTextMetrics</c> hardcoded
+    /// 8pt in its parameterless constructor while the scene emitted no
+    /// <c>fontSizePt</c> at all, so the host rendered its own default and the box the
+    /// scene sized from the 8pt measurement could not contain the text the host drew.
+    /// Both the measuring seam and the emitting style now read this one value.
+    /// </remarks>
+    public static double LabelBodyFontSizePt =>
+        TypographyDefault(LabelBodyFontSizeTokenName);
+
+    /// <summary>The label typography's font family name.</summary>
+    /// <remarks>
+    /// Read for the same reason as <see cref="LabelBodyFontSizePt"/>. The advances
+    /// in the measurement table are Aptos advances, so a host rendering any other
+    /// family measures against the wrong font.
+    /// </remarks>
+    public static string LabelFontFamily =>
+        TypographyDefaultText(LabelFontFamilyTokenName);
+
+    /// <summary>
+    /// The catalogue value of a typography token, as text.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's value verbatim.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token. Thrown rather than defaulted, for the same
+    /// reason <see cref="MetricDefault"/> throws: a defaulted value is a second
+    /// authority that disagrees with the catalogue (R4.8A D5).
+    /// </exception>
+    public static string TypographyDefaultText(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttTypographyToken token in Typography)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.Value;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a typography token in the Gantt Creator catalogue.",
+            nameof(tokenName));
+    }
+
+    /// <summary>
+    /// The catalogue value of a typography token, parsed as points.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's value as a positive point size.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token, or its value is not a finite positive
+    /// number. A malformed size would become a zero-width or absurd box, so it is
+    /// refused at the catalogue rather than at the shape.
+    /// </exception>
+    public static double TypographyDefault(string tokenName)
+    {
+        var value = TypographyDefaultText(tokenName);
+        var parsedOk =
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            && double.IsFinite(parsed)
+            && parsed > 0;
+
+        return parsedOk
+            ? parsed
+            : throw new ArgumentException(
+                $"Typography token '{tokenName}' has a value that is not a positive point size: '{value}'.",
+                nameof(tokenName));
+    }
+
+    /// <summary>
+    /// Returns the code-owned default for a settings key, or <see langword="null"/>
+    /// when the key is not in the approved set.
+    /// </summary>
+    /// <param name="key">The settings key, for example <c>ChartTitle</c>.</param>
+    /// <returns>The key's default value, or <see langword="null"/> when unknown.</returns>
+    /// <remarks>
+    /// <b>Why this exists (ADR-0030 D6).</b> Initialise writes the table title cell
+    /// from the stored <c>ChartTitle</c> setting. Restating the title as a literal at
+    /// the write site would make it a second authority that could disagree with the
+    /// settings table and with the export composition's title entity — the same defect
+    /// class as the three plot-anchor copies slice 1 just removed.
+    /// <para>
+    /// It returns <see langword="null"/> rather than throwing, because
+    /// the Office initialiser needs a <em>fallback</em>: a workbook whose
+    /// settings table has not been read yet still gets a sensible title. A caller
+    /// that requires the key to exist should say so at its own call site rather than
+    /// have this accessor decide by throwing.
+    /// </para>
+    /// </remarks>
+    public static string? SettingDefault(string key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        foreach (GanttSettingDefinition setting in Settings)
+        {
+            if (string.Equals(setting.Key, key, StringComparison.Ordinal))
+            {
+                return setting.DefaultValue;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

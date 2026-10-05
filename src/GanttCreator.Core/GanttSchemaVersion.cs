@@ -22,14 +22,77 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 7 for the two settings keys added by the R4
-    /// QA review (owner ruling 2026-10-01).
+    /// monotonically, and is currently 12 for the reserved anchor row below the body.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 12 is ADR-0038.</b> Two things move together, and neither is a
+    /// behaviour the add-in merely tolerates. (1) The metric catalogue gains
+    /// <c>ChartAnchorRowHeightPt</c>, so a version-11 workbook's
+    /// <c>tblGanttMetrics</c> lacks a row the running add-in reads and its stored
+    /// catalogue hash no longer matches. (2) A NEW RESERVED ROW appears between the
+    /// last body row and the bottom padding row, so the padding row the add-in writes
+    /// to and measures as the chart's bottom margin is no longer the row directly
+    /// below the table. Both are the same class of change as version 9's and
+    /// version 10's, which moved the row the padding lives in. There is no migration
+    /// (ADR-0029 D6): a version-11 workbook reports a mismatch and the remedy is
+    /// Initialise, which is also what reserves the anchor row.
+    /// </para>
+    /// <para>
+    /// <b>Version 11 is ADR-0037.</b> The metric catalogue gains
+    /// <c>PlotBandHeaderOverlapPt</c>, so an existing workbook's
+    /// <c>tblGanttMetrics</c> lacks a row the running add-in reads and its stored
+    /// catalogue hash no longer matches -- the same class of change as version 10's
+    /// retirement, in the opposite direction. The value is what the plot-spanning
+    /// shapes use as their sub-row overlap into the header row, so it is a stored
+    /// measurement rather than a display name. There is no migration (ADR-0029 D6): a
+    /// version-10 workbook reports a mismatch and the remedy is Initialise.
+    /// </para>
+    /// <para>
+    /// <b>Version 10 is ADR-0035.</b> Two things move together, and both are
+    /// contract changes rather than behaviour the add-in merely tolerates. (1) The
+    /// metric catalogue loses <c>MaximumExternalLabelWidthPt</c>, so an existing
+    /// workbook's <c>tblGanttMetrics</c> carries a row the running add-in no longer
+    /// knows and its stored catalogue hash no longer matches. (2) The chart's
+    /// bottom margin becomes a <em>reserved</em> worksheet row below the table
+    /// rather than whatever row happened to follow it — a change to what a bottom
+    /// margin <em>is</em>. Version 9 merely *named* the row below the last activity
+    /// row without reserving it, so it stayed an ordinary worksheet row the user
+    /// could type into and the add-in would silently resize it. Version 10 reserves
+    /// it: Initialise guarantees the row directly below the table exists and is
+    /// empty, and both the row-height normaliser and the panel measurement refuse
+    /// rather than write to a row that is not the reserved one. So a workbook
+    /// written by version 9 may have user content sitting in the row version 10
+    /// treats as the margin. As with versions 8 and 9 there is no migration
+    /// (ADR-0029 D6): a version-9 workbook reports a mismatch and the remedy is
+    /// Initialise, which is also what reserves the padding row.
+    /// </para>
     /// <para>
     /// ADR-0029 D5 requires the bump to be the <em>last</em> change in the row's
     /// commit sequence: every other change lands first, so the integrity checker
     /// — not a manual review — is what notices a partial landing.
+    /// </para>
+    /// <para>
+    /// <b>Version 9 adds the chart padding rows.</b> A row is reserved above the
+    /// title row so the chart's top margin is a real worksheet row, and the row
+    /// below the last activity row is its bottom counterpart (ADR-0031 D1). The
+    /// header therefore moves from row 2 to row 3 and the plot anchor moves with it,
+    /// which is the same class of change as version 8 and carries the same
+    /// consequence: a version-8 workbook's header is still on row 2, so the anchor
+    /// repair would write an address that points at the wrong row. There is no
+    /// migration (ADR-0029 D6); the remedy is Initialise, which
+    /// <c>SchemaVersionMismatchMessage</c> already tells the user to run.
+    /// </para>
+    /// <para>
+    /// <b>Version 8 moves the table down one row.</b> The reserved row above
+    /// <c>tblGanttData</c> carries the table title and the year band, so the header
+    /// row moves from worksheet row 1 to row 2 and the plot anchor moves with it.
+    /// A version-7 workbook reports a mismatch rather than being adjusted, because
+    /// the anchor repair writes the <em>expected</em> address — on a version-7
+    /// workbook that would point the anchor at row 2 while the header is still on
+    /// row 1, producing a workbook that passes its own integrity check and is
+    /// wrong. There is no migration (ADR-0029 D6); the remedy is Initialise, which
+    /// <c>SchemaVersionMismatchMessage</c> already tells the user to run.
     /// </para>
     /// <para>
     /// Version 5 was R4.7C (the <c>Duration</c> column, column classification,
@@ -50,5 +113,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 12;
 }

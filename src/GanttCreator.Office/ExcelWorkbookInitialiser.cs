@@ -202,17 +202,44 @@ public class ExcelWorkbookInitialiser(
             }
         }
 
+        var wroteTitle = false;
         var wroteHeader = false;
         var createdTable = false;
+        ListObject? createdDataTable = null;
         var createdConfigSheet = false;
         var wrotePlotAnchor = false;
 
         try
         {
+            // The reserved row is written FIRST (ADR-0030 D4), so the title cell
+            // exists before the header range is resolved from row 2 and before the
+            // table is created from it. Writing rather than inserting is deliberate:
+            // the adopt path only runs on a pristine sheet, so row 1 is already empty
+            // and there is no structural mutation for a refusal to leave behind.
+            WriteTitleRow(
+                target,
+                GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle);
+            wroteTitle = true;
             WriteHeaderRow(target);
             wroteHeader = true;
-            CreateDataTable(target);
+
+            // The table is split into "add" and "present" so `createdTable` can be set
+            // BETWEEN them. Everything after `ListObjects.Add` can throw -- the host
+            // refuses a rename or a presentation write on a locked or otherwise hostile
+            // target -- and each of those throws while `createdTable` was still false,
+            // so the catch block rolled back only the header row and left a real
+            // `tblGanttData` on the sheet behind a refusal that promised no mutation.
+            // Recording the creation immediately after the Add makes every one of those
+            // paths roll the table back too.
+            //
+            // The reference itself is recorded as well, because a table whose rename
+            // never landed is not findable by name and the rollback must still remove
+            // it -- see RollBackDataTable.
+            createdDataTable = AddDataTable(target);
             createdTable = true;
+            PresentDataTable(createdDataTable);
+            ApplyColumnPresentation(createdDataTable);
+
             CreateConfigurationSheet(sheets, target);
             createdConfigSheet = true;
             ConfigWriteOutcome catalogueOutcome = _catalogueWriter.Write();
@@ -223,8 +250,10 @@ public class ExcelWorkbookInitialiser(
                     sheets,
                     catalogueOutcome,
                     wroteHeader,
+                    wroteTitle,
                     createdTable,
-                    createdConfigSheet);
+                    createdConfigSheet,
+                    createdDataTable);
 
                 // Map each reason explicitly. A catch-all "everything else is
                 // TargetProtected" would tell the user their sheet is protected
@@ -255,8 +284,9 @@ public class ExcelWorkbookInitialiser(
             {
                 RollBackPlotAnchorName(target);
                 RollBackConfigurationSheet(sheets);
-                RollBackDataTable(target);
+                RollBackDataTable(target, createdDataTable);
                 RollBackHeaderRow(target);
+                RollBackTitleRow(target);
                 return typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.NoActiveWorkbook
                     ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
                     : typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.TargetProtected
@@ -278,12 +308,17 @@ public class ExcelWorkbookInitialiser(
 
             if (createdTable)
             {
-                RollBackDataTable(target);
+                RollBackDataTable(target, createdDataTable);
             }
 
             if (wroteHeader)
             {
                 RollBackHeaderRow(target);
+            }
+
+            if (wroteTitle)
+            {
+                RollBackTitleRow(target);
             }
 
             throw;
@@ -304,15 +339,22 @@ public class ExcelWorkbookInitialiser(
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="catalogueOutcome">The refusing catalogue outcome (for parity, not surfaced).</param>
     /// <param name="wroteHeader">Whether the header row was written.</param>
+    /// <param name="wroteTitle">Whether the reserved title row was written.</param>
     /// <param name="createdTable">Whether the data table was created.</param>
     /// <param name="createdConfigSheet">Whether the configuration sheet was created.</param>
+    /// <param name="createdDataTable">
+    /// The table returned by <see cref="AddDataTable"/>, so a table that never received
+    /// its name is still removed rather than looked up and missed.
+    /// </param>
     private void RollBackForCatalogueRefusal(
         Worksheet target,
         Sheets sheets,
         ConfigWriteOutcome catalogueOutcome,
         bool wroteHeader,
+        bool wroteTitle,
         bool createdTable,
-        bool createdConfigSheet)
+        bool createdConfigSheet,
+        ListObject? createdDataTable)
     {
         // The refusal is translated by the caller; the parameter keeps the
         // refusal's evidence attached to the rollback for debugging.
@@ -324,12 +366,17 @@ public class ExcelWorkbookInitialiser(
 
         if (createdTable)
         {
-            RollBackDataTable(target);
+            RollBackDataTable(target, createdDataTable);
         }
 
         if (wroteHeader)
         {
             RollBackHeaderRow(target);
+        }
+
+        if (wroteTitle)
+        {
+            RollBackTitleRow(target);
         }
     }
 
@@ -604,12 +651,29 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Deletes the table named <c>GanttTableSchema.TableName</c> on
-    /// <paramref name="target"/>, if it exists. Used to roll back
-    /// <see cref="CreateDataTable"/> when a later mutation fails.
+    /// Deletes the add-in's own table on <paramref name="target"/>. Used to roll back
+    /// <see cref="AddDataTable"/> when a later mutation fails.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void RollBackDataTable(Worksheet target)
+    /// <param name="created">
+    /// The table returned by <see cref="AddDataTable"/>, or <see langword="null"/> to
+    /// look the table up by name.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// The reference is what makes a PARTIAL table removable. The lookup matches on
+    /// <c>GanttTableSchema.TableName</c>, so a table whose rename never landed -- still
+    /// carrying a host-assigned name -- is invisible to it, and the rollback would
+    /// silently keep it. That is the exact state a refused
+    /// <c>table.Name</c> write leaves behind, and it is what makes a retry then meet a
+    /// table the user never asked for.
+    /// </para>
+    /// <para>
+    /// The lookup remains the fallback for the callers that reach this without a
+    /// reference, so the behaviour is unchanged where the table is fully named.
+    /// </para>
+    /// </remarks>
+    private void RollBackDataTable(Worksheet target, ListObject? created = null)
     {
         if (_application is null)
         {
@@ -624,7 +688,7 @@ public class ExcelWorkbookInitialiser(
             // worksheet column behind it, so restoring afterwards would find no
             // table to read the columns from and would leave the user's engine
             // columns hidden after a refused Initialise.
-            if (FindDataTable(target) is { } owned)
+            if ((created ?? FindDataTable(target)) is { } owned)
             {
                 RestoreColumnVisibility(owned);
                 owned.Delete();
@@ -641,9 +705,32 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
+    /// Clears the title cell written by <see cref="WriteTitleRow"/> in the reserved
+    /// row, so a refused Initialise leaves no add-in-authored content behind.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <remarks>
+    /// <b>Clearing a cell, not deleting a row.</b> The reserved row was written into,
+    /// never structurally inserted, so there is no row to remove and no shifted table
+    /// to restore. That is the whole reason the layout is produced by writing rather
+    /// than by <c>Rows(1).Insert</c>: an inserted row would need a matching delete on
+    /// every refusal path, and a missed one would leave the sheet altered after a
+    /// command that reported no change.
+    /// </remarks>
+    private void RollBackTitleRow(Worksheet target)
+    {
+        // The whole SPAN is cleared, not just its top-left cell. Clearing one cell
+        // would leave a title behind if a write had partially succeeded across the
+        // range, and the rollback exists precisely for the case where the sheet was
+        // already touched (ADR-0032 D1).
+        Excel.Range titleRange = GetTitleRange(target);
+        titleRange.ClearContents();
+    }
+
+    /// <summary>
     /// Clears the header row content written by <see cref="WriteHeaderRow"/> on
-    /// <paramref name="target"/> and unhides the columns it hid. Used to roll back the
-    /// header row when a later mutation fails.
+    /// <paramref name="target"/> and unhides the columns it hid. Used to roll back
+    /// the header row when a later mutation fails.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
     /// <remarks>
@@ -676,9 +763,8 @@ public class ExcelWorkbookInitialiser(
     /// hidden by the failed attempt is an artefact of that attempt rather than
     /// something the user chose.
     /// </summary>
-    /// <param name="table">The add-in-owned table whose columns were hidden.</param>
     /// <remarks>
-    /// Takes the table rather than re-finding it: on the
+    /// Takes <paramref name="table"/> rather than re-finding it: on the
     /// <see cref="RollBackDataTable"/> path the table is deleted immediately after
     /// this runs, so a second lookup would have nothing to find, and on the
     /// <see cref="RollBackHeaderRow"/> path the table has already been deleted.
@@ -720,10 +806,15 @@ public class ExcelWorkbookInitialiser(
     {
         try
         {
-            var tableCount = target.ListObjects.Count;
+            // One proxy in a local, used for BOTH the count and the indexed lookup.
+            // Reaching `target.ListObjects` twice re-enters the COM property getter and
+            // yields two RCWs for one host collection, which is exactly the chained
+            // access the COM-ownership rule forbids.
+            ListObjects listObjects = target.ListObjects;
+            var tableCount = listObjects.Count;
             for (var index = 1; index <= tableCount; index++)
             {
-                ListObject table = GetTableAt(target.ListObjects, index);
+                ListObject table = GetTableAt(listObjects, index);
                 if (string.Equals(
                     table.Name,
                     GanttTableSchema.TableName,
@@ -788,29 +879,50 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Creates the <c>tblGanttData</c> table over the header row with
-    /// header-name behaviour, then names it from the Core schema constant.
-    /// The R2.7 appearance settings (no autofilter dropdowns, no banded
-    /// rows) keep the data panel visually neutral for the live Gantt
-    /// (ADR-0007 D8).
+    /// Adds the <c>tblGanttData</c> table over the header row, and returns it
+    /// WITHOUT naming or presenting it.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private void CreateDataTable(Worksheet target)
+    /// <returns>The added table.</returns>
+    /// <remarks>
+    /// <para>
+    /// Deliberately stops at the Add. Everything after it can throw, and the caller
+    /// must be able to record the creation before any of it runs -- otherwise a
+    /// refused rename leaves a real table on a sheet whose rollback promised no
+    /// mutation, and the retry then finds a table the user never asked for.
+    /// </para>
+    /// <para>
+    /// Splitting here is what makes the partial state <em>findable</em> as well:
+    /// <see cref="RollBackDataTable(Worksheet, ListObject?)"/> takes the returned
+    /// reference rather than searching by name, so a table whose rename never landed
+    /// is still removed.
+    /// </para>
+    /// </remarks>
+    private ListObject AddDataTable(Worksheet target)
     {
         var columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
         ListObjects listObjects = target.ListObjects;
-        ListObject table = listObjects.Add(
+        return listObjects.Add(
             XlListObjectSourceType.xlSrcRange,
             tableRange,
             Type.Missing,
             XlYesNoGuess.xlYes,
             Type.Missing);
+    }
+
+    /// <summary>
+    /// Names the table from the Core schema constant and applies the R2.7 appearance
+    /// settings (no autofilter dropdowns, no banded rows) that keep the data panel
+    /// visually neutral for the live Gantt (ADR-0007 D8).
+    /// </summary>
+    /// <param name="table">The added table.</param>
+    private static void PresentDataTable(ListObject table)
+    {
         table.Name = GanttTableSchema.TableName;
         table.ShowAutoFilter = false;
         table.ShowTableStyleRowStripes = false;
         table.ShowTableStyleColumnStripes = false;
-        ApplyColumnPresentation(table);
     }
 
     /// <summary>
@@ -908,6 +1020,46 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
+    /// Writes the table title into the reserved row above the header
+    /// (ADR-0030 D4/D6, R4.7I slice 1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The title is a cell value, not a drawn shape.</b> It is editable, printable,
+    /// and survives save/reopen without a shape. <c>SceneBuilder</c> emits no title
+    /// primitive under the <c>LiveExcel</c> profile (D6); the export profile still
+    /// emits one.
+    /// </para>
+    /// <para>
+    /// <b>No row is structurally inserted.</b> The adopt path only runs on a pristine
+    /// sheet, so row 1 is already empty and writing into it produces exactly the
+    /// reserved layout the plan's Option A diagram shows. That is strictly safer than
+    /// <c>Rows(1).Insert</c>: there is no structural mutation to roll back, so no
+    /// refusal path can leave a stray row and a shifted table behind it. The header
+    /// range then starts at row 2 and the table is created from it.
+    /// </para>
+    /// <para>
+    /// The value comes from the stored <c>ChartTitle</c> setting rather than a local
+    /// literal, so the cell and the export composition cannot name different charts.
+    /// </para>
+    /// </remarks>
+    private void WriteTitleRow(Worksheet target, string chartTitle)
+    {
+        // ONE cell, above Description.
+        //
+        // This previously wrote to a 1-by-5 `Resize` range on the stated belief that
+        // "Excel resolves a range assignment to that range's top-left cell, so D2:H2
+        // receives the title in D2". That premise is FALSE: assigning `Value2` to a
+        // multi-cell range writes the value into EVERY cell, which is why the live
+        // sheet showed "Gantt Chart" once per visible column. The fix is not to reach
+        // into the range's one-based cell indexer - which ADR-0032 D1 forbids as
+        // hardcoded addressing - but to make the RANGE itself one cell wide, derived
+        // from `GanttSheetLayout` like every other piece of sheet geometry.
+        Excel.Range titleRange = GetTitleRange(target);
+        titleRange.Value2 = chartTitle;
+    }
+
+    /// <summary>
     /// Writes the sheet-scoped plot-anchor defined name: the cell one column
     /// right of the table's last column, on the header row.
     /// </summary>
@@ -968,6 +1120,35 @@ public class ExcelWorkbookInitialiser(
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
         => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
+
+    /// <summary>
+    /// Returns the SINGLE cell holding the table title, in the reserved row directly
+    /// above the header and above the <c>Description</c> column. Test seam over the
+    /// COM parameterised <c>Range.Resize</c> property, mirroring
+    /// <see cref="GetHeaderRange"/>.
+    /// </summary>
+    /// <param name="target">The Gantt worksheet.</param>
+    /// <returns>The one-cell range for the title.</returns>
+    /// <remarks>
+    /// <para>
+    /// The span is <b>one cell</b>, and that is the fix rather than a detail. It was
+    /// five, so the title was assigned to D2:H2 and Excel wrote the value into every
+    /// one of those cells - the live sheet showed the title duplicated across the
+    /// table. A range assignment resolves to each cell in the range, not to the
+    /// range's top-left cell, which is what the previous comment here asserted.
+    /// </para>
+    /// <para>
+    /// The owner asked for the title directly above <c>Description</c>, the column the
+    /// table is read by. The row and the column both come from
+    /// <see cref="GanttSheetLayout"/>, so this seam cannot disagree with the layout
+    /// authority about where the title lives. A title wider than its column is a
+    /// merge or a left-aligned overflow, not a value written into each cell.
+    /// </para>
+    /// </remarks>
+    internal virtual Excel.Range GetTitleRange(Worksheet target) =>
+        target
+            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleColumnIndex]
+            .Resize[1, GanttSheetLayout.TitleColumnSpan];
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM

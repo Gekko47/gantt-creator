@@ -45,6 +45,126 @@ public class GanttRefreshOrchestratorTests
     /// never reaches the scene at all. That is a real constraint of the schema, not a
     /// quirk of the test helper.
     /// </remarks>
+    /// <summary>
+    /// A successful refresh hands the reporter an EMPTY issue list, which is the call
+    /// that clears the notes a previous Validate left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect, pinned at the seam that caused it.</b> In a live F5
+    /// session on 2026-10-04 the cell notes survived a Refresh: Validate wrote them and
+    /// Refresh never touched them, because <c>IGanttValidationReporter</c> had zero
+    /// references in <c>GanttRefreshOrchestrator</c> and was not a constructor
+    /// parameter. The user fixed the row, pressed Refresh, and the stale note was still
+    /// there — which reads as the fix not having registered.
+    /// </para>
+    /// <para>
+    /// The assertion is on the LIST, not merely that the reporter was called. An empty
+    /// list is the whole mechanism, because the reporter clears the notes it owns on
+    /// every call; a refresh that reported only when it had findings would leave the
+    /// stale note exactly in place.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_successful_refresh_reports_an_empty_issue_list_so_stale_notes_are_cleared()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
+        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        Assert.Empty(reported);
+    }
+
+    /// <summary>
+    /// A refresh that finds a blocking error still writes the notes, because the notes
+    /// are how the user is told what to fix.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the empty-list assertion above, and the reason the reporter
+    /// is called before the render decision rather than after it. Calling it only on the
+    /// success path would mean a blocked refresh left the PREVIOUS report in place —
+    /// the notes would never show the current error, and the user would be chasing a
+    /// message about a problem they had already fixed.
+    /// </remarks>
+    [Fact]
+    public void A_blocked_refresh_still_reports_the_errors_it_found()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+
+        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        Assert.Equal(outcome.ValidationIssues.Count, reported.Count);
+        Assert.NotEmpty(reported);
+    }
+
+    /// <summary>
+    /// A refusal to maintain the notes stops the refresh before anything is rendered.
+    /// </summary>
+    /// <remarks>
+    /// The positive case for the new <c>ValidationNotesRefused</c> branch, in the same
+    /// commit as the branch. Swallowing this refusal would leave the sheet showing the
+    /// previous report while the chart silently stayed put, which is the least
+    /// explainable state the pipeline can produce. The zero shape calls are the point:
+    /// the user keeps their last valid chart and gets told why nothing changed.
+    /// </remarks>
+    [Fact]
+    public void A_refused_notes_update_stops_the_refresh_before_any_shape_is_touched()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+        fakes.ValidationNotesRefused = true;
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.ValidationNotesRefused, outcome.Refusal);
+
+        // D3: the refusal happens before the single shape-mutating step.
+        Assert.Empty(fakes.Shapes.Calls);
+        Assert.Equal(0, outcome.DurationCellsWritten);
+        Assert.Equal(0, outcome.ShapesWritten);
+    }
+
+    /// <summary>
+    /// An orchestrator with no reporter wired still refreshes, so a caller that has no
+    /// workbook to annotate is not forced to construct one.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight that keeps the new dependency additive. Every other optional
+    /// collaborator in this constructor was made optional for the same reason, and a
+    /// required parameter here would have broken each existing caller including the
+    /// composition root.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_with_no_reporter_wired_still_succeeds()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator(validationReporter: null);
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Empty(fakes.ReportedIssues);
+    }
+
     private static GanttRowDto Row(
         int rowNumber,
         string? id,
@@ -110,6 +230,29 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttCatalogues.MetricDefault("GanttRowHeightPt"), fakes.LastManagedHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
         Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// The two layout-row heights are the catalogue tokens, not literals.
+    /// </summary>
+    /// <remarks>
+    /// The header row is the period band's row (ADR-0030 D5), so its height is what
+    /// makes the period band's bottom coincide with the first body row's top; the
+    /// reserved row above it carries the table title and the year band (D4). Both
+    /// are asserted against <see cref="GanttCatalogues.MetricDefault"/> rather than
+    /// numbers, so retuning a band token does not require editing this test and cannot
+    /// leave it asserting a stale figure.
+    /// </remarks>
+    [Fact]
+    public void The_layout_row_heights_are_the_catalogue_tokens()
+    {
+        (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(GanttCatalogues.MetricDefault("PeriodBandHeightPt"), fakes.LastHeaderHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("YearBandHeightPt"), fakes.LastReservedRowHeightPt);
     }
 
     /// <summary>
@@ -302,6 +445,16 @@ public class GanttRefreshOrchestratorTests
                 "Guard",
                 "Columns",
                 "Identity",
+
+                // The re-read after repair. The first snapshot is stale the moment
+                // repair writes an Id, so validation must not consume it.
+                "Read",
+
+                // The notes, maintained against the findings of the validation that
+                // follows. Placed BEFORE the render decision on purpose: a refresh that
+                // now finds no errors must clear the notes a previous Validate left
+                // behind, and that call has to happen on the blocked path too.
+                "Notes",
                 "Outline",
                 "Duration",
                 "RowHeights",
@@ -608,6 +761,107 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(expected, outcome.Refusal);
         Assert.Equal("Dispose", scope.Calls[^1]);
     }
+
+    /// <summary>
+    /// Validation sees the REPAIRED rows, not the snapshot taken before repair.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> Identity repair exists to fix a blank or
+    /// malformed <c>Id</c>, so it WRITES new identifiers to the worksheet. The
+    /// orchestrator read the table once at step 1, and validating that snapshot meant
+    /// reporting the very <c>IdMissingOrMalformed</c> errors repair had just resolved —
+    /// a refresh refused with <c>BlockingValidationErrors</c> on a workbook the user
+    /// could not fix by any means, because the column they would edit is engine-hidden
+    /// and the row was already repaired underneath it.
+    /// </remarks>
+    [Fact]
+    public void Validation_receives_the_rows_repaired_by_the_identity_step()
+    {
+        // The FIRST read returns a row with no usable Id: the blocking error that
+        // makes identity repair necessary in the first place.
+        RefreshFakes fakes = new() { Rows = [RowWithoutId()] };
+
+        // After repair the same row carries a well-formed Id, which is what the
+        // repairer writes to the worksheet.
+        fakes.RowsAfterRepair = ValidRows();
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(
+            outcome.Succeeded,
+            "the refresh refused: " + outcome.Refusal + " " + outcome.Message);
+
+        // The re-read really happened, after the repair and before validation.
+        Assert.Equal(2, fakes.TableReadCount);
+        Assert.True(
+            fakes.Steps.IndexOf("Identity") < IndexOfSecond(fakes.Steps, "Read"),
+            "the re-read must follow identity repair; steps were " + string.Join(", ", fakes.Steps));
+        Assert.DoesNotContain(
+            outcome.ValidationIssues,
+            issue => issue.Severity == GanttValidationSeverity.Error);
+    }
+
+    /// <summary>
+    /// A failed re-read after repair takes the table-read refusal path, with no
+    /// shape mutation.
+    /// </summary>
+    /// <remarks>
+    /// <b>The positive test for the new refusal branch.</b> Without handling it, a
+    /// re-read that failed would be validated against the stale rows or — worse —
+    /// produce a chart from data the repair was in the middle of changing. It maps to
+    /// <see cref="GanttRefreshRefusal.TableMissing"/> because from that point on it is
+    /// indistinguishable from a first read that failed.
+    /// </remarks>
+    [Fact]
+    public void A_failed_reread_after_repair_refuses_as_a_table_miss_and_mutates_no_shape()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = [RowWithoutId()],
+            TableReadRefusedAfterRepair = true,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>The one-based position of the second occurrence of <paramref name="step"/>.</summary>
+    private static int IndexOfSecond(List<string> steps, string step)
+    {
+        var seen = 0;
+        for (var index = 0; index < steps.Count; index++)
+        {
+            if (string.Equals(steps[index], step, StringComparison.Ordinal)
+                && ++seen == 2)
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException("'" + step + "' does not occur twice in " + string.Join(", ", steps));
+    }
+
+    /// <summary>A row whose <c>Id</c> is blank, which is what identity repair fixes.</summary>
+    private static GanttRowDto RowWithoutId() =>
+        new(
+            2,
+            string.Empty,
+            NewId(),
+            0,
+            "As-Planned Activity",
+            "Design",
+            new DateOnly(2024, 1, 8),
+            new DateOnly(2024, 1, 19),
+            parentId: null,
+            styleKey: null,
+            labelPositionText: null,
+            fillColourText: null,
+            strokeColourText: null,
+            visible: true,
+            sortOrder: null);
 
     /// <summary>Null collaborators are refused at construction, not at first use.</summary>
     [Fact]

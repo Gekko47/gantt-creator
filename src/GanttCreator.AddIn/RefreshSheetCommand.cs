@@ -100,11 +100,17 @@ internal static class RefreshSheetCommand
             new ExcelOutlineGroupWriter(application),
 
             // The text-metrics seam is a real host dependency: Core never measures,
-            // so something must. Until the host supplies a font-backed implementation
-            // this is Core's deterministic one, which makes the composed chart
-            // identical on every run rather than dependent on the machine's installed
-            // fonts. R5.6a owns replacing it.
-            new ExcelSceneBuildRequestFactory(new FakeTextMetrics()),
+            // so something must. This is now the FONT-BACKED implementation:
+            // AptosTextMetrics reads the real advances of the typography families
+            // (Aptos / Aptos Narrow, Regular and Bold), which a live Excel probe
+            // measured against the previous flat 4pt-per-character table and found
+            // wrong in BOTH directions -- 44 percent too small for 'W' and 105
+            // percent too large for 'i'. The small end is what clipped labels,
+            // because the shape writer writes AutoSize = msoAutoSizeNone and the
+            // host cannot recover the difference. The advances are read from the
+            // font binaries by scripts/gen-font-advances.py and committed as data,
+            // so the measurement stays deterministic and Office-free.
+            new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
             new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
 
             // R4.8A D2's two remaining preflight steps, supplied here so the
@@ -118,6 +124,13 @@ internal static class RefreshSheetCommand
             // orchestrator, which disposes it on every path; constructing one per
             // operation would capture-and-restore the same setting several times and
             // restore the wrong value.
-            new ExcelApplicationStateScope(application));
+            new ExcelApplicationStateScope(application),
+
+            // The notes reporter. Without it here, Refresh never touched the cell notes:
+            // Validate wrote them and Refresh left them alone, so a user who fixed a
+            // validation error and pressed Refresh saw the stale note still sitting on
+            // the row. The reporter clears the notes this add-in owns on every call, so
+            // passing it here is what makes a corrected row lose its note.
+            new ExcelGanttValidationReporter(application));
 #pragma warning restore CA2000
 }

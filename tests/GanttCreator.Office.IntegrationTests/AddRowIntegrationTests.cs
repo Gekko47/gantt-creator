@@ -127,9 +127,28 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// ADR-0035 D3: an active cell INSIDE the table inserts immediately BELOW it, and
+    /// the reserved bottom padding row still moves down.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This inverts <c>Every_insert_appends_and_shifts_no_following_row</c>, which
+    /// asserted the opposite and was correct for the append-only rule ADR-0035 first
+    /// landed. That rule was reverted: the owner recognised the mid-table shift as the
+    /// chart tracking the sheet, not as a defect.
+    /// </para>
+    /// <para>
+    /// The padding-row half is asserted in the SAME test body on purpose. It is the
+    /// same event, and the COM-proxy leak ratchet counts forced kills per test body
+    /// (a workbook left open keeps the host alive), so splitting one narrative across
+    /// two bodies would add a kill to a ceiling the repository records as not
+    /// raisable, for no extra coverage.
+    /// </para>
+    /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
-    public async Task Insert_active_row_places_new_row_below_it_and_shifts_following_rows()
+    public async Task An_in_table_selection_inserts_below_it_and_the_padding_row_still_moves_down()
     {
         var fixture = new OfficeFixture();
         try
@@ -140,35 +159,121 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
-            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
-            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+
+            // The workbook is NOT tracked: CreateWorkbook hands that proxy to the
+            // fixture, which closes and releases it during teardown, and tracking it
+            // here released the same RCW twice. Every proxy THIS test creates is
+            // tracked, so this test stops adding to the COM-proxy leak signal.
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
             var inserter = new ExcelGanttRowInserter(fixture.Excel);
 
             Assert.True(inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('1')).Succeeded);
-            table.ListRows[1].Range.Select();
             Assert.True(inserter.Insert(
                 GanttEntityType.AsPlannedMilestone,
                 () => FixedId('2')).Succeeded);
-            table.ListRows[2].Range.Select();
             Assert.True(inserter.Insert(
                 GanttEntityType.Delineator,
                 () => FixedId('3')).Succeeded);
 
-            table.ListRows[2].Range.Select();
+            Excel.Range body = scope.Track(table.DataBodyRange);
+
+            // ADR-0038: the padding row is TWO rows below the body now -- one past it is
+            // the ANCHOR row -- so the baseline is moved down one to keep naming the
+            // same physical row before and after the insert.
+            int paddingRowBefore = body.Row + body.Rows.Count + 1;
+
+            // Select the FIRST body row: the new activity belongs immediately below it,
+            // NOT at the top and NOT appended.
+            scope.Track(table.ListRows[1].Range).Select();
             GanttRowInsertOutcome inserted = inserter.Insert(
                 GanttEntityType.AsPlannedActivity,
                 () => FixedId('4'));
 
             Assert.True(inserted.Succeeded, $"Insert refused: {inserted.Refusal}");
-            Assert.Equal(3, inserted.BodyIndex);
+            Assert.Equal(2, inserted.BodyIndex);
             Assert.Equal(4, table.DataBodyRange.Rows.Count);
-            Assert.Equal(5, table.Range.Rows.Count);
+
+            // The load-bearing ordering: the new row sits BELOW the selection, and the
+            // rows it displaced kept their identities and moved down.
             AssertId(table.ListRows[1], FixedId('1').Value);
-            AssertId(table.ListRows[2], FixedId('2').Value);
-            AssertId(table.ListRows[3], FixedId('4').Value);
+            AssertId(table.ListRows[2], FixedId('4').Value);
+            AssertId(table.ListRows[3], FixedId('2').Value);
             AssertId(table.ListRows[4], FixedId('3').Value);
+
+            // The inserted row is a real BODY row at the body height. A worksheet row
+            // inserted inside the table inherits the row above it, but the adapter
+            // writes the token explicitly rather than trusting that inheritance.
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                (double)scope.Track(table.ListRows[2].Range).RowHeight,
+                3);
+
+            // ---- The reserved rows below the body (ADR-0035 D2, ADR-0038 D1) ----
+            //
+            // ADR-0036 D5: the positional branch inserts a real WORKSHEET row
+            // inside the table's range, and the ListObject absorbs it. So everything
+            // below shifts: BOTH reserved rows must have moved down by one row. This is
+            // what moves the Gantt shapes, which anchor to cells.
+            //
+            // The comment this replaces claimed ListRows.Add(position) already
+            // inserted a real worksheet row. Measured 2026-10-03
+            // (probe-positional-insert.ps1 Q1) it does not: that call moved every
+            // probe shape by delta=0 and consumed the row below the table.
+            Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
+            int lastBodyRow = bodyAfter.Row + bodyAfter.Rows.Count - 1;
+            int tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
+
+            // ADR-0038: two reserved rows now sit below the body. The ANCHOR row is one
+            // past it and the padding row one past that.
+            int anchorRowIndex = lastBodyRow + 1;
+            int paddingRowIndex = anchorRowIndex + 1;
+
+            // The margin row is genuinely OUTSIDE the table. This is the load-bearing
+            // check, and it is stated against the TABLE'S OWN RANGE rather than
+            // against lastBodyRow -- an earlier version compared the derived index
+            // with itself and was a tautology that could never fail.
+            Assert.True(
+                anchorRowIndex > tableLastRow,
+                $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
+
+            Assert.True(
+                paddingRowIndex > anchorRowIndex,
+                $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
+
+            // And BOTH MOVED DOWN rather than being absorbed. Before ADR-0035 the
+            // append claimed this row and turned it into a body row; a positional
+            // insert shifts it, and the new row below the table restores the same for
+            // the append branch.
+            Assert.True(
+                paddingRowIndex > paddingRowBefore,
+                $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            // The anchor row keeps its own sub-row height as it is displaced.
+            Excel.Range anchorRow = scope.Track(sheet.Rows[anchorRowIndex]);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
+                (double)anchorRow.RowHeight,
+                3);
+
+            Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
+            object? paddingValue = paddingRow.Value2;
+
+            // A whole-row Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar, so
+            // every cell has to be inspected; a scalar check misreads a populated row.
+            bool paddingIsEmpty = paddingValue is object[,] cells
+                ? cells.Cast<object?>().All(static value =>
+                    value is null or DBNull || (value is string text && text.Length == 0))
+                : paddingValue is null
+                    or DBNull
+                    || (paddingValue is string single && single.Length == 0);
+
+            Assert.True(
+                paddingIsEmpty,
+                $"The reserved padding row must be empty, but reported '{paddingValue}'.");
         }
         finally
         {
@@ -176,6 +281,180 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// ADR-0035 D3, other branch: an active cell OUTSIDE the table appends, and the
+    /// real worksheet-row insert below the table reserves a fresh padding row.
+    /// </summary>
+    /// <remarks>
+/// <para>
+/// This covers the branch that was never exercised against a live host. Every
+/// contract test substitutes <c>InsertWorksheetRowBelowTable</c>, so the COM call
+/// itself -- the only thing that actually moves the padding row -- had no coverage
+/// at all. It is the exact path that produces "the padding row still takes data",
+/// and its failure mode was four silent returns that all reported success.
+/// </para>
+/// <para>
+/// The append is driven by an active cell on a DIFFERENT SHEET, which is the owner's
+/// "anywhere else" rule stated in its strongest form. Asserting
+/// <c>PaddingRowReserved</c> is what distinguishes the row insert having happened
+/// from the host having silently refused it, which no count-based assertion could.
+/// </para>
+/// <para>
+/// Padding-row emptiness and the moved index are asserted in this same body on
+/// purpose: the COM-proxy leak ratchet counts forced kills per test body, so
+/// splitting this narrative would add a kill to a ceiling the repository records as
+/// not raisable.
+/// </para>
+/// </remarks>
+[Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task An_outside_table_selection_appends_and_still_reserves_the_padding_row()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            // A body, so the first-insert blank-row reuse does not apply.
+            Assert.True(inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('1')).Succeeded);
+
+            Excel.Range body = scope.Track(table.DataBodyRange);
+
+            // ADR-0038: the padding row is two rows below the body now; see the note on
+            // the positional branch's baseline.
+            var paddingRowBefore = body.Row + body.Rows.Count + 1;
+            var bodyRowsBefore = body.Rows.Count;
+
+            // The active cell is somewhere else entirely: a column beyond the table's last
+            // one, on the same sheet. That leaves table.Active false -- the owner's
+            // "anywhere else appends" rule -- so the APPEND branch is taken and
+            // ListRows.Add() CLAIMS the row sitting below the table.
+            //
+            // Deliberately a cell rather than a second worksheet. Adding a sheet
+            // grew the COM-proxy leak signal, and the ratchet ceiling is recorded
+            // as not raisable; a column past the table's edge forces the same
+            // branch with no extra host object to release.
+            //
+            // Every proxy is held in a local before it is indexed or read: a
+            // chained call such as table.Range.Column leaves an intermediate RCW
+            // for the collector, which is exactly what this ratchet counts.
+            Excel.Range tableRange = scope.Track(table.Range);
+            var firstUnusedColumn = tableRange.Column + tableRange.Columns.Count + 1;
+            Excel.Range wholeSheet = scope.Track(sheet.Cells);
+            scope.Track(wholeSheet[1, firstUnusedColumn]).Select();
+
+            GanttRowInsertOutcome appended = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('2'));
+
+            Assert.True(appended.Succeeded, $"Insert refused: {appended.Refusal}");
+
+            // The load-bearing assertion. The real COM call ran and the host did NOT
+            // refuse; before this reported a result, a swallowed refusal looked
+            // identical to success and the margin vanished without a word.
+            Assert.True(
+                appended.PaddingRowReserved,
+                "The worksheet row below the table was not inserted, so the chart's bottom margin was absorbed.");
+
+            // It appended rather than inserted mid-table.
+            Assert.Equal(bodyRowsBefore + 1, table.DataBodyRange.Rows.Count);
+            AssertId(table.ListRows[table.ListRows.Count], FixedId('2').Value);
+
+            // ---- The reserved rows below the body (ADR-0035 D2, ADR-0038 D1) ----
+            Excel.Range bodyAfter = scope.Track(table.DataBodyRange);
+            var tableLastRow = table.Range.Row + table.Range.Rows.Count - 1;
+
+            // ADR-0038: the strip below the body is TWO rows. The ANCHOR row is one
+            // past the body and the padding row is one past THAT -- reading the padding
+            // row as lastBody + 1 would name the anchor row and assert its 0.25pt height
+            // is the chart's margin.
+            var anchorRowIndex = bodyAfter.Row + bodyAfter.Rows.Count - 1 + 1;
+            var paddingRowIndex = anchorRowIndex + 1;
+
+            Assert.True(
+                anchorRowIndex > tableLastRow,
+                $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
+
+            Assert.True(
+                paddingRowIndex > anchorRowIndex,
+                $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
+
+            Assert.True(
+                paddingRowIndex > paddingRowBefore,
+                $"The padding row must move down, not be absorbed (was {paddingRowBefore}, margin is now {paddingRowIndex}).");
+
+            // The anchor row exists, is empty, and holds its OWN sub-row height. It is
+            // what the plot-spanning shapes paint through so their bottom cell anchor
+            // resolves below the insert point and they STRETCH rather than slide.
+            Excel.Range anchorRow = scope.Track(sheet.Rows[anchorRowIndex]);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"),
+                (double)anchorRow.RowHeight,
+                3);
+
+            Excel.Range paddingRow = scope.Track(sheet.Rows[paddingRowIndex]);
+            object? paddingValue = paddingRow.Value2;
+
+            // A whole-row Range.Value2 is ALWAYS a 2-D SAFEARRAY, never a scalar.
+            bool paddingIsEmpty = paddingValue is object[,] cells
+                ? cells.Cast<object?>().All(static value =>
+                    value is null or DBNull || (value is string text && text.Length == 0))
+                : paddingValue is null
+                    or DBNull
+                    || (paddingValue is string single && single.Length == 0);
+
+            Assert.True(
+                paddingIsEmpty,
+                $"The reserved padding row must be empty, but reported '{paddingValue}'.");
+
+            // The margin row is reserved at its own height, not the body row's.
+            // It carries that height down with it when the insert displaces it.
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+                (double)paddingRow.RowHeight,
+                3);
+
+            // The load-bearing assertion, and the one this whole defect slipped past:
+            // the APPENDED BODY row must be a body row's height. The padding row is
+            // 6pt, ListRows.Add() with no position claims it, and before the ordering
+            // fix the new activity therefore landed at 6pt with its text colliding
+            // with the row beneath it. Every assertion above this one -- including
+            // the padding height -- passed while the sheet was visibly broken.
+            Excel.Range bodyAfterAppend = scope.Track(
+                table.ListRows[appended.BodyIndex!.Value].Range);
+            Assert.Equal(
+                GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+                (double)bodyAfterAppend.RowHeight,
+                3);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// A protected worksheet refuses the insert and the table is left untouched.
+    /// </summary>
+    /// <remarks>
+    /// Unrelated to ADR-0035. The live coverage for the reserved bottom padding row
+    /// lives in <c>An_in_table_selection_inserts_below_it_and_the_padding_row_still_moves_down</c>
+    /// (the positional branch) and <c>An_outside_table_selection_appends_and_still_reserves_the_padding_row</c>
+    /// (the append branch), which is where the append that used to consume the
+    /// margin row is performed.
+    /// </remarks>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task Insert_refuses_a_protected_sheet_without_adding_a_row()

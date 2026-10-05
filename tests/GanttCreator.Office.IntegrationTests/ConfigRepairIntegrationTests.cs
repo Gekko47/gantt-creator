@@ -56,10 +56,14 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
 
             Assert.Null(outcome.Refusal);
             Assert.Equal(Excel.XlSheetVisibility.xlSheetVeryHidden, config.Visible);
-            // Derived from the live column count, as in
-            // InitialiseSheetIntegrationTests: a literal column letter went stale
-            // when R4.7A added SiblingOrder and only the live gate caught it.
-            Excel.Range anchorCell = gantt.Cells[1, ganttTable.ListColumns.Count + 1];
+            // Derived from the live column count AND the layout authority's header row, as
+            // in InitialiseSheetIntegrationTests: a literal column letter went stale
+            // when R4.7A added SiblingOrder, and a literal ROW went stale when
+            // ADR-0030 added the reserved row. Both are now read from the authority
+            // rather than restated, and only this live gate can prove the product
+            // writes the address the layout says it should.
+            Excel.Range anchorCell =
+                gantt.Cells[GanttSheetLayout.HeaderRowIndex, ganttTable.ListColumns.Count + 1];
             Assert.Equal(
                 $"='{GanttWorkbookContract.GanttSheetLabel}'!{anchorCell.Address[External: false]}",
                 gantt.Names.Item(GanttWorkbookContract.PlotAnchorDefinedName).RefersTo,

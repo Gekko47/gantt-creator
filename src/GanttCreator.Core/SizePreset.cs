@@ -98,10 +98,16 @@ public static class SizePresets
         Array.AsReadOnly([A4Portrait, A4Landscape, Presentation16x9, Presentation4x3]);
 
     /// <summary>
-    /// The default preset when a workbook names none. A4 landscape is the
-    /// conventional default for a printed construction schedule.
+    /// The default preset when a workbook names none.
     /// </summary>
-    public static SizePreset Default => A4Landscape;
+    /// <remarks>
+    /// A4 <em>portrait</em>, matching the <c>SizePreset</c> default published by
+    /// <see cref="GanttCatalogues.Settings"/>. The fallback and the stored default
+    /// must agree: while they disagreed, a workbook whose setting was absent
+    /// rendered a landscape page while a workbook whose setting was present
+    /// rendered a portrait one, from the same code and the same data.
+    /// </remarks>
+    public static SizePreset Default => A4Portrait;
 
     /// <summary>
     /// Returns the preset for a settings key.

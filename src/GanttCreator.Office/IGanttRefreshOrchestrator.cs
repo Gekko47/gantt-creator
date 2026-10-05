@@ -89,6 +89,26 @@ public enum GanttRefreshRefusal
     /// was protected or the table was edited by hand.
     /// </remarks>
     ColumnPresentationRefused = 15,
+
+    /// <summary>
+    /// The add-in's own cell notes could not be brought into line with the current
+    /// validation findings.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The notes are the visible evidence of what the refresh found, so a refusal to
+    /// maintain them is reported rather than swallowed. Reported before anything is
+    /// rendered, which means the chart is untouched: the user keeps the last valid
+    /// chart and sees a message explaining that the sheet's notes could not be
+    /// updated.
+    /// </para>
+    /// <para>
+    /// The usual cause is the same as <see cref="ColumnPresentationRefused"/> — a
+    /// protected sheet or a hand-edited table — so the user's remedy is to unprotect
+    /// the sheet and refresh again.
+    /// </para>
+    /// </remarks>
+    ValidationNotesRefused = 16,
 }
 
 /// <summary>The typed result of one whole-sheet refresh.</summary>

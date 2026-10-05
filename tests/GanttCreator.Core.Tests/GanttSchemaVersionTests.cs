@@ -4,8 +4,18 @@ namespace GanttCreator.Core.Tests;
 
 public class GanttSchemaVersionTests
 {
+    /// <summary>
+    /// The schema version is the current one, and each bump is named with the row
+    /// that took it.
+    /// </summary>
+    /// <remarks>
+    /// The name of this test used to say "version six" while asserting 7, which is
+    /// the kind of stale title that survives because nothing checks it. It now
+    /// describes what it pins rather than repeating a number that lives in the
+    /// comment below.
+    /// </remarks>
     [Fact]
-    public void Current_schema_version_is_the_current_version_six()
+    public void Current_schema_version_is_the_current_version()
     {
         // Schema v2 added the nonblank title/default and PeriodLabelFormat contract (ADR-0014).
         // Schema v3 adds the DateDisplayFormat contract (ADR-0016).
@@ -16,7 +26,28 @@ public class GanttSchemaVersionTests
         // is the signal it compares against.
         // Schema v5 adds the Duration column, the column classification, the
         // GanttRowHeightPt rename, the retired CriticalLinePt, and CriticalFill.
-        Assert.Equal(7, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v8 is R4.7I: the reserved title row moves the header from row 1 to
+        // row 2 and the plot anchor with it (ADR-0030 D4/D5).
+        // Schema v9 is ADR-0031 D1: the chart's top and bottom padding become real
+        // worksheet rows, so the header moves from row 2 to row 3 and the plot anchor
+        // moves again. It also adds the ChartPaddingRowHeightPt token.
+        // Schema v10 is ADR-0035: the BOTTOM padding row becomes a genuinely
+        // reserved row rather than whatever row followed the table, and the metric
+        // catalogue loses MaximumExternalLabelWidthPt. No header move this time --
+        // the reservation is below the table -- but the stored catalogue hash moves,
+        // so a version-9 workbook reports a mismatch and Initialise is the remedy.
+        // Schema v11 is ADR-0037: the metric catalogue GAINS PlotBandHeaderOverlapPt,
+        // the sub-row amount the plot-spanning shapes extend up into the header row so
+        // Excel's cell anchoring stretches them when a row is added at the top. Same
+        // class as v10's retirement, opposite direction: the stored catalogue hash
+        // moves because a workbook written before it lacks a row the add-in reads.
+        // Schema v12 is ADR-0038: the metric catalogue GAINS ChartAnchorRowHeightPt AND a
+        // NEW RESERVED ROW appears between the body and the bottom padding row, so the
+        // padding row the add-in writes to and measures is no longer the row directly
+        // below the table. Same class as v9's and v10's, both of which moved the row
+        // the padding lives in. No migration (ADR-0029 D6); Initialise is the remedy
+        // and is also what reserves the anchor row.
+        Assert.Equal(12, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]
