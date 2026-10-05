@@ -16,17 +16,6 @@ public sealed class FrameBandsBuilderTests
     );
 
     /// <summary>
-    /// Each side of the frame margin is applied independently (ADR-0031 D1).
-    /// </summary>
-    /// <remarks>
-    /// <b>This is the test the single scalar could not have.</b> The old request
-    /// carried one <c>ChartOuterPaddingPt</c> for all four sides, so there was no way
-    /// to express — let alone assert — a live chart with no left margin and row-sized
-    /// top and bottom margins. Checking only that "the bounds are the content plus
-    /// 6pt all round" would pass against a builder that ignored the per-side values
-    /// entirely and applied a constant.
-    /// </remarks>
-    /// <summary>
     /// The plot-spanning shapes are lifted into the header row by the configured
     /// overlap, and the TOP is the only edge that moves up (ADR-0037 D1).
     /// </summary>
@@ -300,6 +289,17 @@ public sealed class FrameBandsBuilderTests
             "The chart frame must close below the plot's data boundary.");
     }
 
+    /// <summary>
+    /// Each side of the frame margin is applied independently (ADR-0031 D1).
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the test the single scalar could not have.</b> The old request
+    /// carried one <c>ChartOuterPaddingPt</c> for all four sides, so there was no way
+    /// to express — let alone assert — a live chart with no left margin and row-sized
+    /// top and bottom margins. Checking only that "the bounds are the content plus
+    /// 6pt all round" would pass against a builder that ignored the per-side values
+    /// entirely and applied a constant.
+    /// </remarks>
     [Fact]
     public void Each_side_of_the_padding_is_applied_to_its_own_edge()
     {

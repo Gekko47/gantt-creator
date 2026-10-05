@@ -239,17 +239,6 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
-    /// The measured panel width is the sum of the visible columns, so entity guide
-    /// section 3's "the panel right edge touches the plot left edge" holds. The plot's
-    /// left edge is <c>textPanelWidthPt</c> — the panel's right edge exactly, with no
-    /// chrome between them (ADR-0031 D2).
-    /// </summary>
-    /// <remarks>
-    /// Measuring only the label columns would leave the plot drawn on top of the
-    /// still-visible <c>Start</c>, <c>Finish</c>, and <c>Duration</c> columns, so this
-    /// asserts the placement rather than merely the list.
-    /// </remarks>
-    /// <summary>
     /// The plot's left edge starts exactly where the measured panel ends, with NO
     /// left chrome (ADR-0031 D2).
     /// </summary>
