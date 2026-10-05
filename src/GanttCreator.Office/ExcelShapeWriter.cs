@@ -1397,6 +1397,22 @@ public class ExcelShapeWriter(
         frame.WordWrap = MsoTriState.msoFalse;
         frame.AutoSize = MsoAutoSize.msoAutoSizeNone;
 
+        // Vertical centring, which the entity guide's section 22 requires at EVERY
+        // label position ("Right: ... vertically centred", "Left: ... vertically
+        // centred"). This was never written, so Excel fell back to its own default,
+        // msoAnchorTop, and every label sat at the top of the row-tall box the scene
+        // resolved for it - visible in a live F5 session on 2026-10-04 as labels
+        // hugging the top edge of their bar rather than centred in it.
+        //
+        // Set explicitly rather than relied upon, for the same reason the margins
+        // below are zeroed: the scene already resolved the box and the vertical
+        // placement, so a host default is a second authority that can disagree with
+        // it. Verified against the installed interop assembly (office.dll 16.0) that
+        // TextFrame2.VerticalAnchor is a settable Single-valued property of type
+        // MsoVerticalAnchor, and that msoAnchorMiddle is the member named Middle
+        // (value 3).
+        frame.VerticalAnchor = MsoVerticalAnchor.msoAnchorMiddle;
+
         // The internal margins are zeroed because the scene already resolved the
         // box, and a host default inset would silently move the text away from the
         // position the scene chose - the same no-remeasure violation as auto-sizing.

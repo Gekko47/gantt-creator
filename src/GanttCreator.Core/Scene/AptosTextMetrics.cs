@@ -93,13 +93,19 @@ public sealed class AptosTextMetrics : ITextMetrics
     /// </remarks>
     private const int _fallbackAdvanceEm = FontAdvanceTable.UnitsPerEm;
 
-    private readonly double _fontSizePt;
     private readonly bool _bold;
     private readonly bool _narrow;
 
     /// <summary>Initialises the metrics for the shipped label typography.</summary>
+    /// <remarks>
+    /// The size comes from the catalogue's <c>BodyFontSizePt</c> rather than a literal
+    /// here. It previously hardcoded 8pt while the scene emitted no <c>fontSizePt</c>
+    /// at all, so the host rendered its own default and the box sized from this 8pt
+    /// measurement could not contain the text the host actually drew. Both the
+    /// measuring seam and the emitting style now read the one token.
+    /// </remarks>
     public AptosTextMetrics()
-        : this(8d, bold: false, narrow: false) { }
+        : this(GanttCatalogues.LabelBodyFontSizePt, bold: false, narrow: false) { }
 
     /// <summary>Initialises the metrics for one face and size.</summary>
     /// <param name="fontSizePt">The font size in points.</param>
@@ -118,10 +124,31 @@ public sealed class AptosTextMetrics : ITextMetrics
                 "Font size must be finite and positive.");
         }
 
-        _fontSizePt = fontSizePt;
+        FontSizePt = fontSizePt;
         _bold = bold;
         _narrow = narrow;
     }
+
+    /// <summary>
+    /// The font size this instance measures at, in points.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Public because it is a CONTRACT, not a diagnostic. The scene sizes every label
+    /// box from this instance's measurement and then hands the host a
+    /// <c>fontSizePt</c> to render with; a test can only prove the two agree if it can
+    /// read the size the seam is using. Without it the check would have to divide the
+    /// reported line height back by the private line-height multiple, which would tie
+    /// the assertion to an unrelated constant and would break silently if that multiple
+    /// ever changed.
+    /// </para>
+    /// <para>
+    /// This is the value that was silently wrong: the parameterless constructor passed
+    /// a hardcoded 8pt while the scene emitted no font size at all, so the host rendered
+    /// its own default and the box could not contain the text the host drew.
+    /// </para>
+    /// </remarks>
+    public double FontSizePt { get; }
 
     /// <inheritdoc />
     public bool TryMeasure(string text, out TextMeasurement? measurement)
@@ -138,8 +165,8 @@ public sealed class AptosTextMetrics : ITextMetrics
             sumEm += AdvanceEm(character);
         }
 
-        var widthPt = sumEm * (_fontSizePt / FontAdvanceTable.UnitsPerEm);
-        measurement = new TextMeasurement(widthPt * (1d + WidthPaddingRatio), _fontSizePt * _defaultLineHeightEm);
+        var widthPt = sumEm * (FontSizePt / FontAdvanceTable.UnitsPerEm);
+        measurement = new TextMeasurement(widthPt * (1d + WidthPaddingRatio), FontSizePt * _defaultLineHeightEm);
         return true;
     }
 
@@ -162,9 +189,9 @@ public sealed class AptosTextMetrics : ITextMetrics
     /// The line height this instance reports, for diagnostics and tests.
     /// </summary>
     /// <returns>The line height in points.</returns>
-    internal double LineHeightPt => _fontSizePt * _defaultLineHeightEm;
+    internal double LineHeightPt => FontSizePt * _defaultLineHeightEm;
 
     /// <inheritdoc />
     public override string ToString() =>
-        string.Create(CultureInfo.InvariantCulture, $"AptosTextMetrics({_fontSizePt}pt, bold={_bold}, narrow={_narrow})");
+        string.Create(CultureInfo.InvariantCulture, $"AptosTextMetrics({FontSizePt}pt, bold={_bold}, narrow={_narrow})");
 }

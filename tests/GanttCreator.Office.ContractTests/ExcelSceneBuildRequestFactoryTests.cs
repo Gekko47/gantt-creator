@@ -1109,6 +1109,92 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
+    /// The label style carries the font family and size the scene MEASURED the label
+    /// text with, so the host renders the font the box was sized for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Found live, and my first diagnosis of it was wrong.</b> The reported symptom
+    /// was that label text clipped and that the box did not hug the text. I first
+    /// concluded the width formula was at fault and that the box could not be too
+    /// narrow because <c>LabelPlanner</c> sizes it with
+    /// <c>Math.Min(measured.WidthPt, width)</c>. That reasoning only holds if the
+    /// MEASURED font is the RENDERED font, and it was not: <c>AptosTextMetrics</c>
+    /// measured at 8pt while this style carried no <c>fontSizePt</c>, so
+    /// <c>ExcelShapeWriter</c>'s <c>if (request.FontSizePt is { } size)</c> never ran,
+    /// the host rendered its own default, and the box sized from the 8pt measurement
+    /// could not contain the text actually drawn.
+    /// </para>
+    /// <para>
+    /// The assertion is that both values equal the catalogue token, not that they are
+    /// 8pt. A test pinning the literal would keep passing if the token and the
+    /// measuring seam drifted apart again, which is the defect this one exists to stop.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_label_style_carries_the_measured_font_family_and_size()
+    {
+        SceneBuildRequestOutcome outcome = Create(Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        SceneStyle? labelStyle = outcome.Request!.LabelStyle;
+
+        Assert.NotNull(labelStyle);
+        Assert.Equal(GanttCatalogues.LabelFontFamily, labelStyle!.FontFamily);
+        Assert.Equal(GanttCatalogues.LabelBodyFontSizePt, labelStyle.FontSizePt);
+    }
+
+    /// <summary>
+    /// The measuring seam and the emitting style resolve the SAME size, which is the
+    /// invariant the clipping defect actually broke.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the property assertion above, and the test that would have
+    /// caught the defect at its source rather than at the style. Either value alone
+    /// could be correct while the other drifted: a style carrying 11pt with an 8pt
+    /// measuring seam still under-measures, and an 11pt seam with a null style still
+    /// renders at the host default. Only the equality states the contract the renderer
+    /// depends on — the box is sized from the same font the host draws.
+    /// </remarks>
+    [Fact]
+    public void The_measuring_seam_and_the_label_style_agree_on_the_font_size()
+    {
+        var metrics = new AptosTextMetrics();
+
+        SceneBuildRequestOutcome outcome = Create(Grid());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        double configuredFromSeam = metrics.FontSizePt;
+
+        Assert.Equal(GanttCatalogues.LabelBodyFontSizePt, configuredFromSeam, precision: 10);
+        Assert.Equal(outcome.Request!.LabelStyle!.FontSizePt!.Value, configuredFromSeam, precision: 10);
+    }
+
+    /// <summary>
+    /// An unknown typography token is refused rather than defaulted, and a malformed
+    /// point size is refused rather than becoming a zero-width box.
+    /// </summary>
+    /// <remarks>
+    /// The positive cases for the two new validators in
+    /// <see cref="GanttCatalogues.TypographyDefault"/> and
+    /// <see cref="GanttCatalogues.TypographyDefaultText"/>, in the same commit as the
+    /// validators. A defaulted value here would be a second authority that disagrees
+    /// with the catalogue, which is the failure mode the whole change removes.
+    /// </remarks>
+    [Fact]
+    public void An_unknown_or_malformed_typography_token_is_refused_rather_than_defaulted()
+    {
+        Assert.Throws<ArgumentNullException>(() => GanttCatalogues.TypographyDefault(null!));
+        Assert.Throws<ArgumentException>(() => GanttCatalogues.TypographyDefault("NoSuchTokenPt"));
+
+        // The catalogue's own values parse, which is what makes the two refusals above
+        // refusals rather than a parser that rejects everything.
+        Assert.Equal(8d, GanttCatalogues.LabelBodyFontSizePt);
+        Assert.Equal("Aptos", GanttCatalogues.LabelFontFamily);
+    }
+
+    /// <summary>
     /// A built live scene emits the §23 start/finish date labels and reports no
     /// <c>DateLabelRefused</c> warning.
     /// </summary>

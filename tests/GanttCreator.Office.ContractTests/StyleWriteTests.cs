@@ -33,9 +33,20 @@ public class StyleWriteTests
     /// adapter made to them, recorded in order so the
     /// <c>Solid()</c>/<c>Patterned()</c> sequence is assertable.
     /// </summary>
+    /// <param name="fillOverride">A fill format to substitute, for the style paths.</param>
+    /// <param name="lineOverride">A line format to substitute, for the style paths.</param>
+    /// <param name="primitiveId">
+    /// The identifier the shape reports as its name and ownership tag. An UPDATE is
+    /// authorised by that TAG rather than by the name alone, so a shape tagged for one
+    /// identifier refuses the update for another. Parameterised so a label test can
+    /// present an owned label shape rather than accidentally relying on a bar's tag.
+    /// </param>
     private sealed class HostShape
     {
-        public HostShape(Excel.FillFormat? fillOverride = null, Excel.LineFormat? lineOverride = null)
+        public HostShape(
+                Excel.FillFormat? fillOverride = null,
+                Excel.LineFormat? lineOverride = null,
+                string primitiveId = "row-1:bar")
         {
             var fill = fillOverride ?? new Mock<Excel.FillFormat>().Object;
             var line = lineOverride ?? new Mock<Excel.LineFormat>().Object;
@@ -89,9 +100,9 @@ public class StyleWriteTests
             var shape = new Mock<Excel.Shape>();
             _ = shape.SetupGet(s => s.Fill).Returns(fill);
             _ = shape.SetupGet(s => s.Line).Returns(line);
-            _ = shape.SetupGet(s => s.Name).Returns("row-1:bar");
+            _ = shape.SetupGet(s => s.Name).Returns(primitiveId);
             _ = shape.SetupGet(s => s.AlternativeText)
-                .Returns(() => ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+                .Returns(() => ShapeOwnershipTag.ForPrimitiveId(primitiveId));
             _ = shape.Setup(s => s.Delete()).Callback(() => Deleted = true);
 
             // TextFrame2 is the first member ApplyText reads, so a plain mock is
@@ -109,6 +120,12 @@ public class StyleWriteTests
                 .Callback<float>(value => MarginTop = value);
             _ = frame.SetupSet(f => f.MarginBottom = It.IsAny<float>())
                 .Callback<float>(value => MarginBottom = value);
+            _ = frame.SetupSet(f => f.VerticalAnchor = It.IsAny<MsoVerticalAnchor>())
+                .Callback<MsoVerticalAnchor>(value =>
+                {
+                    VerticalAnchor = value;
+                    VerticalAnchorWrites++;
+                });
             _ = shape.SetupGet(s => s.TextFrame2).Returns(frame.Object);
 
             Shape = shape.Object;
@@ -162,6 +179,17 @@ public class StyleWriteTests
 
         /// <summary>The bottom internal margin the writer last wrote.</summary>
         public float MarginBottom { get; private set; } = float.NaN;
+
+        /// <summary>
+        /// The vertical anchor the adapter last wrote, or the host default when it
+        /// wrote none. Initialised to <see cref="MsoVerticalAnchor.msoAnchorTop"/>
+        /// because that is what Excel reports for a textbox nobody configured - the
+        /// value this suite exists to prove the adapter overrides.
+        /// </summary>
+        public MsoVerticalAnchor VerticalAnchor { get; set; } = MsoVerticalAnchor.msoAnchorTop;
+
+        /// <summary>How many times the adapter wrote the vertical anchor.</summary>
+        public int VerticalAnchorWrites { get; private set; }
     }
 
     /// <summary>
@@ -210,12 +238,22 @@ public class StyleWriteTests
     private sealed class TextBoxWriter : ExcelShapeWriter
     {
         private readonly Mock<Excel.Shapes> _shapes = new();
+        private readonly bool _shapeAlreadyExists;
+        private readonly HostShape _host;
 
         /// <summary>Initialises a writer whose host hands back the modelled shape.</summary>
         /// <param name="host">The shape <c>AddTextbox</c> returns.</param>
-        internal TextBoxWriter(HostShape host)
+        /// <param name="shapeAlreadyExists">
+        /// When true the shape lookup resolves the modelled shape, so the update path
+        /// runs against it. Same flag <see cref="StyleWriter"/> takes, so a refresh that
+        /// reconciles an existing text box in place is expressible here too.
+        /// </param>
+        internal TextBoxWriter(HostShape host, bool shapeAlreadyExists = false)
             : base(ActiveApplication(), new ClearGuard())
         {
+            _shapeAlreadyExists = shapeAlreadyExists;
+            _host = host;
+
             _ = _shapes.Setup(s => s.AddTextbox(
                     It.IsAny<MsoTextOrientation>(),
                     It.IsAny<float>(),
@@ -223,6 +261,11 @@ public class StyleWriteTests
                     It.IsAny<float>(),
                     It.IsAny<float>()))
                 .Returns(host.Shape);
+
+            if (shapeAlreadyExists)
+            {
+                _ = _shapes.Setup(s => s.Item(It.IsAny<object>())).Returns(host.Shape);
+            }
         }
 
         /// <summary>The ownership members stamped, one entry per stamp.</summary>
@@ -233,7 +276,12 @@ public class StyleWriteTests
 
         internal override Excel.Shapes? GetShapes(Excel._Worksheet sheet) => _shapes.Object;
 
-        internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) => null;
+        /// <summary>
+        /// Resolves the modelled shape only when the test asked for an existing one, so
+        /// the update path is reachable here exactly as it is in <see cref="StyleWriter"/>.
+        /// </summary>
+        internal override Excel.Shape? FindShapeByName(Excel.Shapes shapes, string name) =>
+            _shapeAlreadyExists ? _host.Shape : null;
 
         internal override void ApplyOwnershipStamp(Excel.Shape shape, string primitiveId)
         {
@@ -303,6 +351,76 @@ public class StyleWriteTests
         Assert.Equal(0f, host.MarginRight);
         Assert.Equal(0f, host.MarginTop);
         Assert.Equal(0f, host.MarginBottom);
+    }
+
+    /// <summary>
+    /// A label is written with the text vertically centred in the box the scene
+    /// resolved, which entity guide section 22 requires at every label position.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Found live, not reasoned out.</b> In an F5 session on 2026-10-04 every label
+    /// sat at the TOP of its bar. <c>VerticalAnchor</c> was written nowhere in
+    /// <c>src/</c>, so Excel used its own default of
+    /// <see cref="MsoVerticalAnchor.msoAnchorTop"/>, and nothing in the suite could see
+    /// it: no test drove the text-content path far enough to read the anchor back.
+    /// </para>
+    /// <para>
+    /// The write counter is what makes the test non-vacuous. The property is seeded to
+    /// the host default, so asserting the value alone could not distinguish "the
+    /// adapter wrote Middle" from "the mock never moved and still reads its own
+    /// default" — except that the default happens to be Top, so the value assertion
+    /// would fail anyway. The counter additionally pins that it is written exactly
+    /// once rather than repeatedly.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Creating_a_label_writes_the_text_vertically_centred()
+    {
+        var host = new HostShape();
+        var writer = new TextBoxWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            Text: "abc",
+            TextColour: ColourHex.Parse("#000000")));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+
+        Assert.Equal(MsoVerticalAnchor.msoAnchorMiddle, host.VerticalAnchor);
+        Assert.Equal(1, host.VerticalAnchorWrites);
+    }
+
+    /// <summary>
+    /// An update re-applies the vertical anchor, so a reused shape cannot drift back to
+    /// the host default.
+    /// </summary>
+    /// <remarks>
+    /// The counterweight to the create-path assertion. Refresh RECONCILES rather than
+    /// recreating: most shapes are updated in place, so an anchor applied only on
+    /// Create would never reach a shape that already existed. This is the same
+    /// staleness class the colour and width tests below already cover for other members.
+    /// </remarks>
+    [Fact]
+    public void Updating_a_label_rewrites_the_vertical_anchor()
+    {
+        var host = new HostShape(primitiveId: "row-1:label");
+        var writer = new TextBoxWriter(host, shapeAlreadyExists: true);
+        host.VerticalAnchor = MsoVerticalAnchor.msoAnchorBottom;
+
+        ShapeWriteOutcome outcome = writer.Update(new OfficeShapeRequest(
+            "row-1:label",
+            OfficeShapeKind.TextBox,
+            new OfficeShapeGeometry(Bounds: new RectD(40, 60, 80, 18)),
+            ZLayer.Label,
+            Text: "abc",
+            TextColour: ColourHex.Parse("#000000")));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(MsoVerticalAnchor.msoAnchorMiddle, host.VerticalAnchor);
     }
 
     /// <summary>

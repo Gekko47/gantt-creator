@@ -498,6 +498,86 @@ public static class GanttCatalogues
             nameof(tokenName));
     }
 
+    /// <summary>The code-owned name of the label body font-size token.</summary>
+    public const string LabelBodyFontSizeTokenName = "BodyFontSizePt";
+
+    /// <summary>The code-owned name of the label font-family token.</summary>
+    public const string LabelFontFamilyTokenName = "FontFamily";
+
+    /// <summary>
+    /// The label typography's body font size, in points.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the single authority for the size a label is MEASURED at.</b> It
+    /// existed as a catalogue token nobody read: <c>AptosTextMetrics</c> hardcoded
+    /// 8pt in its parameterless constructor while the scene emitted no
+    /// <c>fontSizePt</c> at all, so the host rendered its own default and the box the
+    /// scene sized from the 8pt measurement could not contain the text the host drew.
+    /// Both the measuring seam and the emitting style now read this one value.
+    /// </remarks>
+    public static double LabelBodyFontSizePt =>
+        TypographyDefault(LabelBodyFontSizeTokenName);
+
+    /// <summary>The label typography's font family name.</summary>
+    /// <remarks>
+    /// Read for the same reason as <see cref="LabelBodyFontSizePt"/>. The advances
+    /// in the measurement table are Aptos advances, so a host rendering any other
+    /// family measures against the wrong font.
+    /// </remarks>
+    public static string LabelFontFamily =>
+        TypographyDefaultText(LabelFontFamilyTokenName);
+
+    /// <summary>
+    /// The catalogue value of a typography token, as text.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's value verbatim.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token. Thrown rather than defaulted, for the same
+    /// reason <see cref="MetricDefault"/> throws: a defaulted value is a second
+    /// authority that disagrees with the catalogue (R4.8A D5).
+    /// </exception>
+    public static string TypographyDefaultText(string tokenName)
+    {
+        ArgumentNullException.ThrowIfNull(tokenName);
+        foreach (GanttTypographyToken token in Typography)
+        {
+            if (string.Equals(token.Name, tokenName, StringComparison.Ordinal))
+            {
+                return token.Value;
+            }
+        }
+
+        throw new ArgumentException(
+            $"'{tokenName}' is not a typography token in the Gantt Creator catalogue.",
+            nameof(tokenName));
+    }
+
+    /// <summary>
+    /// The catalogue value of a typography token, parsed as points.
+    /// </summary>
+    /// <param name="tokenName">The token name, matched Ordinal.</param>
+    /// <returns>The token's value as a positive point size.</returns>
+    /// <exception cref="ArgumentException">
+    /// The name is not a typography token, or its value is not a finite positive
+    /// number. A malformed size would become a zero-width or absurd box, so it is
+    /// refused at the catalogue rather than at the shape.
+    /// </exception>
+    public static double TypographyDefault(string tokenName)
+    {
+        var value = TypographyDefaultText(tokenName);
+        var parsedOk =
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            && double.IsFinite(parsed)
+            && parsed > 0;
+
+        return parsedOk
+            ? parsed
+            : throw new ArgumentException(
+                $"Typography token '{tokenName}' has a value that is not a positive point size: '{value}'.",
+                nameof(tokenName));
+    }
+
     /// <summary>
     /// Returns the code-owned default for a settings key, or <see langword="null"/>
     /// when the key is not in the approved set.

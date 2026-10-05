@@ -360,7 +360,20 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // so the intent was the text colour all along; only the named argument was
             // wrong. A label has no fill and no stroke - owner ruling - so both are
             // left null rather than defaulted to white.
-            LabelStyle = new SceneStyle("DefaultText", textColour: ResolveDefaultTextColour()),
+            //
+            // The font family and size are NOT optional here. They previously were,
+            // and that was a silent mismatch: the scene MEASURED this label at the
+            // 8pt Aptos advances in AptosTextMetrics while the request carried no
+            // fontSizePt, so ExcelShapeWriter's `if (request.FontSizePt is { } size)`
+            // never ran, the host rendered its own default face and size, and the box
+            // the planner sized from the measurement could not contain the text the
+            // host drew. Both values now come from the catalogue token that also
+            // sizes the measuring seam, so the two cannot drift apart again.
+            LabelStyle = new SceneStyle(
+                "DefaultText",
+                textColour: ResolveDefaultTextColour(),
+                fontFamily: GanttCatalogues.LabelFontFamily,
+                fontSizePt: GanttCatalogues.LabelBodyFontSizePt),
 
             // ADR-0038 D1: the MEASURED anchor row, not the token. The scene needs the
             // height the row actually has to place the closing line on a real row
