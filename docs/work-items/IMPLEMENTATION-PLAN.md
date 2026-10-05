@@ -184,7 +184,7 @@ files only; the local audit verifies every file exists.
 | R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
 | R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Landed (`abd52c9` steps 1-2, `808162f` step 3, `2e40998` step 4, `b46c59c` steps 5-6) |
-| R3.13 | `R3.13-mutation-testing.md` | Authored (Tier A; deferred by ADR-0010) |
+| R3.13 | `R3.13-mutation-testing.md` | **Landed 2026-10-05** (Tier A). D-G3 approved by the human's instruction to install and proceed; `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, wired into `verify.ps1` and `ci.yml`, Pester guard 20/20. Baseline run in progress; the 80% threshold applies from the next Core change onward. |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Landed (`aa50633`, exit record `0b985bb`, guide upgrade `98e744a`) |
 | R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Landed (`e3efd4e`; golden `d8acd0d`) |
 | R3.16 | `R3.16-equivalence-field-table.md` | Landed (guide revision 6; D-G14 accepted 2026-09-27) |
@@ -202,10 +202,11 @@ files only; the local audit verifies every file exists.
 | R4.6 | `R4.6-style-token-mapping.md` | Upgraded to Tier A (2026-09-26) |
 | R4.7 | `R4.7-refresh-idempotence.md` | **Landed** (`ShapeReconciler` + `ShapeReconcilePlan`; D1's create-only premise expired with R4.6 and **D5 was added** replacing the unachievable "zero operations" pin with a fixed-point property, both approved 2026-09-28; **L18 decided** — refuse and surface; Office gate PASS 46/46) |
 | R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
-| R4.8A | `R4.8A-refresh-orchestrator.md` | **Implemented** (`GanttRefreshOrchestrator`, `ExcelSceneBuildRequestFactory`; D8 wired; Office gate outstanding) |
+| R4.8A | `R4.8A-refresh-orchestrator.md` | **Implemented** (`GanttRefreshOrchestrator`, `ExcelSceneBuildRequestFactory`; D8 wired). **Office gate CLOSED 2026-10-04** by R4.9's session (Excel `16.0.20430.20032`) — all six named conditions observed, including milestones |
 | R4.9 | `R4.9-refresh-command.md` | **Implemented; Office gate PASSED 2026-10-04** (Excel 16.0.20430.20032, human-driven F5 session; Tier A 2026-09-26; first live slice. D1 amended onto R4.8A D1 — the command is a thin boundary, not the pipeline) |
 | R4.7I | `R4.7I-live-chart-vertical-anchoring.md` | **Source landed**; anchoring test coverage closed 2026-10-04; **Office gate PASSED 2026-10-04** in the same session |
-| R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26) |
+| R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26). **Blocked** on ADR-0010's two predecessors: R3.13 (**landed 2026-10-05** — tool installed, gate wired, Pester guard green, baseline run in progress) and R2.10 (source landed, Office gate still owed — see its own status line for why R4.9 did not discharge it) |
+| R4.11 | `R4.11-label-text-colour-propagation.md` | **Landed** (`e286dfe`; golden `e80bc8f`); **Office gate PASSED 45/45**, Office `16.0.20326.20158` x64. Independent of R4.9 and closed on its own live run. **Added to this manifest 2026-10-04** — the row existed in the roadmap, had a guide, and had landed, but was absent here |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
 
@@ -296,7 +297,7 @@ files only; the local audit verifies every file exists.
 | --- | --- | --- | --- | --- |
 | D-G1 | Configuration-sheet table set, settings storage, and storage format | R2.7 | ADR-0007 | Accepted and landed |
 | D-G2 | Destructive-command undo semantics | R2.7a | ADR-0008 | Accepted and landed |
-| D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | Open — new test-only dependency; human approval required |
+| D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | **Approved 2026-10-05** by the human's instruction to install and proceed — `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, gate wired, Pester guard 20/20. No longer open. |
 | D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
 | D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |

@@ -19,6 +19,7 @@
      12. test (OfficeIntegration excluded)
      13. coverage threshold check
      14. package vulnerability scan
+     15. mutation gate (changed Core code)
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -220,6 +221,26 @@ Invoke-Step 'package vulnerability scan' {
     # dotnet list does not set a non-zero exit on found vulnerabilities, so
     # we cannot make this step a hard fail until the team approves an
     # explicit vulnerability gate. For now this is informational.
+}
+
+# R3.13 (the R0.5 deferral). Changed-Core-code mutation score, judged against
+# the pinned threshold in scripts/tool-versions.psd1. Runs AFTER the test step
+# so the score is measured against a suite that has just passed.
+#
+# The gate script judges the Stryker exit code AFTER capturing its output and
+# returns a result object rather than calling `exit`; this step therefore judges
+# the returned object. That is the L10 lesson applied twice: `-EnableExit` from
+# inside this Tee/ForEach pipeline reported false PASSes for the life of the
+# PSScriptAnalyzer gate.
+Invoke-Step 'mutation gate (changed Core code)' {
+    $mutation = pwsh -NoProfile -File (Join-Path $PSScriptRoot 'mutation-gate.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        Add-Content -LiteralPath $report -Value 'Last output:'
+        $mutation | Select-Object -Last 50 | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
+        Write-Error "mutation-gate.ps1 failed with exit $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+    $mutation | Select-Object -Last 20 | ForEach-Object { Add-Content -LiteralPath $report -Value "  $_" }
 }
 
 $end = Get-Date
