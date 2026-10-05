@@ -241,7 +241,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
 
             Assert.True(
-                paddingRowIndex > tableLastRow,
+                paddingRowIndex > anchorRowIndex,
                 $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
 
             // And BOTH MOVED DOWN rather than being absorbed. Before ADR-0035 the
@@ -388,7 +388,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 $"The reserved anchor row ({anchorRowIndex}) must sit below the table's last row ({tableLastRow}).");
 
             Assert.True(
-                paddingRowIndex > tableLastRow,
+                paddingRowIndex > anchorRowIndex,
                 $"The reserved padding row ({paddingRowIndex}) must sit below the anchor row ({anchorRowIndex}).");
 
             Assert.True(
