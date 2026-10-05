@@ -540,9 +540,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <param name="date">The date whose month is wanted.</param>
     /// <returns>The first day of that month.</returns>
     /// <remarks>
-    /// Constructed arithmetically rather than with <c>DateOnly.AddMonths</c> plus a
-    /// day subtraction, which would overflow the <c>DateOnly.MinValue</c> range. The
-    /// year and month are rebuilt from the date's own parts instead.
+    /// Constructed from the date's OWN year and month parts. There is no month
+    /// arithmetic here at all — no <c>AddMonths</c>, and therefore no December or
+    /// <c>DateOnly.MinValue</c> boundary to reason about; the first day of a month is
+    /// expressible directly. The overflow that <c>MonthEnd</c> does have to avoid is
+    /// its own concern.
     /// </remarks>
     private static DateOnly MonthStart(DateOnly date) => new(date.Year, date.Month, 1);
 
