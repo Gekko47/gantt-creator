@@ -91,6 +91,18 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
+    /// <summary>The setting key naming the plot-start mode (R5.1).</summary>
+    private const string _plotStartModeKey = "PlotStartMode";
+
+    /// <summary>The setting key naming the plot-finish mode (R5.1).</summary>
+    private const string _plotFinishModeKey = "PlotFinishMode";
+
+    /// <summary>The setting key naming the explicit plot-start date (R5.1).</summary>
+    private const string _plotStartDateKey = "PlotStartDate";
+
+    /// <summary>The setting key naming the explicit plot-finish date (R5.1).</summary>
+    private const string _plotFinishDateKey = "PlotFinishDate";
+
     /// <summary>
     /// The default plot-range padding, in days, on each side.
     /// </summary>
@@ -446,8 +458,9 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     public static IReadOnlyList<string> MeasuredColumns => MeasuredColumnsCore;
 
     /// <summary>
-    /// Resolves the inclusive plot range from the events themselves, padded by the
-    /// configured number of days.
+    /// Resolves the inclusive plot range from the per-end modes (R5.1): each end
+    /// is automatic (derived from the events, padded) or explicit (the
+    /// user-supplied date). The extent is then snapped outward to whole months.
     /// </summary>
     private static bool TryResolveDateRange(
         IReadOnlyList<GanttEvent> events,
@@ -462,65 +475,42 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        // Every entity contributes its Start, and ONLY a span-dated one contributes its
-        // Finish. A milestone, a delineator, a Splitter and a Spacer read Start as
-        // their single date per the entity guide's date-mode classification; letting
-        // their Finish widen the range would be a claim the guide does not make. In
-        // practice the validator clears Finish for those types, but this method
-        // consumes GanttEvent values and must not depend on that having happened.
-        var starts = new List<DateOnly>();
-        var finishes = new List<DateOnly>();
-        foreach (GanttEvent @event in events)
-        {
-            if (@event.Start is { } start)
-            {
-                starts.Add(start);
-            }
-
-            if (EntityTypeCatalog.GetDefinition(@event.Type)?.DateMode == EntityDateMode.StartFinish
-                && @event.Finish is { } finish)
-            {
-                finishes.Add(finish);
-            }
-        }
-
-        if (starts.Count == 0)
-        {
-            refusal = SceneBuildRequestRefusal.NoPlotRange;
-            message = "No row carries a start date, so the chart has no date range to draw.";
-            return false;
-        }
-
         var padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
         if (padding < 0)
         {
             padding = 0;
         }
 
-        DateOnly earliest = starts.Min();
-
-        // The later of the two maxima, NOT the finish maximum alone. A single-date
-        // event therefore always lands inside the range: taking finishes.Max()
-        // whenever any finish existed could place the plot's right edge before a
-        // milestone's own date, clipping the very event that set the range.
-        DateOnly latest = starts.Max();
-        if (finishes.Count > 0 && finishes.Max() > latest)
+        PlotRangeOutcome range = PlotRangeResolver.TryResolve(
+            events,
+            ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange),
+            ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange),
+            ReadString(settings, _plotStartDateKey),
+            ReadString(settings, _plotFinishDateKey),
+            padding);
+        if (!range.Succeeded)
         {
-            latest = finishes.Max();
+            refusal = MapRangeRefusal(range.Refusal!.Value);
+            message = DescribeRangeRefusal(range.Refusal!.Value, settings);
+            return false;
         }
+
+        DateOnly earliest = range.Start!.Value;
+        DateOnly latest = range.Finish!.Value;
 
         // Month-snapped plot extent (owner ruling, 2026-10-02).
         //
-        // The order is PADDING FIRST, THEN SNAP outward to the containing month, and
-        // that order is load-bearing. Snapping first and then padding would place the
+        // The resolver already applied the padding, so the snap consumes its
+        // extent directly: the order is padding-then-snap, and that order is
+        // load-bearing. Snapping first and then padding would place the
         // 10 Jan edge at 1 Jan minus the pad; padding first gives 10 Jan - 3 = 7 Jan,
         // which is still inside January, so it snaps back to 1 Jan. The 3-day pad is
         // therefore a tie-breaker for dates near a month edge, not a visible margin:
         // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
         // month further out to 1 Dec. Both were stated by the owner and only this
         // order satisfies both.
-        plotStart = MonthStart(earliest.AddDays(-padding));
-        plotFinish = MonthEnd(latest.AddDays(padding));
+        plotStart = MonthStart(earliest);
+        plotFinish = MonthEnd(latest);
 
         // A one-day chart is degenerate: the scale builder has no interval to divide
         // and would either refuse or emit a single unreadable column. Widening to two
@@ -533,6 +523,56 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
 
         return true;
     }
+
+    /// <summary>
+    /// Maps a plot-range refusal onto the request-factory refusal space: the
+    /// empty-data refusal keeps its existing member so its message and callers
+    /// are unchanged; every mode/explicit-date refusal is an invalid setting.
+    /// </summary>
+    private static SceneBuildRequestRefusal MapRangeRefusal(PlotRangeRefusal refusal) =>
+        refusal == PlotRangeRefusal.NoPlotRange
+            ? SceneBuildRequestRefusal.NoPlotRange
+            : SceneBuildRequestRefusal.InvalidSetting;
+
+    /// <summary>
+    /// Explains a plot-range refusal in the user's terms, naming the stored
+    /// value that was rejected and the values the setting accepts.
+    /// </summary>
+    private static string DescribeRangeRefusal(
+        PlotRangeRefusal refusal,
+        IReadOnlyDictionary<string, string> settings) =>
+        refusal switch
+        {
+            PlotRangeRefusal.NoPlotRange =>
+                "No row carries a start date, so the chart has no date range to draw.",
+            PlotRangeRefusal.NullEvents =>
+                "No row carries a start date, so the chart has no date range to draw.",
+            PlotRangeRefusal.UnknownMode =>
+                "A plot-range mode is '"
+                + (ReadString(settings, _plotStartModeKey) ?? ReadString(settings, _plotFinishModeKey))
+                + "'. Set '"
+                + _plotStartModeKey
+                + "' and '"
+                + _plotFinishModeKey
+                + "' to '"
+                + nameof(PlotRangeMode.DataRange)
+                + "' or '"
+                + nameof(PlotRangeMode.Explicit)
+                + "'.",
+            PlotRangeRefusal.MissingExplicitDate =>
+                "A plot range uses Explicit mode but names no date. Enter the date in '"
+                + _plotStartDateKey
+                + "' and '"
+                + _plotFinishDateKey
+                + "' (yyyy-MM-dd).",
+            PlotRangeRefusal.UnparsableExplicitDate =>
+                "An explicit plot date does not parse as a calendar date. Enter it as yyyy-MM-dd.",
+            PlotRangeRefusal.DefaultDates =>
+                "An explicit plot date is blank. Enter the date as yyyy-MM-dd.",
+            PlotRangeRefusal.StartAfterFinish =>
+                "The plot start is after the plot finish. Swap the two dates.",
+            _ => "The plot range could not be resolved from the configured modes and dates.",
+        };
 
     /// <summary>
     /// Returns the first day of the month containing <paramref name="date"/>.
