@@ -368,4 +368,64 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.Null(exception);
     }
+
+    [Fact]
+    public void SetPlotSettingsAuto_persists_automatic_mode_to_settings()
+    {
+        // SetPlotSettingsAuto persists only (the R5.1 selection-change
+        // invariant: no render); the persisted payload is the assertion, not
+        // a ribbon refresh, which this method deliberately never triggers.
+        var service = RibbonStateService.Instance;
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotStartMode"] == "DataRange"
+                    && settings["PlotFinishMode"] == "DataRange"
+                    && settings["PlotStartDate"] == string.Empty
+                    && settings["PlotFinishDate"] == string.Empty)))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotSettingsAuto();
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void SetPlotSettingsAuto_degrades_gracefully_without_a_writer()
+    {
+        // A null writer leaves the persist step as a no-op: the in-memory
+        // state commit must not throw and no refresh is required.
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+
+        var exception = Record.Exception(service.SetPlotSettingsAuto);
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void SetPlotSettingsDate_rejects_bad_date()
+    {
+        var service = RibbonStateService.Instance;
+
+        var exception = Record.Exception(() => service.SetPlotSettingsDate("not-a-date", "2026-01-01"));
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentException>(exception);
+    }
+
+    [Fact]
+    public void SetPlotSettingsDate_rejects_start_after_finish()
+    {
+        var service = RibbonStateService.Instance;
+
+        var exception = Record.Exception(() => service.SetPlotSettingsDate("2026-02-01", "2026-01-01"));
+
+        Assert.NotNull(exception);
+        Assert.IsType<ArgumentException>(exception);
+    }
 }

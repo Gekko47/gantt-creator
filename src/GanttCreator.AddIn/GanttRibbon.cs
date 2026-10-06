@@ -383,6 +383,79 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Called when the user clicks the Automatic plot-settings button.
+    /// Delegates to the state service's auto mode setter, then refreshes
+    /// the ribbon state. Never throws: a throwing callback breaks the
+    /// Ribbon.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotSettingsAutoClick(IRibbonControl control)
+        => OnPlotSettingsAutoClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotSettingsAutoClick(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotSettingsAutoClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotSettingsAuto();
+        NotifyRibbonStateChanged();
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Explicit Dates plot-settings button.
+    /// Delegates to the state service's explicit-date setter, then refreshes
+    /// the ribbon state. Never throws: a throwing callback breaks the Ribbon.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotSettingsExplicitClick(IRibbonControl control)
+        => OnPlotSettingsExplicitClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotSettingsExplicitClick(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotSettingsExplicitClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotSettingsDate("2026-01-01", "2026-12-31");
+        NotifyRibbonStateChanged();
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Apply Plot Settings button.
+    /// Delegates to the state service's apply method, then refreshes
+    /// the ribbon state. Never throws: a throwing callback breaks the Ribbon.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnApplyPlotSettingsClick(IRibbonControl control)
+        => OnApplyPlotSettingsClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnApplyPlotSettingsClick(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnApplyPlotSettingsClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.ApplyPlotSettings();
+        NotifyRibbonStateChanged();
+    }
+
+    /// <summary>
     /// The post-command ribbon-state hook (work item R1.5 decision D3): every
     /// command run through the ribbon's boundary ends with one refresh and
     /// invalidation. Never throws.

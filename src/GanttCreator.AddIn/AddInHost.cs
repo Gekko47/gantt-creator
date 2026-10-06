@@ -146,6 +146,8 @@ public sealed class AddInHost(
                 _applicationAdapterSource());
             RibbonStateService.Instance.SetLogAvailabilitySource(
                 () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
+            RibbonStateService.Instance.SetCatalogueWriter(
+                new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031

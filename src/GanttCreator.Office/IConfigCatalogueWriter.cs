@@ -95,4 +95,12 @@ public interface IConfigCatalogueWriter
     /// The typed outcome. On a refusal nothing was mutated.
     /// </returns>
     ConfigWriteOutcome Write();
+
+    /// <summary>
+    /// Writes only the settings table with the supplied values, preserving
+    /// all other catalogue tables and user content untouched.
+    /// </summary>
+    /// <param name="settings">The key/value pairs to write.</param>
+    /// <returns>The typed outcome. On a refusal nothing was mutated.</returns>
+    ConfigWriteOutcome WriteSettings(IReadOnlyDictionary<string, string> settings);
 }

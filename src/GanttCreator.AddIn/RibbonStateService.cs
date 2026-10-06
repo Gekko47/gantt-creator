@@ -1,4 +1,5 @@
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
@@ -45,11 +46,21 @@ internal class RibbonStateService
     private IExcelApplicationAdapter? _applicationAdapter;
     private Func<bool?>? _logAvailabilitySource;
     private IDisposable? _workbookStateSubscription;
+    private IConfigCatalogueWriter? _catalogueWriter;
     private RibbonState _state = RibbonState.Initial;
 
     internal RibbonStateService()
     {
     }
+
+    /// <summary>
+    /// Injects the catalogue writer that persists plot-range settings to the
+    /// workbook configuration sheet. A null writer leaves the persist step
+    /// as a no-op, so the in-memory state is still correct and the next
+    /// refresh re-reads the worksheet.
+    /// </summary>
+    /// <param name="writer">The catalogue writer, or null when unavailable.</param>
+    internal void SetCatalogueWriter(IConfigCatalogueWriter? writer) => _catalogueWriter = writer;
 
     /// <summary>
     /// Gets the singleton instance for the current Excel session. Creates the
@@ -101,6 +112,154 @@ internal class RibbonStateService
     /// fact is not determinable (which keeps the previous value).
     /// </param>
     internal void SetLogAvailabilitySource(Func<bool?>? source) => _logAvailabilitySource = source;
+
+    /// <summary>
+    /// Sets the plot range to automatic mode: both Start and Finish derive
+    /// from the active data range. Persists the choice to the workbook
+    /// configuration sheet so it survives a workbook close/reopen.
+    /// </summary>
+    internal void SetPlotSettingsAuto()
+    {
+#pragma warning disable CA1031
+        try
+        {
+            PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    Mode = "DataRange",
+                });
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // The settings are code-owned and always valid; a throwing
+            // validator is a defect, not a runtime path.
+            return;
+        }
+
+        _state = _state with
+        {
+            PlotStartAuto = true,
+            PlotFinishAuto = true,
+            PlotStartDate = string.Empty,
+            PlotFinishDate = string.Empty,
+        };
+
+#pragma warning disable CA1031
+        try
+        {
+            _ = _catalogueWriter?.WriteSettings(
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "DataRange",
+                    ["PlotFinishMode"] = "DataRange",
+                    ["PlotStartDate"] = string.Empty,
+                    ["PlotFinishDate"] = string.Empty,
+                });
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+    }
+
+    /// <summary>
+    /// Sets explicit plot dates in explicit mode. Validates the dates and
+    /// the start/finish ordering before committing. Persists the choice to
+    /// the workbook configuration sheet so it survives a workbook close/reopen.
+    /// </summary>
+    /// <param name="startDate">The explicit plot start date.</param>
+    /// <param name="finishDate">The explicit plot finish date.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="startDate"/> or <paramref name="finishDate"/>
+    /// is not a valid ISO-8601 date string (yyyy-MM-dd), or when
+    /// <paramref name="startDate"/> is after <paramref name="finishDate"/>.
+    /// </exception>
+    internal void SetPlotSettingsDate(string startDate, string finishDate)
+    {
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                Mode = "Explicit",
+                StartDate = startDate,
+                FinishDate = finishDate,
+            });
+
+        _state = _state with
+        {
+            PlotStartAuto = false,
+            PlotFinishAuto = false,
+            PlotStartDate = startDate,
+            PlotFinishDate = finishDate,
+        };
+
+#pragma warning disable CA1031
+        try
+        {
+            _ = _catalogueWriter?.WriteSettings(
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "Explicit",
+                    ["PlotFinishMode"] = "Explicit",
+                    ["PlotStartDate"] = startDate,
+                    ["PlotFinishDate"] = finishDate,
+                });
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+    }
+
+    /// <summary>
+    /// Applies plot settings from the current snapshot: when both dates are
+    /// present and non-empty the mode is explicit with those dates; otherwise
+    /// the mode is data-range (automatic). Persists the effective settings to the workbook
+    /// configuration sheet.
+    /// </summary>
+    internal void ApplyPlotSettings()
+    {
+        var effectiveMode = !string.IsNullOrEmpty(_state.PlotStartDate) && !string.IsNullOrEmpty(_state.PlotFinishDate)
+            ? "Explicit"
+            : "DataRange";
+
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                Mode = effectiveMode,
+                StartDate = effectiveMode == "Explicit" ? _state.PlotStartDate : null,
+                FinishDate = effectiveMode == "Explicit" ? _state.PlotFinishDate : null,
+            });
+
+        _state = _state with
+        {
+            PlotStartAuto = effectiveMode == "DataRange",
+            PlotFinishAuto = effectiveMode == "DataRange",
+        };
+
+#pragma warning disable CA1031
+        try
+        {
+            _ = _catalogueWriter?.WriteSettings(
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = effectiveMode,
+                    ["PlotFinishMode"] = effectiveMode,
+                    ["PlotStartDate"] = effectiveMode == "Explicit" ? _state.PlotStartDate : string.Empty,
+                    ["PlotFinishDate"] = effectiveMode == "Explicit" ? _state.PlotFinishDate : string.Empty,
+                });
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+    }
 
     /// <summary>
     /// Arms the service for this session: subscribes the workbook-state events
@@ -195,7 +354,11 @@ internal class RibbonStateService
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
-                logAvailable ?? previous.LogAvailable));
+                logAvailable ?? previous.LogAvailable,
+                previous.PlotStartAuto,
+                previous.PlotFinishAuto,
+                previous.PlotStartDate,
+                previous.PlotFinishDate));
         }
         catch
         {
@@ -301,6 +464,7 @@ internal class RibbonStateService
         _ribbon = null;
         _applicationAdapter = null;
         _logAvailabilitySource = null;
+        _catalogueWriter = null;
         _state = RibbonState.Initial;
     }
 }

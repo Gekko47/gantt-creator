@@ -18,6 +18,11 @@
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
           <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
         </group>
+        <group id="grpPlotSettings" label="Plot Settings">
+          <button id="btnPlotSettingsAuto" label="Automatic" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPlotSettingsAutoClick"/>
+          <button id="btnPlotSettingsExplicit" label="Explicit Dates" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPlotSettingsExplicitClick"/>
+          <button id="btnApplyPlotSettings" label="Apply Plot Settings" imageMso="Refresh" getEnabled="GetEnabled" onAction="OnApplyPlotSettingsClick"/>
+        </group>
       </tab>
     </tabs>
   </ribbon>

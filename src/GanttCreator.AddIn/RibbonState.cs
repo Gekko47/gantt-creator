@@ -8,14 +8,24 @@ namespace GanttCreator.AddIn;
 /// </summary>
 /// <param name="HasActiveWorkbook">True when Excel has an active workbook.</param>
 /// <param name="LogAvailable">True when the rolling log exposes an active file path.</param>
-internal sealed record RibbonState(bool HasActiveWorkbook, bool LogAvailable)
+/// <param name="PlotStartAuto">True when the plot start derives from the data range (R5.1).</param>
+/// <param name="PlotFinishAuto">True when the plot finish derives from the data range (R5.1).</param>
+/// <param name="PlotStartDate">The explicit plot start date, or empty when automatic (R5.1).</param>
+/// <param name="PlotFinishDate">The explicit plot finish date, or empty when automatic (R5.1).</param>
+internal sealed record RibbonState(
+    bool HasActiveWorkbook,
+    bool LogAvailable,
+    bool PlotStartAuto,
+    bool PlotFinishAuto,
+    string PlotStartDate,
+    string PlotFinishDate)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
     /// gated control starts disabled and is enabled by the first refresh
     /// (docs/03-ROADMAP.md R1.5).
     /// </summary>
-    internal static RibbonState Initial { get; } = new(false, false);
+    internal static RibbonState Initial { get; } = new(false, false, true, true, string.Empty, string.Empty);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled

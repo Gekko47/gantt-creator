@@ -474,6 +474,107 @@ public class ConfigCatalogueWriterTests
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }
 
+    [Fact]
+    public void WriteSettings_applies_the_supplied_keys_and_preserves_the_rest()
+    {
+        // Targeted setting write for the R5.1 plot-range service: the four
+        // plot keys land, every untouched approved key keeps its preserved
+        // value (ADR-0007 D4), and the result stays readable.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var titleIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "ChartTitle");
+        fake.Tables[3].Body[titleIndex][1] = "My Chart";
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotFinishMode"] = "Explicit",
+                ["PlotStartDate"] = "2026-01-01",
+                ["PlotFinishDate"] = "2026-12-31",
+            });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
+        Assert.True(read.Succeeded);
+        Assert.Equal("Explicit", read.Settings["PlotStartMode"]);
+        Assert.Equal("Explicit", read.Settings["PlotFinishMode"]);
+        Assert.Equal("2026-01-01", read.Settings["PlotStartDate"]);
+        Assert.Equal("2026-12-31", read.Settings["PlotFinishDate"]);
+        Assert.Equal("My Chart", read.Settings["ChartTitle"]);
+    }
+
+    [Fact]
+    public void WriteSettings_throws_for_a_null_settings_map()
+    {
+        // Null-guard validator (CA1062): a null argument is a caller defect,
+        // refused as an exception rather than a typed workbook refusal.
+        var fake = new ConfigSheetFake();
+
+        Assert.Throws<ArgumentNullException>(
+            () => ConfigGraph.BuildWriter(fake).WriteSettings(null!));
+    }
+
+    [Fact]
+    public void WriteSettings_refuses_with_no_mutation_when_the_configuration_sheet_is_protected()
+    {
+        // Targeted write shares the Write preflight: a protected target
+        // refuses before any cell is touched.
+        var fake = new ConfigSheetFake(protectContents: true);
+        var writer = ConfigGraph.BuildWriter(fake);
+
+        var outcome = writer.WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected),
+            outcome);
+        Assert.Empty(fake.Tables);
+    }
+
+    [Fact]
+    public void WriteSettings_refuses_a_corrupt_settings_table()
+    {
+        // Preservation validator: duplicate keys cannot be merged safely,
+        // so the write refuses without mutation.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[3].Body.Add([GanttCatalogues.Settings[0].Key, "duplicate"]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid),
+            outcome);
+    }
+
+    [Fact]
+    public void WriteSettings_restores_the_settings_table_when_the_host_fails()
+    {
+        // Rollback validator: the settings write is delete-and-recreate, so
+        // a host refusal after the delete must restore the prior rows and
+        // report a typed refusal, not a vanished table.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var before = fake.Tables[3].Body.Select(row => row.ToArray()).ToList();
+        fake.FailAddAt(1);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected),
+            outcome);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal(before.Count, settings.Body.Count);
+        for (var index = 0; index < before.Count; index++)
+        {
+            Assert.Equal(before[index], settings.Body[index]);
+        }
+    }
+
     private static void AssertContractTable(
         ConfigSheetFake.TableFake table,
         string[] expectedHeaders,

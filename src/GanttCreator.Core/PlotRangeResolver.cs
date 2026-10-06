@@ -168,4 +168,67 @@ public static class PlotRangeResolver
         dataFinish = latest.AddDays(padding);
         return true;
     }
+
+    /// <summary>
+    /// Validates plot-range settings without resolving actual dates.
+    /// Used by the Ribbon state service to commit settings before
+    /// they reach the scene-request factory.
+    /// </summary>
+    /// <param name="settings">The settings to validate.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the mode is unknown, or when an explicit mode
+    /// is missing one or both dates, or when the dates are unparsable
+    /// or the start is after the finish.
+    /// </exception>
+    public static void ValidateSettings(PlotRangeSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        if (!PlotRangeModes.TryParse(settings.Mode, out _))
+        {
+            throw new ArgumentException(
+                $"Invalid plot-range mode: {settings.Mode}",
+                nameof(settings));
+        }
+
+        if (settings.Mode == nameof(PlotRangeMode.Explicit))
+        {
+            if (string.IsNullOrWhiteSpace(settings.StartDate))
+            {
+                throw new ArgumentException("Explicit mode requires a start date.", nameof(settings));
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.FinishDate))
+            {
+                throw new ArgumentException("Explicit mode requires a finish date.", nameof(settings));
+            }
+
+            if (!DateOnly.TryParse(
+                settings.StartDate.Trim(),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out DateOnly startParsed)
+                || startParsed == default)
+            {
+                throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
+            }
+
+            if (!DateOnly.TryParse(
+                settings.FinishDate.Trim(),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out DateOnly finishParsed)
+                || finishParsed == default)
+            {
+                throw new ArgumentException($"Unparsable finish date: {settings.FinishDate}", nameof(settings));
+            }
+
+            if (startParsed > finishParsed)
+            {
+                throw new ArgumentException(
+                    $"Start date {settings.StartDate} is after finish date {settings.FinishDate}.",
+                    nameof(settings));
+            }
+        }
+    }
 }

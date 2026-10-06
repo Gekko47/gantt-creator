@@ -368,6 +368,9 @@ public class GanttRibbonTests
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
+                "btnPlotSettingsAuto",
+                "btnPlotSettingsExplicit",
+                "btnApplyPlotSettings",
             ],
             gatedIds);
     }
@@ -691,6 +694,16 @@ public class GanttRibbonTests
         // The state refresh is what re-evaluates every getEnabled, so a button that
         // changed availability during the command must be re-queried afterwards.
         Assert.Equal(1, stateRefreshed);
+    }
+
+    /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
+    [Fact]
+    public void OnApplyPlotSettingsClick_throws_for_a_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnApplyPlotSettingsClick(control.Object, null!));
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>

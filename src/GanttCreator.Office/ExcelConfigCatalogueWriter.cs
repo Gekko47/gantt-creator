@@ -175,6 +175,103 @@ public class ExcelConfigCatalogueWriter(
         return ConfigWriteOutcome.Ok();
     }
 
+    /// <inheritdoc />
+    public ConfigWriteOutcome WriteSettings(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        Application? application = _application;
+        if (application is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        // Read-only phase: capture present values before any mutation so keys
+        // outside the supplied update survive (ADR-0007 D4). An absent table
+        // contributes nothing and the supplied values fill the approved keys;
+        // a corrupt table cannot be preserved safely.
+        if (!TryReadKeyValues(config, GanttCatalogues.SettingsTableName, out Dictionary<string, string> existing))
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        Dictionary<string, string> merged = new(existing, StringComparer.Ordinal);
+        foreach (var entry in settings)
+        {
+            merged[entry.Key] = entry.Value;
+        }
+
+        // Single-table counterpart of the five-table transactional write:
+        // capture the settings table's prior state before the first mutation
+        // so a host failure partway through is undone, not half-applied.
+        ListObject? priorTable = FindTable(config, GanttCatalogues.SettingsTableName);
+        TableSnapshot snapshot = priorTable is null
+            ? new TableSnapshot(
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                false,
+                [],
+                [])
+            : new TableSnapshot(
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                true,
+                [.. ReadHeaders(priorTable)],
+                ReadBodyRows(priorTable));
+        List<TableSnapshot> snapshots = [snapshot];
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+
+        var original = _application!.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                GanttCatalogues.SettingsHeaders,
+                BuildSettingRows(merged),
+                written);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Same host-refusal contract as Write: the rollback is the point,
+            // and a failure inside it propagates rather than being swallowed.
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+
+        return ConfigWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Writes the five contract tables in order, stopping at the first
     /// failure, and records each table's extent as it is written.

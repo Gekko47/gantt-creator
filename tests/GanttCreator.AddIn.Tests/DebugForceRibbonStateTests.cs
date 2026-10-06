@@ -19,7 +19,7 @@ public class DebugForceRibbonStateTests
         Environment.SetEnvironmentVariable(DebugForceRibbonState.EnvironmentVariableName, null);
         try
         {
-            var state = new RibbonState(true, true);
+            var state = new RibbonState(true, true, true, true, string.Empty, string.Empty);
             var result = DebugForceRibbonState.Apply(state);
             Assert.Equal(state, result);
             Assert.True(result.HasActiveWorkbook);
@@ -45,7 +45,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceWorkbookValue);
         try
         {
-            var state = new RibbonState(true, true);
+            var state = new RibbonState(true, true, true, true, string.Empty, string.Empty);
             var result = DebugForceRibbonState.Apply(state);
             Assert.False(result.HasActiveWorkbook);
             Assert.True(result.LogAvailable);
@@ -63,7 +63,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceLogValue);
         try
         {
-            var state = new RibbonState(true, true);
+            var state = new RibbonState(true, true, true, true, string.Empty, string.Empty);
             var result = DebugForceRibbonState.Apply(state);
             Assert.True(result.HasActiveWorkbook);
             Assert.False(result.LogAvailable);
@@ -81,7 +81,7 @@ public class DebugForceRibbonStateTests
         SetVar("unknown-value");
         try
         {
-            var state = new RibbonState(false, false);
+            var state = new RibbonState(false, false, true, true, string.Empty, string.Empty);
             var result = DebugForceRibbonState.Apply(state);
             Assert.Equal(state, result);
         }
@@ -99,7 +99,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceWorkbookValue.ToUpperInvariant());
         try
         {
-            Assert.False(DebugForceRibbonState.Apply(new RibbonState(true, true)).HasActiveWorkbook);
+            Assert.False(DebugForceRibbonState.Apply(new RibbonState(true, true, true, true, string.Empty, string.Empty)).HasActiveWorkbook);
         }
         finally
         {
