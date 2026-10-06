@@ -608,6 +608,12 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
+            if ((expected.Key == "PlotStartMode" || expected.Key == "PlotFinishMode")
+                && !PlotRangeModes.TryParse(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
             map[expected.Key] = value;
         }
 

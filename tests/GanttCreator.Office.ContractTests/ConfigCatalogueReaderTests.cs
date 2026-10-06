@@ -326,6 +326,8 @@ public class ConfigCatalogueReaderTests
     [Theory]
     [InlineData("TimeScale", "Day")]
     [InlineData("PeriodLabelFormat", "MMM ")]
+    [InlineData("PlotStartMode", "Automatic")]
+    [InlineData("PlotFinishMode", "automatic")]
     public void Read_refuses_unknown_chart_settings(string key, string value)
     {
         var fake = new ConfigSheetFake();
@@ -336,6 +338,27 @@ public class ConfigCatalogueReaderTests
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
         Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    /// <summary>
+    /// The explicit plot-date keys survive a write/read round trip: a stored
+    /// explicit date is workbook state, not in-memory state.
+    /// </summary>
+    [Fact]
+    public void Read_returns_the_stored_explicit_plot_dates()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var startIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PlotStartDate");
+        var finishIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PlotFinishDate");
+        fake.Tables[3].Body[startIndex][1] = "2024-02-01";
+        fake.Tables[3].Body[finishIndex][1] = "2024-04-30";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("2024-02-01", outcome.Settings["PlotStartDate"]);
+        Assert.Equal("2024-04-30", outcome.Settings["PlotFinishDate"]);
     }
 
     [Fact]

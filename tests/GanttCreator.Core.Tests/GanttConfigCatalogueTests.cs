@@ -240,9 +240,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_15_approved_keys()
+    public void Settings_contains_exactly_the_17_approved_keys()
     {
-        Assert.Equal(15, GanttCatalogues.Settings.Count);
+        Assert.Equal(17, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -260,6 +260,8 @@ public class GanttConfigCatalogueTests
         "ExportIncludeLegend",
         "PlotStartMode",
         "PlotFinishMode",
+        "PlotStartDate",
+        "PlotFinishDate",
         "AlternateBanding",
         "ShowMinorGrid",
         "ShowMajorGrid",
@@ -746,10 +748,17 @@ public class GanttConfigCatalogueTests
     /// and the schema version that names them. A version-11 workbook carries the
     /// older hash and is reported as a mismatch; the remedy is Initialise
     /// (ADR-0029 D6, no migration), which is also what reserves the anchor row.
+    /// <para>
+    /// <b>Advanced again to 13 by R5.1</b>: the settings catalogue gains
+    /// <c>PlotStartDate</c> and <c>PlotFinishDate</c> for the explicit
+    /// plot-range modes. Both move the hash, because the hash covers the
+    /// catalogue's contents and the schema version that names them. A
+    /// version-12 workbook carries the older hash and is reported as a
+    /// mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "1a09dbf5171fd1d022c3e0f6812736a7a7c5de931bfd295cef8cab5f2d353740";
+        "0e05e0c7efcaafd07b45aaa94531c017a5d02159eb9966235bc61fa839aa3e76";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

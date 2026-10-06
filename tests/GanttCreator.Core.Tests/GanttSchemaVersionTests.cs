@@ -47,7 +47,9 @@ public class GanttSchemaVersionTests
         // below the table. Same class as v9's and v10's, both of which moved the row
         // the padding lives in. No migration (ADR-0029 D6); Initialise is the remedy
         // and is also what reserves the anchor row.
-        Assert.Equal(12, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v13 is R5.1: the settings catalogue gains PlotStartDate and
+        // PlotFinishDate for the explicit plot-range modes.
+        Assert.Equal(13, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

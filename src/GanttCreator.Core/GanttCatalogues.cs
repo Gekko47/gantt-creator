@@ -261,9 +261,10 @@ public static class GanttCatalogues
     ];
 
     /// <summary>
-    /// The 15 schema-v7 setting definitions approved by ADR-0007, ADR-0014, and
+    /// The 17 schema-v7 setting definitions approved by ADR-0007, ADR-0014, and
     /// ADR-0016, plus the two added by the R4 QA review's schema bump (owner
-    /// permitted). <c>DateDisplayFormat</c> is appended before the two new keys so
+    /// permitted), plus the two R5.1 explicit plot dates.
+    /// <c>DateDisplayFormat</c> is appended before the two new keys so
     /// the pre-existing contract order is preserved; the order is part of the schema
     /// contract, not an incidental listing detail.
     /// </summary>
@@ -278,6 +279,8 @@ public static class GanttCatalogues
         new("ExportIncludeLegend", "TRUE"),
         new("PlotStartMode", "DataRange"),
         new("PlotFinishMode", "DataRange"),
+        new("PlotStartDate", string.Empty),
+        new("PlotFinishDate", string.Empty),
         new("AlternateBanding", "TRUE"),
         new("ShowMinorGrid", "TRUE"),
         new("ShowMajorGrid", "TRUE"),

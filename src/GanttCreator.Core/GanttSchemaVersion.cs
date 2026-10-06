@@ -22,9 +22,17 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 12 for the reserved anchor row below the body.
+    /// monotonically, and is currently 13 for the R5.1 explicit plot dates.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 13 is R5.1.</b> The settings catalogue gains
+    /// <c>PlotStartDate</c> and <c>PlotFinishDate</c>, so a version-12
+    /// workbook's <c>tblGanttSettings</c> lacks two rows the running add-in
+    /// reads and its stored catalogue hash no longer matches. There is no
+    /// migration (ADR-0029 D6): a version-12 workbook reports a mismatch and
+    /// the remedy is Initialise.
+    /// </para>
     /// <para>
     /// <b>Version 12 is ADR-0038.</b> Two things move together, and neither is a
     /// behaviour the add-in merely tolerates. (1) The metric catalogue gains
@@ -113,5 +121,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 12;
+    public const int CurrentSchemaVersion = 13;
 }
