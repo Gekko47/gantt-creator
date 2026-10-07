@@ -19,15 +19,15 @@
           <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
         </group>
         <group id="grpPlotArea" label="Plot Area">
-          <label id="lblPlotStartDate" label="Start Plot Date"/>
-          <label id="lblPlotStartAuto" label="Auto"/>
-          <checkbox id="chkPlotStartAuto" getChecked="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
-          <editbox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange"/>
+          <labelControl id="lblPlotStartDate" label="Start Plot Date"/>
+          <labelControl id="lblPlotStartAuto" label="Auto"/>
+          <checkBox id="chkPlotStartAuto" getPressed="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
+          <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange"/>
 
-          <label id="lblPlotFinishDate" label="Finish Plot Date"/>
-          <label id="lblPlotFinishAuto" label="Auto"/>
-          <checkbox id="chkPlotFinishAuto" getChecked="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
-          <editbox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange"/>
+          <labelControl id="lblPlotFinishDate" label="Finish Plot Date"/>
+          <labelControl id="lblPlotFinishAuto" label="Auto"/>
+          <checkBox id="chkPlotFinishAuto" getPressed="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
+          <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange"/>
         </group>
       </tab>
     </tabs>

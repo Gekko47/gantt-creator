@@ -729,30 +729,31 @@ public class GanttRibbonTests
             .Single(element => element.Attribute("id")?.Value == "grpPlotArea");
         Assert.Equal("Plot Area", group.Attribute("label")?.Value);
 
-        var labelIds = group.Elements(ns + "label")
+        var labelIds = group.Elements(ns + "labelControl")
             .Select(element => element.Attribute("id")?.Value)
             .ToList();
         Assert.Equal(
             ["lblPlotStartDate", "lblPlotStartAuto", "lblPlotFinishDate", "lblPlotFinishAuto"],
             labelIds);
 
-        XElement startCheck = group.Elements(ns + "checkbox")
+        XElement startCheck = group.Elements(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotStartAuto");
-        Assert.Equal("GetPlotStartAuto", startCheck.Attribute("getChecked")?.Value);
+        Assert.Equal("GetPlotStartAuto", startCheck.Attribute("getPressed")?.Value);
         Assert.Equal("OnPlotStartAutoClick", startCheck.Attribute("onAction")?.Value);
 
-        XElement finishCheck = group.Elements(ns + "checkbox")
+        XElement finishCheck = group.Elements(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotFinishAuto");
-        Assert.Equal("GetPlotFinishAuto", finishCheck.Attribute("getChecked")?.Value);
+        Assert.Equal("GetPlotFinishAuto", finishCheck.Attribute("getPressed")?.Value);
+        Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
         Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
 
-        XElement startBox = group.Elements(ns + "editbox")
+        XElement startBox = group.Elements(ns + "editBox")
             .Single(element => element.Attribute("id")?.Value == "edtPlotStartDate");
         Assert.Equal("GetPlotStartDate", startBox.Attribute("getText")?.Value);
         Assert.Equal("GetPlotStartDateEnabled", startBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotStartDateChange", startBox.Attribute("onChange")?.Value);
 
-        XElement finishBox = group.Elements(ns + "editbox")
+        XElement finishBox = group.Elements(ns + "editBox")
             .Single(element => element.Attribute("id")?.Value == "edtPlotFinishDate");
         Assert.Equal("GetPlotFinishDate", finishBox.Attribute("getText")?.Value);
         Assert.Equal("GetPlotFinishDateEnabled", finishBox.Attribute("getEnabled")?.Value);
