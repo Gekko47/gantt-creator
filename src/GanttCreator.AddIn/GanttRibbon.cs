@@ -53,7 +53,11 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>
     /// The RibbonX document, or null when the RibbonID is not the workbook.
     /// </returns>
-    public override string GetCustomUI(string RibbonID) => RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
+    public override string GetCustomUI(string RibbonID)
+        => !string.IsNullOrWhiteSpace(RibbonID)
+           && RibbonID.Trim().Equals("Microsoft.Excel.Workbook", StringComparison.OrdinalIgnoreCase)
+               ? RibbonResources.Ribbon
+               : null!;
 
     /// <summary>
     /// Called when the user clicks the Diagnostics button. The callback is a
