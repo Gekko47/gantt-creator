@@ -370,12 +370,15 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
-    public void SetPlotSettingsAuto_persists_automatic_mode_to_settings()
+    public void TogglePlotStartAuto_from_explicit_to_auto_persists_and_clears_the_start_date()
     {
-        // SetPlotSettingsAuto persists only (the R5.1 selection-change
-        // invariant: no render); the persisted payload is the assertion, not
-        // a ribbon refresh, which this method deliberately never triggers.
+        // The R5.1 selection-change invariant: no render; the persisted
+        // payload is the assertion, not a ribbon refresh, which Toggle
+        // deliberately never triggers. Leaving explicit for AUTO clears the
+        // stored start date and flips its mode while the finish end — still
+        // explicit — is preserved untouched.
         var service = RibbonStateService.Instance;
+        service.SetPlotStartDate("15/03/2026");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
@@ -387,45 +390,204 @@ public sealed class RibbonStateServiceTests : IDisposable
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
-        service.SetPlotSettingsAuto();
+        service.TogglePlotStartAuto();
 
         writer.Verify(
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
+        Assert.True(service.IsPlotStartAuto());
+        Assert.Equal(string.Empty, service.GetPlotStartDate());
     }
 
     [Fact]
-    public void SetPlotSettingsAuto_degrades_gracefully_without_a_writer()
+    public void TogglePlotStartAuto_from_auto_to_explicit_arms_the_edit_box_without_persisting()
+    {
+        // Unchecking AUTO must never persist Explicit with no date: an
+        // Explicit mode without a date is the MissingExplicitDate refusal
+        // and would break the next Refresh. The date commit owns that write,
+        // so this toggle changes only the in-memory state that drives
+        // getChecked/getEnabled.
+        var service = RibbonStateService.Instance;
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.TogglePlotStartAuto();
+
+        Assert.False(service.IsPlotStartAuto());
+        Assert.Equal(string.Empty, service.GetPlotStartDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void TogglePlotStartAuto_degrades_gracefully_without_a_writer()
     {
         // A null writer leaves the persist step as a no-op: the in-memory
-        // state commit must not throw and no refresh is required.
+        // state commit must not throw and no refresh is required. Start from
+        // explicit so the toggle actually reaches the persist step.
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetPlotStartDate("15/03/2026");
+
+        var exception = Record.Exception(service.TogglePlotStartAuto);
+
+        Assert.Null(exception);
+        Assert.True(service.IsPlotStartAuto());
+    }
+
+    [Fact]
+    public void TogglePlotFinishAuto_from_explicit_to_auto_persists_and_clears_the_finish_date()
+    {
+        // Per-end analogue: the start end (also explicit) is preserved
+        // untouched in the payload.
+        var service = RibbonStateService.Instance;
+        service.SetPlotStartDate("01/03/2026");
+        service.SetPlotFinishDate("15/06/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotStartMode"] == "Explicit"
+                    && settings["PlotFinishMode"] == "DataRange"
+                    && settings["PlotStartDate"] == "01/03/2026"
+                    && settings["PlotFinishDate"] == string.Empty)))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.TogglePlotFinishAuto();
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+        Assert.True(service.IsPlotFinishAuto());
+        Assert.Equal(string.Empty, service.GetPlotFinishDate());
+        Assert.Equal("01/03/2026", service.GetPlotStartDate());
+    }
+
+    [Fact]
+    public void TogglePlotFinishAuto_from_auto_to_explicit_arms_the_edit_box_without_persisting()
+    {
+        // Mirror of the start-side rule: no Explicit-without-date write.
+        var service = RibbonStateService.Instance;
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.TogglePlotFinishAuto();
+
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal(string.Empty, service.GetPlotFinishDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void TogglePlotFinishAuto_degrades_gracefully_without_a_writer()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetPlotFinishDate("15/06/2026");
+
+        var exception = Record.Exception(service.TogglePlotFinishAuto);
+
+        Assert.Null(exception);
+        Assert.True(service.IsPlotFinishAuto());
+    }
+
+    [Fact]
+    public void SetPlotStartDate_normalises_ddMMyyyy_and_pivots_to_explicit()
+    {
+        // A valid typed date pivots the start end to Explicit and normalises
+        // to the repository dd/MM/yyyy storage form, which the getText getter
+        // then returns.
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
 
-        var exception = Record.Exception(service.SetPlotSettingsAuto);
+        service.SetPlotStartDate("15/03/2026");
 
-        Assert.Null(exception);
+        Assert.False(service.IsPlotStartAuto());
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
     }
 
     [Fact]
-    public void SetPlotSettingsDate_rejects_bad_date()
+    public void SetPlotStartDate_accepts_reasonable_equivalent_formats()
     {
+        // Positive for the multi-format parser: ISO and single-digit US input
+        // normalise to the same dd/MM/yyyy stored form.
         var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
 
-        var exception = Record.Exception(() => service.SetPlotSettingsDate("not-a-date", "2026-01-01"));
+        service.SetPlotStartDate("2026-03-15");
 
-        Assert.NotNull(exception);
-        Assert.IsType<ArgumentException>(exception);
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
     }
 
     [Fact]
-    public void SetPlotSettingsDate_rejects_start_after_finish()
+    public void SetPlotStartDate_reverts_on_an_unparseable_entry()
+    {
+        // Positive for the revert rule: a non-date leaves the last valid
+        // stored value and mode untouched, and never reaches the writer, so
+        // the edit box keeps showing the previously stored date on the next
+        // getText query.
+        var service = RibbonStateService.Instance;
+        service.SetPlotStartDate("15/03/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotStartDate("not-a-date");
+
+        Assert.False(service.IsPlotStartAuto());
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void SetPlotStartDate_ignores_blank_input()
+    {
+        // Positive: clearing the box is a no-op rather than a blank commit.
+        var service = RibbonStateService.Instance;
+        service.SetPlotStartDate("15/03/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotStartDate("   ");
+
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void SetPlotFinishDate_normalises_ddMMyyyy_and_pivots_to_explicit()
     {
         var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
 
-        var exception = Record.Exception(() => service.SetPlotSettingsDate("2026-02-01", "2026-01-01"));
+        service.SetPlotFinishDate("30/06/2026");
 
-        Assert.NotNull(exception);
-        Assert.IsType<ArgumentException>(exception);
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+    }
+
+    [Fact]
+    public void SetPlotFinishDate_reverts_on_an_unparseable_entry()
+    {
+        // Positive for the revert rule on the finish end.
+        var service = RibbonStateService.Instance;
+        service.SetPlotFinishDate("30/06/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotFinishDate("31/02/2026");
+
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
     }
 }

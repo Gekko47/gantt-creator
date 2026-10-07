@@ -368,9 +368,6 @@ public class GanttRibbonTests
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
-                "btnPlotSettingsAuto",
-                "btnPlotSettingsExplicit",
-                "btnApplyPlotSettings",
             ],
             gatedIds);
     }
@@ -696,14 +693,213 @@ public class GanttRibbonTests
         Assert.Equal(1, stateRefreshed);
     }
 
+    /// <summary>
+    /// The Plot Area group owns no Apply control: the Apply-button
+    /// contract is replaced by per-end persistence, and the ribbon state
+    /// does not consult an obsolete control ID.
+    /// </summary>
+    [Fact]
+    public void PlotArea_group_has_no_apply_button()
+    {
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        var buttonIds = doc.Descendants(ns + "button")
+            .Select(button => button.Attribute("id")?.Value)
+            .ToList();
+
+        Assert.DoesNotContain("btnApplyPlotSettings", buttonIds, StringComparer.Ordinal);
+        Assert.DoesNotContain("btnPlotSettingsAuto", buttonIds, StringComparer.Ordinal);
+        Assert.DoesNotContain("btnPlotSettingsExplicit", buttonIds, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void PlotArea_group_declares_labels_checkboxes_and_editboxes()
+    {
+        // The 6-row surface contract: two label rows per end, one AUTO
+        // checkbox per end, one date edit box per end; the edit boxes carry
+        // getText for the stored value, getEnabled for the auto toggle, and
+        // onChange for the commit path.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement group = doc.Descendants(ns + "group")
+            .Single(element => element.Attribute("id")?.Value == "grpPlotArea");
+        Assert.Equal("Plot Area", group.Attribute("label")?.Value);
+
+        var labelIds = group.Elements(ns + "label")
+            .Select(element => element.Attribute("id")?.Value)
+            .ToList();
+        Assert.Equal(
+            ["lblPlotStartDate", "lblPlotStartAuto", "lblPlotFinishDate", "lblPlotFinishAuto"],
+            labelIds);
+
+        XElement startCheck = group.Elements(ns + "checkbox")
+            .Single(element => element.Attribute("id")?.Value == "chkPlotStartAuto");
+        Assert.Equal("GetPlotStartAuto", startCheck.Attribute("getChecked")?.Value);
+        Assert.Equal("OnPlotStartAutoClick", startCheck.Attribute("onAction")?.Value);
+
+        XElement finishCheck = group.Elements(ns + "checkbox")
+            .Single(element => element.Attribute("id")?.Value == "chkPlotFinishAuto");
+        Assert.Equal("GetPlotFinishAuto", finishCheck.Attribute("getChecked")?.Value);
+        Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
+
+        XElement startBox = group.Elements(ns + "editbox")
+            .Single(element => element.Attribute("id")?.Value == "edtPlotStartDate");
+        Assert.Equal("GetPlotStartDate", startBox.Attribute("getText")?.Value);
+        Assert.Equal("GetPlotStartDateEnabled", startBox.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnPlotStartDateChange", startBox.Attribute("onChange")?.Value);
+
+        XElement finishBox = group.Elements(ns + "editbox")
+            .Single(element => element.Attribute("id")?.Value == "edtPlotFinishDate");
+        Assert.Equal("GetPlotFinishDate", finishBox.Attribute("getText")?.Value);
+        Assert.Equal("GetPlotFinishDateEnabled", finishBox.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnPlotFinishDateChange", finishBox.Attribute("onChange")?.Value);
+    }
+
+    /// <summary>
+    /// The edit-box commit path forwards the edited text: a valid commit
+    /// persists the normalised date; the routing itself needs no workbook.
+    /// </summary>
+    [Fact]
+    public void OnPlotStartDateChange_forwards_the_edited_text_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnPlotStartDateChange(null, "15/03/2026", service);
+
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.False(service.IsPlotStartAuto());
+    }
+
+    [Fact]
+    public void OnPlotFinishDateChange_forwards_the_edited_text_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnPlotFinishDateChange(null, "30/06/2026", service);
+
+        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        Assert.False(service.IsPlotFinishAuto());
+    }
+
+    [Fact]
+    public void Plot_date_getters_answer_from_the_snapshot()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotFinishDate("30/06/2026");
+
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Equal("15/03/2026", GanttRibbon.GetPlotStartDate(control.Object, service));
+        Assert.Equal("30/06/2026", GanttRibbon.GetPlotFinishDate(control.Object, service));
+
+        // Explicit on both ends: the edit boxes must be enabled, and the
+        // AUTO checkboxes unchecked.
+        Assert.True(GanttRibbon.GetPlotStartDateEnabled(control.Object, service));
+        Assert.True(GanttRibbon.GetPlotFinishDateEnabled(control.Object, service));
+        Assert.False(GanttRibbon.GetPlotStartAuto(control.Object, service));
+        Assert.False(GanttRibbon.GetPlotFinishAuto(control.Object, service));
+    }
+
+    [Fact]
+    public void Plot_date_getters_disable_the_edit_box_while_auto_is_on()
+    {
+        var service = new RibbonStateService();
+
+        var control = new Mock<IRibbonControl>();
+
+        Assert.False(GanttRibbon.GetPlotStartDateEnabled(control.Object, service));
+        Assert.False(GanttRibbon.GetPlotFinishDateEnabled(control.Object, service));
+        Assert.True(GanttRibbon.GetPlotStartAuto(control.Object, service));
+        Assert.True(GanttRibbon.GetPlotFinishAuto(control.Object, service));
+    }
+
+    [Fact]
+    public void Plot_date_getText_degrades_to_empty_when_the_snapshot_probe_fails()
+    {
+        // Fail-open is the contract: a getter that throws into Excel's
+        // dispatch breaks the whole ribbon, so every plot getter degrades to
+        // the safe direction — empty text, AUTO checked (the initial state),
+        // and the edit box enabled rather than permanently grey.
+        var broken = new ThrowingStateService();
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Equal(string.Empty, GanttRibbon.GetPlotStartDate(control.Object, broken));
+        Assert.Equal(string.Empty, GanttRibbon.GetPlotFinishDate(control.Object, broken));
+        Assert.True(GanttRibbon.GetPlotStartAuto(control.Object, broken));
+        Assert.True(GanttRibbon.GetPlotFinishAuto(control.Object, broken));
+        Assert.True(GanttRibbon.GetPlotStartDateEnabled(control.Object, broken));
+        Assert.True(GanttRibbon.GetPlotFinishDateEnabled(control.Object, broken));
+    }
+
+    private sealed class ThrowingStateService : RibbonStateService
+    {
+        internal override string GetPlotStartDate() => throw new InvalidOperationException("probe failed");
+
+        internal override string GetPlotFinishDate() => throw new InvalidOperationException("probe failed");
+
+        internal override bool IsPlotStartAuto() => throw new InvalidOperationException("probe failed");
+
+        internal override bool IsPlotFinishAuto() => throw new InvalidOperationException("probe failed");
+    }
+
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
     [Fact]
-    public void OnApplyPlotSettingsClick_throws_for_a_null_state_service()
+    public void OnPlotStartAutoClick_throws_for_a_null_state_service()
     {
         var control = new Mock<IRibbonControl>();
 
         Assert.Throws<ArgumentNullException>(
-            () => GanttRibbon.OnApplyPlotSettingsClick(control.Object, null!));
+            () => GanttRibbon.OnPlotStartAutoClick(control.Object, null!));
+    }
+
+    /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
+    [Fact]
+    public void OnPlotFinishAutoClick_throws_for_a_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnPlotFinishAutoClick(control.Object, null!));
+    }
+
+    /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
+    [Fact]
+    public void OnPlotStartDateChange_throws_for_a_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnPlotStartDateChange(control.Object, "15/03/2026", null!));
+    }
+
+    /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
+    [Fact]
+    public void OnPlotFinishDateChange_throws_for_a_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnPlotFinishDateChange(control.Object, "30/06/2026", null!));
+    }
+
+    /// <summary>
+    /// Null dependencies are refused at the boundary, not at first use.
+    /// </summary>
+    [Fact]
+    public void GetPlotStartDate_throws_for_a_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.GetPlotStartDate(control.Object, null!));
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -741,8 +937,10 @@ public class GanttRibbonTests
     /// Parses the RibbonX <paramref name="xml"/> and returns the callback method
     /// names (the values of known callback attributes) that do not resolve to a
     /// public instance method on <paramref name="ribbonType"/> with a compatible
-    /// signature: zero parameters, or one parameter of type
-    /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>.
+    /// signature: zero parameters, one parameter of type
+    /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>, or the two
+    /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> that
+    /// the editBox <c>onChange</c> callback passes.
     /// </summary>
     /// <param name="xml">The RibbonX document to validate.</param>
     /// <param name="ribbonType">The ribbon class type.</param>
@@ -795,6 +993,14 @@ public class GanttRibbonTests
             Type paramType = parameters[0].ParameterType;
             return paramType == typeof(IRibbonControl)
                 || paramType == typeof(IRibbonUI);
+        }
+
+        if (parameters.Length == 2)
+        {
+            // The RibbonX editBox onChange callback passes the control plus the
+            // edited text: public void OnChange(IRibbonControl, string).
+            return parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(string);
         }
 
         return false;

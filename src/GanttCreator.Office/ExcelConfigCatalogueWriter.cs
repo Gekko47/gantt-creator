@@ -218,7 +218,7 @@ public class ExcelConfigCatalogueWriter(
         }
 
         Dictionary<string, string> merged = new(existing, StringComparer.Ordinal);
-        foreach (var entry in settings)
+        foreach (KeyValuePair<string, string> entry in settings)
         {
             merged[entry.Key] = entry.Value;
         }

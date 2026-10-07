@@ -564,11 +564,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 + _plotStartDateKey
                 + "' and '"
                 + _plotFinishDateKey
-                + "' (yyyy-MM-dd).",
+                + "' (dd/MM/yyyy).",
             PlotRangeRefusal.UnparsableExplicitDate =>
-                "An explicit plot date does not parse as a calendar date. Enter it as yyyy-MM-dd.",
+                "An explicit plot date does not parse as a calendar date. Enter it as dd/MM/yyyy.",
             PlotRangeRefusal.DefaultDates =>
-                "An explicit plot date is blank. Enter the date as yyyy-MM-dd.",
+                "An explicit plot date is blank. Enter the date as dd/MM/yyyy.",
             PlotRangeRefusal.StartAfterFinish =>
                 "The plot start is after the plot finish. Swap the two dates.",
             _ => "The plot range could not be resolved from the configured modes and dates.",

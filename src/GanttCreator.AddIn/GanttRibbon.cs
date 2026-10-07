@@ -383,75 +383,298 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Called when the user clicks the Automatic plot-settings button.
-    /// Delegates to the state service's auto mode setter, then refreshes
-    /// the ribbon state. Never throws: a throwing callback breaks the
-    /// Ribbon.
+    /// Excel's getText callback for the start-date edit box. Returns the last
+    /// valid stored value, which is also the value the edit box reverts to when
+    /// the user enters an unparseable date. Never throws.
     /// </summary>
-    /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPlotSettingsAutoClick(IRibbonControl control)
-        => OnPlotSettingsAutoClick(control, RibbonStateService.Instance);
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotStartDate(IRibbonControl control) => GetPlotStartDate(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnPlotSettingsAutoClick(IRibbonControl)"/> against
-    /// an injected state service. Internal so contract tests can verify
-    /// the routing without the session singleton. Never throws.
+    /// Runs <see cref="GetPlotStartDate(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
     /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPlotSettingsAutoClick(IRibbonControl? control, RibbonStateService stateService)
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The stored start date, or empty when none.</returns>
+    internal static string GetPlotStartDate(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        stateService.SetPlotSettingsAuto();
+        // CA1031: a probe failure must degrade to empty text rather than
+        // propagating into Excel's getter dispatch.
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotStartDate();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getText callback for the finish-date edit box. Returns the last
+    /// valid stored value, which is also the value the edit box reverts to when
+    /// the user enters an unparseable date. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotFinishDate(IRibbonControl control) => GetPlotFinishDate(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishDate(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The stored finish date, or empty when none.</returns>
+    internal static string GetPlotFinishDate(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotFinishDate();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getEnabled callback for the start-date edit box. The edit box is
+    /// enabled only while the AUTO checkbox is unchecked: when automatic mode
+    /// is on the start derives from the data and the user cannot type a date.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotStartDateEnabled(IRibbonControl control) => GetPlotStartDateEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotStartDateEnabled(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the edit box should be enabled.</returns>
+    internal static bool GetPlotStartDateEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return !stateService.IsPlotStartAuto();
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getEnabled callback for the finish-date edit box. The edit box is
+    /// enabled only while the AUTO checkbox is unchecked: when automatic mode
+    /// is on the finish derives from the data and the user cannot type a date.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotFinishDateEnabled(IRibbonControl control) => GetPlotFinishDateEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishDateEnabled(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the edit box should be enabled.</returns>
+    internal static bool GetPlotFinishDateEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return !stateService.IsPlotFinishAuto();
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getChecked callback for the start AUTO checkbox: checked when
+    /// the start derives from the data. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotStartAuto(IRibbonControl control) => GetPlotStartAuto(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotStartAuto(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the start end is automatic.</returns>
+    internal static bool GetPlotStartAuto(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.IsPlotStartAuto();
+        }
+        catch
+        {
+            // Fail open: a checked AUTO box matches the initial automatic
+            // state, so a probe failure shows the safe default.
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getChecked callback for the finish AUTO checkbox: checked when
+    /// the finish derives from the data. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotFinishAuto(IRibbonControl control) => GetPlotFinishAuto(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishAuto(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the finish end is automatic.</returns>
+    internal static bool GetPlotFinishAuto(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.IsPlotFinishAuto();
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Plot-Area AUTO checkbox for the start end.
+    /// Toggles the automatic mode, then persists and refreshes the ribbon state.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPlotStartAutoClick(IRibbonControl control)
+        => OnPlotStartAutoClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotStartAutoClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotStartAutoClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.TogglePlotStartAuto();
         NotifyRibbonStateChanged();
     }
 
     /// <summary>
-    /// Called when the user clicks the Explicit Dates plot-settings button.
-    /// Delegates to the state service's explicit-date setter, then refreshes
-    /// the ribbon state. Never throws: a throwing callback breaks the Ribbon.
+    /// Called when the user clicks the Plot-Area AUTO checkbox for the finish end.
+    /// Toggles the automatic mode, then persists and refreshes the ribbon state.
+    /// Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPlotSettingsExplicitClick(IRibbonControl control)
-        => OnPlotSettingsExplicitClick(control, RibbonStateService.Instance);
+    public void OnPlotFinishAutoClick(IRibbonControl control)
+        => OnPlotFinishAutoClick(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnPlotSettingsExplicitClick(IRibbonControl)"/> against
-    /// an injected state service. Internal so contract tests can verify
-    /// the routing without the session singleton. Never throws.
+    /// Runs <see cref="OnPlotFinishAutoClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPlotSettingsExplicitClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnPlotFinishAutoClick(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        stateService.SetPlotSettingsDate("2026-01-01", "2026-12-31");
+        stateService.TogglePlotFinishAuto();
         NotifyRibbonStateChanged();
     }
 
     /// <summary>
-    /// Called when the user clicks the Apply Plot Settings button.
-    /// Delegates to the state service's apply method, then refreshes
-    /// the ribbon state. Never throws: a throwing callback breaks the Ribbon.
+    /// Called when the user commits an edit to the start-date edit box.
+    /// The new text is validated and persisted, then the ribbon state is
+    /// refreshed. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnApplyPlotSettingsClick(IRibbonControl control)
-        => OnApplyPlotSettingsClick(control, RibbonStateService.Instance);
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnPlotStartDateChange(IRibbonControl control, string text)
+        => OnPlotStartDateChange(control, text, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnApplyPlotSettingsClick(IRibbonControl)"/> against
-    /// an injected state service. Internal so contract tests can verify
-    /// the routing without the session singleton. Never throws.
+    /// Runs <see cref="OnPlotStartDateChange(IRibbonControl, string)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The edited text Excel passes on commit, or null in tests.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnApplyPlotSettingsClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnPlotStartDateChange(IRibbonControl? control, string? text, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        stateService.ApplyPlotSettings();
+        stateService.SetPlotStartDate(text ?? string.Empty);
+        NotifyRibbonStateChanged();
+    }
+
+    /// <summary>
+    /// Called when the user commits an edit to the finish-date edit box.
+    /// The new text is validated and persisted, then the ribbon state is
+    /// refreshed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnPlotFinishDateChange(IRibbonControl control, string text)
+        => OnPlotFinishDateChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotFinishDateChange(IRibbonControl, string)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The edited text Excel passes on commit, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotFinishDateChange(IRibbonControl? control, string? text, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotFinishDate(text ?? string.Empty);
         NotifyRibbonStateChanged();
     }
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Office;
@@ -114,48 +115,38 @@ internal class RibbonStateService
     internal void SetLogAvailabilitySource(Func<bool?>? source) => _logAvailabilitySource = source;
 
     /// <summary>
-    /// Sets the plot range to automatic mode: both Start and Finish derive
-    /// from the active data range. Persists the choice to the workbook
-    /// configuration sheet so it survives a workbook close/reopen.
+    /// Toggles the plot-start end between automatic (derived from the data)
+    /// and explicit (the stored date). Checking AUTO clears the stored start
+    /// date and persists DataRange immediately; unchecking only arms the edit
+    /// box, because the explicit mode is persisted by
+    /// <see cref="SetPlotStartDate"/> together with the committed date and an
+    /// Explicit mode with no date would break the next Refresh. Never
+    /// refreshes the chart.
     /// </summary>
-    internal void SetPlotSettingsAuto()
+    internal void TogglePlotStartAuto()
     {
-#pragma warning disable CA1031
-        try
+        var nextAuto = !_state.PlotStartAuto;
+        _state = _state with
         {
-            PlotRangeResolver.ValidateSettings(
-                new PlotRangeSettings
-                {
-                    Mode = "DataRange",
-                });
-        }
-        catch (Exception)
-#pragma warning restore CA1031
+            PlotStartAuto = nextAuto,
+
+            // Entering AUTO clears the date so the disabled edit box and the
+            // next getText cannot show a stale explicit value; entering
+            // explicit keeps whatever is stored (AUTO already cleared it).
+            PlotStartDate = nextAuto ? string.Empty : _state.PlotStartDate,
+        };
+
+        if (!nextAuto)
         {
-            // The settings are code-owned and always valid; a throwing
-            // validator is a defect, not a runtime path.
+            // Nothing coherent to persist yet: the date commit owns the
+            // Explicit write.
             return;
         }
 
-        _state = _state with
-        {
-            PlotStartAuto = true,
-            PlotFinishAuto = true,
-            PlotStartDate = string.Empty,
-            PlotFinishDate = string.Empty,
-        };
-
 #pragma warning disable CA1031
         try
         {
-            _ = _catalogueWriter?.WriteSettings(
-                new Dictionary<string, string>
-                {
-                    ["PlotStartMode"] = "DataRange",
-                    ["PlotFinishMode"] = "DataRange",
-                    ["PlotStartDate"] = string.Empty,
-                    ["PlotFinishDate"] = string.Empty,
-                });
+            PersistPlotSettings();
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -166,46 +157,71 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Sets explicit plot dates in explicit mode. Validates the dates and
-    /// the start/finish ordering before committing. Persists the choice to
-    /// the workbook configuration sheet so it survives a workbook close/reopen.
+    /// Toggles the plot-finish end between automatic (derived from the data)
+    /// and explicit (the stored date). Checking AUTO clears the stored finish
+    /// date and persists DataRange immediately; unchecking only arms the edit
+    /// box, because the explicit mode is persisted by
+    /// <see cref="SetPlotFinishDate"/> together with the committed date and
+    /// an Explicit mode with no date would break the next Refresh. Never
+    /// refreshes the chart.
     /// </summary>
-    /// <param name="startDate">The explicit plot start date.</param>
-    /// <param name="finishDate">The explicit plot finish date.</param>
-    /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="startDate"/> or <paramref name="finishDate"/>
-    /// is not a valid ISO-8601 date string (yyyy-MM-dd), or when
-    /// <paramref name="startDate"/> is after <paramref name="finishDate"/>.
-    /// </exception>
-    internal void SetPlotSettingsDate(string startDate, string finishDate)
+    internal void TogglePlotFinishAuto()
     {
-        PlotRangeResolver.ValidateSettings(
-            new PlotRangeSettings
-            {
-                Mode = "Explicit",
-                StartDate = startDate,
-                FinishDate = finishDate,
-            });
+        var nextAuto = !_state.PlotFinishAuto;
+        _state = _state with
+        {
+            PlotFinishAuto = nextAuto,
+            PlotFinishDate = nextAuto ? string.Empty : _state.PlotFinishDate,
+        };
 
+        if (!nextAuto)
+        {
+            // Nothing coherent to persist yet: the date commit owns the
+            // Explicit write.
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            PersistPlotSettings();
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+    }
+
+    /// <summary>
+    /// Commits a user-typed plot-start date in explicit mode. Parses any
+    /// reasonable date format, normalises it to dd/MM/yyyy for storage, and
+    /// pivots the start end to Explicit; an unparsable value is a no-op (the
+    /// edit box keeps showing the previously stored date on the next getter
+    /// query, which is the revert). Persists to the workbook configuration
+    /// sheet so it survives a close/reopen. Never refreshes the chart: the
+    /// next Refresh chart applies the stored settings.
+    /// </summary>
+    /// <param name="dateText">The user-entered explicit plot start date text.</param>
+    internal void SetPlotStartDate(string dateText)
+    {
+        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        {
+            return;
+        }
+
+        var normalised = parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         _state = _state with
         {
             PlotStartAuto = false,
-            PlotFinishAuto = false,
-            PlotStartDate = startDate,
-            PlotFinishDate = finishDate,
+            PlotStartDate = normalised,
         };
 
 #pragma warning disable CA1031
         try
         {
-            _ = _catalogueWriter?.WriteSettings(
-                new Dictionary<string, string>
-                {
-                    ["PlotStartMode"] = "Explicit",
-                    ["PlotFinishMode"] = "Explicit",
-                    ["PlotStartDate"] = startDate,
-                    ["PlotFinishDate"] = finishDate,
-                });
+            PersistPlotSettings();
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -216,42 +232,33 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Applies plot settings from the current snapshot: when both dates are
-    /// present and non-empty the mode is explicit with those dates; otherwise
-    /// the mode is data-range (automatic). Persists the effective settings to the workbook
-    /// configuration sheet.
+    /// Commits a user-typed plot-finish date in explicit mode. Parses any
+    /// reasonable date format, normalises it to dd/MM/yyyy for storage, and
+    /// pivots the finish end to Explicit; an unparsable value is a no-op (the
+    /// edit box keeps showing the previously stored date on the next getter
+    /// query, which is the revert). Persists to the workbook configuration
+    /// sheet so it survives a close/reopen. Never refreshes the chart: the
+    /// next Refresh chart applies the stored settings.
     /// </summary>
-    internal void ApplyPlotSettings()
+    /// <param name="dateText">The user-entered explicit plot finish date text.</param>
+    internal void SetPlotFinishDate(string dateText)
     {
-        var effectiveMode = !string.IsNullOrEmpty(_state.PlotStartDate) && !string.IsNullOrEmpty(_state.PlotFinishDate)
-            ? "Explicit"
-            : "DataRange";
+        if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
+        {
+            return;
+        }
 
-        PlotRangeResolver.ValidateSettings(
-            new PlotRangeSettings
-            {
-                Mode = effectiveMode,
-                StartDate = effectiveMode == "Explicit" ? _state.PlotStartDate : null,
-                FinishDate = effectiveMode == "Explicit" ? _state.PlotFinishDate : null,
-            });
-
+        var normalised = parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         _state = _state with
         {
-            PlotStartAuto = effectiveMode == "DataRange",
-            PlotFinishAuto = effectiveMode == "DataRange",
+            PlotFinishAuto = false,
+            PlotFinishDate = normalised,
         };
 
 #pragma warning disable CA1031
         try
         {
-            _ = _catalogueWriter?.WriteSettings(
-                new Dictionary<string, string>
-                {
-                    ["PlotStartMode"] = effectiveMode,
-                    ["PlotFinishMode"] = effectiveMode,
-                    ["PlotStartDate"] = effectiveMode == "Explicit" ? _state.PlotStartDate : string.Empty,
-                    ["PlotFinishDate"] = effectiveMode == "Explicit" ? _state.PlotFinishDate : string.Empty,
-                });
+            PersistPlotSettings();
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -259,6 +266,57 @@ internal class RibbonStateService
             // Degrade gracefully: the in-memory state is still correct,
             // and the next refresh re-reads the worksheet.
         }
+    }
+
+    /// <summary>
+    /// Gets the stored explicit plot-start date for the ribbon
+    /// <c>getText</c> getter: the last valid value the edit box displays and
+    /// reverts to on an invalid entry. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored start date, or empty when none.</returns>
+    internal virtual string GetPlotStartDate() => _state.PlotStartDate;
+
+    /// <summary>
+    /// Gets the stored explicit plot-finish date for the ribbon
+    /// <c>getText</c> getter: the last valid value the edit box displays and
+    /// reverts to on an invalid entry. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored finish date, or empty when none.</returns>
+    internal virtual string GetPlotFinishDate() => _state.PlotFinishDate;
+
+    /// <summary>
+    /// Gets whether the plot-start end is automatic, for the ribbon
+    /// <c>getChecked</c> getter. A pure snapshot read.
+    /// </summary>
+    /// <returns>True when the start derives from the data.</returns>
+    internal virtual bool IsPlotStartAuto() => _state.PlotStartAuto;
+
+    /// <summary>
+    /// Gets whether the plot-finish end is automatic, for the ribbon
+    /// <c>getChecked</c> getter. A pure snapshot read.
+    /// </summary>
+    /// <returns>True when the finish derives from the data.</returns>
+    internal virtual bool IsPlotFinishAuto() => _state.PlotFinishAuto;
+
+    /// <summary>
+    /// Writes the four plot-range keys from the current snapshot through the
+    /// injected catalogue writer. Centralises the per-end persist path so the
+    /// four setters cannot construct divergent payloads.
+    /// </summary>
+    private void PersistPlotSettings()
+    {
+        var startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        var finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        var startDate = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
+        var finishDate = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
+        _ = _catalogueWriter?.WriteSettings(
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = startMode,
+                ["PlotFinishMode"] = finishMode,
+                ["PlotStartDate"] = startDate,
+                ["PlotFinishDate"] = finishDate,
+            });
     }
 
     /// <summary>

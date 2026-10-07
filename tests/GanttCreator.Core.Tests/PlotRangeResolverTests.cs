@@ -211,4 +211,89 @@ public sealed class PlotRangeResolverTests
     {
         Assert.False(PlotRangeModes.TryParse(text, out _));
     }
+
+    // --- TryParsePlotDate (the ribbon edit-box parser, R5.1) ---
+
+    [Theory]
+
+    // The repository default, first in the format list.
+    [InlineData("15/03/2026", 2026, 3, 15)]
+    // Reasonable equivalents the parser must also accept.
+    [InlineData("2026-03-15", 2026, 3, 15)]
+    [InlineData("15-Mar-2026", 2026, 3, 15)]
+    [InlineData("15/Mar/2026", 2026, 3, 15)]
+    [InlineData("15 Mar 2026", 2026, 3, 15)]
+    [InlineData("  15/03/2026  ", 2026, 3, 15)]
+    public void TryParsePlotDate_accepts_every_reasonable_format(string text, int year, int month, int day)
+    {
+        Assert.True(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(new DateOnly(year, month, day), parsed);
+    }
+
+    [Theory]
+    // A US month-first date: parsed by the MM/dd/yyyy format in the list.
+    [InlineData("3/15/2026", 2026, 3, 15)]
+    [InlineData("03/15/2026", 2026, 3, 15)]
+    public void TryParsePlotDate_accepts_month_first_input_when_it_is_unambiguous(string text, int year, int month, int day)
+    {
+        // 15 cannot be a month, so only the month-first formats match; the
+        // dd/MM/yyyy attempt fails without misreading it.
+        Assert.True(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(new DateOnly(year, month, day), parsed);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-date")]
+    [InlineData("15/13/2026")]
+    [InlineData("32/01/2026")]
+    [InlineData("15/02/2026 extra")]
+    public void TryParsePlotDate_refuses_non_dates_rather_than_defaulting(string? text)
+    {
+        // Positive test for the failure path: every non-date returns false
+        // with a default DateOnly, so the caller reverts instead of
+        // persisting a wrong value.
+        Assert.False(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(default, parsed);
+    }
+
+    [Fact]
+    public void TryParsePlotDate_refuses_the_default_date_value()
+    {
+        // 01/001 parses as DateOnly.MinValue, which is the DefaultDates
+        // refusal everywhere else; the parser must not bless it.
+        Assert.False(PlotRangeResolver.TryParsePlotDate("01/01/0001", out _));
+    }
+
+    [Fact]
+    public void ValidateSettings_accepts_the_ddMMyyyy_stored_form()
+    {
+        // The ribbon persists normalised dd/MM/yyyy text; the validator must
+        // accept exactly what the setters write.
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                Mode = nameof(PlotRangeMode.Explicit),
+                StartDate = "15/03/2026",
+                FinishDate = "30/06/2026",
+            });
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_a_non_date_with_an_actionable_exception()
+    {
+        // Positive test for the validator's bad-input path.
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    Mode = nameof(PlotRangeMode.Explicit),
+                    StartDate = "not-a-date",
+                    FinishDate = "30/06/2026",
+                }));
+
+        Assert.Contains("Unparsable start date", exception.Message, StringComparison.Ordinal);
+    }
 }

@@ -87,6 +87,53 @@ public static class PlotRangeResolver
     }
 
     /// <summary>
+    /// Parses one user-entered explicit date, accepting every reasonable date
+    /// format: the repository default <c>dd/MM/yyyy</c> first, then the common
+    /// equivalents (<c>MM/dd/yyyy</c>, ISO <c>yyyy-MM-dd</c>, and the short
+    /// single-digit variants), and finally the host culture as a fallback.
+    /// Blank text fails rather than defaulting. Office-free so both the
+    /// ribbon setters and the resolve path share one authority, and the
+    /// stored form is always normalised to <c>dd/MM/yyyy</c> by the caller.
+    /// </summary>
+    /// <param name="text">The user-entered date text.</param>
+    /// <param name="parsed">The parsed date when successful.</param>
+    /// <returns><see langword="true" /> when the text is an actual date.</returns>
+    public static bool TryParsePlotDate(string? text, out DateOnly parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var trimmed = text.Trim();
+        string[] formats =
+        [
+            "dd/MM/yyyy",
+            "MM/dd/yyyy",
+            "yyyy-MM-dd",
+            "M/d/yyyy",
+            "M/d/yy",
+            "dd-MMM-yyyy",
+            "dd/MMM/yyyy",
+            "d MMM yyyy",
+            "dd MMM yyyy",
+        ];
+
+        foreach (var format in formats)
+        {
+            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+                && parsed != default)
+            {
+                return true;
+            }
+        }
+
+        return DateOnly.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.None, out parsed)
+            && parsed != default;
+    }
+
+    /// <summary>
     /// Parses one explicit date: blank is missing, unparsable is unparsable,
     /// and the default value is the <c>TimeScale</c> default-dates refusal.
     /// </summary>
@@ -99,7 +146,7 @@ public static class PlotRangeResolver
             return null;
         }
 
-        if (!DateOnly.TryParse(text.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly parsed))
+        if (!TryParsePlotDate(text, out DateOnly parsed))
         {
             refusal = PlotRangeRefusal.UnparsableExplicitDate;
             return null;
@@ -178,7 +225,8 @@ public static class PlotRangeResolver
     /// <exception cref="ArgumentException">
     /// Thrown when the mode is unknown, or when an explicit mode
     /// is missing one or both dates, or when the dates are unparsable
-    /// or the start is after the finish.
+    /// in any reasonable format (stored as dd/MM/yyyy) or the start
+    /// is after the finish.
     /// </exception>
     public static void ValidateSettings(PlotRangeSettings settings)
     {
@@ -203,22 +251,12 @@ public static class PlotRangeResolver
                 throw new ArgumentException("Explicit mode requires a finish date.", nameof(settings));
             }
 
-            if (!DateOnly.TryParse(
-                settings.StartDate.Trim(),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.None,
-                out DateOnly startParsed)
-                || startParsed == default)
+            if (!TryParsePlotDate(settings.StartDate, out DateOnly startParsed))
             {
                 throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
             }
 
-            if (!DateOnly.TryParse(
-                settings.FinishDate.Trim(),
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.None,
-                out DateOnly finishParsed)
-                || finishParsed == default)
+            if (!TryParsePlotDate(settings.FinishDate, out DateOnly finishParsed))
             {
                 throw new ArgumentException($"Unparsable finish date: {settings.FinishDate}", nameof(settings));
             }
