@@ -88,12 +88,13 @@ public static class PlotRangeResolver
 
     /// <summary>
     /// Parses one user-entered explicit date, accepting every reasonable date
-    /// format: the repository default <c>dd/MM/yyyy</c> first, then the common
-    /// equivalents (<c>MM/dd/yyyy</c>, ISO <c>yyyy-MM-dd</c>, and the short
-    /// single-digit variants), and finally the host culture as a fallback.
-    /// Blank text fails rather than defaulting. Office-free so both the
-    /// ribbon setters and the resolve path share one authority, and the
-    /// stored form is always normalised to <c>dd/MM/yyyy</c> by the caller.
+    /// format: day-first formats first (dd/MM/yyyy, d/M/yyyy, etc.), then
+    /// month-first formats (MM/dd/yyyy, M/d/yyyy, etc.), and finally ISO
+    /// (yyyy-MM-dd). Blank text fails rather than defaulting. No
+    /// CurrentCulture fallback is used so unmatched dates fail deterministically.
+    /// Office-free so both the ribbon setters and the resolve path share one
+    /// authority, and the stored form is always normalised to <c>dd/MM/yyyy</c>
+    /// by the caller.
     /// </summary>
     /// <param name="text">The user-entered date text.</param>
     /// <param name="parsed">The parsed date when successful.</param>
@@ -107,20 +108,35 @@ public static class PlotRangeResolver
         }
 
         var trimmed = text.Trim();
-        string[] formats =
+
+        // Day-first formats (tried first)
+        string[] dayFirstFormats =
         [
             "dd/MM/yyyy",
-            "MM/dd/yyyy",
-            "yyyy-MM-dd",
-            "M/d/yyyy",
-            "M/d/yy",
+            "d/M/yyyy",
+            "d/M/yy",
             "dd-MMM-yyyy",
             "dd/MMM/yyyy",
             "d MMM yyyy",
             "dd MMM yyyy",
         ];
 
-        foreach (var format in formats)
+        // Month-first formats (tried only if no day-first format matches)
+        string[] monthFirstFormats =
+        [
+            "MM/dd/yyyy",
+            "M/d/yyyy",
+            "M/d/yy",
+        ];
+
+        // ISO format (tried last)
+        string[] isoFormats =
+        [
+            "yyyy-MM-dd",
+        ];
+
+        // Try day-first formats first
+        foreach (var format in dayFirstFormats)
         {
             if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
                 && parsed != default)
@@ -129,8 +145,28 @@ public static class PlotRangeResolver
             }
         }
 
-        return DateOnly.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.None, out parsed)
-            && parsed != default;
+        // Only try month-first formats if no day-first format matched
+        foreach (var format in monthFirstFormats)
+        {
+            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+                && parsed != default)
+            {
+                return true;
+            }
+        }
+
+        // Try ISO format
+        foreach (var format in isoFormats)
+        {
+            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+                && parsed != default)
+            {
+                return true;
+            }
+        }
+
+        // No CurrentCulture fallback - unmatched dates fail deterministically
+        return false;
     }
 
     /// <summary>

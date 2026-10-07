@@ -48,6 +48,7 @@ internal class RibbonStateService
     private Func<bool?>? _logAvailabilitySource;
     private IDisposable? _workbookStateSubscription;
     private IConfigCatalogueWriter? _catalogueWriter;
+    private IConfigCatalogueReader? _catalogueReader;
     private RibbonState _state = RibbonState.Initial;
 
     internal RibbonStateService()
@@ -62,6 +63,14 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="writer">The catalogue writer, or null when unavailable.</param>
     internal void SetCatalogueWriter(IConfigCatalogueWriter? writer) => _catalogueWriter = writer;
+
+    /// <summary>
+    /// Injects the catalogue reader that reads plot-range settings from the
+    /// workbook configuration sheet. A null reader leaves the read step
+    /// as a no-op, so the in-memory state is still correct.
+    /// </summary>
+    /// <param name="reader">The catalogue reader, or null when unavailable.</param>
+    internal void SetCatalogueReader(IConfigCatalogueReader? reader) => _catalogueReader = reader;
 
     /// <summary>
     /// Gets the singleton instance for the current Excel session. Creates the
@@ -146,7 +155,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PersistPlotSettings();
+            CommandBoundary.Instance.Run("TogglePlotStartAuto", PersistPlotSettings);
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -184,7 +193,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PersistPlotSettings();
+            CommandBoundary.Instance.Run("TogglePlotFinishAuto", PersistPlotSettings);
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -221,7 +230,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PersistPlotSettings();
+            CommandBoundary.Instance.Run("SetPlotStartDate", PersistPlotSettings);
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -258,7 +267,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            PersistPlotSettings();
+            CommandBoundary.Instance.Run("SetPlotFinishDate", PersistPlotSettings);
         }
         catch (Exception)
 #pragma warning restore CA1031
@@ -301,7 +310,9 @@ internal class RibbonStateService
     /// <summary>
     /// Writes the four plot-range keys from the current snapshot through the
     /// injected catalogue writer. Centralises the per-end persist path so the
-    /// four setters cannot construct divergent payloads.
+    /// four setters cannot construct divergent payloads. Reports
+    /// ConfigWriteOutcome refusals and write exceptions to the user via
+    /// CommandBoundary.
     /// </summary>
     private void PersistPlotSettings()
     {
@@ -309,24 +320,81 @@ internal class RibbonStateService
         var finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
         var startDate = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
         var finishDate = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
-        _ = _catalogueWriter?.WriteSettings(
-            new Dictionary<string, string>
-            {
-                ["PlotStartMode"] = startMode,
-                ["PlotFinishMode"] = finishMode,
-                ["PlotStartDate"] = startDate,
-                ["PlotFinishDate"] = finishDate,
-            });
+
+        var settings = new Dictionary<string, string>
+        {
+            ["PlotStartMode"] = startMode,
+            ["PlotFinishMode"] = finishMode,
+            ["PlotStartDate"] = startDate,
+            ["PlotFinishDate"] = finishDate,
+        };
+
+        var outcome = _catalogueWriter?.WriteSettings(settings);
+        if (outcome is not null && !outcome.Succeeded)
+        {
+            var message = $"Failed to persist plot settings: {outcome.Refusal}";
+            CommandBoundary.Instance.Run("PersistPlotSettings", () => throw new InvalidOperationException(message));
+        }
     }
 
     /// <summary>
-    /// Arms the service for this session: subscribes the workbook-state events
-    /// and performs the first refresh. Called once by <see cref="AddInHost"/>
-    /// after the host sources are wired. Never throws.
+    /// Loads the four plot-range settings from the active workbook into the
+    /// current state snapshot. Uses the injected IConfigCatalogueReader to read
+    /// the settings table. Preserves stored explicit dates and keeps each
+    /// workbook's plot state separate. Never throws.
+    /// </summary>
+    private void LoadPlotSettingsFromWorkbook()
+    {
+        if (_catalogueReader is null)
+        {
+            return;
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
+        // source failure keeps the last known snapshot instead of propagating
+        // into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            var outcome = _catalogueReader.Read();
+            if (outcome.Succeeded && outcome.Settings is not null)
+            {
+                var settings = outcome.Settings;
+                var startMode = settings.TryGetValue("PlotStartMode", out var startModeVal) ? startModeVal : string.Empty;
+                var finishMode = settings.TryGetValue("PlotFinishMode", out var finishModeVal) ? finishModeVal : string.Empty;
+                var startDate = settings.TryGetValue("PlotStartDate", out var startDateVal) ? startDateVal : string.Empty;
+                var finishDate = settings.TryGetValue("PlotFinishDate", out var finishDateVal) ? finishDateVal : string.Empty;
+
+                var startAuto = string.Equals(startMode, nameof(PlotRangeMode.DataRange), StringComparison.OrdinalIgnoreCase);
+                var finishAuto = string.Equals(finishMode, nameof(PlotRangeMode.DataRange), StringComparison.OrdinalIgnoreCase);
+
+                _state = _state with
+                {
+                    PlotStartAuto = startAuto,
+                    PlotFinishAuto = finishAuto,
+                    PlotStartDate = startAuto ? string.Empty : startDate,
+                    PlotFinishDate = finishAuto ? string.Empty : finishDate,
+                };
+            }
+        }
+        catch
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Arms the service for this session: subscribes the workbook-state events,
+    /// loads plot settings from the active workbook, and performs the first
+    /// refresh. Called once by <see cref="AddInHost"/> after the host sources
+    /// are wired. Never throws.
     /// </summary>
     internal void Activate()
     {
         SubscribeToWorkbookStateChanges();
+        LoadPlotSettingsFromWorkbook();
         Refresh();
     }
 
@@ -338,6 +406,7 @@ internal class RibbonStateService
     /// </summary>
     internal void Refresh()
     {
+        LoadPlotSettingsFromWorkbook();
         _state = CaptureSnapshot(_state);
         Invalidate();
     }
@@ -523,6 +592,7 @@ internal class RibbonStateService
         _applicationAdapter = null;
         _logAvailabilitySource = null;
         _catalogueWriter = null;
+        _catalogueReader = null;
         _state = RibbonState.Initial;
     }
 }

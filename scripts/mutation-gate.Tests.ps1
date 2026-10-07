@@ -115,8 +115,13 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
 
         It 'POSITIVE: a missing report is detected as an error' {
             # Proves the missing-report branch is reachable and throwing.
+            # We invoke the report-judging code directly with a missing-path fixture.
             $missing = Join-Path ([System.IO.Path]::GetTempPath()) ('no-such-' + [guid]::NewGuid().ToString('N'))
             Test-Path -LiteralPath $missing | Should -BeFalse
+            
+            # Dot-source the gate script to access Invoke-MutationJudge
+            . $script:gatePath
+            { Invoke-MutationJudge -ReportPath $missing -Threshold 80 -StrykerExitCode 0 } | Should -Throw 'produced no report'
         }
     }
 
@@ -135,7 +140,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
         }
 
         It 'uses --since for the changed-code run and omits it for the baseline' {
-            $script:gateText | Should -Match "'--since'"
+            $script:gateText | Should -Match "'--since:'"
             $script:gateText | Should -Match 'BASELINE'
         }
 

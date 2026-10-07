@@ -60,6 +60,13 @@ $repoRoot = Split-Path -Parent $scriptRoot
 Import-PowerShellDataFile -Path (Join-Path $scriptRoot 'tool-versions.psd1') |
     ForEach-Object { $script:tools = $_ }
 
+# If dot-sourced (e.g., for testing), export the judge function and return
+# Check call stack: when dot-sourced, there's a caller frame
+$callStack = Get-PSCallStack
+if ($callStack.Count -gt 1 -and $callStack[1].Command -eq 'Invoke-Pester') {
+    return
+}
+
 if (-not $PSBoundParameters.ContainsKey('Solution')) {
     $Solution = Join-Path $repoRoot 'GanttCreator.slnx'
 }
@@ -88,29 +95,153 @@ $outputDir = Join-Path $scriptRoot '_artifacts\mutation'
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 function Test-ToolInstalled {
-    param([string]$ToolId)
+    param([string]$ToolId, [string]$ExpectedVersion)
 
     $list = & dotnet tool list --global 2>$null
-    return $null -ne ($list | Where-Object { $_ -match [regex]::Escape($ToolId) })
+    $match = $list | Where-Object { $_ -match [regex]::Escape($ToolId) }
+    if ($null -eq $match) {
+        return $false
+    }
+    # Extract version from the tool list output (format: "tool-id   version   commands")
+    $parts = $match -split '\s+'
+    if ($parts.Count -ge 2) {
+        $installedVersion = $parts[1]
+        return $installedVersion -eq $ExpectedVersion
+    }
+    return $false
+}
+
+function Invoke-MutationJudge {
+    <#
+    .SYNOPSIS
+        Judges a Stryker mutation report against the threshold.
+    .PARAMETER ReportPath
+        Path to the mutation-report.json file.
+    .PARAMETER Threshold
+        The threshold percentage to judge against.
+    .PARAMETER StrykerExitCode
+        The exit code from the Stryker process.
+    .PARAMETER Baseline
+        Whether this is a baseline run (not judged against threshold).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ReportPath,
+        [Parameter(Mandatory=$true)]
+        [int]$Threshold,
+        [Parameter(Mandatory=$true)]
+        [int]$StrykerExitCode,
+        [switch]$Baseline
+    )
+
+    if (-not (Test-Path -LiteralPath $ReportPath)) {
+        throw "Stryker produced no report at $ReportPath. The run did not complete; treating it as a FAILURE rather than a pass."
+    }
+
+    $report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+
+    # Reject empty or unrecognized reports before applying the changed-code threshold.
+    if ($null -eq $report -or $null -eq $report.Files) {
+        throw "Stryker produced an empty or unrecognized report at $ReportPath (missing 'Files' property). Treating it as a FAILURE."
+    }
+
+    # Derive counts from mutants nested under the report's files, using their
+    # schema-defined statuses to calculate the mutation score.
+    $total = 0
+    $killed = 0
+    $survived = 0
+    $timeout = 0
+    $compileErrors = 0
+
+    foreach ($fileEntry in $report.Files.PSObject.Properties) {
+        $fileData = $fileEntry.Value
+        if ($null -ne $fileData.Mutants) {
+            foreach ($mutant in $fileData.Mutants) {
+                $total++
+                switch ($mutant.Status) {
+                    'Killed' { $killed++ }
+                    'Survived' { $survived++ }
+                    'Timeout' { $timeout++ }
+                    'CompileError' { $compileErrors++ }
+                    default { } # Ignored, NoCoverage, RuntimeError, etc. don't count toward score
+                }
+            }
+        }
+    }
+
+    if ($total -eq 0) {
+        throw "Stryker report at $ReportPath contains zero mutants. Treating it as a FAILURE."
+    }
+
+    # Stryker's mutation score is killed / (killed + survived + timeout) * 100
+    $score = if (($killed + $survived + $timeout) -gt 0) {
+        $killed / ($killed + $survived + $timeout)
+    } else {
+        0
+    }
+    $scorePct = [math]::Round($score * 100, 2)
+
+    $result = [pscustomobject]@{
+        Mode            = if ($Baseline) { 'baseline' } else { 'changed-code' }
+        ScorePercent    = $scorePct
+        Threshold       = $Threshold
+        Total           = $total
+        Killed          = $killed
+        Survived        = $survived
+        Timeout         = $timeout
+        CompileErrors   = $compileErrors
+        ReportPath      = $ReportPath
+        StrykerExitCode = $StrykerExitCode
+    }
+
+    Write-Host ''
+    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout) against a $Threshold% threshold."
+
+    if ($Baseline) {
+        Write-Host "mutation-gate: BASELINE archived (not judged). Report: $ReportPath"
+        return $result
+    }
+
+    # `$exit` is judged TOO: a non-zero Stryker exit with a passing score still
+    # means the tool reported a problem, and swallowing it is how a gate starts
+    # lying. Both conditions must hold for the step to pass.
+    if ($StrykerExitCode -ne 0) {
+        Write-Error "Stryker exited $StrykerExitCode despite a score of $scorePct%. Failing the gate rather than reporting a pass."
+        return $result
+    }
+    if ($scorePct -lt $Threshold) {
+        Write-Error "Mutation score $scorePct% is below the $Threshold% changed-code threshold. Do NOT lower the threshold to make it pass - investigate the surviving mutants."
+        return $result
+    }
+
+    Write-Host 'mutation-gate: PASS'
+    return $result
 }
 
 # ---------------------------------------------------------------- install
 # The tool is installed by the GATE, not by a csproj PackageReference, so it
 # is test-only and can never reach a production project.
-if (-not (Test-ToolInstalled $settings.ToolId)) {
+if (-not (Test-ToolInstalled $settings.ToolId $settings.Version)) {
     Write-Host "mutation-gate: installing $($settings.ToolId) $($settings.Version) as a local tool..."
     & dotnet tool install --global $settings.ToolId --version $settings.Version
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install $($settings.ToolId) $($settings.Version)."
     }
 } else {
-    Write-Host "mutation-gate: $($settings.ToolId) already installed."
+    Write-Host "mutation-gate: $($settings.ToolId) $($settings.Version) already installed."
 }
 
 # ---------------------------------------------------------------- run
+# Run Stryker from the Core project directory with explicit --project and --test-project
+# This uses a supported project context per the Stryker CLI requirements.
+$coreProjectDir = Split-Path -Parent $coreProject
+$coreProjectFileName = Split-Path -Leaf $coreProject
+$coreTestsFileName = Split-Path -Leaf $coreTests
+
 $arguments = @(
-    '--project', $coreProject
-    '--test-project', $coreTests
+    '--project', $coreProjectFileName
+    '--test-project', $coreTestsFileName
     '--configuration', $Configuration
     # ONE reporter, and only one: `Json`. The gate judges the JSON report
     # file, not the console stream, so a second reporter adds nothing the
@@ -128,13 +259,19 @@ $arguments = @(
     '--verbosity', 'info'
 )
 if (-not $Baseline) {
-    $arguments += @('--since', $Since, '--threshold-low', "$Threshold")
+    $arguments += @("--since:$Since", '--threshold-low', "$Threshold")
 } else {
     Write-Host 'mutation-gate: BASELINE run over the whole of Core (no --since, no threshold).'
 }
 
 Write-Host "mutation-gate: dotnet-stryker $($arguments -join ' ')"
-$output = & dotnet-stryker @arguments 2>&1
+Push-Location $coreProjectDir
+try {
+    $output = & dotnet-stryker @arguments 2>&1
+}
+finally {
+    Pop-Location
+}
 $exit = $LASTEXITCODE
 
 # The run's text output is echoed so a human reading the CI log sees the
@@ -142,58 +279,6 @@ $exit = $LASTEXITCODE
 $output | ForEach-Object { Write-Host $_ }
 
 # ---------------------------------------------------------------- judge
-# Judge the REPORT, not the process code alone. A run that died before
-# producing a report must never be read as a pass: that is the L10/L18
-# "gate reports PASS without running" class.
 $reportPath = Join-Path $outputDir 'mutation-report.json'
-if (-not (Test-Path -LiteralPath $reportPath)) {
-    throw "Stryker produced no report at $reportPath. The run did not complete; treating it as a FAILURE rather than a pass."
-}
-
-$report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-
-# Stryker writes the score as a fraction (0..1) on MutationScore.
-$score = [double]$report.MutationScore
-$scorePct = [math]::Round($score * 100, 2)
-
-$total = [int]$report.Total
-$killed = [int]$report.Killed
-$survived = [int]$report.Survived
-$timeout = [int]$report.Timeout
-$compileErrors = [int]$report.CompileErrors
-
-$result = [pscustomobject]@{
-    Mode            = if ($Baseline) { 'baseline' } else { 'changed-code' }
-    ScorePercent    = $scorePct
-    Threshold       = $Threshold
-    Total           = $total
-    Killed          = $killed
-    Survived        = $survived
-    Timeout         = $timeout
-    CompileErrors   = $compileErrors
-    ReportPath      = $reportPath
-    StrykerExitCode = $exit
-}
-
-Write-Host ''
-Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout) against a $Threshold% threshold."
-
-if ($Baseline) {
-    Write-Host "mutation-gate: BASELINE archived (not judged). Report: $reportPath"
-    return $result
-}
-
-# `$exit` is judged TOO: a non-zero Stryker exit with a passing score still
-# means the tool reported a problem, and swallowing it is how a gate starts
-# lying. Both conditions must hold for the step to pass.
-if ($exit -ne 0) {
-    Write-Error "Stryker exited $exit despite a score of $scorePct%. Failing the gate rather than reporting a pass."
-    return $result
-}
-if ($scorePct -lt $Threshold) {
-    Write-Error "Mutation score $scorePct% is below the $Threshold% changed-code threshold. Do NOT lower the threshold to make it pass - investigate the surviving mutants."
-    return $result
-}
-
-Write-Host 'mutation-gate: PASS'
+$result = Invoke-MutationJudge -ReportPath $reportPath -Threshold $Threshold -StrykerExitCode $exit -Baseline:$Baseline
 return $result
