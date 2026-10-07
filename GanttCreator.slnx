@@ -1,16 +1,30 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/GanttCreator.AddIn/GanttCreator.AddIn.csproj" />
+    <Project Path="src/GanttCreator.AddIn/GanttCreator.AddIn.csproj">
+      <BuildDependency Project="src/GanttCreator.Raster/GanttCreator.Raster.csproj" />
+    </Project>
     <Project Path="src/GanttCreator.Core/GanttCreator.Core.csproj" />
     <Project Path="src/GanttCreator.Office/GanttCreator.Office.csproj" />
     <Project Path="src/GanttCreator.Raster/GanttCreator.Raster.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/GanttCreator.AddIn.Tests/GanttCreator.AddIn.Tests.csproj" />
-    <Project Path="tests/GanttCreator.Architecture.Tests/GanttCreator.Architecture.Tests.csproj" />
-    <Project Path="tests/GanttCreator.Core.Tests/GanttCreator.Core.Tests.csproj" />
-    <Project Path="tests/GanttCreator.Office.ContractTests/GanttCreator.Office.ContractTests.csproj" />
-    <Project Path="tests/GanttCreator.Office.IntegrationTests/GanttCreator.Office.IntegrationTests.csproj" />
-    <Project Path="tests/GanttCreator.Raster.Tests/GanttCreator.Raster.Tests.csproj" />
+    <Project Path="tests/GanttCreator.AddIn.Tests/GanttCreator.AddIn.Tests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+    <Project Path="tests/GanttCreator.Architecture.Tests/GanttCreator.Architecture.Tests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+    <Project Path="tests/GanttCreator.Core.Tests/GanttCreator.Core.Tests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+    <Project Path="tests/GanttCreator.Office.ContractTests/GanttCreator.Office.ContractTests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+    <Project Path="tests/GanttCreator.Office.IntegrationTests/GanttCreator.Office.IntegrationTests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+    <Project Path="tests/GanttCreator.Raster.Tests/GanttCreator.Raster.Tests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
   </Folder>
 </Solution>
