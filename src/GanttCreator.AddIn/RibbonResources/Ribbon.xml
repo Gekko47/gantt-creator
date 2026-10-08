@@ -11,34 +11,30 @@
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
         </group>
+        <group id="grpPlotArea" label="Plot Area">
+          <box id="boxPlotStart" boxStyle="vertical">
+            <labelControl id="lblPlotStartDate" label="Start Date"/>
+            <box id="boxPlotStartAuto" boxStyle="horizontal">
+              <labelControl id="lblPlotStartAuto" label="Auto"/>
+              <checkBox id="chkPlotStartAuto" getPressed="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
+            </box>              
+            <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="00/00/0000"/>
+          </box>
+          <box id="boxPlotFinish" boxStyle="vertical">
+            <labelControl id="lblPlotFinishDate" label="Finish Date"/>
+            <box id="boxPlotFinishAuto" boxStyle="horizontal">
+              <labelControl id="lblPlotFinishAuto" label="Auto"/>
+              <checkBox id="chkPlotFinishAuto" getPressed="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
+            </box>
+            <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="00/00/0000"/>
+          </box>
+        </group>
         <group id="grpPlaceholder" label="Gantt Creator">
           <button id="btnRefreshSheet" label="Refresh chart" imageMso="Refresh" getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics">
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
           <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
-        </group>
-        <group id="grpPlotArea" label="Plot Area">
-          <box id="boxPlotStart" boxStyle="vertical">
-            <box id="boxPlotStartAuto" boxStyle="horizontal">
-              <labelControl id="lblPlotStartAuto" label="Start Plot Date — Auto"/>
-              <checkBox id="chkPlotStartAuto" getPressed="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
-            </box>
-            <box id="boxPlotStartDate" boxStyle="horizontal">
-              <labelControl id="lblPlotStartDate" label="Start date"/>
-              <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="00/00/0000"/>
-            </box>
-          </box>
-          <box id="boxPlotFinish" boxStyle="vertical">
-            <box id="boxPlotFinishAuto" boxStyle="horizontal">
-              <labelControl id="lblPlotFinishAuto" label="Finish Plot Date — Auto"/>
-              <checkBox id="chkPlotFinishAuto" getPressed="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
-            </box>
-            <box id="boxPlotFinishDate" boxStyle="horizontal">
-              <labelControl id="lblPlotFinishDate" label="Finish date"/>
-              <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="00/00/0000"/>
-            </box>
-          </box>
         </group>
       </tab>
     </tabs>
