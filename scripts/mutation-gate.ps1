@@ -60,40 +60,7 @@ $repoRoot = Split-Path -Parent $scriptRoot
 Import-PowerShellDataFile -Path (Join-Path $scriptRoot 'tool-versions.psd1') |
     ForEach-Object { $script:tools = $_ }
 
-# If dot-sourced (e.g., for testing), export the judge function and return
-# Check call stack: when dot-sourced, there's a caller frame
-$callStack = Get-PSCallStack
-if ($callStack.Count -gt 1 -and $callStack[1].Command -eq 'Invoke-Pester') {
-    return
-}
-
-if (-not $PSBoundParameters.ContainsKey('Solution')) {
-    $Solution = Join-Path $repoRoot 'GanttCreator.slnx'
-}
-
-$settings = $script:tools.'dotnet-stryker'
-if (-not $settings) {
-    throw 'tool-versions.psd1 has no dotnet-stryker pin. The mutation tool must be pinned (W11).'
-}
-if ($PSBoundParameters.ContainsKey('Threshold')) {
-    # An override is allowed but must be visible, so it is echoed. Silent
-    # threshold drift is how a coverage gate stops meaning anything.
-    Write-Host "mutation-gate: THRESHOLD OVERRIDDEN to $Threshold (pinned value is $($settings.ThresholdHigh))."
-} else {
-    $Threshold = $settings.ThresholdHigh
-}
-
-$coreProject = Join-Path $repoRoot 'src\GanttCreator.Core\GanttCreator.Core.csproj'
-$coreTests = Join-Path $repoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
-foreach ($required in @($Solution, $coreProject, $coreTests)) {
-    if (-not (Test-Path -LiteralPath $required)) {
-        throw "Required path not found: $required"
-    }
-}
-
-$outputDir = Join-Path $scriptRoot '_artifacts\mutation'
-New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-
+# ---------------------------------------------------------------- helper functions (available when dot-sourced)
 function Test-ToolInstalled {
     param([string]$ToolId, [string]$ExpectedVersion)
 
@@ -153,6 +120,7 @@ function Invoke-MutationJudge {
     $survived = 0
     $timeout = 0
     $compileErrors = 0
+    $noCoverage = 0
 
     foreach ($fileEntry in $report.Files.PSObject.Properties) {
         $fileData = $fileEntry.Value
@@ -164,19 +132,40 @@ function Invoke-MutationJudge {
                     'Survived' { $survived++ }
                     'Timeout' { $timeout++ }
                     'CompileError' { $compileErrors++ }
-                    default { } # Ignored, NoCoverage, RuntimeError, etc. don't count toward score
+                    'NoCoverage' { $noCoverage++ }
+                    default { } # Ignored, RuntimeError, etc. don't count toward score
                 }
             }
         }
     }
 
     if ($total -eq 0) {
-        throw "Stryker report at $ReportPath contains zero mutants. Treating it as a FAILURE."
+        if ($Baseline) {
+            Write-Host "mutation-gate: BASELINE report at $ReportPath contains zero mutants. Treating as empty baseline (not judged)."
+            $result = [pscustomobject]@{
+                Mode            = 'baseline'
+                ScorePercent    = 0
+                Threshold       = $Threshold
+                Total           = 0
+                Killed          = 0
+                Survived        = 0
+                Timeout         = 0
+                CompileErrors   = 0
+                NoCoverage      = 0
+                ReportPath      = $ReportPath
+                StrykerExitCode = $StrykerExitCode
+            }
+            return $result
+        } else {
+            throw "Stryker report at $ReportPath contains zero mutants. Treating it as a FAILURE."
+        }
     }
 
-    # Stryker's mutation score is killed / (killed + survived + timeout) * 100
-    $score = if (($killed + $survived + $timeout) -gt 0) {
-        $killed / ($killed + $survived + $timeout)
+    # Stryker's mutation score is killed / (killed + survived + timeout + noCoverage) * 100
+    # NoCoverage mutants lower the reported score (they are in the denominator).
+    $denominator = $killed + $survived + $timeout + $noCoverage
+    $score = if ($denominator -gt 0) {
+        $killed / $denominator
     } else {
         0
     }
@@ -191,15 +180,25 @@ function Invoke-MutationJudge {
         Survived        = $survived
         Timeout         = $timeout
         CompileErrors   = $compileErrors
+        NoCoverage      = $noCoverage
         ReportPath      = $ReportPath
         StrykerExitCode = $StrykerExitCode
     }
 
     Write-Host ''
-    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout) against a $Threshold% threshold."
+    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout, $noCoverage no-coverage) against a $Threshold% threshold."
 
     if ($Baseline) {
         Write-Host "mutation-gate: BASELINE archived (not judged). Report: $ReportPath"
+        return $result
+    }
+
+    # Detect when changed-code mode has no scored mutants (zero total or only Ignored/NoCoverage)
+    # In this case, pass the gate but log the reason.
+    $scoredMutants = $killed + $survived + $timeout
+    if ($scoredMutants -eq 0) {
+        Write-Host "mutation-gate: CHANGED-CODE MODE - no scored mutants found ($killed killed, $survived survived, $timeout timeout, $noCoverage no-coverage). Passing gate (no changed code to mutate)."
+        Write-Host 'mutation-gate: PASS'
         return $result
     }
 
@@ -218,6 +217,48 @@ function Invoke-MutationJudge {
     Write-Host 'mutation-gate: PASS'
     return $result
 }
+
+# If dot-sourced (e.g., for testing), export the functions and return
+# Check call stack: when dot-sourced from a Pester test, the call stack
+# will contain Pester frames. The original script used this approach.
+$callStack = Get-PSCallStack
+$isDotSourcedFromPester = $false
+for ($i = 1; $i -lt $callStack.Count; $i++) {
+    if ($callStack[$i].Command -like '*Pester*' -or $callStack[$i].Command -eq 'Invoke-Pester') {
+        $isDotSourcedFromPester = $true
+        break
+    }
+}
+if ($isDotSourcedFromPester) {
+    return
+}
+
+if (-not $PSBoundParameters.ContainsKey('Solution')) {
+    $Solution = Join-Path $repoRoot 'GanttCreator.slnx'
+}
+
+$settings = $script:tools.'dotnet-stryker'
+if (-not $settings) {
+    throw 'tool-versions.psd1 has no dotnet-stryker pin. The mutation tool must be pinned (W11).'
+}
+if ($PSBoundParameters.ContainsKey('Threshold')) {
+    # An override is allowed but must be visible, so it is echoed. Silent
+    # threshold drift is how a coverage gate stops meaning anything.
+    Write-Host "mutation-gate: THRESHOLD OVERRIDDEN to $Threshold (pinned value is $($settings.ThresholdHigh))."
+} else {
+    $Threshold = $settings.ThresholdHigh
+}
+
+$coreProject = Join-Path $repoRoot 'src\GanttCreator.Core\GanttCreator.Core.csproj'
+$coreTests = Join-Path $repoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
+foreach ($required in @($Solution, $coreProject, $coreTests)) {
+    if (-not (Test-Path -LiteralPath $required)) {
+        throw "Required path not found: $required"
+    }
+}
+
+$outputDir = Join-Path $scriptRoot '_artifacts\mutation'
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 # ---------------------------------------------------------------- install
 # The tool is installed by the GATE, not by a csproj PackageReference, so it

@@ -928,6 +928,7 @@ public class ExcelSceneBuildRequestFactoryTests
 
     /// <summary>
     /// Explicit start after explicit finish refuses as an invalid setting.
+    /// Uses dd/MM/yyyy values and asserts the StartAfterFinish path message.
     /// </summary>
     [Fact]
     public void An_explicit_start_after_the_explicit_finish_refuses()
@@ -940,8 +941,8 @@ public class ExcelSceneBuildRequestFactoryTests
             {
                 ["PlotStartMode"] = "Explicit",
                 ["PlotFinishMode"] = "Explicit",
-                ["PlotStartDate"] = "2024-05-01",
-                ["PlotFinishDate"] = "2024-04-01",
+                ["PlotStartDate"] = "01/05/2024",
+                ["PlotFinishDate"] = "01/04/2024",
             },
             StyleRegistry(),
             Grid()
@@ -949,6 +950,7 @@ public class ExcelSceneBuildRequestFactoryTests
 
         Assert.False(outcome.Succeeded);
         Assert.Equal(SceneBuildRequestRefusal.InvalidSetting, outcome.Refusal);
+        Assert.Contains("after the plot finish", outcome.Message!, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>A malformed numeric setting falls back rather than refusing the refresh.</summary>

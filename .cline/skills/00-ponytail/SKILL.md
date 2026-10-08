@@ -17,10 +17,11 @@ Do not get wrong:
 - A bug fix is a root-cause fix, not a symptom patch: grep every caller
   of the function you touch and fix the shared function once.
 - Lazy code without its check is unfinished: non-trivial logic leaves
-  ONE runnable check behind (assert-based self-check or one small test
-  file; no frameworks). Never get lazy about validation at trust
-  boundaries, error handling, security, accessibility, hardware
-  calibration, or anything explicitly requested.
+  ONE runnable check behind that follows the repository's testing
+  rules and runs in the mandated test harness. Never get lazy about
+  validation at trust boundaries, error handling, security,
+  accessibility, hardware calibration, or anything explicitly
+  requested.
 
 ---
 

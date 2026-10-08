@@ -184,7 +184,7 @@ files only; the local audit verifies every file exists.
 | R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
 | R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Landed (`abd52c9` steps 1-2, `808162f` step 3, `2e40998` step 4, `b46c59c` steps 5-6) |
-| R3.13 | `R3.13-mutation-testing.md` | **Landed 2026-10-05** (Tier A). D-G3 approved by the human's instruction to install and proceed; `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, wired into `verify.ps1` and `ci.yml`, Pester guard 20/20. Baseline run in progress; the 80% threshold applies from the next Core change onward. |
+| R3.13 | `R3.13-mutation-testing.md` | **Landed 2026-10-05** (Tier A). D-G3 approved by the human's instruction to install and proceed; `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, wired into `verify.ps1` and `ci.yml`. Pester guard written with 20 positive tests; **a green run has not yet been observed** — the guard's first observed pass is recorded in `docs/STATUS.md` when it happens. Baseline run in progress; the 80% threshold applies from the next Core change onward. |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Landed (`aa50633`, exit record `0b985bb`, guide upgrade `98e744a`) |
 | R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Landed (`e3efd4e`; golden `d8acd0d`) |
 | R3.16 | `R3.16-equivalence-field-table.md` | Landed (guide revision 6; D-G14 accepted 2026-09-27) |
@@ -297,7 +297,7 @@ files only; the local audit verifies every file exists.
 | --- | --- | --- | --- | --- |
 | D-G1 | Configuration-sheet table set, settings storage, and storage format | R2.7 | ADR-0007 | Accepted and landed |
 | D-G2 | Destructive-command undo semantics | R2.7a | ADR-0008 | Accepted and landed |
-| D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | **Approved 2026-10-05** by the human's instruction to install and proceed — `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, gate wired, Pester guard 20/20. No longer open. |
+| D-G3 | Mutation-testing tool and version | R3.13 | R3.13 guide | **Approved 2026-10-05** by the human's instruction to install and proceed — `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1`, gate wired. Pester guard written with 20 positive tests; **a green run has not yet been observed** — the guard's first observed pass is recorded in `docs/STATUS.md` when it happens. No longer open. |
 | D-G4 | Pinned-font provisioning | R8.2a | R8.2a guide | Open — licence-sensitive; human choice required |
 | D-G5 | Code-signing certificate procurement | by Phase 8 | R10.3 guide | Open — external lead time; start no later than Phase 8 |
 | D-G6 | PowerPoint interop dependency (package + version pin) | R7.1 | R7.1 guide; ADR + `Directory.Packages.props` | Open — new production dependency; human approval required before first install |

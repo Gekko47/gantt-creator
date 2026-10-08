@@ -1025,7 +1025,9 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotStartAuto_uncheck_with_a_stored_date_persists_explicit()
     {
-        var service = RibbonStateService.Instance;
+        var log = new Mock<IRollingLog>();
+        CommandBoundary.Instance.SetLog(log.Object);
+        var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
         service.SetPlotStartDate("15/03/2026");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
@@ -1054,7 +1056,9 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotFinishAuto_uncheck_with_a_stored_date_persists_explicit()
     {
-        var service = RibbonStateService.Instance;
+        var log = new Mock<IRollingLog>();
+        CommandBoundary.Instance.SetLog(log.Object);
+        var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
         service.SetPlotFinishDate("30/06/2026");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);

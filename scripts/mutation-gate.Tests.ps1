@@ -121,7 +121,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             
             # Dot-source the gate script to access Invoke-MutationJudge
             . $script:gatePath
-            { Invoke-MutationJudge -ReportPath $missing -Threshold 80 -StrykerExitCode 0 } | Should -Throw 'produced no report'
+            { Invoke-MutationJudge -ReportPath $missing -Threshold 80 -StrykerExitCode 0 } | Should -Throw '*produced no report*'
         }
     }
 
@@ -140,7 +140,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
         }
 
         It 'uses --since for the changed-code run and omits it for the baseline' {
-            $script:gateText | Should -Match "'--since:'"
+            $script:gateText | Should -Match '--since:'
             $script:gateText | Should -Match 'BASELINE'
         }
 
