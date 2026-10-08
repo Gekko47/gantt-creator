@@ -281,8 +281,8 @@ $coreProjectFileName = Split-Path -Leaf $coreProject
 $coreTestsFileName = Split-Path -Leaf $coreTests
 
 $arguments = @(
-    '--project', $coreProjectFileName
-    '--test-project', $coreTestsFileName
+    '--project', $coreProject
+    '--test-project', $coreTests
     '--configuration', $Configuration
     # ONE reporter, and only one: `Json`. The gate judges the JSON report
     # file, not the console stream, so a second reporter adds nothing the
