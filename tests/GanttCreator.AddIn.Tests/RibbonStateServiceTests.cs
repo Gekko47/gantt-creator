@@ -370,13 +370,14 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
-    public void TogglePlotStartAuto_from_explicit_to_auto_persists_and_clears_the_start_date()
+    public void TogglePlotStartAuto_from_explicit_to_auto_persists_and_preserves_the_start_date()
     {
-        // The R5.1 selection-change invariant: no render; the persisted
-        // payload is the assertion, not a ribbon refresh, which Toggle
-        // deliberately never triggers. Leaving explicit for AUTO clears the
-        // stored start date and flips its mode while the finish end — still
-        // explicit — is preserved untouched.
+        // Fix plan ruling 1: entering AUTO no longer clears the stored date —
+        // the disabled edit box keeps showing it until the effective-date
+        // derivation replaces it, and returning to explicit restores it. The
+        // R5.1 selection-change invariant holds: no render; the persisted
+        // payload is the assertion, not a ribbon refresh, which Set never
+        // triggers. The finish end — still explicit — is preserved untouched.
         var service = RibbonStateService.Instance;
         service.SetPlotStartDate("15/03/2026");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
@@ -385,7 +386,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                 settings =>
                     settings["PlotStartMode"] == "DataRange"
                     && settings["PlotFinishMode"] == "DataRange"
-                    && settings["PlotStartDate"] == string.Empty
+                    && settings["PlotStartDate"] == "15/03/2026"
                     && settings["PlotFinishDate"] == string.Empty)))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
@@ -396,7 +397,7 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.True(service.IsPlotStartAuto());
-        Assert.Equal(string.Empty, service.GetPlotStartDate());
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
     }
 
     [Fact]
@@ -437,10 +438,10 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
-    public void TogglePlotFinishAuto_from_explicit_to_auto_persists_and_clears_the_finish_date()
+    public void TogglePlotFinishAuto_from_explicit_to_auto_persists_and_preserves_the_finish_date()
     {
-        // Per-end analogue: the start end (also explicit) is preserved
-        // untouched in the payload.
+        // Per-end analogue of the ruling-1 preserve: the start end (also
+        // explicit) is preserved untouched in the payload.
         var service = RibbonStateService.Instance;
         service.SetPlotStartDate("01/03/2026");
         service.SetPlotFinishDate("15/06/2026");
@@ -451,7 +452,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     settings["PlotStartMode"] == "Explicit"
                     && settings["PlotFinishMode"] == "DataRange"
                     && settings["PlotStartDate"] == "01/03/2026"
-                    && settings["PlotFinishDate"] == string.Empty)))
+                    && settings["PlotFinishDate"] == "15/06/2026")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -461,7 +462,7 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.True(service.IsPlotFinishAuto());
-        Assert.Equal(string.Empty, service.GetPlotFinishDate());
+        Assert.Equal("15/06/2026", service.GetPlotFinishDate());
         Assert.Equal("01/03/2026", service.GetPlotStartDate());
     }
 
@@ -511,16 +512,27 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
-    public void SetPlotStartDate_accepts_reasonable_equivalent_formats()
+    public void SetPlotStartDate_refuses_activity_auto_parser_equivalents()
     {
-        // Positive for the multi-format parser: ISO and single-digit US input
-        // normalise to the same dd/MM/yyyy stored form.
+        // Positive for the exact-date rule: the plot boxes take the chart's
+        // dd/MM/yyyy dates only, never the activity multi-format equivalents.
+        // ISO, US month-first, and dd-MMM-yyyy entries are no-ops that leave
+        // the stored value, mode, and writer untouched.
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
+        service.SetPlotStartDate("15/03/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
 
         service.SetPlotStartDate("2026-03-15");
+        service.SetPlotStartDate("03/15/2026");
+        service.SetPlotStartDate("15-Mar-2026");
 
+        Assert.False(service.IsPlotStartAuto());
         Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
     }
 
     [Fact]

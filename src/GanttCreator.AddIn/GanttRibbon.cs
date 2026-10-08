@@ -584,50 +584,54 @@ public class GanttRibbon : ExcelRibbon
 
     /// <summary>
     /// Called when the user clicks the Plot-Area AUTO checkbox for the start end.
-    /// Toggles the automatic mode, then persists and refreshes the ribbon state.
-    /// Never throws.
+    /// Excel's checkbox onAction contract passes the pressed state, which this
+    /// honours (fix plan ruling 2): the mode is set to what Excel reports,
+    /// then persisted and the ribbon state refreshed. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPlotStartAutoClick(IRibbonControl control)
-        => OnPlotStartAutoClick(control, RibbonStateService.Instance);
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    public void OnPlotStartAutoClick(IRibbonControl control, bool pressed)
+        => OnPlotStartAutoClick(control, pressed, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnPlotStartAutoClick(IRibbonControl)"/> against an
+    /// Runs <see cref="OnPlotStartAutoClick(IRibbonControl, bool)"/> against an
     /// injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPlotStartAutoClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnPlotStartAutoClick(IRibbonControl? control, bool pressed, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        stateService.TogglePlotStartAuto();
-        NotifyRibbonStateChanged();
+        stateService.SetPlotStartAuto(pressed);
     }
 
     /// <summary>
     /// Called when the user clicks the Plot-Area AUTO checkbox for the finish end.
-    /// Toggles the automatic mode, then persists and refreshes the ribbon state.
-    /// Never throws.
+    /// Excel's checkbox onAction contract passes the pressed state, which this
+    /// honours (fix plan ruling 2): the mode is set to what Excel reports,
+    /// then persisted and the ribbon state refreshed. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPlotFinishAutoClick(IRibbonControl control)
-        => OnPlotFinishAutoClick(control, RibbonStateService.Instance);
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    public void OnPlotFinishAutoClick(IRibbonControl control, bool pressed)
+        => OnPlotFinishAutoClick(control, pressed, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnPlotFinishAutoClick(IRibbonControl)"/> against an
+    /// Runs <see cref="OnPlotFinishAutoClick(IRibbonControl, bool)"/> against an
     /// injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPlotFinishAutoClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnPlotFinishAutoClick(IRibbonControl? control, bool pressed, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        stateService.TogglePlotFinishAuto();
-        NotifyRibbonStateChanged();
+        stateService.SetPlotFinishAuto(pressed);
     }
 
     /// <summary>
@@ -653,7 +657,6 @@ public class GanttRibbon : ExcelRibbon
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         stateService.SetPlotStartDate(text ?? string.Empty);
-        NotifyRibbonStateChanged();
     }
 
     /// <summary>
@@ -679,7 +682,6 @@ public class GanttRibbon : ExcelRibbon
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         stateService.SetPlotFinishDate(text ?? string.Empty);
-        NotifyRibbonStateChanged();
     }
 
     /// <summary>

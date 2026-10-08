@@ -831,6 +831,8 @@ public class ExcelSceneBuildRequestFactoryTests
     /// <summary>
     /// Explicit modes use the supplied dates verbatim: the request's plot range
     /// is the month-snapped explicit extent, ignoring the events entirely.
+    /// Dates are the chart's dd/MM/yyyy stored form (exact plot dates, never
+    /// the activity auto-parser equivalents).
     /// </summary>
     [Fact]
     public void Explicit_modes_resolve_the_request_range_from_the_supplied_dates()
@@ -843,8 +845,8 @@ public class ExcelSceneBuildRequestFactoryTests
             {
                 ["PlotStartMode"] = "Explicit",
                 ["PlotFinishMode"] = "Explicit",
-                ["PlotStartDate"] = "2024-02-10",
-                ["PlotFinishDate"] = "2024-04-10",
+                ["PlotStartDate"] = "10/02/2024",
+                ["PlotFinishDate"] = "10/04/2024",
             },
             StyleRegistry(),
             Grid()
@@ -870,7 +872,7 @@ public class ExcelSceneBuildRequestFactoryTests
             {
                 ["PlotStartMode"] = "Explicit",
                 ["PlotFinishMode"] = "DataRange",
-                ["PlotStartDate"] = "2024-01-15",
+                ["PlotStartDate"] = "15/01/2024",
             },
             StyleRegistry(),
             Grid()

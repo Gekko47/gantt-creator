@@ -12,20 +12,33 @@ namespace GanttCreator.AddIn;
 /// <param name="PlotFinishAuto">True when the plot finish derives from the data range (R5.1).</param>
 /// <param name="PlotStartDate">The explicit plot start date, or empty when automatic (R5.1).</param>
 /// <param name="PlotFinishDate">The explicit plot finish date, or empty when automatic (R5.1).</param>
+/// <param name="EffectivePlotStartDate">
+/// The date the start edit box displays: the explicit date in explicit mode,
+/// the derived data range start in automatic mode, or empty when neither is
+/// known (fix plan ruling 1 — manual-entry boxes also display the current
+/// effective plot date, even when disabled).
+/// </param>
+/// <param name="EffectivePlotFinishDate">
+/// The date the finish edit box displays: the explicit date in explicit mode,
+/// the derived data range finish in automatic mode, or empty when neither is
+/// known (fix plan ruling 1).
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
     bool PlotStartAuto,
     bool PlotFinishAuto,
     string PlotStartDate,
-    string PlotFinishDate)
+    string PlotFinishDate,
+    string EffectivePlotStartDate,
+    string EffectivePlotFinishDate)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
     /// gated control starts disabled and is enabled by the first refresh
     /// (docs/03-ROADMAP.md R1.5).
     /// </summary>
-    internal static RibbonState Initial { get; } = new(false, false, true, true, string.Empty, string.Empty);
+    internal static RibbonState Initial { get; } = new(false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled

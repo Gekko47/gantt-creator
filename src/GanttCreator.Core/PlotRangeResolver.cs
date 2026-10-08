@@ -87,14 +87,16 @@ public static class PlotRangeResolver
     }
 
     /// <summary>
-    /// Parses one user-entered explicit date, accepting every reasonable date
-    /// format: day-first formats first (dd/MM/yyyy, d/M/yyyy, etc.), then
-    /// month-first formats (MM/dd/yyyy, M/d/yyyy, etc.), and finally ISO
-    /// (yyyy-MM-dd). Blank text fails rather than defaulting. No
-    /// CurrentCulture fallback is used so unmatched dates fail deterministically.
-    /// Office-free so both the ribbon setters and the resolve path share one
-    /// authority, and the stored form is always normalised to <c>dd/MM/yyyy</c>
-    /// by the caller.
+    /// Parses one user-entered exact plot date in the default display format
+    /// only (<c>dd/MM/yyyy</c>, ADR-0016 D1): the plot boxes take the exact
+    /// dates the chart uses for its bounds, never the activity Start/Finish
+    /// multi-format auto-parser. A bare Excel serial is accepted because the
+    /// edit box echoes a typed date back as its number (e.g. 46118 for
+    /// 06/04/2026); every other text must match the default format exactly.
+    /// Blank text fails rather than defaulting. No CurrentCulture fallback is
+    /// used so unmatched dates fail deterministically. Office-free so both
+    /// the ribbon setters and the resolve path share one authority, and the
+    /// stored form is always normalised to <c>dd/MM/yyyy</c> by the caller.
     /// </summary>
     /// <param name="text">The user-entered date text.</param>
     /// <param name="parsed">The parsed date when successful.</param>
@@ -109,60 +111,32 @@ public static class PlotRangeResolver
 
         var trimmed = text.Trim();
 
-        // Day-first formats (tried first)
-        string[] dayFirstFormats =
-        [
-            "dd/MM/yyyy",
-            "d/M/yyyy",
-            "d/M/yy",
-            "dd-MMM-yyyy",
-            "dd/MMM/yyyy",
-            "d MMM yyyy",
-            "dd MMM yyyy",
-        ];
-
-        // Month-first formats (tried only if no day-first format matches)
-        string[] monthFirstFormats =
-        [
-            "MM/dd/yyyy",
-            "M/d/yyyy",
-            "M/d/yy",
-        ];
-
-        // ISO format (tried last)
-        string[] isoFormats =
-        [
-            "yyyy-MM-dd",
-        ];
-
-        // Try day-first formats first
-        foreach (var format in dayFirstFormats)
+        // A bare Excel serial first: the ribbon edit box echoes the coerced
+        // numeric form back on getText (e.g. 46118, or 46118.0 from an
+        // invariant double render), and a text-only parser rejects it, so a
+        // typed date could never round-trip. Routed through the shared
+        // 1900-epoch converter so the ribbon and the table reader cannot
+        // disagree on what a serial means. The fractional time-of-day, when
+        // present, is truncated to the calendar date by FromOADate.
+        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial)
+            && ExcelDateSystemConverter.Instance.TryConvertDate(
+                serial, ExcelDateSystemKind.Windows1900, out DateOnly? serialDate)
+            && serialDate is { } serialDay
+            && serialDay != default)
         {
-            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
-                && parsed != default)
-            {
-                return true;
-            }
+            parsed = serialDay;
+            return true;
         }
 
-        // Only try month-first formats if no day-first format matched
-        foreach (var format in monthFirstFormats)
+        // Exact default-format only: the plot boxes are not the activity
+        // Start/Finish cells, so the multi-format equivalents (MM/dd/yyyy,
+        // ISO, dd-MMM-yyyy) are refused here. Accepting them would let an
+        // ambiguous entry (01/02/2026) silently mean a different date than
+        // the chart's own dd/MM/yyyy contract.
+        if (DateOnly.TryParseExact(trimmed, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+            && parsed != default)
         {
-            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
-                && parsed != default)
-            {
-                return true;
-            }
-        }
-
-        // Try ISO format
-        foreach (var format in isoFormats)
-        {
-            if (DateOnly.TryParseExact(trimmed, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
-                && parsed != default)
-            {
-                return true;
-            }
+            return true;
         }
 
         // No CurrentCulture fallback - unmatched dates fail deterministically
@@ -260,8 +234,8 @@ public static class PlotRangeResolver
     /// <param name="settings">The settings to validate.</param>
     /// <exception cref="ArgumentException">
     /// Thrown when the mode is unknown, or when an explicit mode
-    /// is missing one or both dates, or when the dates are unparsable
-    /// in any reasonable format (stored as dd/MM/yyyy) or the start
+    /// is missing one or both dates, or when the dates are not exact
+    /// dd/MM/yyyy plot dates (stored as dd/MM/yyyy) or the start
     /// is after the finish.
     /// </exception>
     public static void ValidateSettings(PlotRangeSettings settings)

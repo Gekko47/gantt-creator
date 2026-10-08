@@ -116,8 +116,8 @@ public sealed class PlotRangeResolverTests
             [Event(1)],
             "Explicit",
             "Explicit",
-            "2024-02-01",
-            "2024-04-30",
+            "01/02/2024",
+            "30/04/2024",
             paddingDays: 99);
 
         // Padding must not touch an explicit end: the 99-day pad applies to
@@ -134,8 +134,8 @@ public sealed class PlotRangeResolverTests
             [Event(1)],
             "Explicit",
             "Explicit",
-            "2024-05-06",
-            "2024-05-06",
+            "06/05/2024",
+            "06/05/2024",
             paddingDays: 3);
 
         Assert.True(outcome.Succeeded);
@@ -150,7 +150,7 @@ public sealed class PlotRangeResolverTests
             [Event(1, start: new DateOnly(2024, 1, 10), finish: new DateOnly(2024, 1, 20))],
             "Explicit",
             "DataRange",
-            "2024-01-01",
+            "01/01/2024",
             null,
             paddingDays: 0);
 
@@ -166,8 +166,8 @@ public sealed class PlotRangeResolverTests
             [Event(1)],
             "Explicit",
             "Explicit",
-            "2024-03-02",
-            "2024-03-01",
+            "02/03/2024",
+            "01/03/2024",
             paddingDays: 3);
 
         Assert.False(outcome.Succeeded);
@@ -213,33 +213,36 @@ public sealed class PlotRangeResolverTests
     }
 
     // --- TryParsePlotDate (the ribbon edit-box parser, R5.1) ---
+    // Exact dates only: the default display format dd/MM/yyyy, plus the bare
+    // Excel serial the edit box echoes back. The activity multi-format
+    // equivalents are refused here (see the parser doc block).
 
     [Theory]
 
-    // The repository default, first in the format list.
+    // The chart's own dd/MM/yyyy contract, exact.
     [InlineData("15/03/2026", 2026, 3, 15)]
-    // Reasonable equivalents the parser must also accept.
-    [InlineData("2026-03-15", 2026, 3, 15)]
-    [InlineData("15-Mar-2026", 2026, 3, 15)]
-    [InlineData("15/Mar/2026", 2026, 3, 15)]
-    [InlineData("15 Mar 2026", 2026, 3, 15)]
     [InlineData("  15/03/2026  ", 2026, 3, 15)]
-    public void TryParsePlotDate_accepts_every_reasonable_format(string text, int year, int month, int day)
+    public void TryParsePlotDate_accepts_the_default_display_format(string text, int year, int month, int day)
     {
         Assert.True(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
         Assert.Equal(new DateOnly(year, month, day), parsed);
     }
 
     [Theory]
-    // A US month-first date: parsed by the MM/dd/yyyy format in the list.
-    [InlineData("3/15/2026", 2026, 3, 15)]
-    [InlineData("03/15/2026", 2026, 3, 15)]
-    public void TryParsePlotDate_accepts_month_first_input_when_it_is_unambiguous(string text, int year, int month, int day)
+    // The activity auto-parser equivalents are NOT plot input: an ambiguous
+    // entry must fail here rather than silently mean a different date than
+    // the chart's dd/MM/yyyy contract. The serial path stays (it is the
+    // echo, not a format), as do the refusal positives below.
+    [InlineData("2026-03-15")]
+    [InlineData("15-Mar-2026")]
+    [InlineData("15/Mar/2026")]
+    [InlineData("15 Mar 2026")]
+    [InlineData("3/15/2026")]
+    [InlineData("03/15/2026")]
+    public void TryParsePlotDate_refuses_activity_auto_parser_equivalents(string text)
     {
-        // 15 cannot be a month, so only the month-first formats match; the
-        // dd/MM/yyyy attempt fails without misreading it.
-        Assert.True(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
-        Assert.Equal(new DateOnly(year, month, day), parsed);
+        Assert.False(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(default, parsed);
     }
 
     [Theory]
@@ -265,6 +268,43 @@ public sealed class PlotRangeResolverTests
         // 01/001 parses as DateOnly.MinValue, which is the DefaultDates
         // refusal everywhere else; the parser must not bless it.
         Assert.False(PlotRangeResolver.TryParsePlotDate("01/01/0001", out _));
+    }
+
+    [Theory]
+    // The serial round-trip: the ribbon edit box echoes a typed date back as
+    // its Excel number (e.g. 46118 for 06/04/2026), and the previous
+    // text-only parser rejected it, so a typed date could never round-trip.
+    // 06/04/2026 is 46118; the .0 double render must parse identically.
+    [InlineData("46118", 2026, 4, 6)]
+    [InlineData("46118.0", 2026, 4, 6)]
+    [InlineData("  46118  ", 2026, 4, 6)]
+    public void TryParsePlotDate_accepts_a_bare_Excel_serial(string text, int year, int month, int day)
+    {
+        Assert.True(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(new DateOnly(year, month, day), parsed);
+    }
+
+    [Theory]
+    // Serial bounds follow the shared 1900-epoch converter: 0 and negatives
+    // are below MinSerial, 2958466 is above MaxSerial, and a fractional serial
+    // truncates to its calendar date (FromOADate semantics, shared with the
+    // table reader so the two cannot disagree).
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("2958466")]
+    public void TryParsePlotDate_refuses_an_out_of_range_serial(string text)
+    {
+        Assert.False(PlotRangeResolver.TryParsePlotDate(text, out DateOnly parsed));
+        Assert.Equal(default, parsed);
+    }
+
+    [Fact]
+    public void TryParsePlotDate_truncates_a_fractional_serial_to_its_calendar_date()
+    {
+        // 46118.5 is 06/04/2026 midday: the date half survives, the time half
+        // is truncated by FromOADate.
+        Assert.True(PlotRangeResolver.TryParsePlotDate("46118.5", out DateOnly parsed));
+        Assert.Equal(new DateOnly(2026, 4, 6), parsed);
     }
 
     [Fact]

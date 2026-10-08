@@ -148,6 +148,10 @@ public sealed class AddInHost(
                 () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
             RibbonStateService.Instance.SetCatalogueWriter(
                 new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetCatalogueReader(
+                new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetTableReader(
+                new ExcelGanttTableReader(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031

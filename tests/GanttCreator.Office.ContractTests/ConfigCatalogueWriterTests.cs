@@ -490,8 +490,8 @@ public class ConfigCatalogueWriterTests
             {
                 ["PlotStartMode"] = "Explicit",
                 ["PlotFinishMode"] = "Explicit",
-                ["PlotStartDate"] = "2026-01-01",
-                ["PlotFinishDate"] = "2026-12-31",
+                ["PlotStartDate"] = "01/01/2026",
+                ["PlotFinishDate"] = "31/12/2026",
             });
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
@@ -499,8 +499,8 @@ public class ConfigCatalogueWriterTests
         Assert.True(read.Succeeded);
         Assert.Equal("Explicit", read.Settings["PlotStartMode"]);
         Assert.Equal("Explicit", read.Settings["PlotFinishMode"]);
-        Assert.Equal("2026-01-01", read.Settings["PlotStartDate"]);
-        Assert.Equal("2026-12-31", read.Settings["PlotFinishDate"]);
+        Assert.Equal("01/01/2026", read.Settings["PlotStartDate"]);
+        Assert.Equal("31/12/2026", read.Settings["PlotFinishDate"]);
         Assert.Equal("My Chart", read.Settings["ChartTitle"]);
     }
 

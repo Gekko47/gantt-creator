@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 using GanttCreator.Core.Logging;
 using GanttCreator.Office;
 using Moq;
@@ -715,11 +716,12 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void PlotArea_group_declares_labels_checkboxes_and_editboxes()
+    public void PlotArea_group_declares_start_and_finish_rows_with_checkboxes_and_editboxes()
     {
-        // The 6-row surface contract: two label rows per end, one AUTO
-        // checkbox per end, one date edit box per end; the edit boxes carry
-        // getText for the stored value, getEnabled for the auto toggle, and
+        // Fix plan ruling 3: the flat label stack is restructured into proper
+        // start/finish rows — one AUTO box row and one date box row per end,
+        // each label sitting beside its control. The edit boxes carry getText
+        // for the effective display value, getEnabled for the auto toggle, and
         // onChange for the commit path.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
@@ -729,40 +731,45 @@ public class GanttRibbonTests
             .Single(element => element.Attribute("id")?.Value == "grpPlotArea");
         Assert.Equal("Plot Area", group.Attribute("label")?.Value);
 
-        var labelIds = group.Elements(ns + "labelControl")
+        var labelIds = group.Descendants(ns + "labelControl")
             .Select(element => element.Attribute("id")?.Value)
             .ToList();
         Assert.Equal(
-            ["lblPlotStartDate", "lblPlotStartAuto", "lblPlotFinishDate", "lblPlotFinishAuto"],
+            ["lblPlotStartAuto", "lblPlotStartDate", "lblPlotFinishAuto", "lblPlotFinishDate"],
             labelIds);
 
-        XElement startCheck = group.Elements(ns + "checkBox")
+        XElement startCheck = group.Descendants(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotStartAuto");
         Assert.Equal("GetPlotStartAuto", startCheck.Attribute("getPressed")?.Value);
         Assert.Equal("OnPlotStartAutoClick", startCheck.Attribute("onAction")?.Value);
 
-        XElement finishCheck = group.Elements(ns + "checkBox")
+        XElement finishCheck = group.Descendants(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotFinishAuto");
         Assert.Equal("GetPlotFinishAuto", finishCheck.Attribute("getPressed")?.Value);
         Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
-        Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
 
-        XElement startBox = group.Elements(ns + "editBox")
+        XElement startBox = group.Descendants(ns + "editBox")
             .Single(element => element.Attribute("id")?.Value == "edtPlotStartDate");
         Assert.Equal("GetPlotStartDate", startBox.Attribute("getText")?.Value);
         Assert.Equal("GetPlotStartDateEnabled", startBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotStartDateChange", startBox.Attribute("onChange")?.Value);
 
-        XElement finishBox = group.Elements(ns + "editBox")
+        // The box is sized for the default display format dd/MM/yyyy: without
+        // a sizeString Excel sizes the echo for a short string and a typed
+        // date renders back as its bare number.
+        Assert.Equal("00/00/0000", startBox.Attribute("sizeString")?.Value);
+
+        XElement finishBox = group.Descendants(ns + "editBox")
             .Single(element => element.Attribute("id")?.Value == "edtPlotFinishDate");
         Assert.Equal("GetPlotFinishDate", finishBox.Attribute("getText")?.Value);
         Assert.Equal("GetPlotFinishDateEnabled", finishBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotFinishDateChange", finishBox.Attribute("onChange")?.Value);
+        Assert.Equal("00/00/0000", finishBox.Attribute("sizeString")?.Value);
     }
 
     /// <summary>
-    /// The edit-box commit path forwards the edited text: a valid commit
-    /// persists the normalised date; the routing itself needs no workbook.
+    /// The edit-box commit path forwards the edited text: an exact dd/MM/yyyy
+    /// commit persists the normalised date; the routing itself needs no workbook.
     /// </summary>
     [Fact]
     public void OnPlotStartDateChange_forwards_the_edited_text_to_the_service()
@@ -775,6 +782,102 @@ public class GanttRibbonTests
         Assert.Equal("15/03/2026", service.GetPlotStartDate());
         Assert.False(service.IsPlotStartAuto());
     }
+
+    /// <summary>
+    /// The setter invalidates exactly once per commit, so the clicked control
+    /// repaints from the new snapshot: without an invalidate the ribbon
+    /// getters never re-query and the box visually sticks.
+    /// </summary>
+    [Fact]
+    public void SetPlotStartAuto_invalidates_once_per_commit()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetRibbon(ribbon.Object);
+
+        service.SetPlotStartAuto(true);
+
+        Assert.Equal(
+            1,
+            ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
+    }
+
+    /// <summary>
+    /// The finish-end analogue: one commit, one invalidate.
+    /// </summary>
+    [Fact]
+    public void SetPlotFinishAuto_invalidates_once_per_commit()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetRibbon(ribbon.Object);
+
+        service.SetPlotFinishAuto(true);
+
+        Assert.Equal(
+            1,
+            ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate)));
+    }
+
+    /// <summary>
+    /// Positive for the true-bounds display: with both ends AUTO and event
+    /// data present, the boxes show the month-snapped chart bounds Refresh
+    /// renders (01/03/2026–30/04/2026 for 10 Mar–31 Mar spans with the
+    /// default 3-day pad), not the raw padded data extent (07/03–03/04).
+    /// </summary>
+    [Fact]
+    public void Plot_date_getters_show_the_true_chart_bounds_in_auto_mode()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        var catalogue = new Mock<IConfigCatalogueReader>();
+        _ = catalogue.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb",
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "DataRange",
+                ["PlotFinishMode"] = "DataRange",
+                ["PlotStartDate"] = string.Empty,
+                ["PlotFinishDate"] = string.Empty,
+            },
+            GanttStyleRegistry.Empty));
+        service.SetCatalogueReader(catalogue.Object);
+        var table = new Mock<IGanttTableReader>();
+        _ = table.Setup(r => r.Read()).Returns(GanttTableReadOutcome.Ok(
+        [
+            PlotBoundsRow(1, "10/03/2026", "31/03/2026"),
+        ]));
+        service.SetTableReader(table.Object);
+
+        service.Refresh();
+
+        Assert.Equal("01/03/2026", service.GetPlotStartDate());
+        Assert.Equal("30/04/2026", service.GetPlotFinishDate());
+    }
+
+    private static int s_nextPlotBoundsId;
+
+    private static string PlotBoundsId() => "G-" + (++s_nextPlotBoundsId).ToString("x32", CultureInfo.InvariantCulture);
+
+    private static GanttRowDto PlotBoundsRow(int row, string start, string finish) =>
+        new(
+            row,
+            PlotBoundsId(),
+            PlotBoundsId(),
+            null,
+            "As-Planned Activity",
+            $"Row {row}",
+            DateOnly.ParseExact(start, "dd/MM/yyyy", CultureInfo.InvariantCulture),
+            DateOnly.ParseExact(finish, "dd/MM/yyyy", CultureInfo.InvariantCulture),
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null);
 
     [Fact]
     public void OnPlotFinishDateChange_forwards_the_edited_text_to_the_service()
@@ -858,7 +961,7 @@ public class GanttRibbonTests
         var control = new Mock<IRibbonControl>();
 
         Assert.Throws<ArgumentNullException>(
-            () => GanttRibbon.OnPlotStartAutoClick(control.Object, null!));
+            () => GanttRibbon.OnPlotStartAutoClick(control.Object, true, null!));
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -868,7 +971,108 @@ public class GanttRibbonTests
         var control = new Mock<IRibbonControl>();
 
         Assert.Throws<ArgumentNullException>(
-            () => GanttRibbon.OnPlotFinishAutoClick(control.Object, null!));
+            () => GanttRibbon.OnPlotFinishAutoClick(control.Object, true, null!));
+    }
+
+    /// <summary>
+    /// The checkbox honours Excel's pressed state (fix plan ruling 2): checking
+    /// AUTO enters automatic mode, unchecking arms explicit mode.
+    /// </summary>
+    [Fact]
+    public void OnPlotStartAutoClick_honours_the_pressed_state_Excel_reports()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        var autoService = new RibbonStateService();
+        autoService.SetCatalogueWriter(null);
+        GanttRibbon.OnPlotStartAutoClick(control.Object, true, autoService);
+        Assert.True(autoService.IsPlotStartAuto());
+
+        var explicitService = new RibbonStateService();
+        explicitService.SetCatalogueWriter(null);
+        explicitService.SetPlotStartDate("15/03/2026");
+        GanttRibbon.OnPlotStartAutoClick(control.Object, false, explicitService);
+        Assert.False(explicitService.IsPlotStartAuto());
+    }
+
+    /// <summary>
+    /// The checkbox honours Excel's pressed state (fix plan ruling 2): checking
+    /// AUTO enters automatic mode, unchecking arms explicit mode.
+    /// </summary>
+    [Fact]
+    public void OnPlotFinishAutoClick_honours_the_pressed_state_Excel_reports()
+    {
+        var control = new Mock<IRibbonControl>();
+
+        var autoService = new RibbonStateService();
+        autoService.SetCatalogueWriter(null);
+        GanttRibbon.OnPlotFinishAutoClick(control.Object, true, autoService);
+        Assert.True(autoService.IsPlotFinishAuto());
+
+        var explicitService = new RibbonStateService();
+        explicitService.SetCatalogueWriter(null);
+        explicitService.SetPlotFinishDate("30/06/2026");
+        GanttRibbon.OnPlotFinishAutoClick(control.Object, false, explicitService);
+        Assert.False(explicitService.IsPlotFinishAuto());
+    }
+
+    /// <summary>
+    /// Positive for the uncheck fix: unchecking AUTO with a stored date
+    /// persists Explicit with that date, so the next workbook load cannot
+    /// revert the box to checked. The date commit's own write is not counted:
+    /// only the uncheck's persist is asserted.
+    /// </summary>
+    [Fact]
+    public void SetPlotStartAuto_uncheck_with_a_stored_date_persists_explicit()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetPlotStartDate("15/03/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotStartMode"] == "Explicit"
+                    && settings["PlotStartDate"] == "15/03/2026")))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotStartAuto(false);
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+        Assert.False(service.IsPlotStartAuto());
+        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+    }
+
+    /// <summary>
+    /// Positive for the uncheck fix on the finish end: unchecking AUTO with a
+    /// stored date persists Explicit with that date. The date commit's own
+    /// write is not counted: only the uncheck's persist is asserted.
+    /// </summary>
+    [Fact]
+    public void SetPlotFinishAuto_uncheck_with_a_stored_date_persists_explicit()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetPlotFinishDate("30/06/2026");
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotFinishMode"] == "Explicit"
+                    && settings["PlotFinishDate"] == "30/06/2026")))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotFinishAuto(false);
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -939,9 +1143,11 @@ public class GanttRibbonTests
     /// names (the values of known callback attributes) that do not resolve to a
     /// public instance method on <paramref name="ribbonType"/> with a compatible
     /// signature: zero parameters, one parameter of type
-    /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>, or the two
+    /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>, the two
     /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> that
-    /// the editBox <c>onChange</c> callback passes.
+    /// the editBox <c>onChange</c> callback passes, or the two parameters
+    /// <see cref="IRibbonControl"/> plus <see cref="bool"/> that the checkBox
+    /// <c>onAction</c> callback passes (fix plan ruling 2).
     /// </summary>
     /// <param name="xml">The RibbonX document to validate.</param>
     /// <param name="ribbonType">The ribbon class type.</param>
@@ -1000,8 +1206,16 @@ public class GanttRibbonTests
         {
             // The RibbonX editBox onChange callback passes the control plus the
             // edited text: public void OnChange(IRibbonControl, string).
+            if (parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(string))
+            {
+                return true;
+            }
+
+            // The RibbonX checkBox onAction callback passes the control plus
+            // the pressed state: public void OnClick(IRibbonControl, bool).
             return parameters[0].ParameterType == typeof(IRibbonControl)
-                && parameters[1].ParameterType == typeof(string);
+                && parameters[1].ParameterType == typeof(bool);
         }
 
         return false;
