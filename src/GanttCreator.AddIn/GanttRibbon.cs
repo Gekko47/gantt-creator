@@ -387,8 +387,10 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Excel's getText callback for the start-date edit box. Returns the last
-    /// valid stored value, which is also the value the edit box reverts to when
+    /// Excel's getText callback for the start-date edit box. Returns the
+    /// effective display date: the explicit date in explicit mode, the
+    /// current month-snapped chart bound in automatic mode, or empty when
+    /// neither is known. This is also the value the edit box reverts to when
     /// the user enters an unparseable date. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
@@ -401,7 +403,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The stored start date, or empty when none.</returns>
+    /// <returns>The display start date, or empty when none.</returns>
     internal static string GetPlotStartDate(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
@@ -421,8 +423,10 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Excel's getText callback for the finish-date edit box. Returns the last
-    /// valid stored value, which is also the value the edit box reverts to when
+    /// Excel's getText callback for the finish-date edit box. Returns the
+    /// effective display date: the explicit date in explicit mode, the
+    /// current month-snapped chart bound in automatic mode, or empty when
+    /// neither is known. This is also the value the edit box reverts to when
     /// the user enters an unparseable date. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
@@ -435,7 +439,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The stored finish date, or empty when none.</returns>
+    /// <returns>The display finish date, or empty when none.</returns>
     internal static string GetPlotFinishDate(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;

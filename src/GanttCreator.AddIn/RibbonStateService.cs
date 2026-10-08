@@ -137,42 +137,73 @@ internal class RibbonStateService
     /// the checkbox honours Excel's pressed state rather than blindly
     /// toggling). Entering AUTO keeps the last explicit date in memory so it
     /// is restored when the user returns to explicit, and persists DataRange
-    /// immediately. Entering explicit persists Explicit together with the
-    /// stored date when one is known — a checkbox that arms explicit but
-    /// persists nothing is reverted by the next workbook load, which is why
-    /// the box would not stay unchecked — and only arms the edit box (no
-    /// persist) when no date is stored yet, because an Explicit mode with no
-    /// date would break the next Refresh. Never refreshes the chart.
+    /// immediately. Unchecking AUTO seeds the edit box from the CURRENT plot
+    /// bound (the month-snapped chart bound the AUTO box was displaying, per
+    /// the owner ruling 2026-10-08) — never from the stale stored date — and
+    /// persists Explicit immediately, so the next Refresh renders exactly
+    /// what the box shows and no volatile "armed but unpersisted" window
+    /// remains. Only when no current bound is known does the uncheck arm the
+    /// edit box without persisting, because an Explicit mode with no date
+    /// would break the next Refresh. A stored explicit date is read only
+    /// after a user edit: a valid edit replaces it, an invalid edit reverts
+    /// to it. Never refreshes the chart.
     /// </summary>
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotStartAuto(bool pressed)
     {
         var nextAuto = pressed;
-        _state = _state with
+        if (nextAuto)
         {
-            PlotStartAuto = nextAuto,
+            _state = _state with
+            {
+                PlotStartAuto = true,
 
-            // Entering AUTO preserves the typed date in memory (fix plan
-            // ruling 1): it is no longer cleared, so the disabled edit box
-            // keeps showing it until the effective-date derivation replaces
-            // it, and returning to explicit restores it. Entering explicit
-            // keeps whatever is stored. The display value follows
-            // immediately: explicit shows the stored date, AUTO keeps the
-            // last display value until the next workbook load derives the
-            // data range date.
-            PlotStartDate = _state.PlotStartDate,
-            EffectivePlotStartDate = nextAuto ? _state.EffectivePlotStartDate : _state.PlotStartDate,
-        };
-
-        if (!nextAuto && string.IsNullOrWhiteSpace(_state.PlotStartDate))
+                // Entering AUTO preserves the typed date in memory (fix plan
+                // ruling 1): it is no longer cleared, so the disabled edit box
+                // keeps showing it until the effective-date derivation replaces
+                // it, and returning to explicit restores it.
+                PlotStartDate = _state.PlotStartDate,
+                EffectivePlotStartDate = _state.EffectivePlotStartDate,
+            };
+        }
+        else
         {
-            // Nothing coherent to persist yet: the date commit owns the
-            // Explicit write. The ribbon is still invalidated so the
-            // unchecked box and the enabled edit box repaint; without this
-            // the click's visual state never lands because ribbon getters
-            // only re-query on invalidate.
-            Invalidate();
-            return;
+            // Leaving AUTO: seed BOTH the stored and the display date from
+            // the current plot bound when one is known. The stored date is
+            // deliberately NOT reused: it may predate the latest data, and
+            // the box was showing the bound, so Explicit must start from
+            // what the user saw. A parseable bound (always dd/MM/yyyy from
+            // the derivation, but parsed defensively) persists at once.
+            if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
+            {
+                var seeded = GanttDateFormatting.FormatDdMMyyyy(bound);
+                _state = _state with
+                {
+                    PlotStartAuto = false,
+                    PlotStartDate = seeded,
+                    EffectivePlotStartDate = seeded,
+                };
+            }
+            else
+            {
+                _state = _state with
+                {
+                    PlotStartAuto = false,
+                    PlotStartDate = _state.PlotStartDate,
+                    EffectivePlotStartDate = _state.PlotStartDate,
+                };
+
+                if (string.IsNullOrWhiteSpace(_state.PlotStartDate))
+                {
+                    // Nothing coherent to persist yet: the date commit owns the
+                    // Explicit write. The ribbon is still invalidated so the
+                    // unchecked box and the enabled edit box repaint; without this
+                    // the click's visual state never lands because ribbon getters
+                    // only re-query on invalidate.
+                    Invalidate();
+                    return;
+                }
+            }
         }
 
 #pragma warning disable CA1031
@@ -202,33 +233,65 @@ internal class RibbonStateService
     /// the checkbox honours Excel's pressed state rather than blindly
     /// toggling). Entering AUTO keeps the last explicit date in memory so it
     /// is restored when the user returns to explicit, and persists DataRange
-    /// immediately. Entering explicit persists Explicit together with the
-    /// stored date when one is known — a checkbox that arms explicit but
-    /// persists nothing is reverted by the next workbook load, which is why
-    /// the box would not stay unchecked — and only arms the edit box (no
-    /// persist) when no date is stored yet, because an Explicit mode with no
-    /// date would break the next Refresh. Never refreshes the chart.
+    /// immediately. Unchecking AUTO seeds the edit box from the CURRENT plot
+    /// bound (the month-snapped chart bound the AUTO box was displaying, per
+    /// the owner ruling 2026-10-08) — never from the stale stored date — and
+    /// persists Explicit immediately, so the next Refresh renders exactly
+    /// what the box shows and no volatile "armed but unpersisted" window
+    /// remains. Only when no current bound is known does the uncheck arm the
+    /// edit box without persisting, because an Explicit mode with no date
+    /// would break the next Refresh. A stored explicit date is read only
+    /// after a user edit: a valid edit replaces it, an invalid edit reverts
+    /// to it. Never refreshes the chart.
     /// </summary>
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotFinishAuto(bool pressed)
     {
         var nextAuto = pressed;
-        _state = _state with
+        if (nextAuto)
         {
-            PlotFinishAuto = nextAuto,
-            PlotFinishDate = _state.PlotFinishDate,
-            EffectivePlotFinishDate = nextAuto ? _state.EffectivePlotFinishDate : _state.PlotFinishDate,
-        };
+            _state = _state with
+            {
+                PlotFinishAuto = true,
+                PlotFinishDate = _state.PlotFinishDate,
+                EffectivePlotFinishDate = _state.EffectivePlotFinishDate,
+            };
+        }
+        else
+        {
+            // Leaving AUTO: seed BOTH the stored and the display date from
+            // the current plot bound when one is known (see the start-end
+            // note above for why the stored date is not reused).
+            if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly bound))
+            {
+                var seeded = GanttDateFormatting.FormatDdMMyyyy(bound);
+                _state = _state with
+                {
+                    PlotFinishAuto = false,
+                    PlotFinishDate = seeded,
+                    EffectivePlotFinishDate = seeded,
+                };
+            }
+            else
+            {
+                _state = _state with
+                {
+                    PlotFinishAuto = false,
+                    PlotFinishDate = _state.PlotFinishDate,
+                    EffectivePlotFinishDate = _state.PlotFinishDate,
+                };
 
-        if (!nextAuto && string.IsNullOrWhiteSpace(_state.PlotFinishDate))
-        {
-            // Nothing coherent to persist yet: the date commit owns the
-            // Explicit write. The ribbon is still invalidated so the
-            // unchecked box and the enabled edit box repaint; without this
-            // the click's visual state never lands because ribbon getters
-            // only re-query on invalidate.
-            Invalidate();
-            return;
+                if (string.IsNullOrWhiteSpace(_state.PlotFinishDate))
+                {
+                    // Nothing coherent to persist yet: the date commit owns the
+                    // Explicit write. The ribbon is still invalidated so the
+                    // unchecked box and the enabled edit box repaint; without this
+                    // the click's visual state never lands because ribbon getters
+                    // only re-query on invalidate.
+                    Invalidate();
+                    return;
+                }
+            }
         }
 
 #pragma warning disable CA1031
@@ -254,11 +317,12 @@ internal class RibbonStateService
     internal void TogglePlotFinishAuto() => SetPlotFinishAuto(!_state.PlotFinishAuto);
 
     /// <summary>
-    /// Commits a user-typed plot-start date in explicit mode. Parses any
-    /// reasonable date format, normalises it to dd/MM/yyyy for storage, and
-    /// pivots the start end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
+    /// Commits a user-typed plot-start date in explicit mode. Parses the exact
+    /// plot-date input (dd/MM/yyyy, plus the bare Excel serial the edit box
+    /// echoes back), normalises it to dd/MM/yyyy for storage, and pivots the
+    /// start end to Explicit; an unparsable value is a no-op (the edit box
+    /// keeps showing the previously stored date on the next getter query,
+    /// which is the revert). Persists to the workbook configuration
     /// sheet so it survives a close/reopen, and updates the display value
     /// immediately since the commit happens outside a workbook load. Never
     /// refreshes the chart: the next Refresh chart applies the stored settings.
@@ -271,7 +335,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        var normalised = GanttDateFormatting.FormatDdMMyyyy(parsed);
         _state = _state with
         {
             PlotStartAuto = false,
@@ -295,11 +359,12 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Commits a user-typed plot-finish date in explicit mode. Parses any
-    /// reasonable date format, normalises it to dd/MM/yyyy for storage, and
-    /// pivots the finish end to Explicit; an unparsable value is a no-op (the
-    /// edit box keeps showing the previously stored date on the next getter
-    /// query, which is the revert). Persists to the workbook configuration
+    /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
+    /// plot-date input (dd/MM/yyyy, plus the bare Excel serial the edit box
+    /// echoes back), normalises it to dd/MM/yyyy for storage, and pivots the
+    /// finish end to Explicit; an unparsable value is a no-op (the edit box
+    /// keeps showing the previously stored date on the next getter query,
+    /// which is the revert). Persists to the workbook configuration
     /// sheet so it survives a close/reopen, and updates the display value
     /// immediately since the commit happens outside a workbook load. Never
     /// refreshes the chart: the next Refresh chart applies the stored settings.
@@ -312,7 +377,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = parsed.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        var normalised = GanttDateFormatting.FormatDdMMyyyy(parsed);
         _state = _state with
         {
             PlotFinishAuto = false,
@@ -406,8 +471,14 @@ internal class RibbonStateService
     /// untouched (fix for the stuck checkbox: the post-click refresh must not
     /// overwrite a just-set mode with stale snapshot data when the workbook
     /// cannot be read mid-click). A successful read adopts the workbook's
-    /// modes and explicit dates wholesale, then derives the effective display
-    /// dates so disabled AUTO edit boxes show the current data range date.
+    /// modes and explicit dates, normalising any parseable explicit date
+    /// (bare Excel serials from pre-fix workbooks, unpadded input) to
+    /// dd/MM/yyyy so the edit box never shows a raw number; an unparsable
+    /// stored date is kept verbatim so the failure stays visible instead of
+    /// being silently replaced. Then derives the effective display dates so
+    /// disabled AUTO edit boxes show the current data range date.
+    /// Mode text parses through the single PlotRangeModes authority, so the
+    /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// Never throws.
     /// </summary>
     private void LoadPlotSettingsFromWorkbook()
@@ -429,11 +500,15 @@ internal class RibbonStateService
                 var settings = outcome.Settings;
                 var startMode = settings.TryGetValue("PlotStartMode", out var startModeVal) ? startModeVal : string.Empty;
                 var finishMode = settings.TryGetValue("PlotFinishMode", out var finishModeVal) ? finishModeVal : string.Empty;
-                var startDate = settings.TryGetValue("PlotStartDate", out var startDateVal) ? startDateVal : string.Empty;
-                var finishDate = settings.TryGetValue("PlotFinishDate", out var finishDateVal) ? finishDateVal : string.Empty;
+                var startDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotStartDate", out var startDateVal) ? startDateVal : string.Empty);
+                var finishDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotFinishDate", out var finishDateVal) ? finishDateVal : string.Empty);
 
-                var startAuto = string.Equals(startMode, nameof(PlotRangeMode.DataRange), StringComparison.OrdinalIgnoreCase);
-                var finishAuto = string.Equals(finishMode, nameof(PlotRangeMode.DataRange), StringComparison.OrdinalIgnoreCase);
+                var startAuto = PlotRangeModes.TryParse(startMode, out PlotRangeMode parsedStart)
+                    && parsedStart == PlotRangeMode.DataRange;
+                var finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
+                    && parsedFinish == PlotRangeMode.DataRange;
 
                 _state = _state with
                 {
@@ -496,16 +571,12 @@ internal class RibbonStateService
 
                     if (range.Succeeded && range.Start is { } resolvedStart && range.Finish is { } resolvedFinish)
                     {
-                        // The TRUE chart bounds: padding-then-snap, exactly as
-                        // the scene-request factory renders them (owner ruling
-                        // 2026-10-02). Showing the raw padded data extent here
-                        // would display dates the chart never draws.
-                        DateOnly boundStart = SnapToMonthStart(resolvedStart);
-                        DateOnly boundFinish = SnapToMonthEnd(resolvedFinish);
-                        if (boundFinish.DayNumber <= boundStart.DayNumber)
-                        {
-                            boundFinish = boundStart.AddDays(1);
-                        }
+                        // The TRUE chart bounds: padding-then-snap through the
+                        // single PlotMonthBounds authority Refresh renders
+                        // (owner ruling 2026-10-02). Showing the raw padded
+                        // data extent here would display dates the chart never
+                        // draws.
+                        (DateOnly boundStart, DateOnly boundFinish) = PlotMonthBounds.SnapExtent(resolvedStart, resolvedFinish);
 
                         if (_state.PlotStartAuto)
                         {
@@ -534,6 +605,24 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Normalises one stored explicit plot date for display and state: a
+    /// parseable value (dd/MM/yyyy or the bare Excel serial the edit box
+    /// echoes) becomes canonical dd/MM/yyyy; blank stays blank; an
+    /// unparsable value is kept verbatim so the failure stays visible.
+    /// Pure and never throws.
+    /// </summary>
+    /// <param name="stored">The stored date text.</param>
+    /// <returns>The display-ready date text.</returns>
+    private static string NormaliseStoredPlotDate(string stored)
+    {
+        return string.IsNullOrWhiteSpace(stored)
+            ? string.Empty
+            : PlotRangeResolver.TryParsePlotDate(stored, out DateOnly parsed)
+                ? GanttDateFormatting.FormatDdMMyyyy(parsed)
+                : stored;
+    }
+
+    /// <summary>
     /// Reads the automatic-mode range padding from the settings map, mirroring
     /// the Refresh pipeline's default: a stored value outside the valid range
     /// falls back to the same default Refresh uses.
@@ -548,26 +637,6 @@ internal class RibbonStateService
             ? parsed
             : 3;
     }
-
-    /// <summary>
-    /// Returns the first day of the month containing <paramref name="date"/>:
-    /// the chart's start bound. Mirrors the scene-request factory's snap
-    /// (owner ruling 2026-10-02) so the AUTO box shows the bound Refresh
-    /// renders, not the raw data extent.
-    /// </summary>
-    /// <param name="date">The resolved padded data date.</param>
-    /// <returns>The first day of that month.</returns>
-    private static DateOnly SnapToMonthStart(DateOnly date) => new(date.Year, date.Month, 1);
-
-    /// <summary>
-    /// Returns the last day of the month containing <paramref name="date"/>:
-    /// the chart's finish bound. Mirrors the scene-request factory's snap so
-    /// the AUTO box shows the bound Refresh renders.
-    /// </summary>
-    /// <param name="date">The resolved padded data date.</param>
-    /// <returns>The last day of that month.</returns>
-    private static DateOnly SnapToMonthEnd(DateOnly date) =>
-        new DateOnly(date.Year, date.Month, 1).AddMonths(1).AddDays(-1);
 
     /// <summary>
     /// Arms the service for this session: subscribes the workbook-state events,

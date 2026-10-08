@@ -1,4 +1,5 @@
 using ExcelDna.Integration.CustomUI;
+using GanttCreator.Core;
 using GanttCreator.Office;
 using Moq;
 
@@ -108,6 +109,12 @@ public sealed class RibbonStateServiceTests : IDisposable
 
     private static int CountInvalidations(Mock<IRibbonUI> ribbon)
         => ribbon.Invocations.Count(invocation => invocation.Method.Name == nameof(IRibbonUI.Invalidate));
+
+    /// <summary>
+    /// A well-formed <see cref="GanttRowId"/> for seeded table rows:
+    /// <c>G-</c> plus 32 lowercase hex characters.
+    /// </summary>
+    private static string NewRowId(char last = 'a') => "G-" + new string('0', 31) + last;
 
     [Fact]
     public void GetEnabled_is_deterministic_and_never_probes_the_state_source()
@@ -401,13 +408,80 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void TogglePlotStartAuto_from_auto_to_explicit_seeds_from_the_current_plot_bound()
+    {
+        // Owner ruling 2026-10-08: unchecking AUTO seeds the edit box from
+        // the CURRENT plot bound (the month-snapped chart bound the AUTO box
+        // was displaying) — never from the stale stored date — and persists
+        // Explicit at once, so the next Refresh renders exactly what the box
+        // shows. The workbook holds a stale stored 15/03/2026 while the data
+        // derives the 01/06/2026 bound; the seeded date must be the bound.
+        var service = RibbonStateService.Instance;
+        var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
+        _ = catalogueReader
+            .Setup(r => r.Read())
+            .Returns(ConfigReadOutcome.Ok(
+                "workbook",
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "DataRange",
+                    ["PlotFinishMode"] = "DataRange",
+                    ["PlotStartDate"] = "15/03/2026",
+                    ["PlotFinishDate"] = string.Empty,
+                },
+                GanttStyleRegistry.Empty));
+        var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = tableReader
+            .Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+            [
+                new GanttRowDto(
+                    1,
+                    NewRowId(),
+                    NewRowId('b'),
+                    0,
+                    "As-Planned Activity",
+                    "Seeded row",
+                    new DateOnly(2026, 6, 10),
+                    new DateOnly(2026, 6, 20),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    null),
+            ]));
+        service.SetCatalogueReader(catalogueReader.Object);
+        service.SetTableReader(tableReader.Object);
+        service.Refresh();
+        Assert.Equal("01/06/2026", service.GetPlotStartDate());
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotStartMode"] == "Explicit"
+                    && settings["PlotStartDate"] == "01/06/2026")))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotStartAuto(false);
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+        Assert.False(service.IsPlotStartAuto());
+        Assert.Equal("01/06/2026", service.GetPlotStartDate());
+    }
+
+    [Fact]
     public void TogglePlotStartAuto_from_auto_to_explicit_arms_the_edit_box_without_persisting()
     {
-        // Unchecking AUTO must never persist Explicit with no date: an
-        // Explicit mode without a date is the MissingExplicitDate refusal
-        // and would break the next Refresh. The date commit owns that write,
-        // so this toggle changes only the in-memory state that drives
-        // getChecked/getEnabled.
+        // No current bound is known here (no effective date was ever
+        // derived), so the uncheck arms the edit box without persisting:
+        // an Explicit mode without a date is the MissingExplicitDate
+        // refusal and would break the next Refresh. The date commit owns
+        // that write.
         var service = RibbonStateService.Instance;
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         service.SetCatalogueWriter(writer.Object);
@@ -467,6 +541,70 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void TogglePlotFinishAuto_from_auto_to_explicit_seeds_from_the_current_plot_bound()
+    {
+        // Owner ruling 2026-10-08, finish-end analogue: unchecking AUTO
+        // seeds from the current plot bound, never the stale stored date,
+        // and persists Explicit at once.
+        var service = RibbonStateService.Instance;
+        var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
+        _ = catalogueReader
+            .Setup(r => r.Read())
+            .Returns(ConfigReadOutcome.Ok(
+                "workbook",
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "DataRange",
+                    ["PlotFinishMode"] = "DataRange",
+                    ["PlotStartDate"] = string.Empty,
+                    ["PlotFinishDate"] = "15/06/2026",
+                },
+                GanttStyleRegistry.Empty));
+        var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = tableReader
+            .Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+            [
+                new GanttRowDto(
+                    1,
+                    NewRowId(),
+                    NewRowId('b'),
+                    0,
+                    "As-Planned Activity",
+                    "Seeded row",
+                    new DateOnly(2026, 6, 10),
+                    new DateOnly(2026, 9, 20),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    null),
+            ]));
+        service.SetCatalogueReader(catalogueReader.Object);
+        service.SetTableReader(tableReader.Object);
+        service.Refresh();
+        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings =>
+                    settings["PlotFinishMode"] == "Explicit"
+                    && settings["PlotFinishDate"] == "30/09/2026")))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPlotFinishAuto(false);
+
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Once);
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
+    }
+
+    [Fact]
     public void TogglePlotFinishAuto_from_auto_to_explicit_arms_the_edit_box_without_persisting()
     {
         // Mirror of the start-side rule: no Explicit-without-date write.
@@ -491,9 +629,72 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetPlotFinishDate("15/06/2026");
 
         var exception = Record.Exception(service.TogglePlotFinishAuto);
-
         Assert.Null(exception);
         Assert.True(service.IsPlotFinishAuto());
+    }
+
+    [Fact]
+    public void Refresh_normalises_a_stored_serial_to_ddMMyyyy_instead_of_echoing_the_number()
+    {
+        // Positive test for the numeric-echo load path: a workbook holding a
+        // bare Excel serial (46118 = 06/04/2026, e.g. persisted pre-fix or
+        // hand-edited) must display the standard formatted date, not the
+        // number, after the workbook load. Both ends are explicit so no
+        // table derivation is involved.
+        var service = RibbonStateService.Instance;
+        var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
+        _ = catalogueReader
+            .Setup(r => r.Read())
+            .Returns(ConfigReadOutcome.Ok(
+                "workbook",
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "Explicit",
+                    ["PlotFinishMode"] = "Explicit",
+                    ["PlotStartDate"] = "46118",
+                    ["PlotFinishDate"] = "46216",
+                },
+                GanttStyleRegistry.Empty));
+        service.SetCatalogueReader(catalogueReader.Object);
+
+        service.Refresh();
+
+        Assert.False(service.IsPlotStartAuto());
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("06/04/2026", service.GetPlotStartDate());
+        Assert.Equal("13/07/2026", service.GetPlotFinishDate());
+    }
+
+    [Fact]
+    public void Refresh_treats_a_miscased_mode_as_explicit_like_the_refresh_pipeline()
+    {
+        // Positive test for the single-authority mode parse: the catalogue
+        // layer refuses miscased modes (PlotRangeModes.TryParse is ordinal),
+        // so a display path that case-folded "datarange" to AUTO would show
+        // AUTO while Refresh refuses UnknownMode. The ribbon must agree
+        // with Refresh: unknown text means explicit.
+        var service = RibbonStateService.Instance;
+        var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
+        _ = catalogueReader
+            .Setup(r => r.Read())
+            .Returns(ConfigReadOutcome.Ok(
+                "workbook",
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = "datarange",
+                    ["PlotFinishMode"] = "datarange",
+                    ["PlotStartDate"] = "01/06/2026",
+                    ["PlotFinishDate"] = "30/09/2026",
+                },
+                GanttStyleRegistry.Empty));
+        service.SetCatalogueReader(catalogueReader.Object);
+
+        service.Refresh();
+
+        Assert.False(service.IsPlotStartAuto());
+        Assert.False(service.IsPlotFinishAuto());
+        Assert.Equal("01/06/2026", service.GetPlotStartDate());
+        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
     }
 
     [Fact]

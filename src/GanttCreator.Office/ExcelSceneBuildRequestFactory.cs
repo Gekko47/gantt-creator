@@ -508,18 +508,9 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // therefore a tie-breaker for dates near a month edge, not a visible margin:
         // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
         // month further out to 1 Dec. Both were stated by the owner and only this
-        // order satisfies both.
-        plotStart = MonthStart(earliest);
-        plotFinish = MonthEnd(latest);
-
-        // A one-day chart is degenerate: the scale builder has no interval to divide
-        // and would either refuse or emit a single unreadable column. Widening to two
-        // days is not a silent fudge — the alternative is a refusal on data that is
-        // perfectly valid, and a user cannot act on "your chart is too narrow".
-        if (plotFinish.DayNumber <= plotStart.DayNumber)
-        {
-            plotFinish = plotStart.AddDays(1);
-        }
+        // order satisfies both. The snap itself lives in PlotMonthBounds, the
+        // single authority the Ribbon's AUTO display shares.
+        (plotStart, plotFinish) = PlotMonthBounds.SnapExtent(earliest, latest);
 
         return true;
     }
@@ -573,32 +564,6 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 "The plot start is after the plot finish. Swap the two dates.",
             _ => "The plot range could not be resolved from the configured modes and dates.",
         };
-
-    /// <summary>
-    /// Returns the first day of the month containing <paramref name="date"/>.
-    /// </summary>
-    /// <param name="date">The date whose month is wanted.</param>
-    /// <returns>The first day of that month.</returns>
-    /// <remarks>
-    /// Constructed from the date's OWN year and month parts. There is no month
-    /// arithmetic here at all — no <c>AddMonths</c>, and therefore no December or
-    /// <c>DateOnly.MinValue</c> boundary to reason about; the first day of a month is
-    /// expressible directly. The overflow that <c>MonthEnd</c> does have to avoid is
-    /// its own concern.
-    /// </remarks>
-    private static DateOnly MonthStart(DateOnly date) => new(date.Year, date.Month, 1);
-
-    /// <summary>
-    /// Returns the last day of the month containing <paramref name="date"/>.
-    /// </summary>
-    /// <param name="date">The date whose month is wanted.</param>
-    /// <returns>The last day of that month.</returns>
-    /// <remarks>
-    /// Day zero of the FOLLOWING month is the last day of this one, which avoids
-    /// both a hard-coded 28/30/31 table and the December overflow that
-    /// <c>AddMonths(1)</c> would need a range check for.
-    /// </remarks>
-    private static DateOnly MonthEnd(DateOnly date) => MonthStart(date).AddMonths(1).AddDays(-1);
 
     /// <summary>
     /// Resolves the size preset, refusing an unknown key rather than defaulting.

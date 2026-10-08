@@ -133,7 +133,7 @@ public static class PlotRangeResolver
         // ISO, dd-MMM-yyyy) are refused here. Accepting them would let an
         // ambiguous entry (01/02/2026) silently mean a different date than
         // the chart's own dd/MM/yyyy contract.
-        if (DateOnly.TryParseExact(trimmed, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+        if (DateOnly.TryParseExact(trimmed, GanttDateFormatting.DdMMyyyyPattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
             && parsed != default)
         {
             return true;
