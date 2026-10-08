@@ -284,7 +284,7 @@ public static class GanttCatalogues
         new("AlternateBanding", "TRUE"),
         new("ShowMinorGrid", "TRUE"),
         new("ShowMajorGrid", "TRUE"),
-        new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMyyyy)),
+        new("DateDisplayFormat", nameof(GanttDateDisplayFormat.DdMMMyy)),
 
         // Schema version 7. These two were read by the scene-request factory from the
         // very first version of R4.8A but were never part of the approved key set, so

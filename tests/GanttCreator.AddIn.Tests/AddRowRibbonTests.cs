@@ -135,9 +135,12 @@ public class AddRowRibbonTests
     {
         var adapter = new Mock<IExcelApplicationAdapter>();
         _ = adapter.Setup(a => a.HasActiveWorkbook()).Returns(true);
+        var tableReader = new Mock<IGanttTableReader>();
+        _ = tableReader.Setup(t => t.Read()).Returns(GanttTableReadOutcome.Ok([]));
         var service = new RibbonStateService();
         service.SetApplicationAdapter(adapter.Object);
         service.SetLogAvailabilitySource(() => false);
+        service.SetTableReader(tableReader.Object);
         service.Refresh();
 
         Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));

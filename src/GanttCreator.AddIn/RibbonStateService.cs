@@ -176,7 +176,7 @@ internal class RibbonStateService
             // the derivation, but parsed defensively) persists at once.
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMyyyy(bound);
+                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
                 _state = _state with
                 {
                     PlotStartAuto = false,
@@ -264,7 +264,7 @@ internal class RibbonStateService
             // note above for why the stored date is not reused).
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMyyyy(bound);
+                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
                 _state = _state with
                 {
                     PlotFinishAuto = false,
@@ -318,11 +318,11 @@ internal class RibbonStateService
 
     /// <summary>
     /// Commits a user-typed plot-start date in explicit mode. Parses the exact
-    /// plot-date input (dd/MM/yyyy, plus the bare Excel serial the edit box
-    /// echoes back), normalises it to dd/MM/yyyy for storage, and pivots the
-    /// start end to Explicit; an unparsable value is a no-op (the edit box
-    /// keeps showing the previously stored date on the next getter query,
-    /// which is the revert). Persists to the workbook configuration
+    /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
+    /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
+    /// pivots the start end to Explicit; an unparsable value is a no-op (the
+    /// edit box keeps showing the previously stored date on the next getter
+    /// query, which is the revert). Persists to the workbook configuration
     /// sheet so it survives a close/reopen, and updates the display value
     /// immediately since the commit happens outside a workbook load. Never
     /// refreshes the chart: the next Refresh chart applies the stored settings.
@@ -335,7 +335,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMyyyy(parsed);
+        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
         _state = _state with
         {
             PlotStartAuto = false,
@@ -360,11 +360,11 @@ internal class RibbonStateService
 
     /// <summary>
     /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
-    /// plot-date input (dd/MM/yyyy, plus the bare Excel serial the edit box
-    /// echoes back), normalises it to dd/MM/yyyy for storage, and pivots the
-    /// finish end to Explicit; an unparsable value is a no-op (the edit box
-    /// keeps showing the previously stored date on the next getter query,
-    /// which is the revert). Persists to the workbook configuration
+    /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
+    /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
+    /// pivots the finish end to Explicit; an unparsable value is a no-op (the
+    /// edit box keeps showing the previously stored date on the next getter
+    /// query, which is the revert). Persists to the workbook configuration
     /// sheet so it survives a close/reopen, and updates the display value
     /// immediately since the commit happens outside a workbook load. Never
     /// refreshes the chart: the next Refresh chart applies the stored settings.
@@ -377,7 +377,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMyyyy(parsed);
+        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
         _state = _state with
         {
             PlotFinishAuto = false,
@@ -473,11 +473,12 @@ internal class RibbonStateService
     /// cannot be read mid-click). A successful read adopts the workbook's
     /// modes and explicit dates, normalising any parseable explicit date
     /// (bare Excel serials from pre-fix workbooks, unpadded input) to
-    /// dd/MM/yyyy so the edit box never shows a raw number; an unparsable
+    /// dd-MMM-yy so the edit box never shows a raw number; an unparsable
     /// stored date is kept verbatim so the failure stays visible instead of
     /// being silently replaced. Then derives the effective display dates so
     /// disabled AUTO edit boxes show the current data range date.
     /// Mode text parses through the single PlotRangeModes authority, so the
+    /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// Never throws.
     /// </summary>
@@ -535,7 +536,7 @@ internal class RibbonStateService
     /// bound in automatic mode (the month-snapped extent Refresh renders, not
     /// the raw padded data extent), or empty when neither is known. Uses the
     /// same ingredients Refresh consumes (table rows, row validation, the
-    /// plot resolver, then the factory's padding-then-snap), so the disabled
+    /// plot resolver, then the per-end padding-then-snap), so the disabled
     /// AUTO box shows exactly what Refresh would render. A failed derivation
     /// keeps the last known display value rather than blanking the box.
     /// Never throws.
@@ -571,21 +572,44 @@ internal class RibbonStateService
 
                     if (range.Succeeded && range.Start is { } resolvedStart && range.Finish is { } resolvedFinish)
                     {
-                        // The TRUE chart bounds: padding-then-snap through the
-                        // single PlotMonthBounds authority Refresh renders
-                        // (owner ruling 2026-10-02). Showing the raw padded
-                        // data extent here would display dates the chart never
-                        // draws.
-                        (DateOnly boundStart, DateOnly boundFinish) = PlotMonthBounds.SnapExtent(resolvedStart, resolvedFinish);
+                        // The TRUE chart bounds: per-end padding-then-snap
+                        // through the single PlotMonthBounds authority Refresh
+                        // renders (owner ruling 2026-10-02). DataRange ends are
+                        // month-snapped; explicit ends pass through verbatim.
+                        // Mirrors TryResolveDateRange in ExcelSceneBuildRequestFactory.
+                        var startMode = _state.PlotStartAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
+                        var finishMode = _state.PlotFinishAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
 
-                        if (_state.PlotStartAuto)
+                        var start = resolvedStart;
+                        var finish = resolvedFinish;
+
+                        if (startMode == PlotRangeMode.DataRange)
                         {
-                            effectiveStart = GanttDateFormatting.FormatDdMMyyyy(boundStart);
+                            start = PlotMonthBounds.SnapToMonthStart(start);
                         }
 
-                        if (_state.PlotFinishAuto)
+                        if (finishMode == PlotRangeMode.DataRange)
                         {
-                            effectiveFinish = GanttDateFormatting.FormatDdMMyyyy(boundFinish);
+                            finish = PlotMonthBounds.SnapToMonthEnd(finish);
+                        }
+
+                        // Degenerate guard: if snap moved finish on or before
+                        // start, keep last display values.
+                        if (finish.DayNumber <= start.DayNumber)
+                        {
+                            // Degenerate; last display values stand.
+                        }
+                        else
+                        {
+                            if (_state.PlotStartAuto)
+                            {
+                                effectiveStart = GanttDateFormatting.FormatDdMMMyy(start);
+                            }
+
+                            if (_state.PlotFinishAuto)
+                            {
+                                effectiveFinish = GanttDateFormatting.FormatDdMMMyy(finish);
+                            }
                         }
                     }
                 }
@@ -606,8 +630,8 @@ internal class RibbonStateService
 
     /// <summary>
     /// Normalises one stored explicit plot date for display and state: a
-    /// parseable value (dd/MM/yyyy or the bare Excel serial the edit box
-    /// echoes) becomes canonical dd/MM/yyyy; blank stays blank; an
+    /// parseable value (dd-MMM-yy, dd/MM/yyyy, or the bare Excel serial the
+    /// edit box echoes) becomes canonical dd-MMM-yy; blank stays blank; an
     /// unparsable value is kept verbatim so the failure stays visible.
     /// Pure and never throws.
     /// </summary>
@@ -618,7 +642,7 @@ internal class RibbonStateService
         return string.IsNullOrWhiteSpace(stored)
             ? string.Empty
             : PlotRangeResolver.TryParsePlotDate(stored, out DateOnly parsed)
-                ? GanttDateFormatting.FormatDdMMyyyy(parsed)
+                ? GanttDateFormatting.FormatDdMMMyy(parsed)
                 : stored;
     }
 
@@ -660,7 +684,20 @@ internal class RibbonStateService
     internal void Refresh()
     {
         LoadPlotSettingsFromWorkbook();
-        _state = CaptureSnapshot(_state);
+
+        // Probe whether the active workbook has an initialised Gantt sheet.
+        // TableMissing means the sheet hasn't been initialised yet; other
+        // refusals mean it exists but is corrupted (still counts as initialised
+        // for gating purposes — the user can still repair). NoActiveWorkbook
+        // means no workbook at all.
+        var sheetInitialised = false;
+        if (_tableReader is not null)
+        {
+            var tableOutcome = _tableReader.Read();
+            sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
+        }
+
+        _state = CaptureSnapshot(_state, sheetInitialised);
         Invalidate();
     }
 
@@ -676,7 +713,7 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            _state = CaptureSnapshot(_state);
+            _state = CaptureSnapshot(_state, _state.SheetInitialised);
             Invalidate();
         }
         catch
@@ -742,8 +779,9 @@ internal class RibbonStateService
     /// previous snapshot.
     /// </summary>
     /// <param name="previous">The snapshot currently published.</param>
+    /// <param name="sheetInitialised">Whether the active workbook has an initialised Gantt sheet.</param>
     /// <returns>The snapshot to publish.</returns>
-    private RibbonState CaptureSnapshot(RibbonState previous)
+    private RibbonState CaptureSnapshot(RibbonState previous, bool sheetInitialised)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
         // source failure keeps the last known snapshot instead of propagating
@@ -757,6 +795,7 @@ internal class RibbonStateService
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
                 logAvailable ?? previous.LogAvailable,
+                sheetInitialised,
                 previous.PlotStartAuto,
                 previous.PlotFinishAuto,
                 previous.PlotStartDate,

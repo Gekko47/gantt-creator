@@ -758,7 +758,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "0e05e0c7efcaafd07b45aaa94531c017a5d02159eb9966235bc61fa839aa3e76";
+        "9a24ea7fab4a78de0ee1505ec32f2f87c661f83d83074188ed37f60b874678ea";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

@@ -481,12 +481,17 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             padding = 0;
         }
 
+        var startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
+        var finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
+        var startDateText = ReadString(settings, _plotStartDateKey);
+        var finishDateText = ReadString(settings, _plotFinishDateKey);
+
         PlotRangeOutcome range = PlotRangeResolver.TryResolve(
             events,
-            ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange),
-            ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange),
-            ReadString(settings, _plotStartDateKey),
-            ReadString(settings, _plotFinishDateKey),
+            startModeText,
+            finishModeText,
+            startDateText,
+            finishDateText,
             padding);
         if (!range.Succeeded)
         {
@@ -495,22 +500,40 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             return false;
         }
 
-        DateOnly earliest = range.Start!.Value;
-        DateOnly latest = range.Finish!.Value;
+        // The resolver returns the RAW extent: explicit ends are the exact
+        // user-entered dates, DataRange ends are padded from data. Only
+        // DataRange ends are month-snapped; explicit ends pass through
+        // verbatim (R5.1 D2: modes never blend, explicit is never padded,
+        // widened, or narrowed). Post-snap ordering check: if an auto-finish
+        // snap lands before an explicit start, refuse rather than silently
+        // adjust — modes never blend.
+        var startMode = Enum.Parse<PlotRangeMode>(startModeText);
+        var finishMode = Enum.Parse<PlotRangeMode>(finishModeText);
 
-        // Month-snapped plot extent (owner ruling, 2026-10-02).
-        //
-        // The resolver already applied the padding, so the snap consumes its
-        // extent directly: the order is padding-then-snap, and that order is
-        // load-bearing. Snapping first and then padding would place the
-        // 10 Jan edge at 1 Jan minus the pad; padding first gives 10 Jan - 3 = 7 Jan,
-        // which is still inside January, so it snaps back to 1 Jan. The 3-day pad is
-        // therefore a tie-breaker for dates near a month edge, not a visible margin:
-        // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
-        // month further out to 1 Dec. Both were stated by the owner and only this
-        // order satisfies both. The snap itself lives in PlotMonthBounds, the
-        // single authority the Ribbon's AUTO display shares.
-        (plotStart, plotFinish) = PlotMonthBounds.SnapExtent(earliest, latest);
+        var start = range.Start!.Value;
+        var finish = range.Finish!.Value;
+
+        if (startMode == PlotRangeMode.DataRange)
+        {
+            start = PlotMonthBounds.SnapToMonthStart(start);
+        }
+
+        if (finishMode == PlotRangeMode.DataRange)
+        {
+            finish = PlotMonthBounds.SnapToMonthEnd(finish);
+        }
+
+        // Degenerate guard: if snap moved finish on or before start, refuse
+        // rather than silently adjust — modes never blend.
+        if (finish.DayNumber <= start.DayNumber)
+        {
+            refusal = SceneBuildRequestRefusal.InvalidSetting;
+            message = "The resolved plot start is after the plot finish after month-snapping. Check the configured modes and dates.";
+            return false;
+        }
+
+        plotStart = start;
+        plotFinish = finish;
 
         return true;
     }

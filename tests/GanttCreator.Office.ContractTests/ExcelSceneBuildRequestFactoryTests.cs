@@ -853,8 +853,9 @@ public class ExcelSceneBuildRequestFactoryTests
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
-        Assert.Equal(new DateOnly(2024, 2, 1), outcome.Request!.PlotStart);
-        Assert.Equal(new DateOnly(2024, 4, 30), outcome.Request.PlotFinish);
+        // Explicit dates pass through verbatim (no month-snap)
+        Assert.Equal(new DateOnly(2024, 2, 10), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2024, 4, 10), outcome.Request.PlotFinish);
     }
 
     /// <summary>
@@ -879,7 +880,8 @@ public class ExcelSceneBuildRequestFactoryTests
         );
 
         Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
-        Assert.Equal(new DateOnly(2024, 1, 1), outcome.Request!.PlotStart);
+        // Explicit start passes through verbatim; DataRange finish is month-snapped
+        Assert.Equal(new DateOnly(2024, 1, 15), outcome.Request!.PlotStart);
         Assert.Equal(new DateOnly(2024, 4, 30), outcome.Request.PlotFinish);
     }
 

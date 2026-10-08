@@ -18,10 +18,10 @@ public class GanttDateDisplayFormatTests
     {
         var setting = GanttCatalogues.Settings.Single(item => item.Key == "DateDisplayFormat");
 
-        Assert.Equal(nameof(GanttDateDisplayFormat.DdMMyyyy), setting.DefaultValue);
+        Assert.Equal(nameof(GanttDateDisplayFormat.DdMMMyy), setting.DefaultValue);
         Assert.True(
             GanttChartSettings.TryParseDateDisplayFormat(setting.DefaultValue, out GanttDateDisplayFormat parsed));
-        Assert.Equal(GanttDateDisplayFormat.DdMMyyyy, parsed);
+        Assert.Equal(GanttDateDisplayFormat.DdMMMyy, parsed);
     }
 
     [Fact]

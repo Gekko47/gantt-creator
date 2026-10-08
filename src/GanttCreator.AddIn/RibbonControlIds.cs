@@ -49,4 +49,16 @@ internal static class RibbonControlIds
 
     /// <summary>The Add delineator button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string AddDelineator = "btnAddDelineator";
+
+    /// <summary>The Plot start AUTO checkbox (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PlotStartAuto = "chkPlotStartAuto";
+
+    /// <summary>The Plot finish AUTO checkbox (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PlotFinishAuto = "chkPlotFinishAuto";
+
+    /// <summary>The Plot start date edit box (<c>getEnabled</c> driven by workbook + initialised + not auto).</summary>
+    internal const string PlotStartDate = "edtPlotStartDate";
+
+    /// <summary>The Plot finish date edit box (<c>getEnabled</c> driven by workbook + initialised + not auto).</summary>
+    internal const string PlotFinishDate = "edtPlotFinishDate";
 }

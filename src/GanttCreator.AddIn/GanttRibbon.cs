@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 
@@ -480,7 +480,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return !stateService.IsPlotStartAuto();
+            return stateService.GetEnabled(RibbonControlIds.PlotStartDate);
         }
         catch
         {
@@ -513,7 +513,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return !stateService.IsPlotFinishAuto();
+            return stateService.GetEnabled(RibbonControlIds.PlotFinishDate);
         }
         catch
         {
@@ -717,3 +717,4 @@ public class GanttRibbon : ExcelRibbon
         return string.IsNullOrWhiteSpace(id) ? fallbackCommandName : id;
     }
 }
+

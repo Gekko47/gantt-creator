@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
@@ -735,7 +735,7 @@ public class GanttRibbonTests
             .Select(element => element.Attribute("id")?.Value)
             .ToList();
         Assert.Equal(
-            ["lblPlotStartAuto", "lblPlotStartDate", "lblPlotFinishAuto", "lblPlotFinishDate"],
+            ["lblPlotStartDate", "lblPlotStartAuto", "lblPlotFinishDate", "lblPlotFinishAuto"],
             labelIds);
 
         XElement startCheck = group.Descendants(ns + "checkBox")
@@ -754,17 +754,15 @@ public class GanttRibbonTests
         Assert.Equal("GetPlotStartDateEnabled", startBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotStartDateChange", startBox.Attribute("onChange")?.Value);
 
-        // The box is sized for the default display format dd/MM/yyyy: without
-        // a sizeString Excel sizes the echo for a short string and a typed
-        // date renders back as its bare number.
-        Assert.Equal("00/00/0000", startBox.Attribute("sizeString")?.Value);
+        // The box is sized for the default display format dd-mmm-yy.
+        Assert.Equal("dd-mmm-yy", startBox.Attribute("sizeString")?.Value);
 
         XElement finishBox = group.Descendants(ns + "editBox")
             .Single(element => element.Attribute("id")?.Value == "edtPlotFinishDate");
         Assert.Equal("GetPlotFinishDate", finishBox.Attribute("getText")?.Value);
         Assert.Equal("GetPlotFinishDateEnabled", finishBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotFinishDateChange", finishBox.Attribute("onChange")?.Value);
-        Assert.Equal("00/00/0000", finishBox.Attribute("sizeString")?.Value);
+        Assert.Equal("dd-mmm-yy", finishBox.Attribute("sizeString")?.Value);
     }
 
     /// <summary>
@@ -777,9 +775,9 @@ public class GanttRibbonTests
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
 
-        GanttRibbon.OnPlotStartDateChange(null, "15/03/2026", service);
+        GanttRibbon.OnPlotStartDateChange(null, "15-Mar-26", service);
 
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
         Assert.False(service.IsPlotStartAuto());
     }
 
@@ -824,7 +822,7 @@ public class GanttRibbonTests
     /// <summary>
     /// Positive for the true-bounds display: with both ends AUTO and event
     /// data present, the boxes show the month-snapped chart bounds Refresh
-    /// renders (01/03/2026–30/04/2026 for 10 Mar–31 Mar spans with the
+    /// renders (01-Mar-26–30-Apr-26 for 10 Mar–31 Mar spans with the
     /// default 3-day pad), not the raw padded data extent (07/03–03/04).
     /// </summary>
     [Fact]
@@ -853,8 +851,8 @@ public class GanttRibbonTests
 
         service.Refresh();
 
-        Assert.Equal("01/03/2026", service.GetPlotStartDate());
-        Assert.Equal("30/04/2026", service.GetPlotFinishDate());
+        Assert.Equal("01-Mar-26", service.GetPlotStartDate());
+        Assert.Equal("30-Apr-26", service.GetPlotFinishDate());
     }
 
     private static int s_nextPlotBoundsId;
@@ -885,24 +883,31 @@ public class GanttRibbonTests
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
 
-        GanttRibbon.OnPlotFinishDateChange(null, "30/06/2026", service);
+        GanttRibbon.OnPlotFinishDateChange(null, "30-Jun-26", service);
 
-        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
         Assert.False(service.IsPlotFinishAuto());
     }
 
     [Fact]
     public void Plot_date_getters_answer_from_the_snapshot()
     {
+        var adapter = new Mock<IExcelApplicationAdapter>();
+        _ = adapter.Setup(a => a.HasActiveWorkbook()).Returns(true);
+        var tableReader = new Mock<IGanttTableReader>();
+        _ = tableReader.Setup(t => t.Read()).Returns(GanttTableReadOutcome.Ok([]));
         var service = new RibbonStateService();
+        service.SetApplicationAdapter(adapter.Object);
+        service.SetTableReader(tableReader.Object);
         service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15/03/2026");
-        service.SetPlotFinishDate("30/06/2026");
+        service.SetPlotStartDate("15-Mar-26");
+        service.SetPlotFinishDate("30-Jun-26");
+        service.Refresh();
 
         var control = new Mock<IRibbonControl>();
 
-        Assert.Equal("15/03/2026", GanttRibbon.GetPlotStartDate(control.Object, service));
-        Assert.Equal("30/06/2026", GanttRibbon.GetPlotFinishDate(control.Object, service));
+        Assert.Equal("15-Mar-26", GanttRibbon.GetPlotStartDate(control.Object, service));
+        Assert.Equal("30-Jun-26", GanttRibbon.GetPlotFinishDate(control.Object, service));
 
         // Explicit on both ends: the edit boxes must be enabled, and the
         // AUTO checkboxes unchecked.
@@ -952,6 +957,8 @@ public class GanttRibbonTests
         internal override bool IsPlotStartAuto() => throw new InvalidOperationException("probe failed");
 
         internal override bool IsPlotFinishAuto() => throw new InvalidOperationException("probe failed");
+
+        internal override bool GetEnabled(string? controlId) => true;
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -990,7 +997,7 @@ public class GanttRibbonTests
 
         var explicitService = new RibbonStateService();
         explicitService.SetCatalogueWriter(null);
-        explicitService.SetPlotStartDate("15/03/2026");
+        explicitService.SetPlotStartDate("15-Mar-26");
         GanttRibbon.OnPlotStartAutoClick(control.Object, false, explicitService);
         Assert.False(explicitService.IsPlotStartAuto());
     }
@@ -1011,7 +1018,7 @@ public class GanttRibbonTests
 
         var explicitService = new RibbonStateService();
         explicitService.SetCatalogueWriter(null);
-        explicitService.SetPlotFinishDate("30/06/2026");
+        explicitService.SetPlotFinishDate("30-Jun-26");
         GanttRibbon.OnPlotFinishAutoClick(control.Object, false, explicitService);
         Assert.False(explicitService.IsPlotFinishAuto());
     }
@@ -1029,13 +1036,13 @@ public class GanttRibbonTests
         CommandBoundary.Instance.SetLog(log.Object);
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotStartMode"] == "Explicit"
-                    && settings["PlotStartDate"] == "15/03/2026")))
+                    && settings["PlotStartDate"] == "15-Mar-26")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -1045,7 +1052,7 @@ public class GanttRibbonTests
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
     }
 
     /// <summary>
@@ -1060,13 +1067,13 @@ public class GanttRibbonTests
         CommandBoundary.Instance.SetLog(log.Object);
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
-        service.SetPlotFinishDate("30/06/2026");
+        service.SetPlotFinishDate("30-Jun-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotFinishMode"] == "Explicit"
-                    && settings["PlotFinishDate"] == "30/06/2026")))
+                    && settings["PlotFinishDate"] == "30-Jun-26")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -1076,7 +1083,7 @@ public class GanttRibbonTests
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -1086,7 +1093,7 @@ public class GanttRibbonTests
         var control = new Mock<IRibbonControl>();
 
         Assert.Throws<ArgumentNullException>(
-            () => GanttRibbon.OnPlotStartDateChange(control.Object, "15/03/2026", null!));
+            () => GanttRibbon.OnPlotStartDateChange(control.Object, "15-Mar-26", null!));
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -1096,7 +1103,7 @@ public class GanttRibbonTests
         var control = new Mock<IRibbonControl>();
 
         Assert.Throws<ArgumentNullException>(
-            () => GanttRibbon.OnPlotFinishDateChange(control.Object, "30/06/2026", null!));
+            () => GanttRibbon.OnPlotFinishDateChange(control.Object, "30-Jun-26", null!));
     }
 
     /// <summary>
@@ -1225,3 +1232,4 @@ public class GanttRibbonTests
         return false;
     }
 }
+

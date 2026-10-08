@@ -87,16 +87,17 @@ public static class PlotRangeResolver
     }
 
     /// <summary>
-    /// Parses one user-entered exact plot date in the default display format
-    /// only (<c>dd/MM/yyyy</c>, ADR-0016 D1): the plot boxes take the exact
-    /// dates the chart uses for its bounds, never the activity Start/Finish
-    /// multi-format auto-parser. A bare Excel serial is accepted because the
-    /// edit box echoes a typed date back as its number (e.g. 46118 for
-    /// 06/04/2026); every other text must match the default format exactly.
-    /// Blank text fails rather than defaulting. No CurrentCulture fallback is
-    /// used so unmatched dates fail deterministically. Office-free so both
-    /// the ribbon setters and the resolve path share one authority, and the
-    /// stored form is always normalised to <c>dd/MM/yyyy</c> by the caller.
+    /// Parses one user-entered exact plot date. The accepted forms are the
+    /// development default display format (<c>dd-MMM-yy</c>, e.g. <c>10-Jan-26</c>),
+    /// the legacy numeric form (<c>dd/MM/yyyy</c>, still accepted so workbooks
+    /// created before the format change keep parsing), and a bare Excel serial.
+    /// The plot boxes take the exact dates the chart uses for its bounds, never
+    /// the activity Start/Finish multi-format auto-parser. Blank text fails
+    /// rather than defaulting. No CurrentCulture fallback is used so unmatched
+    /// dates fail deterministically, and no numeric month/day form is accepted,
+    /// because that is the form Excel re-reads as a different date under a
+    /// non-UK locale (the <c>10/01/2025</c> → 1 Oct 2025 defect). Office-free so
+    /// both the ribbon setters and the resolve path share one authority.
     /// </summary>
     /// <param name="text">The user-entered date text.</param>
     /// <param name="parsed">The parsed date when successful.</param>
@@ -128,11 +129,17 @@ public static class PlotRangeResolver
             return true;
         }
 
-        // Exact default-format only: the plot boxes are not the activity
-        // Start/Finish cells, so the multi-format equivalents (MM/dd/yyyy,
-        // ISO, dd-MMM-yyyy) are refused here. Accepting them would let an
-        // ambiguous entry (01/02/2026) silently mean a different date than
-        // the chart's own dd/MM/yyyy contract.
+        // The development default format, which carries a month name and so
+        // cannot be misread by Excel under any locale.
+        if (DateOnly.TryParseExact(trimmed, GanttDateFormatting.DdMMMyyPattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+            && parsed != default)
+        {
+            return true;
+        }
+
+        // Legacy numeric form, accepted only so pre-existing workbooks keep
+        // parsing. It is deliberately NOT the preferred input: a numeric
+        // day/month pair is ambiguous and is what the locale flip came from.
         if (DateOnly.TryParseExact(trimmed, GanttDateFormatting.DdMMyyyyPattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
             && parsed != default)
         {

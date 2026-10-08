@@ -8,6 +8,7 @@ namespace GanttCreator.AddIn;
 /// </summary>
 /// <param name="HasActiveWorkbook">True when Excel has an active workbook.</param>
 /// <param name="LogAvailable">True when the rolling log exposes an active file path.</param>
+/// <param name="SheetInitialised">True when the active workbook has a Gantt sheet that has been initialised (tblGanttData exists).</param>
 /// <param name="PlotStartAuto">True when the plot start derives from the data range (R5.1).</param>
 /// <param name="PlotFinishAuto">True when the plot finish derives from the data range (R5.1).</param>
 /// <param name="PlotStartDate">The explicit plot start date, or empty when automatic (R5.1).</param>
@@ -26,6 +27,7 @@ namespace GanttCreator.AddIn;
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
+    bool SheetInitialised,
     bool PlotStartAuto,
     bool PlotFinishAuto,
     string PlotStartDate,
@@ -38,7 +40,7 @@ internal sealed record RibbonState(
     /// gated control starts disabled and is enabled by the first refresh
     /// (docs/03-ROADMAP.md R1.5).
     /// </summary>
-    internal static RibbonState Initial { get; } = new(false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty);
+    internal static RibbonState Initial { get; } = new(false, false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled
@@ -58,11 +60,15 @@ internal sealed record RibbonState(
         RibbonControlIds.OpenLog => LogAvailable,
         RibbonControlIds.InitialiseSheet => HasActiveWorkbook,
         RibbonControlIds.ValidateSheet => HasActiveWorkbook,
-        RibbonControlIds.RefreshSheet => HasActiveWorkbook,
+        RibbonControlIds.RefreshSheet => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.RepairConfig => HasActiveWorkbook,
-        RibbonControlIds.AddActivity => HasActiveWorkbook,
-        RibbonControlIds.AddMilestone => HasActiveWorkbook,
-        RibbonControlIds.AddDelineator => HasActiveWorkbook,
+        RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.AddDelineator => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,
+        RibbonControlIds.PlotFinishDate => HasActiveWorkbook && SheetInitialised && !PlotFinishAuto,
         _ => true,
     };
 }

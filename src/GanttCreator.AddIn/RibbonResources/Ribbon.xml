@@ -18,7 +18,7 @@
               <labelControl id="lblPlotStartAuto" label="Auto"/>
               <checkBox id="chkPlotStartAuto" getPressed="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
             </box>              
-            <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="00/00/0000"/>
+            <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="dd-mmm-yy"/>
           </box>
           <box id="boxPlotFinish" boxStyle="vertical">
             <labelControl id="lblPlotFinishDate" label="Finish Date"/>
@@ -26,7 +26,7 @@
               <labelControl id="lblPlotFinishAuto" label="Auto"/>
               <checkBox id="chkPlotFinishAuto" getPressed="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
             </box>
-            <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="00/00/0000"/>
+            <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="dd-mmm-yy"/>
           </box>
         </group>
         <group id="grpPlaceholder" label="Gantt Creator">

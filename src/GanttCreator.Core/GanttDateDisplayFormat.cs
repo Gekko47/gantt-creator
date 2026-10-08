@@ -22,6 +22,9 @@ public enum GanttDateDisplayFormat
 {
     /// <summary>Two-digit day, two-digit month, four-digit year, such as <c>05/01/2026</c>.</summary>
     DdMMyyyy = 0,
+
+    /// <summary>Day, three-letter month, two-digit year, such as <c>05-Sep-26</c>.</summary>
+    DdMMMyy = 1,
 }
 
 /// <summary>The culture-invariant date formatting contract (ADR-0016 D4).</summary>
@@ -39,6 +42,9 @@ public static class GanttDateFormatting
     /// <summary>The approved invariant pattern for <see cref="GanttDateDisplayFormat.DdMMyyyy"/>.</summary>
     public const string DdMMyyyyPattern = "dd/MM/yyyy";
 
+    /// <summary>The approved invariant pattern for <see cref="GanttDateDisplayFormat.DdMMMyy" />.</summary>
+    public const string DdMMMyyPattern = "dd-MMM-yy";
+
     /// <summary>Formats a date using the invariant pattern for a display format.</summary>
     /// <param name="date">The date to format.</param>
     /// <param name="format">The approved display format.</param>
@@ -51,6 +57,7 @@ public static class GanttDateFormatting
         format switch
         {
             GanttDateDisplayFormat.DdMMyyyy => FormatDdMMyyyy(date),
+            GanttDateDisplayFormat.DdMMMyy => FormatDdMMMyy(date),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(format),
                 format,
@@ -62,4 +69,10 @@ public static class GanttDateFormatting
     /// <returns>The invariant formatted date text.</returns>
     public static string FormatDdMMyyyy(DateOnly date) =>
         date.ToString(DdMMyyyyPattern, CultureInfo.InvariantCulture);
+
+    /// <summary>Formats a date as the approved invariant <c>dd-mmm-yy</c> text.</summary>
+    /// <param name="date">The date to format.</param>
+    /// <returns>The invariant formatted date text.</returns>
+    public static string FormatDdMMMyy(DateOnly date) =>
+        date.ToString(DdMMMyyPattern, CultureInfo.InvariantCulture);
 }

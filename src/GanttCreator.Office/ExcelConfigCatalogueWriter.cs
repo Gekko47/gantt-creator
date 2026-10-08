@@ -621,6 +621,44 @@ public class ExcelConfigCatalogueWriter(
 
         ListObject table = AddTable(listObjects, extent);
         table.Name = tableName;
+
+        // The settings table's Value column holds free text, including plot
+        // dates such as "10/01/2025". Written into a General-format cell via
+        // Value2, Excel re-reads that text under the host locale and stores
+        // the serial it parsed (45931 = 1 Oct 2025 for a US host); the next
+        // read then returns the coerced value and the UK date is lost before
+        // the parser ever sees it. Formatting the column as Text AFTER the
+        // table is created stores the text verbatim, which is the only form
+        // the parser can parse deterministically.
+        // This is a best-effort operation; if the range is not available (e.g.
+        // in tests with fakes), we skip formatting rather than failing.
+        if (tableName == GanttCatalogues.SettingsTableName)
+        {
+#pragma warning disable CA1031 // Best-effort formatting: any COM exception is swallowed
+            try
+            {
+                var listColumns = table.ListColumns;
+                if (listColumns is not null && listColumns.Count >= 3)
+                {
+                    var valueColumn = listColumns[2];
+                    if (valueColumn is not null)
+                    {
+                        var bodyRange = valueColumn.DataBodyRange;
+                        if (bodyRange is { } br)
+                        {
+                            br.NumberFormat = "@";
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Best-effort: formatting failed (e.g. in tests with fakes).
+                // The write still succeeds; the parser will handle legacy formats.
+            }
+#pragma warning restore CA1031
+        }
+
         return extent;
     }
 
@@ -896,6 +934,15 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The resized range.</returns>
     internal virtual Excel.Range GetResizedRange(Excel.Range range, int rows, int columns) =>
         range.Resize[rows, columns];
+
+    /// <summary>
+    /// Formats one column of a range as text. Test seam over the COM
+    /// <c>Range.NumberFormat</c> property.
+    /// </summary>
+    /// <param name="range">The range containing the column.</param>
+    /// <param name="columnIndex">The zero-based column index within <paramref name="range"/> to format.</param>
+    internal virtual void FormatColumnAsText(Excel.Range range, int columnIndex) =>
+        range.Columns[columnIndex + 1].NumberFormat = "@";
 
     /// <summary>
     /// Returns a table's body range. Test seam over the COM property.

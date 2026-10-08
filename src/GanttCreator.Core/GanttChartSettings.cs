@@ -97,6 +97,9 @@ public static class GanttChartSettings
             case nameof(GanttDateDisplayFormat.DdMMyyyy):
                 format = GanttDateDisplayFormat.DdMMyyyy;
                 return true;
+            case nameof(GanttDateDisplayFormat.DdMMMyy):
+                format = GanttDateDisplayFormat.DdMMMyy;
+                return true;
             default:
                 format = default;
                 return false;

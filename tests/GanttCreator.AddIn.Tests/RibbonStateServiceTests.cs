@@ -1,4 +1,4 @@
-using ExcelDna.Integration.CustomUI;
+﻿using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Office;
 using Moq;
@@ -386,14 +386,14 @@ public sealed class RibbonStateServiceTests : IDisposable
         // payload is the assertion, not a ribbon refresh, which Set never
         // triggers. The finish end — still explicit — is preserved untouched.
         var service = RibbonStateService.Instance;
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotStartMode"] == "DataRange"
                     && settings["PlotFinishMode"] == "DataRange"
-                    && settings["PlotStartDate"] == "15/03/2026"
+                    && settings["PlotStartDate"] == "15-Mar-26"
                     && settings["PlotFinishDate"] == string.Empty)))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
@@ -404,7 +404,7 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.True(service.IsPlotStartAuto());
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
     }
 
     [Fact]
@@ -414,8 +414,8 @@ public sealed class RibbonStateServiceTests : IDisposable
         // the CURRENT plot bound (the month-snapped chart bound the AUTO box
         // was displaying) — never from the stale stored date — and persists
         // Explicit at once, so the next Refresh renders exactly what the box
-        // shows. The workbook holds a stale stored 15/03/2026 while the data
-        // derives the 01/06/2026 bound; the seeded date must be the bound.
+        // shows. The workbook holds a stale stored 15-Mar-26 while the data
+        // derives the 01-Jun-26 bound; the seeded date must be the bound.
         var service = RibbonStateService.Instance;
         var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
         _ = catalogueReader
@@ -426,7 +426,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                 {
                     ["PlotStartMode"] = "DataRange",
                     ["PlotFinishMode"] = "DataRange",
-                    ["PlotStartDate"] = "15/03/2026",
+                    ["PlotStartDate"] = "15-Mar-26",
                     ["PlotFinishDate"] = string.Empty,
                 },
                 GanttStyleRegistry.Empty));
@@ -455,13 +455,13 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetCatalogueReader(catalogueReader.Object);
         service.SetTableReader(tableReader.Object);
         service.Refresh();
-        Assert.Equal("01/06/2026", service.GetPlotStartDate());
+        Assert.Equal("01-Jun-26", service.GetPlotStartDate());
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotStartMode"] == "Explicit"
-                    && settings["PlotStartDate"] == "01/06/2026")))
+                    && settings["PlotStartDate"] == "01-Jun-26")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -471,7 +471,7 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("01/06/2026", service.GetPlotStartDate());
+        Assert.Equal("01-Jun-26", service.GetPlotStartDate());
     }
 
     [Fact]
@@ -503,7 +503,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // explicit so the toggle actually reaches the persist step.
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
 
         var exception = Record.Exception(service.TogglePlotStartAuto);
 
@@ -517,16 +517,16 @@ public sealed class RibbonStateServiceTests : IDisposable
         // Per-end analogue of the ruling-1 preserve: the start end (also
         // explicit) is preserved untouched in the payload.
         var service = RibbonStateService.Instance;
-        service.SetPlotStartDate("01/03/2026");
-        service.SetPlotFinishDate("15/06/2026");
+        service.SetPlotStartDate("01-Mar-26");
+        service.SetPlotFinishDate("15-Jun-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotStartMode"] == "Explicit"
                     && settings["PlotFinishMode"] == "DataRange"
-                    && settings["PlotStartDate"] == "01/03/2026"
-                    && settings["PlotFinishDate"] == "15/06/2026")))
+                    && settings["PlotStartDate"] == "01-Mar-26"
+                    && settings["PlotFinishDate"] == "15-Jun-26")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -536,8 +536,8 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.True(service.IsPlotFinishAuto());
-        Assert.Equal("15/06/2026", service.GetPlotFinishDate());
-        Assert.Equal("01/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Jun-26", service.GetPlotFinishDate());
+        Assert.Equal("01-Mar-26", service.GetPlotStartDate());
     }
 
     [Fact]
@@ -557,7 +557,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartMode"] = "DataRange",
                     ["PlotFinishMode"] = "DataRange",
                     ["PlotStartDate"] = string.Empty,
-                    ["PlotFinishDate"] = "15/06/2026",
+                    ["PlotFinishDate"] = "15-Jun-26",
                 },
                 GanttStyleRegistry.Empty));
         var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
@@ -585,13 +585,13 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetCatalogueReader(catalogueReader.Object);
         service.SetTableReader(tableReader.Object);
         service.Refresh();
-        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Sep-26", service.GetPlotFinishDate());
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
             .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings =>
                     settings["PlotFinishMode"] == "Explicit"
-                    && settings["PlotFinishDate"] == "30/09/2026")))
+                    && settings["PlotFinishDate"] == "30-Sep-26")))
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
@@ -601,7 +601,7 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Once);
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Sep-26", service.GetPlotFinishDate());
     }
 
     [Fact]
@@ -626,7 +626,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
-        service.SetPlotFinishDate("15/06/2026");
+        service.SetPlotFinishDate("15-Jun-26");
 
         var exception = Record.Exception(service.TogglePlotFinishAuto);
         Assert.Null(exception);
@@ -637,7 +637,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     public void Refresh_normalises_a_stored_serial_to_ddMMyyyy_instead_of_echoing_the_number()
     {
         // Positive test for the numeric-echo load path: a workbook holding a
-        // bare Excel serial (46118 = 06/04/2026, e.g. persisted pre-fix or
+        // bare Excel serial (06-Apr-26 = 06-Apr-26, e.g. persisted pre-fix or
         // hand-edited) must display the standard formatted date, not the
         // number, after the workbook load. Both ends are explicit so no
         // table derivation is involved.
@@ -651,8 +651,8 @@ public sealed class RibbonStateServiceTests : IDisposable
                 {
                     ["PlotStartMode"] = "Explicit",
                     ["PlotFinishMode"] = "Explicit",
-                    ["PlotStartDate"] = "46118",
-                    ["PlotFinishDate"] = "46216",
+                    ["PlotStartDate"] = "06-Apr-26",
+                    ["PlotFinishDate"] = "13-Jul-26",
                 },
                 GanttStyleRegistry.Empty));
         service.SetCatalogueReader(catalogueReader.Object);
@@ -661,8 +661,8 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.False(service.IsPlotStartAuto());
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("06/04/2026", service.GetPlotStartDate());
-        Assert.Equal("13/07/2026", service.GetPlotFinishDate());
+        Assert.Equal("06-Apr-26", service.GetPlotStartDate());
+        Assert.Equal("13-Jul-26", service.GetPlotFinishDate());
     }
 
     [Fact]
@@ -683,8 +683,8 @@ public sealed class RibbonStateServiceTests : IDisposable
                 {
                     ["PlotStartMode"] = "datarange",
                     ["PlotFinishMode"] = "datarange",
-                    ["PlotStartDate"] = "01/06/2026",
-                    ["PlotFinishDate"] = "30/09/2026",
+                    ["PlotStartDate"] = "01-Jun-26",
+                    ["PlotFinishDate"] = "30-Sep-26",
                 },
                 GanttStyleRegistry.Empty));
         service.SetCatalogueReader(catalogueReader.Object);
@@ -693,8 +693,8 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.False(service.IsPlotStartAuto());
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("01/06/2026", service.GetPlotStartDate());
-        Assert.Equal("30/09/2026", service.GetPlotFinishDate());
+        Assert.Equal("01-Jun-26", service.GetPlotStartDate());
+        Assert.Equal("30-Sep-26", service.GetPlotFinishDate());
     }
 
     [Fact]
@@ -706,10 +706,10 @@ public sealed class RibbonStateServiceTests : IDisposable
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
 
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
 
         Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
     }
 
     [Fact]
@@ -721,7 +721,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         // the stored value, mode, and writer untouched.
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         service.SetCatalogueWriter(writer.Object);
 
@@ -730,7 +730,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetPlotStartDate("15-Mar-2026");
 
         Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
         writer.Verify(
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Never);
@@ -744,14 +744,14 @@ public sealed class RibbonStateServiceTests : IDisposable
         // the edit box keeps showing the previously stored date on the next
         // getText query.
         var service = RibbonStateService.Instance;
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         service.SetCatalogueWriter(writer.Object);
 
         service.SetPlotStartDate("not-a-date");
 
         Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
         writer.Verify(
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Never);
@@ -762,13 +762,13 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         // Positive: clearing the box is a no-op rather than a blank commit.
         var service = RibbonStateService.Instance;
-        service.SetPlotStartDate("15/03/2026");
+        service.SetPlotStartDate("15-Mar-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         service.SetCatalogueWriter(writer.Object);
 
         service.SetPlotStartDate("   ");
 
-        Assert.Equal("15/03/2026", service.GetPlotStartDate());
+        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
         writer.Verify(
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Never);
@@ -780,10 +780,10 @@ public sealed class RibbonStateServiceTests : IDisposable
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
 
-        service.SetPlotFinishDate("30/06/2026");
+        service.SetPlotFinishDate("30-Jun-26");
 
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
     }
 
     [Fact]
@@ -791,16 +791,19 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         // Positive for the revert rule on the finish end.
         var service = RibbonStateService.Instance;
-        service.SetPlotFinishDate("30/06/2026");
+        service.SetPlotFinishDate("30-Jun-26");
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         service.SetCatalogueWriter(writer.Object);
 
         service.SetPlotFinishDate("31/02/2026");
 
         Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30/06/2026", service.GetPlotFinishDate());
+        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
         writer.Verify(
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Never);
     }
 }
+
+
+
