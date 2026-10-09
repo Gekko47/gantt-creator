@@ -277,8 +277,6 @@ if (-not (Test-ToolInstalled $settings.ToolId $settings.Version)) {
 # Run Stryker from the Core project directory with explicit --project and --test-project
 # This uses a supported project context per the Stryker CLI requirements.
 $coreProjectDir = Split-Path -Parent $coreProject
-$coreProjectFileName = Split-Path -Leaf $coreProject
-$coreTestsFileName = Split-Path -Leaf $coreTests
 
 $arguments = @(
     '--project', $coreProject
