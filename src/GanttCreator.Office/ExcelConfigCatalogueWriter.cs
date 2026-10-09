@@ -637,13 +637,13 @@ public class ExcelConfigCatalogueWriter(
 #pragma warning disable CA1031 // Best-effort formatting: any COM exception is swallowed
             try
             {
-                var listColumns = table.ListColumns;
+                ListColumns? listColumns = table.ListColumns;
                 if (listColumns is not null && listColumns.Count >= 3)
                 {
-                    var valueColumn = listColumns[2];
+                    ListColumn? valueColumn = listColumns[2];
                     if (valueColumn is not null)
                     {
-                        var bodyRange = valueColumn.DataBodyRange;
+                        Excel.Range bodyRange = valueColumn.DataBodyRange;
                         if (bodyRange is { } br)
                         {
                             br.NumberFormat = "@";

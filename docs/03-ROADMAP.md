@@ -217,7 +217,7 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | ID | Reviewable commit outcome | Automated gate | Visual Studio / Office gate |
 | --- | --- | --- | --- |
 | R5.1 | Add plot start/finish settings with automatic and explicit modes | Invalid, automatic, explicit, and boundary setting tests | Required: change both modes in Excel and confirm chart range and Ribbon state |
-| R5.2 | Add month/quarter/year scale and page-width layout choices | Geometry snapshots for every scale/layout choice | Required: inspect headers, bands, and page-width behaviour in Excel |
+| R5.2 | Add the week scale (replacing year), the plot page margin, and the size-preset/width display | Geometry snapshots for every scale, margin, and preset choice; margin-clamp and reader-refusal tests | Required: inspect headers, bands, and page-width behaviour in Excel |
 | R5.3 | Add parent/child commands and stable lane reassignment | Sort, move, parent, child, and stable-ID contract tests | Required: exercise parent/child commands and refresh the real worksheet |
 | R5.4 | Add move-up/down and expand/collapse display commands | Deterministic ordering and visibility tests | Required: exercise controls and confirm visible rows/shapes remain aligned |
 | R5.5 | Add label visibility/position controls | Scene snapshots and Type-specific allowed-position tests for every option | Required: inspect label placement, clipping, and retained settings after Refresh |

@@ -50,6 +50,22 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_writes_the_settings_table_with_the_approved_keys_in_contract_order()
+    {
+        // R5.2: the settings catalogue gained Margin and MarginCm. The key set is
+        // pinned here, in contract order, so a future change that adds or drops a
+        // key is caught by the writer rather than by a reader that happens to be
+        // tolerant of an extra or missing row.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        ConfigSheetFake.TableFake settings = fake.Tables[3];
+        Assert.Equal(
+            GanttCatalogues.Settings.Select(setting => setting.Key).ToArray(),
+            settings.Body.Select(row => CellText(row[0])).ToArray());
+    }
+
+    [Fact]
     public void Write_materialises_the_types_from_the_code_owned_catalogue_only()
     {
         var fake = new ConfigSheetFake();

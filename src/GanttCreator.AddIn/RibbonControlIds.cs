@@ -61,4 +61,31 @@ internal static class RibbonControlIds
 
     /// <summary>The Plot finish date edit box (<c>getEnabled</c> driven by workbook + initialised + not auto).</summary>
     internal const string PlotFinishDate = "edtPlotFinishDate";
+
+    /// <summary>The plot time-scale dropdown (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PlotTimeScale = "ddnPlotTimeScale";
+
+    /// <summary>The plot margin combobox (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string Margin = "ddnMargin";
+
+    /// <summary>The custom-margin edit box (<c>getEnabled</c> driven by the margin preset being Custom).</summary>
+    internal const string MarginCm = "edtMarginCm";
+
+    /// <summary>The plot width display (always disabled; read-only output).</summary>
+    internal const string PlotWidth = "edtPlotWidth";
+
+    /// <summary>The plot height display (always disabled; read-only output).</summary>
+    internal const string PlotHeight = "edtPlotHeight";
+
+    /// <summary>The A4 portrait preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PresetA4Portrait = "btnPresetA4Portrait";
+
+    /// <summary>The A4 landscape preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PresetA4Landscape = "btnPresetA4Landscape";
+
+    /// <summary>The Presentation 16:9 preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PresetPresentation16x9 = "btnPresetPresentation16x9";
+
+    /// <summary>The Presentation 4:3 preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PresetPresentation4x3 = "btnPresetPresentation4x3";
 }

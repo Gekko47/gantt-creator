@@ -1,3 +1,5 @@
+using GanttCreator.Core;
+
 namespace GanttCreator.AddIn;
 
 /// <summary>
@@ -24,6 +26,12 @@ namespace GanttCreator.AddIn;
 /// the derived data range finish in automatic mode, or empty when neither is
 /// known (fix plan ruling 1).
 /// </param>
+/// <param name="TimeScale">The stored plot time scale (Month/Quarter/Week).</param>
+/// <param name="Margin">The stored plot margin preset (Narrow/Normal/Wide/Custom).</param>
+/// <param name="MarginCm">The stored custom margin, in centimetres, used only when <paramref name="Margin"/> is <see cref="GanttPlotMargin.Custom"/></param>
+/// <param name="Preset">The stored output size preset, or null when the workbook names none.</param>
+/// <param name="PlotWidthPt">The plot width the resolver would derive, in points, or null when no preset is known.</param>
+/// <param name="PlotHeightPt">The plot height the resolver would derive, in points, or null when no preset is known.</param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -33,14 +41,38 @@ internal sealed record RibbonState(
     string PlotStartDate,
     string PlotFinishDate,
     string EffectivePlotStartDate,
-    string EffectivePlotFinishDate)
+    string EffectivePlotFinishDate,
+    GanttTimeScale TimeScale,
+    GanttPlotMargin Margin,
+    double MarginCm,
+    SizePreset? Preset,
+    double? PlotWidthPt,
+    double? PlotHeightPt)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
     /// gated control starts disabled and is enabled by the first refresh
-    /// (docs/03-ROADMAP.md R1.5).
+    /// (docs/03-ROADMAP.md R1.5). The scale and margin default to the catalogue
+    /// defaults so the dropdowns and combobox show a selection even before the
+    /// workbook is read (R5.2); the width and height displays show nothing,
+    /// because there is no preset to measure against yet.
     /// </summary>
-    internal static RibbonState Initial { get; } = new(false, false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty);
+    internal static RibbonState Initial { get; } = new(
+        false,
+        false,
+        false,
+        true,
+        true,
+        string.Empty,
+        string.Empty,
+        string.Empty,
+        string.Empty,
+        GanttTimeScale.Month,
+        GanttPlotMargin.Normal,
+        GanttPlotMargins.DefaultCustomCm,
+        null,
+        null,
+        null);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled
@@ -69,6 +101,15 @@ internal sealed record RibbonState(
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,
         RibbonControlIds.PlotFinishDate => HasActiveWorkbook && SheetInitialised && !PlotFinishAuto,
+        RibbonControlIds.PlotTimeScale => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.Margin => HasActiveWorkbook && SheetInitialised,
+        // The width/height displays are outputs, never inputs: they are
+        // permanently disabled through the dedicated GetPlotDimensionsEnabled
+        // getter, so they never appear in this table (work item R5.2 D4).
+        RibbonControlIds.PresetA4Portrait => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PresetA4Landscape => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PresetPresentation16x9 => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PresetPresentation4x3 => HasActiveWorkbook && SheetInitialised,
         _ => true,
     };
 }

@@ -92,7 +92,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         {
             GanttTimeScale.Month => new(scale.PlotStart.Year, scale.PlotStart.Month, 1),
             GanttTimeScale.Quarter => new(scale.PlotStart.Year, ((scale.PlotStart.Month - 1) / 3 * 3) + 1, 1),
-            GanttTimeScale.Year => new(scale.PlotStart.Year, 1, 1),
+            GanttTimeScale.Week => StartOfIsoWeek(scale.PlotStart),
             _ => throw new ArgumentOutOfRangeException(nameof(periodScale)),
         };
 
@@ -102,7 +102,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
             {
                 GanttTimeScale.Month => periodStart.AddMonths(1),
                 GanttTimeScale.Quarter => periodStart.AddMonths(3),
-                GanttTimeScale.Year => periodStart.AddYears(1),
+                GanttTimeScale.Week => periodStart.AddDays(7),
                 _ => throw new ArgumentOutOfRangeException(nameof(periodScale)),
             };
             DateOnly periodFinish = next.AddDays(-1);
@@ -135,9 +135,26 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
             GanttPeriodLabelFormat.MM => start.ToString("MM", CultureInfo.InvariantCulture),
             GanttPeriodLabelFormat.MMM => start.ToString("MMM", CultureInfo.InvariantCulture),
             GanttPeriodLabelFormat.Quarter => $"Q{((start.Month - 1) / 3) + 1}",
-            GanttPeriodLabelFormat.Year => start.ToString("yyyy", CultureInfo.InvariantCulture),
+            GanttPeriodLabelFormat.Week => $"W{ISOWeek.GetWeekOfYear(start):D2}",
             _ => throw new ArgumentOutOfRangeException(nameof(format)),
         };
+
+    /// <summary>
+    /// The Monday that begins the ISO week containing <paramref name="date"/>.
+    /// </summary>
+    /// <param name="date">Any date inside the week.</param>
+    /// <returns>The Monday on or before <paramref name="date"/>.</returns>
+    /// <remarks>
+    /// ISO weeks begin on Monday, so the first band is clipped back to that Monday
+    /// and every following band steps a whole number of days from it. The
+    /// <see cref="ISOWeek"/> numbering is culture-invariant, matching the rest of
+    /// the sequence.
+    /// </remarks>
+    private static DateOnly StartOfIsoWeek(DateOnly date)
+    {
+        var offset = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return date.AddDays(-offset);
+    }
 
     private static BandSequenceCreationOutcome Refused(BandSequenceRefusal refusal) => new(null, refusal);
 }

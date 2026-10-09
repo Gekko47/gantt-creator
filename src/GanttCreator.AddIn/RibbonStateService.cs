@@ -1,6 +1,7 @@
 using System.Globalization;
 using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
 namespace GanttCreator.AddIn;
@@ -50,7 +51,16 @@ internal class RibbonStateService
     private IConfigCatalogueWriter? _catalogueWriter;
     private IConfigCatalogueReader? _catalogueReader;
     private IGanttTableReader? _tableReader;
+    private IPanelGridMeasurementPort? _panelGridMeasurementPort;
     private RibbonState _state = RibbonState.Initial;
+
+    /// <summary>
+    /// The metric token naming the frame's outer right padding, in points.
+    /// Named once here rather than inlined so the display's chrome split and
+    /// the Refresh pipeline's cannot drift (R4.8A D5: a literal here is a
+    /// second authority).
+    /// </summary>
+    private const string _outerPaddingToken = "ChartOuterPaddingPt";
 
     internal RibbonStateService()
     {
@@ -72,6 +82,15 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="reader">The catalogue reader, or null when unavailable.</param>
     internal void SetCatalogueReader(IConfigCatalogueReader? reader) => _catalogueReader = reader;
+
+    /// <summary>
+    /// Injects the panel-grid measurement port that supplies the live text-panel
+    /// width the plot-width display reads (R5.2). A null port leaves the width
+    /// and height displays showing nothing rather than a guess, because there
+    /// is no page to measure against.
+    /// </summary>
+    /// <param name="port">The measurement port, or null when unavailable.</param>
+    internal void SetPanelGridMeasurementPort(IPanelGridMeasurementPort? port) => _panelGridMeasurementPort = port;
 
     /// <summary>
     /// Injects the table reader that derives the effective AUTO plot dates
@@ -401,6 +420,146 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Commits a user-selected plot time scale (R5.2). The value is validated
+    /// against the closed <see cref="GanttTimeScale"/> set, so an unknown scale
+    /// is refused rather than defaulted: a silently wrong scale would redraw the
+    /// whole period band with the wrong calendar unit. Persists through the
+    /// injected catalogue writer so it survives a close/reopen, and updates the
+    /// in-memory state immediately since the commit happens outside a workbook
+    /// load. Never refreshes the chart: the next Refresh chart applies the
+    /// stored scale.
+    /// </summary>
+    /// <param name="timeScale">The selected scale, or null when the dropdown reported none.</param>
+    internal void SetTimeScale(GanttTimeScale? timeScale)
+    {
+        if (timeScale is not GanttTimeScale scale)
+        {
+            return;
+        }
+
+        _state = _state with { TimeScale = scale };
+
+#pragma warning disable CA1031
+        try
+        {
+            CommandBoundary.Instance.Run("SetTimeScale", PersistPlotSettings);
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Commits a user-selected plot margin preset (R5.2). The value is validated
+    /// against the closed <see cref="GanttPlotMargin"/> set, so an unknown preset
+    /// is refused rather than defaulted. When the preset is
+    /// <see cref="GanttPlotMargin.Custom"/>, the currently stored custom
+    /// centimetre value is carried through; a preset ignores it. Persists
+    /// through the injected catalogue writer. Never refreshes the chart.
+    /// </summary>
+    /// <param name="margin">The selected margin preset, or null when the combobox reported none.</param>
+    internal void SetMargin(GanttPlotMargin? margin)
+    {
+        if (margin is not GanttPlotMargin selected)
+        {
+            return;
+        }
+
+        var customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
+        _state = _state with { Margin = selected, MarginCm = customCm };
+
+#pragma warning disable CA1031
+        try
+        {
+            CommandBoundary.Instance.Run("SetMargin", PersistPlotSettings);
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Commits a user-entered custom plot margin, in centimetres (R5.2). Used
+    /// only when the stored preset is <see cref="GanttPlotMargin.Custom"/>; an
+    /// out-of-range value is clamped to the permitted band rather than refused,
+    /// so a stale stored value cannot break a Refresh. Persists through the
+    /// injected catalogue writer. Never refreshes the chart.
+    /// </summary>
+    /// <param name="customCm">The custom margin, in centimetres.</param>
+    internal void SetMarginCm(double customCm)
+    {
+        var clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
+        if (!double.IsFinite(clamped))
+        {
+            clamped = GanttPlotMargins.DefaultCustomCm;
+        }
+
+        _state = _state with { MarginCm = clamped };
+
+#pragma warning disable CA1031
+        try
+        {
+            CommandBoundary.Instance.Run("SetMarginCm", PersistPlotSettings);
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Commits a user-selected output size preset (R5.2). The value is validated
+    /// against the closed <see cref="SizePresets"/> catalogue, so an unknown key
+    /// is refused rather than defaulted: a silently wrong preset would render
+    /// the chart on the wrong paper. Persists through the injected catalogue
+    /// writer and recomputes the width/height displays from the new preset.
+    /// Never refreshes the chart.
+    /// </summary>
+    /// <param name="preset">The selected preset, or null when none was supplied.</param>
+    internal void SetPreset(SizePreset? preset)
+    {
+        if (preset is null)
+        {
+            return;
+        }
+
+        // The preset is committed first: C# evaluates every `with` initializer
+        // against the OLD snapshot, so measuring inside the same expression
+        // would read the previous (possibly null) preset and leave the width
+        // display one click behind. The height comes straight from the preset.
+        _state = _state with { Preset = preset };
+        _state = _state with { PlotWidthPt = MeasurePlotWidth(), PlotHeightPt = preset.HeightPt };
+
+#pragma warning disable CA1031
+        try
+        {
+            CommandBoundary.Instance.Run("SetPreset", PersistPlotSettings);
+        }
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Degrade gracefully: the in-memory state is still correct,
+            // and the next refresh re-reads the worksheet.
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>
     /// Gets the date the start edit box displays for the ribbon
     /// <c>getText</c> getter: the explicit date in explicit mode, the derived
     /// data range start in automatic mode (fix plan ruling 1), or empty when
@@ -433,13 +592,121 @@ internal class RibbonStateService
     internal virtual bool IsPlotFinishAuto() => _state.PlotFinishAuto;
 
     /// <summary>
-    /// Writes the four plot-range keys from the current snapshot through the
-    /// injected catalogue writer. Centralises the per-end persist path so the
-    /// four setters cannot construct divergent payloads. Fix plan ruling 1:
-    /// the stored explicit dates persist even while their end is AUTO, so
-    /// they survive the round trip and are restored on return to explicit;
-    /// the Refresh pipeline still treats an AUTO end as data-derived and
-    /// ignores its date text, so persisting it cannot blend the modes.
+    /// Gets the stored plot time scale for the ribbon dropdown's
+    /// <c>getSelectedItemIndex</c> getter. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored scale.</returns>
+    internal virtual GanttTimeScale GetTimeScale() => _state.TimeScale;
+
+    /// <summary>
+    /// Gets the stored plot margin preset for the ribbon combobox's
+    /// <c>getSelectedItemIndex</c> getter. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored margin preset.</returns>
+    internal virtual GanttPlotMargin GetMargin() => _state.Margin;
+
+    /// <summary>
+    /// Gets the stored custom margin, in centimetres, for the ribbon's custom
+    /// margin display. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored custom margin.</returns>
+    internal virtual double GetMarginCm() => _state.MarginCm;
+
+    /// <summary>
+    /// Gets the stored output size preset for the ribbon preset buttons'
+    /// pressed-state getter. A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored preset, or null when the workbook names none.</returns>
+    internal virtual SizePreset? GetPreset() => _state.Preset;
+
+    /// <summary>
+    /// Gets the plot width the resolver would derive, for the ribbon's
+    /// read-only Width display (R5.2). A pure snapshot read.
+    /// </summary>
+    /// <returns>The plot width in points, or empty when no preset is known.</returns>
+    internal virtual string GetPlotWidth() => _state.PlotWidthPt?.ToString("F2", CultureInfo.InvariantCulture) ?? string.Empty;
+
+    /// <summary>
+    /// Gets the plot height the resolver would derive, for the ribbon's
+    /// read-only Height display (R5.2). A pure snapshot read.
+    /// </summary>
+    /// <returns>The plot height in points, or empty when no preset is known.</returns>
+    internal virtual string GetPlotHeight() => _state.PlotHeightPt?.ToString("F2", CultureInfo.InvariantCulture) ?? string.Empty;
+
+    /// <summary>
+    /// Recomputes the plot width the resolver would derive from the current
+    /// preset and a live panel measurement, so a preset change is reflected in
+    /// the read-only display without a Refresh. Uses the SAME subtraction
+    /// <see cref="PlotGeometryResolver.MeasurePlotWidth"/> performs, read once
+    /// through that authority so the displayed figure and the rendered plot
+    /// cannot drift. Returns null when no preset is known or the measurement
+    /// refuses, which the display renders as empty rather than a guess.
+    /// </summary>
+    /// <returns>The plot width in points, or null.</returns>
+    private double? MeasurePlotWidth()
+    {
+        SizePreset? preset = _state.Preset;
+        if (preset is null)
+        {
+            return null;
+        }
+
+        IPanelGridMeasurementPort? port = _panelGridMeasurementPort;
+        if (port is null)
+        {
+            return null;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            PanelGridOutcome outcome = port.Measure(MeasuredColumns());
+            if (!outcome.Succeeded || outcome.Grid is null)
+            {
+                return null;
+            }
+
+            PanelCellGrid grid = outcome.Grid;
+            var marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
+            // Same chrome split the Refresh pipeline uses (ADR-0031 D2): the
+            // plot is flush-left, so the left chrome is zero and the R5.2 margin
+            // (twice) plus the frame's outer padding rides on the right.
+            var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
+            return PlotGeometryResolver.MeasurePlotWidth(
+                preset,
+                grid.TotalWidthPt,
+                leftChromePt: 0,
+                rightChromePt: (marginPt * 2) + chrome);
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The display names of the visible table columns, in panel order — the
+    /// same list the live measurement port measures. Derived from the schema
+    /// rather than hand-written so a hidden column is never measured (R4.8A
+    /// D5: a hidden column reports width 0 and the grid refuses it).
+    /// </summary>
+    private static List<string> MeasuredColumns() =>
+        [.. GanttTableSchema.Default.Columns
+            .Where(column => !column.IsHidden)
+            .Select(column => column.Name)];
+
+    /// <summary>
+    /// Writes the ten plot-layout keys from the current snapshot through the
+    /// injected catalogue writer. Centralises the per-setting persist path so
+    /// the six setters cannot construct divergent payloads. The four
+    /// plot-range keys behave as before (fix plan ruling 1: the stored
+    /// explicit dates persist even while their end is AUTO, so they survive
+    /// the round trip and are restored on return to explicit; the Refresh
+    /// pipeline still treats an AUTO end as data-derived and ignores its date
+    /// text, so persisting it cannot blend the modes). The six R5.2 layout
+    /// keys are written alongside them so a single commit keeps the scale,
+    /// the margin pair, and the preset consistent with the dates.
     /// Reports ConfigWriteOutcome refusals and write exceptions to the user
     /// via CommandBoundary.
     /// </summary>
@@ -454,9 +721,24 @@ internal class RibbonStateService
             ["PlotFinishMode"] = finishMode,
             ["PlotStartDate"] = _state.PlotStartDate,
             ["PlotFinishDate"] = _state.PlotFinishDate,
+            ["TimeScale"] = _state.TimeScale.ToString(),
+            // The period label format is derived from the scale through the
+            // compatibility table (GanttChartSettings.IsCompatible), so the
+            // pair is always valid. Each scale has exactly one canonical
+            // format: MMM for months, Qn for quarters, Wnn for weeks.
+            ["PeriodLabelFormat"] = _state.TimeScale switch
+            {
+                GanttTimeScale.Month => nameof(GanttPeriodLabelFormat.MMM),
+                GanttTimeScale.Quarter => nameof(GanttPeriodLabelFormat.Quarter),
+                GanttTimeScale.Week => nameof(GanttPeriodLabelFormat.Week),
+                _ => nameof(GanttPeriodLabelFormat.MMM),
+            },
+            ["Margin"] = _state.Margin.ToString(),
+            ["MarginCm"] = _state.MarginCm.ToString("R", CultureInfo.InvariantCulture),
+            ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
         };
 
-        var outcome = _catalogueWriter?.WriteSettings(settings);
+        ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(settings);
         if (outcome is not null && !outcome.Succeeded)
         {
             var message = $"Failed to persist plot settings: {outcome.Refusal}";
@@ -479,7 +761,6 @@ internal class RibbonStateService
     /// disabled AUTO edit boxes show the current data range date.
     /// Mode text parses through the single PlotRangeModes authority, so the
     /// display and the Refresh pipeline cannot disagree on what AUTO means.
-    /// display and the Refresh pipeline cannot disagree on what AUTO means.
     /// Never throws.
     /// </summary>
     private void LoadPlotSettingsFromWorkbook()
@@ -495,10 +776,10 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            var outcome = _catalogueReader.Read();
+            ConfigReadOutcome outcome = _catalogueReader.Read();
             if (outcome.Succeeded && outcome.Settings is not null)
             {
-                var settings = outcome.Settings;
+                IReadOnlyDictionary<string, string> settings = outcome.Settings;
                 var startMode = settings.TryGetValue("PlotStartMode", out var startModeVal) ? startModeVal : string.Empty;
                 var finishMode = settings.TryGetValue("PlotFinishMode", out var finishModeVal) ? finishModeVal : string.Empty;
                 var startDate = NormaliseStoredPlotDate(
@@ -511,12 +792,27 @@ internal class RibbonStateService
                 var finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
                     && parsedFinish == PlotRangeMode.DataRange;
 
+                // R5.2 layout settings. Each is parsed through its closed Core
+                // authority and falls back to the catalogue default on an
+                // absent or unknown stored value, so a workbook that never set
+                // a scale renders identically to a freshly initialised one.
+                var timeScale = ReadTimeScale(settings);
+                var margin = ReadMargin(settings);
+                var marginCm = ReadMarginCm(settings);
+                var preset = ReadPreset(settings);
+
                 _state = _state with
                 {
                     PlotStartAuto = startAuto,
                     PlotFinishAuto = finishAuto,
                     PlotStartDate = startDate,
                     PlotFinishDate = finishDate,
+                    TimeScale = timeScale,
+                    Margin = margin,
+                    MarginCm = marginCm,
+                    Preset = preset,
+                    PlotWidthPt = MeasurePlotWidth(),
+                    PlotHeightPt = preset?.HeightPt,
                 };
 
                 RefreshEffectivePlotDates(settings);
@@ -529,6 +825,49 @@ internal class RibbonStateService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// Reads the stored plot time scale, falling back to the catalogue default
+    /// when the key is absent or names an unknown scale (R5.2).
+    /// </summary>
+    private static GanttTimeScale ReadTimeScale(IReadOnlyDictionary<string, string> settings) =>
+        settings.TryGetValue("TimeScale", out var text)
+            && GanttChartSettings.TryParseTimeScale(text, out GanttTimeScale scale)
+            ? scale
+            : GanttTimeScale.Month;
+
+    /// <summary>
+    /// Reads the stored plot margin preset, falling back to the Windows
+    /// "Normal" default when the key is absent or names an unknown preset
+    /// (R5.2).
+    /// </summary>
+    private static GanttPlotMargin ReadMargin(IReadOnlyDictionary<string, string> settings) =>
+        settings.TryGetValue("Margin", out var text)
+            && GanttPlotMargins.TryParse(text, out GanttPlotMargin margin)
+            ? margin
+            : GanttPlotMargins.Default;
+
+    /// <summary>
+    /// Reads the stored custom margin, in centimetres (R5.2). Used only when
+    /// the preset is <see cref="GanttPlotMargin.Custom"/>; an absent or
+    /// unparsable value falls back to the catalogue default, and
+    /// <see cref="GanttPlotMargins.MarginPt"/> clamps an out-of-range value
+    /// rather than producing a negative or unbounded margin.
+    /// </summary>
+    private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
+        settings.TryGetValue("MarginCm", out var raw)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            && double.IsFinite(parsed)
+            ? parsed
+            : GanttPlotMargins.DefaultCustomCm;
+
+    /// <summary>
+    /// Reads the stored output size preset, returning null when the key is
+    /// absent or names an unknown preset (R5.2). A null preset means the
+    /// width and height displays show nothing rather than a guess.
+    /// </summary>
+    private static SizePreset? ReadPreset(IReadOnlyDictionary<string, string> settings) =>
+        settings.TryGetValue("SizePreset", out var text) ? SizePresets.ByKey(text) : null;
 
     /// <summary>
     /// Derives the effective display dates for both edit boxes (fix plan
@@ -549,20 +888,20 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            string explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
-            string explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
+            var explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
+            var explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
 
-            string effectiveStart = explicitStart;
-            string effectiveFinish = explicitFinish;
+            var effectiveStart = explicitStart;
+            var effectiveFinish = explicitFinish;
 
             if (_state.PlotStartAuto || _state.PlotFinishAuto)
             {
                 GanttTableReadOutcome? table = _tableReader?.Read();
                 if (table is { Succeeded: true } && table.Rows is not null)
                 {
-                    var validation = GanttRowValidator.Validate(table.Rows);
+                    GanttValidationOutcome validation = GanttRowValidator.Validate(table.Rows);
                     var padding = ReadRangePaddingDays(settings);
-                    var range = PlotRangeResolver.TryResolve(
+                    PlotRangeOutcome range = PlotRangeResolver.TryResolve(
                         validation.Events,
                         _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
                         _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
@@ -577,11 +916,11 @@ internal class RibbonStateService
                         // renders (owner ruling 2026-10-02). DataRange ends are
                         // month-snapped; explicit ends pass through verbatim.
                         // Mirrors TryResolveDateRange in ExcelSceneBuildRequestFactory.
-                        var startMode = _state.PlotStartAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
-                        var finishMode = _state.PlotFinishAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
+                        PlotRangeMode startMode = _state.PlotStartAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
+                        PlotRangeMode finishMode = _state.PlotFinishAuto ? PlotRangeMode.DataRange : PlotRangeMode.Explicit;
 
-                        var start = resolvedStart;
-                        var finish = resolvedFinish;
+                        DateOnly start = resolvedStart;
+                        DateOnly finish = resolvedFinish;
 
                         if (startMode == PlotRangeMode.DataRange)
                         {
@@ -693,7 +1032,7 @@ internal class RibbonStateService
         var sheetInitialised = false;
         if (_tableReader is not null)
         {
-            var tableOutcome = _tableReader.Read();
+            GanttTableReadOutcome tableOutcome = _tableReader.Read();
             sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
         }
 
@@ -801,7 +1140,13 @@ internal class RibbonStateService
                 previous.PlotStartDate,
                 previous.PlotFinishDate,
                 previous.EffectivePlotStartDate,
-                previous.EffectivePlotFinishDate));
+                previous.EffectivePlotFinishDate,
+                previous.TimeScale,
+                previous.Margin,
+                previous.MarginCm,
+                previous.Preset,
+                previous.PlotWidthPt,
+                previous.PlotHeightPt));
         }
         catch
         {
@@ -910,6 +1255,7 @@ internal class RibbonStateService
         _catalogueWriter = null;
         _catalogueReader = null;
         _tableReader = null;
+        _panelGridMeasurementPort = null;
         _state = RibbonState.Initial;
     }
 }

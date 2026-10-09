@@ -91,6 +91,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
+    /// <summary>The setting key naming the plot margin preset (R5.2).</summary>
+    private const string _marginKey = "Margin";
+
+    /// <summary>The setting key naming the custom plot margin, in centimetres (R5.2).</summary>
+    private const string _marginCmKey = "MarginCm";
+
     /// <summary>The setting key naming the plot-start mode (R5.1).</summary>
     private const string _plotStartModeKey = "PlotStartMode";
 
@@ -225,6 +231,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         var topPt = measuredGrid.OriginTopPt;
         var heightPt = measuredGrid.TotalRowHeightPt;
 
+        // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
+        // subtracted TWICE from the width budget (owner ruling) so a visible, usable
+        // plotting area is determined. The plot stays flush-left (ADR-0031 D2), so both
+        // margins ride on the RIGHT chrome: the plot's right edge lands 2*margin inside
+        // the page, leaving the margin as breathing room on that side without opening a
+        // gap between the table and the plot. The margin never touches the measured text
+        // panel, so it cannot resize a user column (R4.7H D3).
+        var marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
+        var widthChromePt = marginPt * 2;
+
         // The single production call to the plot authority. PlotGeometryResolver owns
         // the subtraction and the bounds; this type supplies the measurements and
         // consumes the result.
@@ -233,12 +249,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             textPanelWidthPt,
 
             // ADR-0031 D2: no left chrome. The plot begins exactly where the data
-            // table ends, so the two read as one object. The RIGHT chrome is
-            // unchanged and still earns its place: the plot's right edge is the
-            // sheet's own edge, and without that margin the final period label would
-            // sit flush against it.
+            // table ends, so the two read as one object. The RIGHT chrome carries the
+            // R5.2 margin (twice) plus the frame's own outer padding, so the plot's
+            // right edge sits inside the page with the margin as breathing room.
             leftChromePt: 0,
-            rightChromePt: chrome,
+            rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,
             boundVerticallyToPage: false);
@@ -507,11 +522,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // widened, or narrowed). Post-snap ordering check: if an auto-finish
         // snap lands before an explicit start, refuse rather than silently
         // adjust — modes never blend.
-        var startMode = Enum.Parse<PlotRangeMode>(startModeText);
-        var finishMode = Enum.Parse<PlotRangeMode>(finishModeText);
+        PlotRangeMode startMode = Enum.Parse<PlotRangeMode>(startModeText);
+        PlotRangeMode finishMode = Enum.Parse<PlotRangeMode>(finishModeText);
 
-        var start = range.Start!.Value;
-        var finish = range.Finish!.Value;
+        DateOnly start = range.Start!.Value;
+        DateOnly finish = range.Finish!.Value;
 
         if (startMode == PlotRangeMode.DataRange)
         {
@@ -703,4 +718,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         && bool.TryParse(raw, out var parsed)
             ? parsed
             : fallback;
+
+    /// <summary>
+    /// Reads the plot-margin preset. An absent or unknown value falls back to the
+    /// Windows "Normal" default, matching the catalogue default so a workbook that
+    /// never set a margin renders identically to a freshly initialised one.
+    /// </summary>
+    private static GanttPlotMargin ReadMargin(IReadOnlyDictionary<string, string> settings) =>
+        GanttPlotMargins.TryParse(ReadString(settings, _marginKey), out GanttPlotMargin margin)
+            ? margin
+            : GanttPlotMargins.Default;
+
+    /// <summary>
+    /// Reads the custom plot margin in centimetres. Used only when the preset is
+    /// <see cref="GanttPlotMargin.Custom"/>; an absent or unparsable value falls back
+    /// to the catalogue default, and <see cref="GanttPlotMargins.MarginPt"/> clamps an
+    /// out-of-range value rather than producing a negative or unbounded margin.
+    /// </summary>
+    private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
+        ReadDouble(settings, _marginCmKey, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.DefaultCustomCm);
 }

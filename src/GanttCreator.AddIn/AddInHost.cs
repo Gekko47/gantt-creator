@@ -152,6 +152,8 @@ public sealed class AddInHost(
                 new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetTableReader(
                 new ExcelGanttTableReader(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetPanelGridMeasurementPort(
+                new ExcelPanelGridMeasurement(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031

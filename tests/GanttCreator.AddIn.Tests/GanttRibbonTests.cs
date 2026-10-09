@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
@@ -49,6 +50,7 @@ public class GanttRibbonTests
         "getContent",
         "getShowLabel",
         "getShowImage",
+        "getSelectedItemIndex",
     ];
 
     private const string NamespaceCustomUI2010 =
@@ -343,18 +345,31 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Ribbon_declares_getEnabled_on_exactly_the_four_gated_controls()
+    public void Ribbon_declares_getEnabled_on_exactly_the_gated_controls()
     {
         // R2.2 adds the Initialise sheet button to the Data group and R2.6 adds
         // Validate beside it; both are gated on the same workbook fact as
         // Diagnostics. The set is pinned here so adding or dropping a gated
         // control fails the contract instead of silently changing the surface.
+        // R5.1 adds the plot start/finish date boxes (gated on workbook +
+        // initialised + not AUTO) and R5.2 adds the grpPlotTimeScale and
+        // grpPlotSize groups: the scale dropdown, the margin combobox and its
+        // companion centimetre box, and the four preset buttons are all gated
+        // on workbook + initialised, so they join the pinned set. The two
+        // read-only width/height displays are permanently disabled through
+        // the dedicated GetPlotDimensionsEnabled getter (work item R5.2 D4),
+        // so they carry NO getEnabled on the shared truth table and are
+        // pinned separately below. The query groups by element type (buttons,
+        // then dropdowns, then edit boxes), each in document order.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
         var gatedIds = doc.Descendants(ns + "button")
-            .Where(button => button.Attribute("getEnabled") is not null)
+            .Concat(doc.Descendants(ns + "dropDown"))
+            .Concat(doc.Descendants(ns + "editBox"))
+            .Where(button => button.Attribute("getEnabled") is not null
+                && button.Attribute("getEnabled")?.Value != "GetPlotDimensionsEnabled")
             .Select(button => button.Attribute("id")?.Value)
             .ToList();
 
@@ -366,11 +381,54 @@ public class GanttRibbonTests
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
+                RibbonControlIds.PresetA4Portrait,
+                RibbonControlIds.PresetA4Landscape,
+                RibbonControlIds.PresetPresentation16x9,
+                RibbonControlIds.PresetPresentation4x3,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
+                RibbonControlIds.PlotTimeScale,
+                RibbonControlIds.Margin,
+                RibbonControlIds.PlotStartDate,
+                RibbonControlIds.PlotFinishDate,
+                RibbonControlIds.MarginCm,
             ],
             gatedIds);
+    }
+
+    [Fact]
+    public void Plot_dimension_displays_are_permanently_disabled()
+    {
+        // Work item R5.2 D4: the width/height boxes are outputs, never
+        // inputs. They bypass the shared GetEnabled truth table entirely and
+        // carry the dedicated GetPlotDimensionsEnabled getter, which is
+        // always false — so they render greyed for every workbook state and
+        // can never be edited. Excel's editBox has no readOnly attribute, so
+        // a dedicated always-false getter is the only read-only mechanism.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        foreach (string id in new[]
+        {
+            RibbonControlIds.PlotWidth,
+            RibbonControlIds.PlotHeight,
+        })
+        {
+            XElement box = doc.Descendants(ns + "editBox")
+                .Single(element => element.Attribute("id")?.Value == id);
+            Assert.Equal(
+                "GetPlotDimensionsEnabled",
+                box.Attribute("getEnabled")?.Value);
+            // The display carries text but no commit path: getText only, no
+            // onChange, so typing (if it were enabled) could never persist.
+            Assert.Null(box.Attribute("onChange"));
+        }
+
+        var control = new Mock<IRibbonControl>();
+        var ribbon = new GanttRibbon();
+        Assert.False(ribbon.GetPlotDimensionsEnabled(control.Object));
     }
 
     [Fact]
@@ -394,9 +452,22 @@ public class GanttRibbonTests
             RibbonControlIds.AddMilestone,
             RibbonControlIds.AddDelineator,
             RibbonControlIds.RefreshSheet,
+            RibbonControlIds.PlotStartDate,
+            RibbonControlIds.PlotFinishDate,
+            RibbonControlIds.PlotTimeScale,
+            RibbonControlIds.Margin,
+            RibbonControlIds.MarginCm,
+            RibbonControlIds.PlotWidth,
+            RibbonControlIds.PlotHeight,
+            RibbonControlIds.PresetA4Portrait,
+            RibbonControlIds.PresetA4Landscape,
+            RibbonControlIds.PresetPresentation16x9,
+            RibbonControlIds.PresetPresentation4x3,
         })
         {
             var matches = doc.Descendants(ns + "button")
+                .Concat(doc.Descendants(ns + "dropDown"))
+                .Concat(doc.Descendants(ns + "editBox"))
                 .Where(b => b.Attribute("id")?.Value == id)
                 .Select(b => b.Attribute("getEnabled"))
                 .Count(attr => attr is not null);
@@ -435,6 +506,24 @@ public class GanttRibbonTests
         // (Information absent, OfficeDiagnostics present, Help present,
         // FileOpen present). Evidence and the remaining F5 glyph step:
         // docs/work-items/R2.2-initialise-sheet.md decision D8.
+        //
+        // The four preset buttons use the orientation icons (the user's
+        // mapping: A4 portrait/4:3 -> portrait glyph, A4 landscape/16:9 ->
+        // landscape glyph). Both IDs satisfy the two bases: the gallery
+        // lists them as button entries (customUI14.xml: imageMso=
+        // PageOrientationPortrait / PageOrientationLandscape), and the
+        // Excel idMso table rows are idMso=PageOrientationPortrait,
+        // control=toggleButton, label="Portrait" and idMso=
+        // PageOrientationLandscape, control=toggleButton, label=
+        // "Landscape". The icon is what imageMso borrows, so a
+        // toggleButton id is valid on a button element — the gallery
+        // itself renders these on <button>. The previous values failed
+        // this test's protocol: "Presentation" is absent from the gallery
+        // entirely (0 occurrences; Excel reported "Unknown Office control
+        // ID: Presentation" at load), and "PageSetup" is gallery-present
+        // but absent from the Excel idMso table — the OfficeDiagnostics
+        // failure mode. The orientation IDs replace both, satisfy the
+        // two bases, and are orientation-specific.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
@@ -448,6 +537,10 @@ public class GanttRibbonTests
         Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
         Assert.Equal("TableInsertExcel", ImageMso(RibbonControlIds.InitialiseSheet));
         Assert.Equal("Spelling", ImageMso(RibbonControlIds.ValidateSheet));
+        Assert.Equal("PageOrientationPortrait", ImageMso(RibbonControlIds.PresetA4Portrait));
+        Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetA4Landscape));
+        Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetPresentation16x9));
+        Assert.Equal("PageOrientationPortrait", ImageMso(RibbonControlIds.PresetPresentation4x3));
     }
 
     [Fact]
@@ -763,6 +856,265 @@ public class GanttRibbonTests
         Assert.Equal("GetPlotFinishDateEnabled", finishBox.Attribute("getEnabled")?.Value);
         Assert.Equal("OnPlotFinishDateChange", finishBox.Attribute("onChange")?.Value);
         Assert.Equal("dd-mmm-yy", finishBox.Attribute("sizeString")?.Value);
+    }
+
+    [Fact]
+    public void PlotTimeScale_group_declares_the_three_scale_items()
+    {
+        // R5.2: the lower band's calendar unit is a closed set
+        // (month/quarter/week — the year is the fixed upper band,
+        // so a Year lower band would duplicate it). The dropdown
+        // selects the scale through getSelectedItemIndex and commits
+        // it through onAction; every item is one of the three
+        // closed values.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement group = doc.Descendants(ns + "group")
+            .Single(element => element.Attribute("id")?.Value == "grpPlotTimeScale");
+        Assert.Equal("Plot Time Scale", group.Attribute("label")?.Value);
+
+        XElement dropdown = group.Descendants(ns + "dropDown")
+            .Single(element => element.Attribute("id")?.Value == "ddnPlotTimeScale");
+        Assert.Equal("GetTimeScale", dropdown.Attribute("getSelectedItemIndex")?.Value);
+        Assert.Null(dropdown.Attribute("getSelectedIndex"));
+        Assert.Equal("GetEnabled", dropdown.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnTimeScaleChange", dropdown.Attribute("onAction")?.Value);
+
+        var itemLabels = dropdown.Descendants(ns + "item")
+            .Select(element => element.Attribute("label")?.Value)
+            .ToList();
+        Assert.Equal(["Month", "Quarter", "Week"], itemLabels);
+    }
+
+    [Fact]
+    public void PlotSize_group_declares_dimensions_presets_and_margin()
+    {
+        // R5.2: the plot-size group carries the read-only width/
+        // height displays (getText only — they are outputs, never
+        // inputs), the four output-size preset buttons, and the
+        // margin combobox with its custom-centimetre edit box.
+        // The width/height boxes are permanently disabled through
+        // the dedicated GetPlotDimensionsEnabled getter (R5.2 D4);
+        // the preset buttons are gated on the shared workbook fact;
+        // the custom-cm box is gated on the margin being Custom.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement group = doc.Descendants(ns + "group")
+            .Single(element => element.Attribute("id")?.Value == "grpPlotSize");
+        Assert.Equal("Plot Size", group.Attribute("label")?.Value);
+
+        XElement widthBox = group.Descendants(ns + "editBox")
+            .Single(element => element.Attribute("id")?.Value == "edtPlotWidth");
+        Assert.Equal("GetPlotWidth", widthBox.Attribute("getText")?.Value);
+        Assert.Equal("GetPlotDimensionsEnabled", widthBox.Attribute("getEnabled")?.Value);
+        Assert.Null(widthBox.Attribute("onChange"));
+
+        XElement heightBox = group.Descendants(ns + "editBox")
+            .Single(element => element.Attribute("id")?.Value == "edtPlotHeight");
+        Assert.Equal("GetPlotHeight", heightBox.Attribute("getText")?.Value);
+        Assert.Equal("GetPlotDimensionsEnabled", heightBox.Attribute("getEnabled")?.Value);
+        Assert.Null(heightBox.Attribute("onChange"));
+
+        var presetIds = group.Descendants(ns + "button")
+            .Where(element => element.Attribute("onAction")?.Value == "OnPresetClick")
+            .Select(element => element.Attribute("id")?.Value)
+            .ToList();
+        Assert.Equal(
+            [
+                RibbonControlIds.PresetA4Portrait,
+                RibbonControlIds.PresetA4Landscape,
+                RibbonControlIds.PresetPresentation16x9,
+                RibbonControlIds.PresetPresentation4x3,
+            ],
+            presetIds);
+
+        XElement marginDropdown = group.Descendants(ns + "dropDown")
+            .Single(element => element.Attribute("id")?.Value == "ddnMargin");
+        Assert.Equal("GetMargin", marginDropdown.Attribute("getSelectedItemIndex")?.Value);
+        Assert.Null(marginDropdown.Attribute("getSelectedIndex"));
+        Assert.Equal("GetEnabled", marginDropdown.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnMarginChange", marginDropdown.Attribute("onAction")?.Value);
+        var marginLabels = marginDropdown.Descendants(ns + "item")
+            .Select(element => element.Attribute("label")?.Value)
+            .ToList();
+        Assert.Equal(
+            ["Narrow (0.635 cm)", "Normal (1.78 cm)", "Wide (2.54 cm)", "Custom"],
+            marginLabels);
+
+        XElement marginCmBox = group.Descendants(ns + "editBox")
+            .Single(element => element.Attribute("id")?.Value == "edtMarginCm");
+        Assert.Equal("GetMarginCm", marginCmBox.Attribute("getText")?.Value);
+        Assert.Equal("GetMarginCmEnabled", marginCmBox.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnMarginCmChange", marginCmBox.Attribute("onChange")?.Value);
+    }
+
+    /// <summary>
+    /// The time-scale commit path forwards the selected item
+    /// id: an exact ordinal match persists the scale, so the
+    /// dropdown and the stored setting cannot disagree. The
+    /// routing itself needs no workbook.
+    /// </summary>
+    [Fact]
+    public void OnTimeScaleChange_forwards_the_selected_scale_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnTimeScaleChange(null, "Week", service);
+
+        Assert.Equal(GanttTimeScale.Week, service.GetTimeScale());
+    }
+
+    /// <summary>
+    /// An unknown item id is refused by the closed-set parser,
+    /// so a mistyped or stale selection cannot silently redraw
+    /// the period band with the wrong calendar unit: the
+    /// stored scale is untouched.
+    /// </summary>
+    [Fact]
+    public void OnTimeScaleChange_refuses_an_unknown_scale_id()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Month);
+
+        GanttRibbon.OnTimeScaleChange(null, "Year", service);
+
+        Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
+    }
+
+    /// <summary>
+    /// The margin commit path forwards the selected item id
+    /// through the closed-set parser: an exact ordinal match
+    /// persists the preset, so the combobox and the stored
+    /// setting cannot disagree.
+    /// </summary>
+    [Fact]
+    public void OnMarginChange_forwards_the_selected_margin_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnMarginChange(null, "Custom", service);
+
+        Assert.Equal(GanttPlotMargin.Custom, service.GetMargin());
+    }
+
+    /// <summary>
+    /// An unknown item id is refused by the closed-set parser,
+    /// so the stored margin preset is untouched.
+    /// </summary>
+    [Fact]
+    public void OnMarginChange_refuses_an_unknown_margin_id()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetMargin(GanttPlotMargin.Normal);
+
+        GanttRibbon.OnMarginChange(null, "Narrow-ish", service);
+
+        Assert.Equal(GanttPlotMargin.Normal, service.GetMargin());
+    }
+
+    /// <summary>
+    /// The custom-margin commit path parses the edited text
+    /// with the invariant culture and forwards the centimetre
+    /// value, so a locale-independent commit persists the
+    /// typed margin.
+    /// </summary>
+    [Fact]
+    public void OnMarginCmChange_forwards_the_parsed_cm_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnMarginCmChange(null, "2.5", service);
+
+        Assert.Equal(2.5, service.GetMarginCm());
+    }
+
+    /// <summary>
+    /// An unparsable commit is a no-op, so a partial keystroke
+    /// cannot corrupt the stored margin: the previous value
+    /// survives.
+    /// </summary>
+    [Fact]
+    public void OnMarginCmChange_refuses_an_unparsable_value()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetMarginCm(1.0);
+
+        GanttRibbon.OnMarginCmChange(null, "abc", service);
+
+        Assert.Equal(1.0, service.GetMarginCm());
+    }
+
+    /// <summary>
+    /// The preset buttons share one handler; Excel's button
+    /// onAction contract passes the control, and the control
+    /// id selects the preset. Clicking the A4 landscape button
+    /// stores the A4 landscape preset, so the width/height
+    /// displays and the next Refresh agree.
+    /// </summary>
+    [Fact]
+    public void OnPresetClick_routes_the_control_id_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetA4Landscape);
+
+        GanttRibbon.OnPresetClick(control.Object, service);
+
+        Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
+    }
+
+    /// <summary>
+    /// An unknown control id is refused — never defaulted to a preset —
+    /// so a mistyped or renamed button cannot silently render the chart on
+    /// the wrong paper: the stored preset is untouched.
+    /// </summary>
+    [Fact]
+    public void OnPresetClick_refuses_an_unknown_control_id()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetPreset(SizePresets.A4Landscape);
+        var control = new Mock<IRibbonControl>();
+        control.SetupGet(c => c.Id).Returns("btnPresetA3");
+
+        GanttRibbon.OnPresetClick(control.Object, service);
+
+        Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
+    }
+
+    /// <summary>
+    /// The preset pressed-state getter marks the active preset:
+    /// the control whose id names the stored preset reports
+    /// pressed, and every other preset button reports not
+    /// pressed, so exactly one preset reads as active at a
+    /// time. The comparison is by durable key, so a preset
+    /// record compared by reference would misreport.
+    /// </summary>
+    [Fact]
+    public void GetPreset_marks_only_the_active_preset()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetPreset(SizePresets.Presentation16x9);
+
+        var active = new Mock<IRibbonControl>();
+        active.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetPresentation16x9);
+        var inactive = new Mock<IRibbonControl>();
+        inactive.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetA4Portrait);
+
+        Assert.True(GanttRibbon.GetPreset(active.Object, service));
+        Assert.False(GanttRibbon.GetPreset(inactive.Object, service));
     }
 
     /// <summary>
@@ -1156,9 +1508,11 @@ public class GanttRibbonTests
     /// signature: zero parameters, one parameter of type
     /// <see cref="IRibbonControl"/> or <see cref="IRibbonUI"/>, the two
     /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> that
-    /// the editBox <c>onChange</c> callback passes, or the two parameters
+    /// the editBox <c>onChange</c> callback passes, the two parameters
     /// <see cref="IRibbonControl"/> plus <see cref="bool"/> that the checkBox
-    /// <c>onAction</c> callback passes (fix plan ruling 2).
+    /// <c>onAction</c> callback passes (fix plan ruling 2), or the three
+    /// parameters <see cref="IRibbonControl"/> plus <see cref="string"/> plus
+    /// <see cref="int"/> that the dropDown <c>onAction</c> callback passes.
     /// </summary>
     /// <param name="xml">The RibbonX document to validate.</param>
     /// <param name="ribbonType">The ribbon class type.</param>
@@ -1227,6 +1581,19 @@ public class GanttRibbonTests
             // the pressed state: public void OnClick(IRibbonControl, bool).
             return parameters[0].ParameterType == typeof(IRibbonControl)
                 && parameters[1].ParameterType == typeof(bool);
+        }
+
+        if (parameters.Length == 3)
+        {
+            // The RibbonX dropDown onAction callback passes the control, the
+            // selected item id, and the selected index:
+            // public void OnChange(IRibbonControl, string, int). Excel
+            // dispatches all three by reflection, so a two-parameter handler
+            // throws TargetParameterCountException at click time (live defect,
+            // found in Excel 2026-10-10).
+            return parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(string)
+                && parameters[2].ParameterType == typeof(int);
         }
 
         return false;

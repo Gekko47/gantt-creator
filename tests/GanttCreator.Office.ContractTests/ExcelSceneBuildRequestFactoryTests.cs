@@ -1355,6 +1355,90 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.Throws<ArgumentNullException>(() => factory.Create(null!, new Dictionary<string, string>(), StyleRegistry(), Grid()));
     }
 
+    /// <summary>
+    /// R5.2: the plot margin is resolved once from the Margin/MarginCm settings and
+    /// subtracted twice from the width budget. This is the contract test for the
+    /// factory's own reading of the two keys, not for the resolver's arithmetic
+    /// (which is pinned in PlotGeometryResolverTests).
+    /// </summary>
+    [Fact]
+    public void The_factory_subtracts_the_margin_twice_from_the_plot_width_budget()
+    {
+        // Narrow (0.635cm/side) vs Normal (1.78cm/side): the difference is exactly
+        // 2 x (1.78 - 0.635)cm in points, because the margin rides on the RIGHT
+        // chrome only and is applied to BOTH sides of the layout width.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome narrow = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Narrow", ["MarginCm"] = "0.635" },
+            StyleRegistry(),
+            Grid());
+        SceneBuildRequestOutcome normal = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(narrow.Succeeded, "refused: " + narrow.Message);
+        Assert.True(normal.Succeeded, "refused: " + normal.Message);
+
+        double differencePt = (1.78 - 0.635) * 10.0 * SizePresets.PointsPerMillimetre * 2;
+        Assert.Equal(
+            normal.Request!.PlotBounds!.Value.Width + differencePt,
+            narrow.Request!.PlotBounds!.Value.Width,
+            precision: 6);
+    }
+
+    /// <summary>
+    /// The margin is horizontal only and never touches the measured text panel,
+    /// so a user's column widths survive every margin choice (R4.7H D3).
+    /// </summary>
+    [Fact]
+    public void The_measured_text_panel_width_is_unchanged_by_the_margin()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        PanelCellGrid grid = Grid(widthPt: 400);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Wide", ["MarginCm"] = "2.54" },
+            StyleRegistry(),
+            grid);
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(grid.Columns[0].WidthPt, outcome.Request!.Grid!.Columns[0].WidthPt, precision: 6);
+    }
+
+    /// <summary>
+    /// An absent or unknown margin falls back to the Windows "Normal" default,
+    /// exactly as the catalogue default, so a workbook that never set a margin
+    /// renders identically to a freshly initialised one.
+    /// </summary>
+    [Fact]
+    public void An_absent_margin_falls_back_to_normal()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome absent = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid());
+        SceneBuildRequestOutcome explicitNormal = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(absent.Succeeded, "refused: " + absent.Message);
+        Assert.True(explicitNormal.Succeeded, "refused: " + explicitNormal.Message);
+        Assert.Equal(
+            absent.Request!.PlotBounds!.Value.Width,
+            explicitNormal.Request!.PlotBounds!.Value.Width,
+            precision: 6);
+    }
+
     /// <summary>A registry with the one style the fixture events reference.</summary>
     private static GanttStyleRegistry StyleRegistry() =>
         new([

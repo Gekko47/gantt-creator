@@ -240,9 +240,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_17_approved_keys()
+    public void Settings_contains_exactly_the_19_approved_keys()
     {
-        Assert.Equal(17, GanttCatalogues.Settings.Count);
+        Assert.Equal(19, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -268,6 +268,8 @@ public class GanttConfigCatalogueTests
         "DateDisplayFormat",
         "SizePreset",
         "RangePaddingDays",
+        "Margin",
+        "MarginCm",
     ];
 
     [Fact]
@@ -282,9 +284,15 @@ public class GanttConfigCatalogueTests
         Assert.True(GanttChartSettings.TryParseTimeScale("Quarter", out GanttTimeScale quarter));
         Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Quarter", out GanttPeriodLabelFormat quarterFormat));
         Assert.True(GanttChartSettings.IsCompatible(quarter, quarterFormat));
-        Assert.True(GanttChartSettings.TryParseTimeScale("Year", out GanttTimeScale year));
-        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Year", out GanttPeriodLabelFormat yearFormat));
-        Assert.True(GanttChartSettings.IsCompatible(year, yearFormat));
+        Assert.True(GanttChartSettings.TryParseTimeScale("Week", out GanttTimeScale week));
+        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Week", out GanttPeriodLabelFormat weekFormat));
+        Assert.True(GanttChartSettings.IsCompatible(week, weekFormat));
+
+        // The Year scale was removed (R5.2): the upper band is fixed as the year, so
+        // a Year lower band would duplicate it. A stored "Year" is now refused rather
+        // than silently coerced, and it is no longer compatible with any format.
+        Assert.False(GanttChartSettings.TryParseTimeScale("Year", out _));
+        Assert.False(GanttChartSettings.TryParsePeriodLabelFormat("Year", out _));
     }
 
     [Theory]
@@ -310,7 +318,7 @@ public class GanttConfigCatalogueTests
     {
         Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Month, GanttPeriodLabelFormat.Quarter));
         Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Quarter, GanttPeriodLabelFormat.MM));
-        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Year, GanttPeriodLabelFormat.MMM));
+        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Week, GanttPeriodLabelFormat.MMM));
     }
 
     // ------------------------------------------------------------------
@@ -756,9 +764,17 @@ public class GanttConfigCatalogueTests
     /// version-12 workbook carries the older hash and is reported as a
     /// mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Advanced again to 14 by R5.2</b>: the settings catalogue gains
+    /// <c>Margin</c> and <c>MarginCm</c> for the plot page margin. The margin
+    /// is subtracted twice from the width budget to determine the usable
+    /// plotting area; it never touches the measured text panel. A version-13
+    /// workbook carries the older hash and is reported as a mismatch; the
+    /// remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "9a24ea7fab4a78de0ee1505ec32f2f87c661f83d83074188ed37f60b874678ea";
+        "b2dc61391ba11d5160f4c4afc3491a5805b6e54adc4ca55376b8dc6023109b35";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

@@ -302,6 +302,16 @@ public static class GanttCatalogues
         // rather than producing a negative plot range.
         new("SizePreset", "A4Portrait"),
         new("RangePaddingDays", "7"),
+
+        // Schema version 14 (R5.2). The plot margin is a two-key pair: `Margin`
+        // names the Windows page-margin preset (or `Custom`) and `MarginCm` carries
+        // the user-entered centimetre value used only when `Margin` is `Custom`. The
+        // margin is subtracted twice from the layout width to determine the usable
+        // plotting area; it never touches the measured text panel (R4.7H D3). The
+        // reader validates `Margin` against the closed `GanttPlotMargins` set and
+        // `MarginCm` as a finite centimetre value in the permitted band.
+        new("Margin", nameof(GanttPlotMargin.Normal)),
+        new("MarginCm", GanttPlotMargins.DefaultCustomCm.ToString("R", CultureInfo.InvariantCulture)),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

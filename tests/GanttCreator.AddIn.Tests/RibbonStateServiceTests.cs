@@ -1,10 +1,10 @@
 ﻿using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 using Moq;
 
 namespace GanttCreator.AddIn.Tests;
-
 /// <summary>
 /// Contract tests for <see cref="RibbonStateService"/>: the dynamic getters are
 /// deterministic and side-effect-free, the invalidate mechanism drives the
@@ -803,7 +803,78 @@ public sealed class RibbonStateServiceTests : IDisposable
             w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
             Times.Never);
     }
-}
 
+    /// <summary>
+    /// Hand-written fake for <see cref="IPanelGridMeasurementPort"/>: returns
+    /// one fixed grid so the width-display tests can prove the display equals
+    /// the resolver output without Excel.
+    /// </summary>
+    private sealed class FakePanelGridMeasurementPort(PanelCellGrid grid) : IPanelGridMeasurementPort
+    {
+        public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+        {
+            ArgumentNullException.ThrowIfNull(includedColumns);
+            return PanelGridOutcome.Ok(grid);
+        }
+    }
+
+    /// <summary>
+    /// The width display equals the resolver output: with a measured 300pt
+    /// panel, the Normal margin, and the A4 portrait preset, the box shows
+    /// exactly what <c>PlotGeometryResolver.MeasurePlotWidth</c> derives, so
+    /// the displayed figure and the rendered plot cannot drift (R5.2 D4).
+    /// </summary>
+    [Fact]
+    public void SetPreset_recomputes_the_width_display_from_the_resolver()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetMargin(GanttPlotMargin.Normal);
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        service.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+
+        service.SetPreset(SizePresets.A4Portrait);
+
+        var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm);
+        var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        var expected = PlotGeometryResolver.MeasurePlotWidth(
+            SizePresets.A4Portrait,
+            300.0,
+            0,
+            (marginPt * 2) + chrome);
+        Assert.Equal(
+            expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            service.GetPlotWidth());
+        Assert.Equal(
+            SizePresets.A4Portrait.HeightPt.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            service.GetPlotHeight());
+    }
+
+    /// <summary>
+    /// Reset drops the measurement port: a width computed before the reset
+    /// is not recomputed from a stale port afterwards, so a fresh session
+    /// starts with no grid to measure against.
+    /// </summary>
+    [Fact]
+    public void Reset_clears_the_measurement_port()
+    {
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        RibbonStateService.Instance.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+
+        RibbonStateService.Reset();
+
+        // The fresh singleton holds no port and no preset, so the width
+        // display is empty rather than measured from a retained grid.
+        Assert.Equal(string.Empty, RibbonStateService.Instance.GetPlotWidth());
+    }
+}
 
 

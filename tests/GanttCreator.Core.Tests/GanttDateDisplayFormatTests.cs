@@ -40,7 +40,7 @@ public class GanttDateDisplayFormatTests
         // before it), with the two v7 keys following it.
         Assert.Equal(14, GanttCatalogues.Settings.ToList().FindIndex(s => s.Key == "DateDisplayFormat"));
         Assert.Equal(
-            ["SizePreset", "RangePaddingDays"],
+            ["SizePreset", "RangePaddingDays", "Margin", "MarginCm"],
             GanttCatalogues.Settings.Skip(15).Select(s => s.Key).ToArray());
     }
 

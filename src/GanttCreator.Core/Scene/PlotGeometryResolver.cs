@@ -186,7 +186,7 @@ public static class PlotGeometryResolver
             return Refused(PlotGeometryRefusal.InvalidOrigin);
         }
 
-        var plotWidth = preset.WidthPt - textPanelWidthPt - leftChromePt - rightChromePt;
+        var plotWidth = PlotWidth(preset, textPanelWidthPt, leftChromePt, rightChromePt);
         if (plotWidth < MinimumPlotWidthPt)
         {
             // Report the shortfall rather than rendering a too-narrow plot. The
@@ -207,4 +207,43 @@ public static class PlotGeometryResolver
     }
 
     private static PlotGeometryOutcome Refused(PlotGeometryRefusal refusal) => new(null, refusal);
+
+    /// <summary>
+    /// The one expression of the width subtraction (D2): everything the preset does
+    /// not consume, after the text panel and both chromes, becomes plot width.
+    /// </summary>
+    /// <param name="preset">The selected preset.</param>
+    /// <param name="textPanelWidthPt">The measured text-panel width in points.</param>
+    /// <param name="leftChromePt">Chrome consumed left of the plot.</param>
+    /// <param name="rightChromePt">Chrome consumed right of the plot.</param>
+    /// <returns>The plot width in points.</returns>
+    private static double PlotWidth(SizePreset preset, double textPanelWidthPt, double leftChromePt, double rightChromePt) =>
+        preset.WidthPt - textPanelWidthPt - leftChromePt - rightChromePt;
+
+    /// <summary>
+    /// Reports the plot width the resolver would derive, for a read-only display
+    /// (R5.2's disabled Width box). It is the SAME subtraction <see cref="TryResolve"/>
+    /// performs, read once through <see cref="PlotWidth"/> so the displayed figure and
+    /// the rendered plot cannot drift.
+    /// </summary>
+    /// <param name="preset">The selected preset, or <see langword="null"/>.</param>
+    /// <param name="textPanelWidthPt">The measured text-panel width in points.</param>
+    /// <param name="leftChromePt">Chrome consumed left of the plot.</param>
+    /// <param name="rightChromePt">Chrome consumed right of the plot.</param>
+    /// <returns>
+    /// The plot width in points, or <see langword="null"/> when no preset is supplied
+    /// (a display with no page to measure against shows nothing rather than a guess).
+    /// </returns>
+    /// <remarks>
+    /// This deliberately does NOT call <see cref="TryResolve"/>: the single-caller
+    /// architecture guard counts <c>TryResolve</c> invocations, and a Ribbon display
+    /// is a reader of the same arithmetic, not a second place that resolves plot
+    /// bounds. Sharing <see cref="PlotWidth"/> is what keeps it one authority.
+    /// </remarks>
+    public static double? MeasurePlotWidth(
+        SizePreset? preset,
+        double textPanelWidthPt,
+        double leftChromePt,
+        double rightChromePt) =>
+        preset is null ? null : PlotWidth(preset, textPanelWidthPt, leftChromePt, rightChromePt);
 }
