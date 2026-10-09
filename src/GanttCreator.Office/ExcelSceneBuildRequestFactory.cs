@@ -91,6 +91,24 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// <summary>The setting key naming the plot range padding, in days.</summary>
     private const string _rangePaddingKey = "RangePaddingDays";
 
+    /// <summary>The setting key naming the plot margin preset (R5.2).</summary>
+    private const string _marginKey = "Margin";
+
+    /// <summary>The setting key naming the custom plot margin, in centimetres (R5.2).</summary>
+    private const string _marginCmKey = "MarginCm";
+
+    /// <summary>The setting key naming the plot-start mode (R5.1).</summary>
+    private const string _plotStartModeKey = "PlotStartMode";
+
+    /// <summary>The setting key naming the plot-finish mode (R5.1).</summary>
+    private const string _plotFinishModeKey = "PlotFinishMode";
+
+    /// <summary>The setting key naming the explicit plot-start date (R5.1).</summary>
+    private const string _plotStartDateKey = "PlotStartDate";
+
+    /// <summary>The setting key naming the explicit plot-finish date (R5.1).</summary>
+    private const string _plotFinishDateKey = "PlotFinishDate";
+
     /// <summary>
     /// The default plot-range padding, in days, on each side.
     /// </summary>
@@ -213,6 +231,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         var topPt = measuredGrid.OriginTopPt;
         var heightPt = measuredGrid.TotalRowHeightPt;
 
+        // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
+        // subtracted TWICE from the width budget (owner ruling) so a visible, usable
+        // plotting area is determined. The plot stays flush-left (ADR-0031 D2), so both
+        // margins ride on the RIGHT chrome: the plot's right edge lands 2*margin inside
+        // the page, leaving the margin as breathing room on that side without opening a
+        // gap between the table and the plot. The margin never touches the measured text
+        // panel, so it cannot resize a user column (R4.7H D3).
+        var marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
+        var widthChromePt = marginPt * 2;
+
         // The single production call to the plot authority. PlotGeometryResolver owns
         // the subtraction and the bounds; this type supplies the measurements and
         // consumes the result.
@@ -221,12 +249,11 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             textPanelWidthPt,
 
             // ADR-0031 D2: no left chrome. The plot begins exactly where the data
-            // table ends, so the two read as one object. The RIGHT chrome is
-            // unchanged and still earns its place: the plot's right edge is the
-            // sheet's own edge, and without that margin the final period label would
-            // sit flush against it.
+            // table ends, so the two read as one object. The RIGHT chrome carries the
+            // R5.2 margin (twice) plus the frame's own outer padding, so the plot's
+            // right edge sits inside the page with the margin as breathing room.
             leftChromePt: 0,
-            rightChromePt: chrome,
+            rightChromePt: widthChromePt + chrome,
             topPt: topPt,
             heightPt: heightPt,
             boundVerticallyToPage: false);
@@ -446,8 +473,9 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     public static IReadOnlyList<string> MeasuredColumns => MeasuredColumnsCore;
 
     /// <summary>
-    /// Resolves the inclusive plot range from the events themselves, padded by the
-    /// configured number of days.
+    /// Resolves the inclusive plot range from the per-end modes (R5.1): each end
+    /// is automatic (derived from the events, padded) or explicit (the
+    /// user-supplied date). The extent is then snapped outward to whole months.
     /// </summary>
     private static bool TryResolveDateRange(
         IReadOnlyList<GanttEvent> events,
@@ -462,103 +490,118 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        // Every entity contributes its Start, and ONLY a span-dated one contributes its
-        // Finish. A milestone, a delineator, a Splitter and a Spacer read Start as
-        // their single date per the entity guide's date-mode classification; letting
-        // their Finish widen the range would be a claim the guide does not make. In
-        // practice the validator clears Finish for those types, but this method
-        // consumes GanttEvent values and must not depend on that having happened.
-        var starts = new List<DateOnly>();
-        var finishes = new List<DateOnly>();
-        foreach (GanttEvent @event in events)
-        {
-            if (@event.Start is { } start)
-            {
-                starts.Add(start);
-            }
-
-            if (EntityTypeCatalog.GetDefinition(@event.Type)?.DateMode == EntityDateMode.StartFinish
-                && @event.Finish is { } finish)
-            {
-                finishes.Add(finish);
-            }
-        }
-
-        if (starts.Count == 0)
-        {
-            refusal = SceneBuildRequestRefusal.NoPlotRange;
-            message = "No row carries a start date, so the chart has no date range to draw.";
-            return false;
-        }
-
         var padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
         if (padding < 0)
         {
             padding = 0;
         }
 
-        DateOnly earliest = starts.Min();
+        var startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
+        var finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
+        var startDateText = ReadString(settings, _plotStartDateKey);
+        var finishDateText = ReadString(settings, _plotFinishDateKey);
 
-        // The later of the two maxima, NOT the finish maximum alone. A single-date
-        // event therefore always lands inside the range: taking finishes.Max()
-        // whenever any finish existed could place the plot's right edge before a
-        // milestone's own date, clipping the very event that set the range.
-        DateOnly latest = starts.Max();
-        if (finishes.Count > 0 && finishes.Max() > latest)
+        PlotRangeOutcome range = PlotRangeResolver.TryResolve(
+            events,
+            startModeText,
+            finishModeText,
+            startDateText,
+            finishDateText,
+            padding);
+        if (!range.Succeeded)
         {
-            latest = finishes.Max();
+            refusal = MapRangeRefusal(range.Refusal!.Value);
+            message = DescribeRangeRefusal(range.Refusal!.Value, settings);
+            return false;
         }
 
-        // Month-snapped plot extent (owner ruling, 2026-10-02).
-        //
-        // The order is PADDING FIRST, THEN SNAP outward to the containing month, and
-        // that order is load-bearing. Snapping first and then padding would place the
-        // 10 Jan edge at 1 Jan minus the pad; padding first gives 10 Jan - 3 = 7 Jan,
-        // which is still inside January, so it snaps back to 1 Jan. The 3-day pad is
-        // therefore a tie-breaker for dates near a month edge, not a visible margin:
-        // 10 Jan renders from 1 Jan, while 3 Jan pads to 31 Dec and snaps a whole
-        // month further out to 1 Dec. Both were stated by the owner and only this
-        // order satisfies both.
-        plotStart = MonthStart(earliest.AddDays(-padding));
-        plotFinish = MonthEnd(latest.AddDays(padding));
+        // The resolver returns the RAW extent: explicit ends are the exact
+        // user-entered dates, DataRange ends are padded from data. Only
+        // DataRange ends are month-snapped; explicit ends pass through
+        // verbatim (R5.1 D2: modes never blend, explicit is never padded,
+        // widened, or narrowed). Post-snap ordering check: if an auto-finish
+        // snap lands before an explicit start, refuse rather than silently
+        // adjust — modes never blend.
+        PlotRangeMode startMode = Enum.Parse<PlotRangeMode>(startModeText);
+        PlotRangeMode finishMode = Enum.Parse<PlotRangeMode>(finishModeText);
 
-        // A one-day chart is degenerate: the scale builder has no interval to divide
-        // and would either refuse or emit a single unreadable column. Widening to two
-        // days is not a silent fudge — the alternative is a refusal on data that is
-        // perfectly valid, and a user cannot act on "your chart is too narrow".
-        if (plotFinish.DayNumber <= plotStart.DayNumber)
+        DateOnly start = range.Start!.Value;
+        DateOnly finish = range.Finish!.Value;
+
+        if (startMode == PlotRangeMode.DataRange)
         {
-            plotFinish = plotStart.AddDays(1);
+            start = PlotMonthBounds.SnapToMonthStart(start);
         }
+
+        if (finishMode == PlotRangeMode.DataRange)
+        {
+            finish = PlotMonthBounds.SnapToMonthEnd(finish);
+        }
+
+        // Degenerate guard: if snap moved finish on or before start, refuse
+        // rather than silently adjust — modes never blend.
+        if (finish.DayNumber <= start.DayNumber)
+        {
+            refusal = SceneBuildRequestRefusal.InvalidSetting;
+            message = "The resolved plot start is after the plot finish after month-snapping. Check the configured modes and dates.";
+            return false;
+        }
+
+        plotStart = start;
+        plotFinish = finish;
 
         return true;
     }
 
     /// <summary>
-    /// Returns the first day of the month containing <paramref name="date"/>.
+    /// Maps a plot-range refusal onto the request-factory refusal space: the
+    /// empty-data refusal keeps its existing member so its message and callers
+    /// are unchanged; every mode/explicit-date refusal is an invalid setting.
     /// </summary>
-    /// <param name="date">The date whose month is wanted.</param>
-    /// <returns>The first day of that month.</returns>
-    /// <remarks>
-    /// Constructed from the date's OWN year and month parts. There is no month
-    /// arithmetic here at all — no <c>AddMonths</c>, and therefore no December or
-    /// <c>DateOnly.MinValue</c> boundary to reason about; the first day of a month is
-    /// expressible directly. The overflow that <c>MonthEnd</c> does have to avoid is
-    /// its own concern.
-    /// </remarks>
-    private static DateOnly MonthStart(DateOnly date) => new(date.Year, date.Month, 1);
+    private static SceneBuildRequestRefusal MapRangeRefusal(PlotRangeRefusal refusal) =>
+        refusal == PlotRangeRefusal.NoPlotRange
+            ? SceneBuildRequestRefusal.NoPlotRange
+            : SceneBuildRequestRefusal.InvalidSetting;
 
     /// <summary>
-    /// Returns the last day of the month containing <paramref name="date"/>.
+    /// Explains a plot-range refusal in the user's terms, naming the stored
+    /// value that was rejected and the values the setting accepts.
     /// </summary>
-    /// <param name="date">The date whose month is wanted.</param>
-    /// <returns>The last day of that month.</returns>
-    /// <remarks>
-    /// Day zero of the FOLLOWING month is the last day of this one, which avoids
-    /// both a hard-coded 28/30/31 table and the December overflow that
-    /// <c>AddMonths(1)</c> would need a range check for.
-    /// </remarks>
-    private static DateOnly MonthEnd(DateOnly date) => MonthStart(date).AddMonths(1).AddDays(-1);
+    private static string DescribeRangeRefusal(
+        PlotRangeRefusal refusal,
+        IReadOnlyDictionary<string, string> settings) =>
+        refusal switch
+        {
+            PlotRangeRefusal.NoPlotRange =>
+                "No row carries a start date, so the chart has no date range to draw.",
+            PlotRangeRefusal.NullEvents =>
+                "No row carries a start date, so the chart has no date range to draw.",
+            PlotRangeRefusal.UnknownMode =>
+                "A plot-range mode is '"
+                + (ReadString(settings, _plotStartModeKey) ?? ReadString(settings, _plotFinishModeKey))
+                + "'. Set '"
+                + _plotStartModeKey
+                + "' and '"
+                + _plotFinishModeKey
+                + "' to '"
+                + nameof(PlotRangeMode.DataRange)
+                + "' or '"
+                + nameof(PlotRangeMode.Explicit)
+                + "'.",
+            PlotRangeRefusal.MissingExplicitDate =>
+                "A plot range uses Explicit mode but names no date. Enter the date in '"
+                + _plotStartDateKey
+                + "' and '"
+                + _plotFinishDateKey
+                + "' (dd/MM/yyyy).",
+            PlotRangeRefusal.UnparsableExplicitDate =>
+                "An explicit plot date does not parse as a calendar date. Enter it as dd/MM/yyyy.",
+            PlotRangeRefusal.DefaultDates =>
+                "An explicit plot date is blank. Enter the date as dd/MM/yyyy.",
+            PlotRangeRefusal.StartAfterFinish =>
+                "The plot start is after the plot finish. Swap the two dates.",
+            _ => "The plot range could not be resolved from the configured modes and dates.",
+        };
 
     /// <summary>
     /// Resolves the size preset, refusing an unknown key rather than defaulting.
@@ -675,4 +718,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         && bool.TryParse(raw, out var parsed)
             ? parsed
             : fallback;
+
+    /// <summary>
+    /// Reads the plot-margin preset. An absent or unknown value falls back to the
+    /// Windows "Normal" default, matching the catalogue default so a workbook that
+    /// never set a margin renders identically to a freshly initialised one.
+    /// </summary>
+    private static GanttPlotMargin ReadMargin(IReadOnlyDictionary<string, string> settings) =>
+        GanttPlotMargins.TryParse(ReadString(settings, _marginKey), out GanttPlotMargin margin)
+            ? margin
+            : GanttPlotMargins.Default;
+
+    /// <summary>
+    /// Reads the custom plot margin in centimetres. Used only when the preset is
+    /// <see cref="GanttPlotMargin.Custom"/>; an absent or unparsable value falls back
+    /// to the catalogue default, and <see cref="GanttPlotMargins.MarginPt"/> clamps an
+    /// out-of-range value rather than producing a negative or unbounded margin.
+    /// </summary>
+    private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
+        ReadDouble(settings, _marginCmKey, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.DefaultCustomCm);
 }

@@ -153,6 +153,18 @@ jobs:
           pwsh -NoProfile -File scripts/test-non-office.ps1 -Solution GanttCreator.slnx -Configuration Release
           if ($LASTEXITCODE -ne 0) { throw "test-non-office.ps1 failed with exit $LASTEXITCODE" }
 
+      - name: Mutation gate (changed Core code)
+        # R3.13. Delegates to scripts/mutation-gate.ps1, the same entry point
+        # as verify.ps1. The Stryker version and the 80% threshold are pinned
+        # in scripts/tool-versions.psd1 and read by that script at runtime;
+        # ci-parity.Tests.ps1 asserts this step imports the psd1 rather than
+        # repeating a literal. Inline `dotnet-stryker` here is forbidden for the
+        # same W8 reason as inline `dotnet test`: a version inlined in the
+        # workflow drifts from the pinned local gate silently.
+        run: |
+          pwsh -NoProfile -File scripts/mutation-gate.ps1
+          if ($LASTEXITCODE -ne 0) { throw "mutation-gate.ps1 failed with exit $LASTEXITCODE" }
+
       - name: Upload packed XLL artifact
         uses: actions/upload-artifact@v7
         with:

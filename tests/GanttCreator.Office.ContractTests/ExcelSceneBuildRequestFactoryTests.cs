@@ -828,6 +828,133 @@ public class ExcelSceneBuildRequestFactoryTests
         Assert.True(outcome.Request!.PlotFinish > outcome.Request.PlotStart);
     }
 
+    /// <summary>
+    /// Explicit modes use the supplied dates verbatim: the request's plot range
+    /// is the month-snapped explicit extent, ignoring the events entirely.
+    /// Dates are the chart's dd/MM/yyyy stored form (exact plot dates, never
+    /// the activity auto-parser equivalents).
+    /// </summary>
+    [Fact]
+    public void Explicit_modes_resolve_the_request_range_from_the_supplied_dates()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotFinishMode"] = "Explicit",
+                ["PlotStartDate"] = "10/02/2024",
+                ["PlotFinishDate"] = "10/04/2024",
+            },
+            StyleRegistry(),
+            Grid()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        // Explicit dates pass through verbatim (no month-snap)
+        Assert.Equal(new DateOnly(2024, 2, 10), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2024, 4, 10), outcome.Request.PlotFinish);
+    }
+
+    /// <summary>
+    /// Mixed modes resolve each end from its own source: the explicit start is
+    /// used verbatim while the finish still derives from the events.
+    /// </summary>
+    [Fact]
+    public void A_mixed_mode_request_resolves_each_end_from_its_own_source()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotFinishMode"] = "DataRange",
+                ["PlotStartDate"] = "15/01/2024",
+            },
+            StyleRegistry(),
+            Grid()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        // Explicit start passes through verbatim; DataRange finish is month-snapped
+        Assert.Equal(new DateOnly(2024, 1, 15), outcome.Request!.PlotStart);
+        Assert.Equal(new DateOnly(2024, 4, 30), outcome.Request.PlotFinish);
+    }
+
+    /// <summary>
+    /// An unknown mode refuses as an invalid setting with the accepted values
+    /// named, rather than falling back to the data range silently.
+    /// </summary>
+    [Fact]
+    public void An_unknown_mode_refuses_as_an_invalid_setting()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
+            new Dictionary<string, string> { ["PlotStartMode"] = "Automatic" },
+            StyleRegistry(),
+            Grid()
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneBuildRequestRefusal.InvalidSetting, outcome.Refusal);
+        Assert.Contains("DataRange", outcome.Message!, StringComparison.Ordinal);
+        Assert.Contains("Explicit", outcome.Message!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Explicit mode with no date refuses as an invalid setting naming the
+    /// date key, rather than rendering the data range the user overrode.
+    /// </summary>
+    [Fact]
+    public void Explicit_mode_with_no_date_refuses_as_an_invalid_setting()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" },
+            StyleRegistry(),
+            Grid()
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneBuildRequestRefusal.InvalidSetting, outcome.Refusal);
+        Assert.Contains("PlotStartDate", outcome.Message!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Explicit start after explicit finish refuses as an invalid setting.
+    /// Uses dd/MM/yyyy values and asserts the StartAfterFinish path message.
+    /// </summary>
+    [Fact]
+    public void An_explicit_start_after_the_explicit_finish_refuses()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 31))],
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotFinishMode"] = "Explicit",
+                ["PlotStartDate"] = "01/05/2024",
+                ["PlotFinishDate"] = "01/04/2024",
+            },
+            StyleRegistry(),
+            Grid()
+        );
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(SceneBuildRequestRefusal.InvalidSetting, outcome.Refusal);
+        Assert.Contains("after the plot finish", outcome.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>A malformed numeric setting falls back rather than refusing the refresh.</summary>
     /// <summary>
     /// A metric-looking key in the settings map cannot corrupt a metric, because
@@ -1226,6 +1353,90 @@ public class ExcelSceneBuildRequestFactoryTests
         ExcelSceneBuildRequestFactory factory = new(Metrics());
 
         Assert.Throws<ArgumentNullException>(() => factory.Create(null!, new Dictionary<string, string>(), StyleRegistry(), Grid()));
+    }
+
+    /// <summary>
+    /// R5.2: the plot margin is resolved once from the Margin/MarginCm settings and
+    /// subtracted twice from the width budget. This is the contract test for the
+    /// factory's own reading of the two keys, not for the resolver's arithmetic
+    /// (which is pinned in PlotGeometryResolverTests).
+    /// </summary>
+    [Fact]
+    public void The_factory_subtracts_the_margin_twice_from_the_plot_width_budget()
+    {
+        // Narrow (0.635cm/side) vs Normal (1.78cm/side): the difference is exactly
+        // 2 x (1.78 - 0.635)cm in points, because the margin rides on the RIGHT
+        // chrome only and is applied to BOTH sides of the layout width.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome narrow = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Narrow", ["MarginCm"] = "0.635" },
+            StyleRegistry(),
+            Grid());
+        SceneBuildRequestOutcome normal = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(narrow.Succeeded, "refused: " + narrow.Message);
+        Assert.True(normal.Succeeded, "refused: " + normal.Message);
+
+        double differencePt = (1.78 - 0.635) * 10.0 * SizePresets.PointsPerMillimetre * 2;
+        Assert.Equal(
+            normal.Request!.PlotBounds!.Value.Width + differencePt,
+            narrow.Request!.PlotBounds!.Value.Width,
+            precision: 6);
+    }
+
+    /// <summary>
+    /// The margin is horizontal only and never touches the measured text panel,
+    /// so a user's column widths survive every margin choice (R4.7H D3).
+    /// </summary>
+    [Fact]
+    public void The_measured_text_panel_width_is_unchanged_by_the_margin()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+        PanelCellGrid grid = Grid(widthPt: 400);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Wide", ["MarginCm"] = "2.54" },
+            StyleRegistry(),
+            grid);
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        Assert.Equal(grid.Columns[0].WidthPt, outcome.Request!.Grid!.Columns[0].WidthPt, precision: 6);
+    }
+
+    /// <summary>
+    /// An absent or unknown margin falls back to the Windows "Normal" default,
+    /// exactly as the catalogue default, so a workbook that never set a margin
+    /// renders identically to a freshly initialised one.
+    /// </summary>
+    [Fact]
+    public void An_absent_margin_falls_back_to_normal()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome absent = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid());
+        SceneBuildRequestOutcome explicitNormal = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string> { ["Margin"] = "Normal", ["MarginCm"] = "1.78" },
+            StyleRegistry(),
+            Grid());
+
+        Assert.True(absent.Succeeded, "refused: " + absent.Message);
+        Assert.True(explicitNormal.Succeeded, "refused: " + explicitNormal.Message);
+        Assert.Equal(
+            absent.Request!.PlotBounds!.Value.Width,
+            explicitNormal.Request!.PlotBounds!.Value.Width,
+            precision: 6);
     }
 
     /// <summary>A registry with the one style the fixture events reference.</summary>

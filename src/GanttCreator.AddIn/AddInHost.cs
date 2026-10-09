@@ -146,6 +146,17 @@ public sealed class AddInHost(
                 _applicationAdapterSource());
             RibbonStateService.Instance.SetLogAvailabilitySource(
                 () => !string.IsNullOrWhiteSpace(DiagnosticsService.Instance.LogFilePath));
+            // The catalogue writer's host-rejection evidence rides the same
+            // rolling log (null-safe: a failed log creation degrades to no
+            // record, never to a failed write).
+            RibbonStateService.Instance.SetCatalogueWriter(
+                new ExcelConfigCatalogueWriter(ExcelDnaUtil.Application, log: _log));
+            RibbonStateService.Instance.SetCatalogueReader(
+                new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetTableReader(
+                new ExcelGanttTableReader(ExcelDnaUtil.Application));
+            RibbonStateService.Instance.SetPanelGridMeasurementPort(
+                new ExcelPanelGridMeasurement(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
         }
 #pragma warning disable CA1031

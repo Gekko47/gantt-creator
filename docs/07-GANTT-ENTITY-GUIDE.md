@@ -383,15 +383,17 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 ## 6. Period header band
 
-**Purpose:** show the selected time subdivision, initially month, quarter, or year.
+**Purpose:** show the selected time subdivision, initially month, quarter, or week.
 
-**Source:** selected plot start/finish and the closed `TimeScale` (`Month`, `Quarter`, `Year`) plus `PeriodLabelFormat` settings.
+**Source:** selected plot start/finish and the closed `TimeScale` (`Month`, `Quarter`, `Week`) plus `PeriodLabelFormat` settings.
 
 **Geometry:** one clipped cell per period below the year band. Height is `PeriodBandHeightPt`; period boundaries continue into the plot as grid lines.
 
 **Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
 
-**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Year` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Year` permits `Year`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+
+**The `Year` scale is retired (R5.2).** The upper band is fixed as the year, so a `Year` lower band would duplicate it. A stored `Year` is refused rather than silently coerced, and it is compatible with no format. A workbook written before this ruling carries the older closed set; the reader reports `CatalogueMismatch` and the remedy is `Initialise` (ADR-0029 D6, no migration).
 
 **Validation/tests:** every supported scale/format, partial periods, boundary alignment, narrow widths, locale independence.
 

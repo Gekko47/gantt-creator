@@ -4,6 +4,8 @@ Applies to every coding agent and every repository change. Reflects the approved
 
 Detailed elaboration for each section below lives in the matching on-demand skill under `.cline/skills/`. This file is deliberately short because it is loaded on every turn; the skills are loaded only when the conversation matches them.
 
+**Skill `00-ponytail` runs first.** Before any other skill, at session start, load and apply skill `00-ponytail` (canonical source `docs/00-PONYTAIL.md`); it is the driving skill — every task follows its minimal-diff ladder after the problem is understood, and all other skills are subordinate, loading on demand after it.
+
 ## Source-of-truth order
 
 1. Current approved work item in `docs/work-items/`.
@@ -42,7 +44,7 @@ At session start, read [the repository map](docs/REPO-MAP.md) for project respon
 
 ## Required task protocol
 
-Before editing: restate outcome, files/layers likely involved, explicit exclusions, acceptance tests, and remaining unknowns; verify any uncertain API/Office behaviour/package capability against installed metadata or primary documentation before relying on it; ask for direction if the answer changes the product contract, schema, dependency graph, security model, or supported Office versions. Full session-opening format: skill `06-llm-protocol`.
+Before editing: run skill `00-ponytail` first — it is the driving skill and runs before any other skill; then restate outcome, files/layers likely involved, explicit exclusions, acceptance tests, and remaining unknowns; verify any uncertain API/Office behaviour/package capability against installed metadata or primary documentation before relying on it; ask for direction if the answer changes the product contract, schema, dependency graph, security model, or supported Office versions. Full session-opening format: skill `06-llm-protocol`.
 
 While editing:
 

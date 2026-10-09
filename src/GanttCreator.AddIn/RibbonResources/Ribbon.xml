@@ -11,6 +11,62 @@
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
         </group>
+        <group id="grpPlotArea" label="Plot Area">
+          <box id="boxPlotStart" boxStyle="vertical">
+            <labelControl id="lblPlotStartDate" label="Start Date"/>
+            <box id="boxPlotStartAuto" boxStyle="horizontal">
+              <labelControl id="lblPlotStartAuto" label="Auto"/>
+              <checkBox id="chkPlotStartAuto" getPressed="GetPlotStartAuto" onAction="OnPlotStartAutoClick"/>
+            </box>
+            <editBox id="edtPlotStartDate" getText="GetPlotStartDate" getEnabled="GetPlotStartDateEnabled" onChange="OnPlotStartDateChange" sizeString="dd-mmm-yy"/>
+          </box>
+          <box id="boxPlotFinish" boxStyle="vertical">
+            <labelControl id="lblPlotFinishDate" label="Finish Date"/>
+            <box id="boxPlotFinishAuto" boxStyle="horizontal">
+              <labelControl id="lblPlotFinishAuto" label="Auto"/>
+              <checkBox id="chkPlotFinishAuto" getPressed="GetPlotFinishAuto" onAction="OnPlotFinishAutoClick"/>
+            </box>
+            <editBox id="edtPlotFinishDate" getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="dd-mmm-yy"/>
+          </box>
+        </group>
+        <group id="grpPlotTimeScale" label="Plot Time Scale">
+          <dropDown id="ddnPlotTimeScale" getSelectedItemIndex="GetTimeScale" getEnabled="GetEnabled" onAction="OnTimeScaleChange">
+            <item id="Month" label="Month"/>
+            <item id="Quarter" label="Quarter"/>
+            <item id="Week" label="Week"/>
+          </dropDown>
+        </group>
+        <group id="grpPlotSize" label="Plot Size">
+          <box id="boxPlotSize" boxStyle="vertical">
+            <box id="boxPlotDimensions" boxStyle="horizontal">
+              <box id="boxPlotWidth" boxStyle="vertical">
+                <labelControl id="lblPlotWidth" label="Width (pt)"/>
+                <editBox id="edtPlotWidth" getText="GetPlotWidth" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
+              </box>
+              <box id="boxPlotHeight" boxStyle="vertical">
+                <labelControl id="lblPlotHeight" label="Height (pt)"/>
+                <editBox id="edtPlotHeight" getText="GetPlotHeight" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
+              </box>
+            </box>
+            <box id="boxPresetsA4" boxStyle="horizontal">
+              <button id="btnPresetA4Portrait" label="A4 portrait" imageMso="PageOrientationPortrait" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+              <button id="btnPresetA4Landscape" label="A4 landscape" imageMso="PageOrientationLandscape" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+            </box>
+            <box id="boxPresetsPresentation" boxStyle="horizontal">
+              <button id="btnPresetPresentation16x9" label="16:9" imageMso="PageOrientationLandscape" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+              <button id="btnPresetPresentation4x3" label="4:3" imageMso="PageOrientationPortrait" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+            </box>
+            <box id="boxMargin" boxStyle="horizontal">
+              <dropDown id="ddnMargin" getSelectedItemIndex="GetMargin" getEnabled="GetEnabled" onAction="OnMarginChange">
+                <item id="Narrow" label="Narrow (0.635 cm)"/>
+                <item id="Normal" label="Normal (1.78 cm)"/>
+                <item id="Wide" label="Wide (2.54 cm)"/>
+                <item id="Custom" label="Custom"/>
+              </dropDown>
+              <editBox id="edtMarginCm" getText="GetMarginCm" getEnabled="GetMarginCmEnabled" onChange="OnMarginCmChange" sizeString="0.00"/>
+            </box>
+          </box>
+        </group>
         <group id="grpPlaceholder" label="Gantt Creator">
           <button id="btnRefreshSheet" label="Refresh chart" imageMso="Refresh" getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
         </group>

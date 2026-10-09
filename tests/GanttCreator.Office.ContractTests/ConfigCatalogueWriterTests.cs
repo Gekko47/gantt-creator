@@ -50,6 +50,22 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_writes_the_settings_table_with_the_approved_keys_in_contract_order()
+    {
+        // R5.2: the settings catalogue gained Margin and MarginCm. The key set is
+        // pinned here, in contract order, so a future change that adds or drops a
+        // key is caught by the writer rather than by a reader that happens to be
+        // tolerant of an extra or missing row.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        ConfigSheetFake.TableFake settings = fake.Tables[3];
+        Assert.Equal(
+            GanttCatalogues.Settings.Select(setting => setting.Key).ToArray(),
+            settings.Body.Select(row => CellText(row[0])).ToArray());
+    }
+
+    [Fact]
     public void Write_materialises_the_types_from_the_code_owned_catalogue_only()
     {
         var fake = new ConfigSheetFake();
@@ -120,6 +136,76 @@ public class ConfigCatalogueWriterTests
             Assert.Equal(state.Headers, table.Headers);
             Assert.Equal(state.Rows, table.Body.Count);
         }
+    }
+
+    /// <summary>
+    /// A host rejection writes exactly one evidence record to the injected
+    /// rolling log — exception type, HRESULT, the contract tables recorded
+    /// before the refusal in write order, and the full detail — and still
+    /// returns the typed refusal. Without the record the broad catch would
+    /// discard the original failure and the live cause could not be
+    /// diagnosed (the command boundary logs nothing for a typed refusal).
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> The live Initialise failure
+    /// (diagnostics chain GC-20261009, re-observed after the
+    /// rollback-masking fix) surfaced only as the CatalogueWriteFailed
+    /// dialog: the original host exception died in the writer's catch with
+    /// no trace in the rolling log.
+    /// </remarks>
+    [Fact]
+    public void A_host_rejection_writes_one_evidence_record_and_still_refuses_typed()
+    {
+        var fake = new ConfigSheetFake();
+        var records = new List<string>();
+        var log = new Mock<GanttCreator.Core.Logging.IRollingLog>();
+        _ = log.Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) => records.Add(
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args)));
+        var writer = ConfigGraph.BuildWriter(fake, log: log.Object);
+
+        // Fail the third table's Add on a fresh (empty) sheet: the types,
+        // styles, and metrics extents are each recorded before their Add,
+        // so the evidence must name exactly those three, in contract order.
+        fake.FailAddAt(3);
+        var outcome = writer.Write();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.HostRejected, outcome.Refusal);
+
+        var record = Assert.Single(records);
+        Assert.StartsWith("CatalogueWriteRejected ", record, StringComparison.Ordinal);
+        Assert.Contains("exception=System.InvalidOperationException", record, StringComparison.Ordinal);
+        Assert.Contains(
+            $"hresult=0x{new InvalidOperationException().HResult:X8}",
+            record,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"written={GanttCatalogues.TypesTableName},{GanttCatalogues.StylesTableName},{GanttCatalogues.MetricsTableName}",
+            record,
+            StringComparison.Ordinal);
+        Assert.Contains("The host refused the table write.", record, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A successful write produces no evidence record: the log hook fires
+    /// only on the host-rejection path, never on every catalogue write.
+    /// </summary>
+    [Fact]
+    public void A_successful_write_produces_no_evidence_record()
+    {
+        var fake = new ConfigSheetFake();
+        var records = new List<string>();
+        var log = new Mock<GanttCreator.Core.Logging.IRollingLog>();
+        _ = log.Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) => records.Add(
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args)));
+        var writer = ConfigGraph.BuildWriter(fake, log: log.Object);
+
+        var outcome = writer.Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Empty(records);
     }
 
     [Fact]
@@ -472,6 +558,107 @@ public class ConfigCatalogueWriterTests
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal("TRUE", CellText(fake.Tables[3].Body[index][1]));
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
+    }
+
+    [Fact]
+    public void WriteSettings_applies_the_supplied_keys_and_preserves_the_rest()
+    {
+        // Targeted setting write for the R5.1 plot-range service: the four
+        // plot keys land, every untouched approved key keeps its preserved
+        // value (ADR-0007 D4), and the result stays readable.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var titleIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "ChartTitle");
+        fake.Tables[3].Body[titleIndex][1] = "My Chart";
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string>
+            {
+                ["PlotStartMode"] = "Explicit",
+                ["PlotFinishMode"] = "Explicit",
+                ["PlotStartDate"] = "01/01/2026",
+                ["PlotFinishDate"] = "31/12/2026",
+            });
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
+        Assert.True(read.Succeeded);
+        Assert.Equal("Explicit", read.Settings["PlotStartMode"]);
+        Assert.Equal("Explicit", read.Settings["PlotFinishMode"]);
+        Assert.Equal("01/01/2026", read.Settings["PlotStartDate"]);
+        Assert.Equal("31/12/2026", read.Settings["PlotFinishDate"]);
+        Assert.Equal("My Chart", read.Settings["ChartTitle"]);
+    }
+
+    [Fact]
+    public void WriteSettings_throws_for_a_null_settings_map()
+    {
+        // Null-guard validator (CA1062): a null argument is a caller defect,
+        // refused as an exception rather than a typed workbook refusal.
+        var fake = new ConfigSheetFake();
+
+        Assert.Throws<ArgumentNullException>(
+            () => ConfigGraph.BuildWriter(fake).WriteSettings(null!));
+    }
+
+    [Fact]
+    public void WriteSettings_refuses_with_no_mutation_when_the_configuration_sheet_is_protected()
+    {
+        // Targeted write shares the Write preflight: a protected target
+        // refuses before any cell is touched.
+        var fake = new ConfigSheetFake(protectContents: true);
+        var writer = ConfigGraph.BuildWriter(fake);
+
+        var outcome = writer.WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.TargetProtected),
+            outcome);
+        Assert.Empty(fake.Tables);
+    }
+
+    [Fact]
+    public void WriteSettings_refuses_a_corrupt_settings_table()
+    {
+        // Preservation validator: duplicate keys cannot be merged safely,
+        // so the write refuses without mutation.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[3].Body.Add([GanttCatalogues.Settings[0].Key, "duplicate"]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid),
+            outcome);
+    }
+
+    [Fact]
+    public void WriteSettings_restores_the_settings_table_when_the_host_fails()
+    {
+        // Rollback validator: the settings write is delete-and-recreate, so
+        // a host refusal after the delete must restore the prior rows and
+        // report a typed refusal, not a vanished table.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var before = fake.Tables[3].Body.Select(row => row.ToArray()).ToList();
+        fake.FailAddAt(1);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteSettings(
+            new Dictionary<string, string> { ["PlotStartMode"] = "Explicit" });
+
+        Assert.Equal(
+            ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected),
+            outcome);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal(before.Count, settings.Body.Count);
+        for (var index = 0; index < before.Count; index++)
+        {
+            Assert.Equal(before[index], settings.Body[index]);
+        }
     }
 
     private static void AssertContractTable(

@@ -1,6 +1,6 @@
 # Two views of the same kit
 
-> The Gantt Creator development kit has two views of the same seven
+> The Gantt Creator development kit has two views of the same eight
 > documents. Each view has a different audience and a different loading
 > rule. This file explains the relationship and the sync discipline.
 

@@ -1,6 +1,17 @@
 namespace GanttCreator.Core;
 
-/// <summary>The closed time-scale values stored in workbook settings.</summary>
+/// <summary>
+/// The closed time-scale values stored in workbook settings. Each selects the
+/// calendar unit of the LOWER (period) band; the UPPER band is always the year.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>Year</c> was removed (owner ruling, R5.2): the upper band is fixed as the
+/// year, so a <c>Year</c> lower band would duplicate it. <c>Week</c> was added in
+/// its place. The three values are the closed set; any other value is a typed
+/// validation error, never a fallback.
+/// </para>
+/// </remarks>
 public enum GanttTimeScale
 {
     /// <summary>One calendar month per period.</summary>
@@ -9,11 +20,17 @@ public enum GanttTimeScale
     /// <summary>One calendar quarter per period.</summary>
     Quarter = 1,
 
-    /// <summary>One calendar year per period.</summary>
-    Year = 2,
+    /// <summary>One ISO week per period.</summary>
+    Week = 2,
 }
 
 /// <summary>The closed period-label formats stored in workbook settings.</summary>
+/// <remarks>
+/// The <c>Year</c> member was removed alongside the <c>Year</c> time scale (the
+/// year band is the fixed upper band and never carries a period-format setting).
+/// <c>Week</c> renders the two-digit ISO week number prefixed <c>W</c> (owner
+/// ruling, R5.2).
+/// </remarks>
 public enum GanttPeriodLabelFormat
 {
     /// <summary>Two-digit numeric month, such as <c>01</c>.</summary>
@@ -25,8 +42,8 @@ public enum GanttPeriodLabelFormat
     /// <summary>Calendar quarter, such as <c>Q1</c>.</summary>
     Quarter = 2,
 
-    /// <summary>Four-digit calendar year.</summary>
-    Year = 3,
+    /// <summary>Two-digit ISO week number prefixed <c>W</c>, such as <c>W07</c>.</summary>
+    Week = 3,
 }
 
 /// <summary>Strict parsers and compatibility rules for the frame/band settings.</summary>
@@ -46,8 +63,8 @@ public static class GanttChartSettings
             case nameof(GanttTimeScale.Quarter):
                 scale = GanttTimeScale.Quarter;
                 return true;
-            case nameof(GanttTimeScale.Year):
-                scale = GanttTimeScale.Year;
+            case nameof(GanttTimeScale.Week):
+                scale = GanttTimeScale.Week;
                 return true;
             default:
                 scale = default;
@@ -72,8 +89,8 @@ public static class GanttChartSettings
             case nameof(GanttPeriodLabelFormat.Quarter):
                 format = GanttPeriodLabelFormat.Quarter;
                 return true;
-            case nameof(GanttPeriodLabelFormat.Year):
-                format = GanttPeriodLabelFormat.Year;
+            case nameof(GanttPeriodLabelFormat.Week):
+                format = GanttPeriodLabelFormat.Week;
                 return true;
             default:
                 format = default;
@@ -97,6 +114,9 @@ public static class GanttChartSettings
             case nameof(GanttDateDisplayFormat.DdMMyyyy):
                 format = GanttDateDisplayFormat.DdMMyyyy;
                 return true;
+            case nameof(GanttDateDisplayFormat.DdMMMyy):
+                format = GanttDateDisplayFormat.DdMMMyy;
+                return true;
             default:
                 format = default;
                 return false;
@@ -112,7 +132,7 @@ public static class GanttChartSettings
         {
             GanttTimeScale.Month => format is GanttPeriodLabelFormat.MM or GanttPeriodLabelFormat.MMM,
             GanttTimeScale.Quarter => format == GanttPeriodLabelFormat.Quarter,
-            GanttTimeScale.Year => format == GanttPeriodLabelFormat.Year,
+            GanttTimeScale.Week => format == GanttPeriodLabelFormat.Week,
             _ => false,
         };
 }

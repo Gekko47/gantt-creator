@@ -92,7 +92,16 @@ Describe 'check-md-links.ps1' {
             $r = Invoke-MdLinksHarness
             $r.Exit   | Should -Not -Be 0
             $r.Output | Should -Match 'AGENTS.md'
-            $r.Output | Should -Match 'does not exist'
+            # PowerShell 7.6 renders error records with embedded
+            # ANSI escapes even into redirected streams, wraps long
+            # messages at the console width (the wrap point depends
+            # on the temp path length), and prefixes every wrapped
+            # line with a "     | " gutter -- so the phrase can span
+            # escape-coded, guttered lines. Strip both, then match
+            # whitespace-tolerantly wherever the wrap lands.
+            $plain = $r.Output -replace '\x1b\[[0-9;]*m', ''
+            $message = $plain -replace '(?m)^[ \t]*\|[ \t]?', ''
+            $message | Should -Match 'does\s+not\s+exist'
         }
 
         It 'keeps an unclosed fenced block content and still flags a broken link after it (regression test)' {

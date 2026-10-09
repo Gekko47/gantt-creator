@@ -389,6 +389,27 @@ public class WorkbookInitialiserTests
         }
 
         /// <summary>
+        /// Makes this sheet's <c>Delete</c> throw the host's generic
+        /// refusal (HRESULT 0x800A03EC), as a workbook that refuses a
+        /// sheet deletion does.
+        /// </summary>
+        /// <remarks>
+        /// The exception is produced from an HRESULT rather than
+        /// constructed, because <c>COMException</c> has no public
+        /// constructor (CA2201) -- the same production as
+        /// <see cref="FailTableNameWrite"/>.
+        /// </remarks>
+        internal void FailSheetDelete()
+        {
+            var exception = (System.Runtime.InteropServices.COMException?)
+                System.Runtime.InteropServices.Marshal.GetExceptionForHR(unchecked((int)0x800A03EC))
+                ?? throw new InvalidOperationException(
+                    "The runtime did not produce a COMException for HRESULT 0x800A03EC.");
+
+            _ = Worksheet.Setup(w => w.Delete()).Throws(exception);
+        }
+
+        /// <summary>
         /// Verifies the sheet-scoped plot-anchor defined-name write: when
         /// <paramref name="expectedRefersTo"/> is non-null it must have been
         /// written with exactly that <c>refersTo</c>, the given number of
@@ -1022,6 +1043,90 @@ public class WorkbookInitialiserTests
             WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
             outcome);
         active.VerifyAnchorName(null, Times.Never());
+    }
+
+    /// <summary>
+    /// A host that refuses the configuration sheet's deletion neither
+    /// masks the exception that triggered the rollback nor stops the
+    /// remaining rollbacks from restoring the user's sheet.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> The live failure (diagnostics ops
+    /// GC-20261009-131341-684-01 and GC-20261009-141205-384-01,
+    /// 2026-10-09) raised <c>COMException 0x800A03EC</c> from
+    /// <c>Worksheet.Delete()</c> inside <c>RollBackConfigurationSheet</c>.
+    /// That rollback runs inside the <c>catch</c> block of
+    /// <see cref="ExcelWorkbookInitialiser.Initialise"/>, so the COM
+    /// error replaced the original exception -- the <c>throw;</c> never
+    /// ran -- and the table, header, and title rollbacks after it never
+    /// ran either, leaving the user's sheet half-rolled-back behind a
+    /// generic "Excel could not complete the operation" dialog with no
+    /// diagnostic of the real cause.
+    /// </remarks>
+    [Fact]
+    public void A_host_refusal_on_the_configuration_sheet_delete_does_not_mask_the_original_failure()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        config.FailSheetDelete();
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.Write())
+            .Throws(new InvalidOperationException("The host refused the catalogue write."));
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => graph.BuildWithWriter(active, writer.Object).Initialise());
+
+        // The ORIGINAL exception survives the rollback: the command
+        // boundary logs this one, so the diagnostics show the real
+        // cause rather than the rollback's own COM error.
+        Assert.Equal("The host refused the catalogue write.", exception.Message);
+
+        // The configuration sheet deletion was attempted, and the
+        // rollbacks after it still ran.
+        config.Worksheet.Verify(w => w.Delete(), Times.Once);
+        active.Table.Verify(t => t.Delete(), Times.Once);
+        active.HeaderRange.Verify(h => h.ClearContents(), Times.Once);
+        active.TitleCell.Verify(c => c.ClearContents(), Times.Once);
+    }
+
+    /// <summary>
+    /// A host that refuses to delete a just-created target sheet still
+    /// yields the typed protection refusal, not a raw COM error.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> <c>RollBackCreatedSheet</c> ran
+    /// the deletion unguarded, so a host refusal on
+    /// <c>Worksheet.Delete()</c> would escape <c>Initialise</c> as a
+    /// <c>COMException</c> and replace the typed refusal the command
+    /// boundary translates into actionable text (ADR-0008 D4: a host
+    /// refusal is reported, never thrown).
+    /// </remarks>
+    [Fact]
+    public void A_host_refusal_on_the_created_sheet_delete_still_returns_the_protection_refusal()
+    {
+        // Create path: the active object is not a worksheet, so a fresh
+        // target sheet is added and then found protected.
+        var existing = new WorksheetGraph("Sheet1");
+        var created = new WorksheetGraph("Sheet2");
+        created.FailSheetDelete();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(existing);
+        graph.EnqueueCreated(created);
+
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<Excel.Worksheet>()))
+            .Returns(ProtectionGuardOutcome.SheetProtected);
+        var writer = new Mock<IConfigCatalogueWriter>();
+
+        var outcome = graph.BuildWithWriter(null, writer.Object, guard.Object).Initialise();
+
+        Assert.Equal(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+            outcome);
+        created.Worksheet.Verify(w => w.Delete(), Times.Once);
     }
 
     /// <summary>

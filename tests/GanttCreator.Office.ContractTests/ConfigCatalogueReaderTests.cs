@@ -293,7 +293,7 @@ public class ConfigCatalogueReaderTests
     [InlineData("Month", "MM")]
     [InlineData("Month", "MMM")]
     [InlineData("Quarter", "Quarter")]
-    [InlineData("Year", "Year")]
+    [InlineData("Week", "Week")]
     public void Read_accepts_each_supported_scale_and_period_format_pair(string scale, string format)
     {
         var fake = new ConfigSheetFake();
@@ -326,6 +326,8 @@ public class ConfigCatalogueReaderTests
     [Theory]
     [InlineData("TimeScale", "Day")]
     [InlineData("PeriodLabelFormat", "MMM ")]
+    [InlineData("PlotStartMode", "Automatic")]
+    [InlineData("PlotFinishMode", "automatic")]
     public void Read_refuses_unknown_chart_settings(string key, string value)
     {
         var fake = new ConfigSheetFake();
@@ -336,6 +338,27 @@ public class ConfigCatalogueReaderTests
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
         Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    /// <summary>
+    /// The explicit plot-date keys survive a write/read round trip: a stored
+    /// explicit date is workbook state, not in-memory state.
+    /// </summary>
+    [Fact]
+    public void Read_returns_the_stored_explicit_plot_dates()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var startIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PlotStartDate");
+        var finishIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "PlotFinishDate");
+        fake.Tables[3].Body[startIndex][1] = "2024-02-01";
+        fake.Tables[3].Body[finishIndex][1] = "2024-04-30";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("2024-02-01", outcome.Settings["PlotStartDate"]);
+        Assert.Equal("2024-04-30", outcome.Settings["PlotFinishDate"]);
     }
 
     [Fact]
@@ -349,6 +372,82 @@ public class ConfigCatalogueReaderTests
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
         Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_an_unknown_margin_preset()
+    {
+        // R5.2: the Margin key is a closed preset set. A stored value that is not
+        // an exact member name is refused rather than coerced to the default.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "Margin");
+        fake.Tables[3].Body[index][1] = "Medium";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_a_margin_cm_below_the_permitted_band()
+    {
+        // The custom margin is clamped at render time, but a stored value that is
+        // negative is workbook drift and is refused on read so the workbook is
+        // repaired rather than silently rendered with a negative margin.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "MarginCm");
+        fake.Tables[3].Body[index][1] = -1.0;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_a_margin_cm_above_the_permitted_band()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "MarginCm");
+        fake.Tables[3].Body[index][1] = 99.0;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_a_non_finite_margin_cm()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var index = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "MarginCm");
+        fake.Tables[3].Body[index][1] = double.PositiveInfinity;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ValueOutOfRange), outcome);
+    }
+
+    [Fact]
+    public void Read_round_trips_the_custom_margin_preset_and_cm_value()
+    {
+        // Workbook state, not in-memory state: a stored Custom margin and its
+        // centimetre value survive a write/read round trip unchanged.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        var marginIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "Margin");
+        var cmIndex = GanttCatalogues.Settings.ToList().FindIndex(setting => setting.Key == "MarginCm");
+        fake.Tables[3].Body[marginIndex][1] = "Custom";
+        fake.Tables[3].Body[cmIndex][1] = 2.5;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("Custom", outcome.Settings["Margin"]);
+        Assert.Equal("2.5", outcome.Settings["MarginCm"]);
     }
 
     [Fact]

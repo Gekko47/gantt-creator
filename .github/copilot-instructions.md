@@ -5,6 +5,7 @@ These instructions apply to GitHub Copilot in Visual Studio when Agent Mode is e
 ## Read these first
 
 - `AGENTS.md` — the always-on operating contract for every agent and every commit.
+- `docs/00-PONYTAIL.md` — the driving skill: run it first, before any other skill (lazy-senior-dev minimal-diff ladder).
 - `docs/01-ENVIRONMENT.md` — the supported baseline and common failures.
 - `docs/02-ARCHITECTURE.md` — the product boundary, workbook contract, and renderer rules.
 - `docs/03-ROADMAP.md` — the commit-sized work items and gates.

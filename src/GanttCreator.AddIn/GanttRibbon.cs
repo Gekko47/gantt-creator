@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
@@ -53,7 +54,11 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>
     /// The RibbonX document, or null when the RibbonID is not the workbook.
     /// </returns>
-    public override string GetCustomUI(string RibbonID) => RibbonID != "Microsoft.Excel.Workbook" ? null! : RibbonResources.Ribbon;
+    public override string GetCustomUI(string RibbonID)
+        => !string.IsNullOrWhiteSpace(RibbonID)
+           && RibbonID.Trim().Equals("Microsoft.Excel.Workbook", StringComparison.OrdinalIgnoreCase)
+               ? RibbonResources.Ribbon
+               : null!;
 
     /// <summary>
     /// Called when the user clicks the Diagnostics button. The callback is a
@@ -383,16 +388,702 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Excel's getText callback for the start-date edit box. Returns the
+    /// effective display date: the explicit date in explicit mode, the
+    /// current month-snapped chart bound in automatic mode, or empty when
+    /// neither is known. This is also the value the edit box reverts to when
+    /// the user enters an unparseable date. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotStartDate(IRibbonControl control) => GetPlotStartDate(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotStartDate(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The display start date, or empty when none.</returns>
+    internal static string GetPlotStartDate(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: a probe failure must degrade to empty text rather than
+        // propagating into Excel's getter dispatch.
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotStartDate();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getText callback for the finish-date edit box. Returns the
+    /// effective display date: the explicit date in explicit mode, the
+    /// current month-snapped chart bound in automatic mode, or empty when
+    /// neither is known. This is also the value the edit box reverts to when
+    /// the user enters an unparseable date. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotFinishDate(IRibbonControl control) => GetPlotFinishDate(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishDate(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The display finish date, or empty when none.</returns>
+    internal static string GetPlotFinishDate(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotFinishDate();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getEnabled callback for the start-date edit box. The edit box is
+    /// enabled only while the AUTO checkbox is unchecked: when automatic mode
+    /// is on the start derives from the data and the user cannot type a date.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotStartDateEnabled(IRibbonControl control) => GetPlotStartDateEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotStartDateEnabled(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the edit box should be enabled.</returns>
+    internal static bool GetPlotStartDateEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetEnabled(RibbonControlIds.PlotStartDate);
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getEnabled callback for the finish-date edit box. The edit box is
+    /// enabled only while the AUTO checkbox is unchecked: when automatic mode
+    /// is on the finish derives from the data and the user cannot type a date.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotFinishDateEnabled(IRibbonControl control) => GetPlotFinishDateEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishDateEnabled(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the edit box should be enabled.</returns>
+    internal static bool GetPlotFinishDateEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetEnabled(RibbonControlIds.PlotFinishDate);
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getChecked callback for the start AUTO checkbox: checked when
+    /// the start derives from the data. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotStartAuto(IRibbonControl control) => GetPlotStartAuto(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotStartAuto(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the start end is automatic.</returns>
+    internal static bool GetPlotStartAuto(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.IsPlotStartAuto();
+        }
+        catch
+        {
+            // Fail open: a checked AUTO box matches the initial automatic
+            // state, so a probe failure shows the safe default.
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Excel's getChecked callback for the finish AUTO checkbox: checked when
+    /// the finish derives from the data. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPlotFinishAuto(IRibbonControl control) => GetPlotFinishAuto(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotFinishAuto(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the finish end is automatic.</returns>
+    internal static bool GetPlotFinishAuto(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.IsPlotFinishAuto();
+        }
+        catch
+        {
+            return true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Plot-Area AUTO checkbox for the start end.
+    /// Excel's checkbox onAction contract passes the pressed state, which this
+    /// honours (fix plan ruling 2): the mode is set to what Excel reports,
+    /// then persisted and the ribbon state refreshed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    public void OnPlotStartAutoClick(IRibbonControl control, bool pressed)
+        => OnPlotStartAutoClick(control, pressed, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotStartAutoClick(IRibbonControl, bool)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotStartAutoClick(IRibbonControl? control, bool pressed, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotStartAuto(pressed);
+    }
+
+    /// <summary>
+    /// Called when the user clicks the Plot-Area AUTO checkbox for the finish end.
+    /// Excel's checkbox onAction contract passes the pressed state, which this
+    /// honours (fix plan ruling 2): the mode is set to what Excel reports,
+    /// then persisted and the ribbon state refreshed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    public void OnPlotFinishAutoClick(IRibbonControl control, bool pressed)
+        => OnPlotFinishAutoClick(control, pressed, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotFinishAutoClick(IRibbonControl, bool)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotFinishAutoClick(IRibbonControl? control, bool pressed, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotFinishAuto(pressed);
+    }
+
+    /// <summary>
+    /// Called when the user commits an edit to the start-date edit box.
+    /// The new text is validated and persisted, then the ribbon state is
+    /// refreshed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnPlotStartDateChange(IRibbonControl control, string text)
+        => OnPlotStartDateChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotStartDateChange(IRibbonControl, string)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The edited text Excel passes on commit, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotStartDateChange(IRibbonControl? control, string? text, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotStartDate(text ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Called when the user commits an edit to the finish-date edit box.
+    /// The new text is validated and persisted, then the ribbon state is
+    /// refreshed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnPlotFinishDateChange(IRibbonControl control, string text)
+        => OnPlotFinishDateChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPlotFinishDateChange(IRibbonControl, string)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The edited text Excel passes on commit, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPlotFinishDateChange(IRibbonControl? control, string? text, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        stateService.SetPlotFinishDate(text ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Returns the index of the current plot time scale. The ribbon
+    /// dropdown asks for this through getSelectedItemIndex; the answer
+    /// comes from the state service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetTimeScale(IRibbonControl control) => GetTimeScale(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetTimeScale(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based index of the current time scale.</returns>
+    internal static int GetTimeScale(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return (int)stateService.GetTimeScale();
+        }
+        catch
+        {
+            return (int)GanttTimeScale.Month;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user picks a plot time scale from the ribbon
+    /// dropdown. Excel's dropDown onAction contract passes the control, the
+    /// selected item id, and the selected index; the scale is set from the
+    /// id, then persisted. An unknown id is refused by the service rather
+    /// than defaulted, so a mistyped selection cannot silently redraw the
+    /// period band with the wrong calendar unit. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id (Month, Quarter, or Week).</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnTimeScaleChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnTimeScaleChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnTimeScaleChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can
+    /// verify the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnTimeScaleChange(IRibbonControl? control, string? id, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (GanttChartSettings.TryParseTimeScale(id, out GanttTimeScale scale))
+        {
+            stateService.SetTimeScale(scale);
+        }
+    }
+
+    /// <summary>
+    /// Returns the index of the current plot margin preset. The ribbon
+    /// dropdown asks for this through getSelectedItemIndex; the answer
+    /// comes from the state service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetMargin(IRibbonControl control) => GetMargin(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetMargin(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based index of the current margin preset.</returns>
+    internal static int GetMargin(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return (int)stateService.GetMargin();
+        }
+        catch
+        {
+            return (int)GanttPlotMargins.Default;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user picks a plot margin from the ribbon
+    /// dropdown. Excel's dropDown onAction contract passes the control, the
+    /// selected item id, and the selected index; the margin is set from the
+    /// id, then persisted. An unknown id is refused by the service rather
+    /// than defaulted. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="id">The selected item id (Narrow, Normal, Wide, or Custom).</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnMarginChange(IRibbonControl control, string id, int selectedIndex)
+        => OnMarginChange(control, id, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnMarginChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can
+    /// verify the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnMarginChange(IRibbonControl? control, string? id, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (GanttPlotMargins.TryParse(id, out GanttPlotMargin margin))
+        {
+            stateService.SetMargin(margin);
+        }
+    }
+
+    /// <summary>
+    /// Returns the current custom margin in centimetres. The ribbon edit
+    /// box asks for this through getText; the answer comes from the
+    /// state service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetMarginCm(IRibbonControl control) => GetMarginCm(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetMarginCm(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The custom margin in centimetres, formatted with the invariant culture.</returns>
+    internal static string GetMarginCm(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetMarginCm().ToString(CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return GanttPlotMargins.DefaultCustomCm.ToString(CultureInfo.InvariantCulture);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns whether the custom-margin edit box is enabled. It is
+    /// enabled only while the margin is set to Custom, so the box
+    /// cannot be edited while a fixed preset is selected. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetMarginCmEnabled(IRibbonControl control) => GetMarginCmEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetMarginCmEnabled(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the margin is set to Custom.</returns>
+    internal static bool GetMarginCmEnabled(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetMargin() == GanttPlotMargin.Custom;
+        }
+        catch
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user commits an edit to the custom-margin edit
+    /// box. The new text is parsed with the invariant culture and
+    /// persisted, then the ribbon state is refreshed; an unparsable
+    /// value is a no-op so a partial keystroke cannot corrupt the
+    /// stored margin. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="text">The edited text Excel passes on commit.</param>
+    public void OnMarginCmChange(IRibbonControl control, string text)
+        => OnMarginCmChange(control, text, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnMarginCmChange(IRibbonControl, string)"/>
+    /// against an injected state service. Internal so contract tests can
+    /// verify the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="text">The edited text Excel passes on commit, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnMarginCmChange(IRibbonControl? control, string? text, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cm))
+        {
+            stateService.SetMarginCm(cm);
+        }
+    }
+
+    /// <summary>
+    /// The enabled getter for the read-only plot-dimension displays (work
+    /// item R5.2 D4). Always false: the width/height boxes are outputs, never
+    /// inputs, so Excel renders them permanently greyed. A dedicated getter —
+    /// not GetEnabled — because the truth table fail-opens unknown IDs, and a
+    /// read-only display must never be editable for any workbook state.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>Always false.</returns>
+    public bool GetPlotDimensionsEnabled(IRibbonControl control)
+    {
+        _ = control;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the current plot width in points. The ribbon edit box
+    /// asks for this through getText; the answer is the measured panel
+    /// grid width, so the displayed figure and the rendered plot cannot
+    /// drift. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotWidth(IRibbonControl control) => GetPlotWidth(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotWidth(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The plot width in points, formatted with the invariant culture.</returns>
+    internal static string GetPlotWidth(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotWidth();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the current plot height in points. The ribbon edit box
+    /// asks for this through getText; the answer comes from the state
+    /// service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public string GetPlotHeight(IRibbonControl control) => GetPlotHeight(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotHeight(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The plot height in points, formatted with the invariant culture.</returns>
+    internal static string GetPlotHeight(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPlotHeight();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user clicks a plot-size preset button. All four
+    /// buttons share this handler; Excel's button onAction contract
+    /// passes the control, and the control id selects the preset. The
+    /// preset is set, then persisted. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPresetClick(IRibbonControl control)
+        => OnPresetClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnPresetClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPresetClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        // An unknown control id is refused — never defaulted to a preset —
+        // so a mistyped or renamed button cannot silently render the chart on
+        // the wrong paper.
+        SizePreset? preset = control?.Id switch
+        {
+            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
+            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
+            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
+            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
+            _ => null,
+        };
+        if (preset is not null)
+        {
+            stateService.SetPreset(preset);
+        }
+    }
+
+    /// <summary>
+    /// Returns whether a plot-size preset button is pressed. Excel's
+    /// button getPressed contract asks for this when a button carries
+    /// getPressed; the answer compares the control id against the
+    /// current preset so the active preset is visually marked. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public bool GetPreset(IRibbonControl control) => GetPreset(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPreset(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>True when the control's id names the current preset.</returns>
+    internal static bool GetPreset(IRibbonControl? control, RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+        SizePreset? expected = control?.Id switch
+        {
+            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
+            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
+            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
+            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
+            _ => null,
+        };
+#pragma warning disable CA1031
+        try
+        {
+            // Records do not overload ==, so compare the durable key
+            // rather than relying on the reference identity of the
+            // catalogue singletons.
+            return expected is not null
+                && string.Equals(stateService.GetPreset()?.Key, expected.Key, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// The post-command ribbon-state hook (work item R1.5 decision D3): every
     /// command run through the ribbon's boundary ends with one refresh and
     /// invalidation. Never throws.
     /// </summary>
     private static void NotifyRibbonStateChanged() => RibbonStateService.Instance.Refresh();
-
-    /// <summary>
-    /// Resolves the stable command name for a Ribbon callback: the control's
-    /// ID when available, otherwise the Diagnostics callback method name.
-    /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <returns>The command name used in log records and the force-failure hook.</returns>
     internal static string ResolveCommandName(IRibbonControl? control)
@@ -411,3 +1102,4 @@ public class GanttRibbon : ExcelRibbon
         return string.IsNullOrWhiteSpace(id) ? fallbackCommandName : id;
     }
 }
+

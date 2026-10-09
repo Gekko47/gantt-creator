@@ -45,6 +45,75 @@ public class GanttConfigCatalogueTests
         Assert.Equal(24, GanttCatalogues.Metrics.Count);
 
     /// <summary>
+    /// Every contract anchor must leave at least one blank row between the
+    /// previous table's full extent and the next anchor cell.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins (live defect 2026-10-09).</b>
+    /// <c>ExcelConfigCatalogueWriter.WriteOrReplaceTable</c> writes a
+    /// table's cell values BEFORE creating the ListObject (so a refused add
+    /// leaves clearable cells for the rollback). When those values land in
+    /// cells directly adjacent to an existing table, Excel's table
+    /// auto-expand claims them into that table before the new
+    /// <c>ListObjects.Add</c> runs, and the add is refused with "A table
+    /// can't overlap another table". R5.2 added the Margin and MarginCm
+    /// settings, growing tblGanttSettings from 17 to 19 keys: its extent
+    /// reached row 89, making the then-anchor A90 directly adjacent, and
+    /// every live Initialise began failing (observed on a fresh fixture
+    /// workbook and on the user's F5 runs alike; reproduced by probe:
+    /// tblGanttSettings reads A70:B89 after its own add but A70:B94 by the
+    /// time the config add is attempted). The blank row is the buffer that
+    /// makes auto-expand impossible; this test ties the anchors to the
+    /// code-owned catalogue sizes so the next catalogue addition can never
+    /// silently consume it again. With ConfigAnchor at A90 this test fails.
+    /// </remarks>
+    [Fact]
+    public void The_contract_anchors_leave_a_blank_row_between_table_extents()
+    {
+        (string Name, string Anchor, int DataRows)[] tables =
+        [
+            (GanttCatalogues.TypesTableName, GanttCatalogues.TypesAnchor, GanttCatalogues.TypeRows.Count),
+            (GanttCatalogues.StylesTableName, GanttCatalogues.StylesAnchor, GanttCatalogues.StylePresets.Count),
+            (GanttCatalogues.MetricsTableName, GanttCatalogues.MetricsAnchor, GanttCatalogues.Metrics.Count),
+            (GanttCatalogues.SettingsTableName, GanttCatalogues.SettingsAnchor, GanttCatalogues.Settings.Count),
+
+            // BuildConfigRows emits exactly four rows (schema version,
+            // catalogue hash, workbook ID, add-in version); a fifth would
+            // need its own line here, which is the point of the pin.
+            (GanttCatalogues.ConfigTableName, GanttCatalogues.ConfigAnchor, 4),
+        ];
+
+        for (var index = 1; index < tables.Length; index++)
+        {
+            // The extent's last row: anchor row plus header plus data, minus one.
+            var previousEndRow = AnchorRow(tables[index - 1].Anchor) + tables[index - 1].DataRows;
+            var blankRows = AnchorRow(tables[index].Anchor) - previousEndRow - 1;
+            Assert.True(
+                blankRows >= 1,
+                $"{tables[index].Name} at {tables[index].Anchor} is adjacent to {tables[index - 1].Name}, "
+                + $"whose extent ends at row {previousEndRow}: Excel table auto-expand would claim the new "
+                + "table's cells before its add, refusing the write. Leave at least one blank row.");
+        }
+    }
+
+    /// <summary>
+    /// Parses the one-based row from an A1-style anchor (any column letters,
+    /// culture-invariant digits) for the blank-row invariant.
+    /// </summary>
+    /// <param name="anchor">The anchor address, e.g. <c>"A92"</c>.</param>
+    /// <returns>The anchor's row number.</returns>
+    private static int AnchorRow(string anchor)
+    {
+        var start = anchor.Length;
+        while (start > 0 && char.IsAsciiDigit(anchor[start - 1]))
+        {
+            start--;
+        }
+
+        return int.Parse(anchor[start..], CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
     /// The overlap must be sub-row, or it becomes visible rather than structural.
     /// </summary>
     /// <remarks>
@@ -240,9 +309,9 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_15_approved_keys()
+    public void Settings_contains_exactly_the_19_approved_keys()
     {
-        Assert.Equal(15, GanttCatalogues.Settings.Count);
+        Assert.Equal(19, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -260,12 +329,16 @@ public class GanttConfigCatalogueTests
         "ExportIncludeLegend",
         "PlotStartMode",
         "PlotFinishMode",
+        "PlotStartDate",
+        "PlotFinishDate",
         "AlternateBanding",
         "ShowMinorGrid",
         "ShowMajorGrid",
         "DateDisplayFormat",
         "SizePreset",
         "RangePaddingDays",
+        "Margin",
+        "MarginCm",
     ];
 
     [Fact]
@@ -280,9 +353,15 @@ public class GanttConfigCatalogueTests
         Assert.True(GanttChartSettings.TryParseTimeScale("Quarter", out GanttTimeScale quarter));
         Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Quarter", out GanttPeriodLabelFormat quarterFormat));
         Assert.True(GanttChartSettings.IsCompatible(quarter, quarterFormat));
-        Assert.True(GanttChartSettings.TryParseTimeScale("Year", out GanttTimeScale year));
-        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Year", out GanttPeriodLabelFormat yearFormat));
-        Assert.True(GanttChartSettings.IsCompatible(year, yearFormat));
+        Assert.True(GanttChartSettings.TryParseTimeScale("Week", out GanttTimeScale week));
+        Assert.True(GanttChartSettings.TryParsePeriodLabelFormat("Week", out GanttPeriodLabelFormat weekFormat));
+        Assert.True(GanttChartSettings.IsCompatible(week, weekFormat));
+
+        // The Year scale was removed (R5.2): the upper band is fixed as the year, so
+        // a Year lower band would duplicate it. A stored "Year" is now refused rather
+        // than silently coerced, and it is no longer compatible with any format.
+        Assert.False(GanttChartSettings.TryParseTimeScale("Year", out _));
+        Assert.False(GanttChartSettings.TryParsePeriodLabelFormat("Year", out _));
     }
 
     [Theory]
@@ -308,7 +387,7 @@ public class GanttConfigCatalogueTests
     {
         Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Month, GanttPeriodLabelFormat.Quarter));
         Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Quarter, GanttPeriodLabelFormat.MM));
-        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Year, GanttPeriodLabelFormat.MMM));
+        Assert.False(GanttChartSettings.IsCompatible(GanttTimeScale.Week, GanttPeriodLabelFormat.MMM));
     }
 
     // ------------------------------------------------------------------
@@ -746,10 +825,25 @@ public class GanttConfigCatalogueTests
     /// and the schema version that names them. A version-11 workbook carries the
     /// older hash and is reported as a mismatch; the remedy is Initialise
     /// (ADR-0029 D6, no migration), which is also what reserves the anchor row.
+    /// <para>
+    /// <b>Advanced again to 13 by R5.1</b>: the settings catalogue gains
+    /// <c>PlotStartDate</c> and <c>PlotFinishDate</c> for the explicit
+    /// plot-range modes. Both move the hash, because the hash covers the
+    /// catalogue's contents and the schema version that names them. A
+    /// version-12 workbook carries the older hash and is reported as a
+    /// mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
+    /// </para>
+    /// <para>
+    /// <b>Advanced again to 14 by R5.2</b>: the settings catalogue gains
+    /// <c>Margin</c> and <c>MarginCm</c> for the plot page margin. The margin
+    /// is subtracted twice from the width budget to determine the usable
+    /// plotting area; it never touches the measured text panel. A version-13
+    /// workbook carries the older hash and is reported as a mismatch; the
+    /// remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "1a09dbf5171fd1d022c3e0f6812736a7a7c5de931bfd295cef8cab5f2d353740";
+        "b2dc61391ba11d5160f4c4afc3491a5805b6e54adc4ca55376b8dc6023109b35";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

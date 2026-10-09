@@ -733,7 +733,7 @@ public sealed class FrameBandsBuilderTests
     [InlineData(GanttTimeScale.Month, GanttPeriodLabelFormat.MM, "01")]
     [InlineData(GanttTimeScale.Month, GanttPeriodLabelFormat.MMM, "Jan")]
     [InlineData(GanttTimeScale.Quarter, GanttPeriodLabelFormat.Quarter, "Q1")]
-    [InlineData(GanttTimeScale.Year, GanttPeriodLabelFormat.Year, "2024")]
+    [InlineData(GanttTimeScale.Week, GanttPeriodLabelFormat.Week, "W01")]
     public void Supports_each_closed_scale_and_format_pair(GanttTimeScale scale, GanttPeriodLabelFormat format, string expectedLabel)
     {
         FrameBandsResult result = Build(CreateRequest() with { Scale = scale, PeriodLabelFormat = format }).Result!;

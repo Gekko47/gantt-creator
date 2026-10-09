@@ -260,4 +260,23 @@ public sealed class PlotGeometryResolverTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(PlotGeometryResolver.MinimumPlotWidthPt, outcome.Geometry!.ShortfallPt, TolerancePt);
     }
+
+    [Fact]
+    public void MeasurePlotWidth_reports_the_same_width_the_resolver_derives()
+    {
+        // R5.2: the disabled Width box reads this. It MUST equal the width TryResolve
+        // would hand the plot, or the displayed figure and the rendered plot drift.
+        PlotGeometryOutcome resolved = Resolve(SizePresets.Presentation16x9, 400, left: 10, right: 6);
+        double? measured = PlotGeometryResolver.MeasurePlotWidth(SizePresets.Presentation16x9, 400, 10, 6);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(resolved.Geometry!.PlotBounds.Width, measured!.Value, TolerancePt);
+    }
+
+    [Fact]
+    public void MeasurePlotWidth_returns_null_for_an_absent_preset()
+    {
+        // A display with no page to measure against shows nothing rather than a guess.
+        Assert.Null(PlotGeometryResolver.MeasurePlotWidth(null, 400, 0, 0));
+    }
 }

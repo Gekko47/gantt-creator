@@ -608,6 +608,26 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
+            if ((expected.Key == "PlotStartMode" || expected.Key == "PlotFinishMode")
+                && !PlotRangeModes.TryParse(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
+            if (expected.Key == "Margin" && !GanttPlotMargins.TryParse(value, out _))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
+            if (expected.Key == "MarginCm"
+                && (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var marginCm)
+                    || !double.IsFinite(marginCm)
+                    || marginCm < GanttPlotMargins.MinimumCustomCm
+                    || marginCm > GanttPlotMargins.MaximumCustomCm))
+            {
+                return ConfigReadRefusalReason.ValueOutOfRange;
+            }
+
             map[expected.Key] = value;
         }
 

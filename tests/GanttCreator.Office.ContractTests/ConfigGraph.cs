@@ -1,5 +1,6 @@
 using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
+using GanttCreator.Core.Logging;
 using Moq;
 
 namespace GanttCreator.Office.ContractTests;
@@ -16,8 +17,12 @@ internal static class ConfigGraph
 {
     private sealed class TestableWriter : ExcelConfigCatalogueWriter
     {
-        public TestableWriter(object? application, ConfigSheetFake fake, IWorksheetProtectionGuard? protectionGuard = null)
-            : base(application, protectionGuard)
+        public TestableWriter(
+            object? application,
+            ConfigSheetFake fake,
+            IWorksheetProtectionGuard? protectionGuard = null,
+            IRollingLog? log = null)
+            : base(application, protectionGuard, log)
         {
             Fake = fake;
         }
@@ -93,11 +98,14 @@ internal static class ConfigGraph
     /// </summary>
     /// <param name="fake">The config sheet fake.</param>
     /// <param name="structureProtected">The mocked <c>Workbook.ProtectStructure</c>.</param>
+    /// <param name="protectionGuard">An optional substitute protection guard.</param>
+    /// <param name="log">Optional rolling log passed to the writer's evidence sink.</param>
     /// <returns>The writer under test.</returns>
     public static ExcelConfigCatalogueWriter BuildWriter(
         ConfigSheetFake fake,
         bool structureProtected = false,
-        IWorksheetProtectionGuard? protectionGuard = null)
+        IWorksheetProtectionGuard? protectionGuard = null,
+        IRollingLog? log = null)
     {
         var application = new Mock<Excel.Application>();
         var workbook = new Mock<Excel.Workbook>();
@@ -108,7 +116,7 @@ internal static class ConfigGraph
         _ = workbook.SetupGet(w => w.ProtectStructure).Returns(structureProtected);
         _ = sheets.SetupGet(s => s.Count).Returns(1);
         _ = application.SetupGet(a => a.DisplayAlerts).Returns(true);
-        return new TestableWriter(application.Object, fake, protectionGuard);
+        return new TestableWriter(application.Object, fake, protectionGuard, log);
     }
 
     /// <summary>

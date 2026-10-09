@@ -1,5 +1,6 @@
 using System.Globalization;
 using GanttCreator.Core;
+using GanttCreator.Core.Logging;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -18,6 +19,12 @@ namespace GanttCreator.Office;
 /// no-active-workbook refusal with no mutation.
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
+/// <param name="log">
+/// Optional rolling log that receives one redacted evidence record when
+/// the host rejects the write (see
+/// <see cref="ConfigWriteRefusalReason.HostRejected"/>). Absent (or
+/// failed) logging degrades to no record, never to a thrown error.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: every proxy is held in a local and used without chained
@@ -40,11 +47,19 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelConfigCatalogueWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IConfigCatalogueWriter
+    IWorksheetProtectionGuard? protectionGuard = null,
+    IRollingLog? log = null) : IConfigCatalogueWriter
 {
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    // Evidence sink for a host-rejected write. The broad catch in Write()
+    // converts the host exception into a typed refusal, and the command
+    // boundary logs nothing for a typed refusal — without this record the
+    // original error (type, HRESULT, stack) would be discarded and the live
+    // failure could not be diagnosed (live defect chain GC-20261009).
+    private readonly IRollingLog? _log = log;
 
     /// <summary>
     /// The preservation data captured before any mutation: existing setting
@@ -154,7 +169,7 @@ public class ExcelConfigCatalogueWriter(
             WriteContractTables(config, preservation, written);
         }
 #pragma warning disable CA1031 // Deliberately broad: see the catch body.
-        catch (Exception)
+        catch (Exception exception)
 #pragma warning restore CA1031
         {
             // A host refusal reaching managed code is reported either as a
@@ -164,6 +179,137 @@ public class ExcelConfigCatalogueWriter(
             // ignore-and-continue, because the rollback is the whole point and
             // a failure inside the rollback propagates rather than being
             // swallowed.
+            //
+            // The evidence record runs BEFORE the rollback: the original
+            // exception is about to be discarded in favour of the typed
+            // refusal, and a rollback failure would replace it with its own
+            // exception — so this is the only point the real cause can be
+            // captured. The log write never throws (RollingLog latches its
+            // own failures), matching the DiagnosticsService precedent.
+            WriteHostRejectedEvidence(exception, written);
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+
+        return ConfigWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Writes one redacted evidence record for a host-rejected write: the
+    /// exception type, HRESULT, the contract tables whose extents were
+    /// recorded before the refusal (in write order — the last name is where
+    /// the sequence stopped), and the full exception detail. Without this
+    /// record the typed <see cref="ConfigWriteRefusalReason.HostRejected"/>
+    /// refusal discards the original failure and the live cause cannot be
+    /// diagnosed. A missing or failed log degrades to no record.
+    /// </summary>
+    /// <param name="exception">The host exception being converted to a refusal.</param>
+    /// <param name="written">
+    /// The extents recorded before the failure, keyed by contract table name.
+    /// </param>
+    private void WriteHostRejectedEvidence(
+        Exception exception,
+        Dictionary<string, Excel.Range> written)
+    {
+        var progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
+        _log?.Write(
+            "CatalogueWriteRejected exception={0} hresult=0x{1:X8} written={2} detail={3}",
+            exception.GetType().FullName,
+            exception.HResult,
+            progress,
+            exception);
+    }
+
+    /// <inheritdoc />
+    public ConfigWriteOutcome WriteSettings(IReadOnlyDictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        Application? application = _application;
+        if (application is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        // Read-only phase: capture present values before any mutation so keys
+        // outside the supplied update survive (ADR-0007 D4). An absent table
+        // contributes nothing and the supplied values fill the approved keys;
+        // a corrupt table cannot be preserved safely.
+        if (!TryReadKeyValues(config, GanttCatalogues.SettingsTableName, out Dictionary<string, string> existing))
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        Dictionary<string, string> merged = new(existing, StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> entry in settings)
+        {
+            merged[entry.Key] = entry.Value;
+        }
+
+        // Single-table counterpart of the five-table transactional write:
+        // capture the settings table's prior state before the first mutation
+        // so a host failure partway through is undone, not half-applied.
+        ListObject? priorTable = FindTable(config, GanttCatalogues.SettingsTableName);
+        TableSnapshot snapshot = priorTable is null
+            ? new TableSnapshot(
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                false,
+                [],
+                [])
+            : new TableSnapshot(
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                true,
+                [.. ReadHeaders(priorTable)],
+                ReadBodyRows(priorTable));
+        List<TableSnapshot> snapshots = [snapshot];
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+
+        var original = _application!.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                GanttCatalogues.SettingsHeaders,
+                BuildSettingRows(merged),
+                written);
+        }
+#pragma warning disable CA1031
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Same host-refusal contract as Write: the rollback is the point,
+            // and a failure inside it propagates rather than being swallowed.
             RollBack(config, snapshots, written);
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
         }
@@ -524,6 +670,44 @@ public class ExcelConfigCatalogueWriter(
 
         ListObject table = AddTable(listObjects, extent);
         table.Name = tableName;
+
+        // The settings table's Value column holds free text, including plot
+        // dates such as "10/01/2025". Written into a General-format cell via
+        // Value2, Excel re-reads that text under the host locale and stores
+        // the serial it parsed (45931 = 1 Oct 2025 for a US host); the next
+        // read then returns the coerced value and the UK date is lost before
+        // the parser ever sees it. Formatting the column as Text AFTER the
+        // table is created stores the text verbatim, which is the only form
+        // the parser can parse deterministically.
+        // This is a best-effort operation; if the range is not available (e.g.
+        // in tests with fakes), we skip formatting rather than failing.
+        if (tableName == GanttCatalogues.SettingsTableName)
+        {
+#pragma warning disable CA1031 // Best-effort formatting: any COM exception is swallowed
+            try
+            {
+                ListColumns? listColumns = table.ListColumns;
+                if (listColumns is not null && listColumns.Count >= 3)
+                {
+                    ListColumn? valueColumn = listColumns[2];
+                    if (valueColumn is not null)
+                    {
+                        Excel.Range bodyRange = valueColumn.DataBodyRange;
+                        if (bodyRange is { } br)
+                        {
+                            br.NumberFormat = "@";
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Best-effort: formatting failed (e.g. in tests with fakes).
+                // The write still succeeds; the parser will handle legacy formats.
+            }
+#pragma warning restore CA1031
+        }
+
         return extent;
     }
 
@@ -799,6 +983,15 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The resized range.</returns>
     internal virtual Excel.Range GetResizedRange(Excel.Range range, int rows, int columns) =>
         range.Resize[rows, columns];
+
+    /// <summary>
+    /// Formats one column of a range as text. Test seam over the COM
+    /// <c>Range.NumberFormat</c> property.
+    /// </summary>
+    /// <param name="range">The range containing the column.</param>
+    /// <param name="columnIndex">The zero-based column index within <paramref name="range"/> to format.</param>
+    internal virtual void FormatColumnAsText(Excel.Range range, int columnIndex) =>
+        range.Columns[columnIndex + 1].NumberFormat = "@";
 
     /// <summary>
     /// Returns a table's body range. Test seam over the COM property.
