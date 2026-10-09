@@ -44,6 +44,10 @@ namespace GanttCreator.Office;
 /// catalogues live only on the configuration sheet, so the configuration
 /// rollback removes them with the sheet; a typed catalogue refusal rolls
 /// back every mutation above and returns the matching initialise refusal.
+/// Every rollback is best-effort: a host refusal during a rollback is
+/// caught there, so it neither masks the exception that triggered it --
+/// the command boundary logs that original exception -- nor aborts the
+/// remaining rollbacks that restore the user's sheet.
 /// </para>
 /// <para>
 /// The three <c>internal virtual</c> accessors (<see cref="GetSheetAt"/>,
@@ -573,6 +577,12 @@ public class ExcelWorkbookInitialiser(
             _application.DisplayAlerts = false;
             target.Delete();
         }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort, like every rollback in this class: a host
+            // that refuses the deletion must not replace the typed
+            // refusal this rollback is part of with a raw COM error.
+        }
         finally
         {
             _application.DisplayAlerts = original;
@@ -643,6 +653,15 @@ public class ExcelWorkbookInitialiser(
                     break;
                 }
             }
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort, like RollBackDataTable: a host that refuses
+            // the configuration sheet's deletion must not mask the
+            // exception that triggered the rollback -- the `throw;` in
+            // Initialise's catch block carries that original exception
+            // to the command boundary, which logs it -- and must not
+            // abort the table, header, and title rollbacks after it.
         }
         finally
         {
@@ -723,8 +742,17 @@ public class ExcelWorkbookInitialiser(
         // would leave a title behind if a write had partially succeeded across the
         // range, and the rollback exists precisely for the case where the sheet was
         // already touched (ADR-0032 D1).
-        Excel.Range titleRange = GetTitleRange(target);
-        titleRange.ClearContents();
+        try
+        {
+            Excel.Range titleRange = GetTitleRange(target);
+            titleRange.ClearContents();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort: a host that refuses the clear must not
+            // mask the original exception nor abort the remaining
+            // rollbacks.
+        }
     }
 
     /// <summary>
@@ -743,10 +771,19 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private void RollBackHeaderRow(Worksheet target)
     {
-        Excel.Range headerRange = GetHeaderRange(
-            target,
-            GanttTableSchema.Default.Columns.Count);
-        headerRange.ClearContents();
+        try
+        {
+            Excel.Range headerRange = GetHeaderRange(
+                target,
+                GanttTableSchema.Default.Columns.Count);
+            headerRange.ClearContents();
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort: a host that refuses the clear must not
+            // mask the original exception nor abort the remaining
+            // rollbacks.
+        }
 
         // Best-effort: the table may already have been deleted by the preceding
         // rollback, in which case RollBackDataTable restored the visibility already.
