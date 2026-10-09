@@ -42,7 +42,10 @@
 | ADR-0036 | Every insert shifts the sheet: a worksheet row, never `ListRows.Add(position)` | Accepted | 2026-10-03 | [`adr/0036-append-inserts-the-worksheet-row-before-claiming-it.md`](adr/0036-append-inserts-the-worksheet-row-before-claiming-it.md) |
 | ADR-0037 | The plot-spanning shapes are anchored into the header row so they stretch | Accepted | 2026-10-03 | [`adr/0037-plot-bands-anchored-into-the-header-row.md`](adr/0037-plot-bands-anchored-into-the-header-row.md) |
 | ADR-0038 | An anchor row below the body lets the plot's BOTTOM stretch, closed by its own line | Accepted (amended 2026-10-03) | 2026-10-03 | [`adr/0038-anchor-row-below-the-body-for-the-plot-bottom.md`](adr/0038-anchor-row-below-the-body-for-the-plot-bottom.md) |
-| ADR-0039 | The month period label steps down MMM → MM when the band is too narrow | Accepted | 2026-10-09 | [`adr/0039-period-label-fit-ladder.md`](adr/0039-period-label-fit-ladder.md) |
+| ADR-0039 | The month period label steps down MMM → MM when the band is too narrow | Superseded by ADR-0040 | 2026-10-09 | [`adr/0039-period-label-fit-ladder.md`](adr/0039-period-label-fit-ladder.md) |
+| ADR-0040 | The Month period-label format is the user's explicit choice (MM or MMM) | Accepted | 2026-10-09 | [`adr/0040-period-label-format-selection.md`](adr/0040-period-label-format-selection.md) |
+
+**ADR-0040 supersedes ADR-0039's automatic MMM→MM fit ladder.** The owner rejected the per-interval step-down on review — it makes the band non-uniform (some months at `MMM`, some at `MM`) and is effectively unobservable in live use, because a three-character month at the 8pt measuring seam is narrower than the 18pt `MinimumHeaderLabelWidthPt` suppression floor. The selected `PeriodLabelFormat` is instead surfaced directly as a Plot Time Scale dropdown (Month scale: `MM` or `MMM`) and emitted verbatim, so the format is a uniform, explicit choice. ADR-0039 is retained as history.
 
 **ADR-0034 D3 supersedes ADR-0027's slot-centring.** ADR-0027 records the critical
 interval as centred on its own visual slot; ADR-0034 D3 (owner ruling 2026-10-02)

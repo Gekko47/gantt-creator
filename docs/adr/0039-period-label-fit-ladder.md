@@ -1,6 +1,6 @@
 # ADR-0039 — The month period label steps down MMM → MM when the band is too narrow
 
-- **Status:** Accepted (implemented 2026-10-09)
+- **Status:** Superseded by [ADR-0040](0040-period-label-format-selection.md) 2026-10-09
 - **Date:** 2026-10-09
 - **Relates to:** entity guide §6 (period header band); ADR-0035 (a label's width is bounded by available space); ADR-0015 (the measured-fallback precedent for event labels); ADR-0033 (label appearance)
 - **Decided by:** product owner, 2026-10-09.
@@ -40,4 +40,4 @@ The measuring seam is 8pt (`LabelBodyFontSizePt`) while the Office factory's `Pe
 
 ## Implementation status
 
-**Implemented 2026-10-09.** `FrameBandsBuilder.ResolvePeriodLabel` with the measurer threaded into `AddHeaders`; Core tests in `FrameBandsBuilderTests` (the step-down, the wide-band control, `MM`-also-clips, the scale/format scope theory, suppression precedence, and the role-derived label ID); guide §6 amended (revision 11); roadmap row R5.12. The golden scene snapshot is byte-identical — its fixture's months are wide enough for the selected form at the measuring seam, so no regeneration is owed.
+**Superseded 2026-10-09 — never shipped.** This ADR was implemented on the R5.12 branch (`FrameBandsBuilder.ResolvePeriodLabel`, the measurer threaded into `AddHeaders`, and the Core tests) and reverted before merge. The owner's follow-up ruling rejected the automatic step-down: a per-interval ladder makes the band non-uniform (some months at `MMM`, some at `MM`) and is not reliably observable in live use — a three-character month at the 8pt measuring seam is narrower than the 18pt `MinimumHeaderLabelWidthPt` suppression floor, so the step-down window is effectively empty and any interval wide enough to escape suppression already fits `MMM`. The selected `PeriodLabelFormat` is instead surfaced to the user directly as a ribbon dropdown (Month scale: `MM` or `MMM`) so the format is a uniform, explicit choice. See [ADR-0040](0040-period-label-format-selection.md). The decision record and its reasoning are retained here as history.
