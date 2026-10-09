@@ -34,9 +34,23 @@ internal static class InitialiseSheetCommand
     /// Ribbon <c>onAction</c> thread).
     /// </summary>
     internal static void RunForExcel()
-        => Run(
-            new ExcelWorkbookInitialiser(ExcelDna.Integration.ExcelDnaUtil.Application),
+    {
+        var application = ExcelDna.Integration.ExcelDnaUtil.Application;
+
+        // Inject the SESSION catalogue writer so its host-rejection evidence
+        // log (wired by AddInHost) reaches the writer this command actually
+        // runs: the initialiser's default writer has no log, so without this
+        // injection the CatalogueWriteRejected record never fires (live
+        // observation 2026-10-09T17:04Z: refusal with no record). The
+        // fallback keeps the command working when the service was not armed,
+        // degrading to the previous log-less writer.
+        Run(
+            new ExcelWorkbookInitialiser(
+                application,
+                catalogueWriter: RibbonStateService.Instance.GetCatalogueWriter()
+                    ?? new ExcelConfigCatalogueWriter(application)),
             CommandErrorDialog.Show);
+    }
 
     /// <summary>
     /// Runs one initialise attempt against an injected initialiser and

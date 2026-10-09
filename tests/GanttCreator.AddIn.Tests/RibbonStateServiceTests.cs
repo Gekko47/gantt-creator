@@ -28,6 +28,31 @@ public sealed class RibbonStateServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    [Fact]
+    public void Get_catalogue_writer_returns_the_injected_writer()
+    {
+        // The Initialise-sheet command injects this instance into the
+        // workbook initialiser; if the getter lost the writer, the
+        // CatalogueWriteRejected evidence record would silently never fire
+        // (live observation 2026-10-09T17:04Z).
+        var service = new RibbonStateService();
+        var writer = new Mock<IConfigCatalogueWriter>().Object;
+
+        service.SetCatalogueWriter(writer);
+
+        Assert.Same(writer, service.GetCatalogueWriter());
+    }
+
+    [Fact]
+    public void Get_catalogue_writer_is_null_before_injection()
+    {
+        // The unarmed fallback in RunForExcel relies on null, not on a
+        // stale or default instance.
+        var service = new RibbonStateService();
+
+        Assert.Null(service.GetCatalogueWriter());
+    }
+
     /// <summary>
     /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
     /// captures and subscriptions so the tests can prove the getters never probe

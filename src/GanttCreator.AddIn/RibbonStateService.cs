@@ -76,6 +76,17 @@ internal class RibbonStateService
     internal void SetCatalogueWriter(IConfigCatalogueWriter? writer) => _catalogueWriter = writer;
 
     /// <summary>
+    /// Returns the injected catalogue writer, or <see langword="null"/> when
+    /// the service was not armed. The Initialise-sheet command injects this
+    /// instance into the workbook initialiser so the host-rejection evidence
+    /// log (wired by <see cref="AddInHost"/>) reaches the writer the command
+    /// actually runs — the initialiser's default writer has no log, so
+    /// without this injection the <c>CatalogueWriteRejected</c> record never
+    /// fires.
+    /// </summary>
+    internal IConfigCatalogueWriter? GetCatalogueWriter() => _catalogueWriter;
+
+    /// <summary>
     /// Injects the catalogue reader that reads plot-range settings from the
     /// workbook configuration sheet. A null reader leaves the read step
     /// as a no-op, so the in-memory state is still correct.
