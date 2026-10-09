@@ -138,6 +138,76 @@ public class ConfigCatalogueWriterTests
         }
     }
 
+    /// <summary>
+    /// A host rejection writes exactly one evidence record to the injected
+    /// rolling log — exception type, HRESULT, the contract tables recorded
+    /// before the refusal in write order, and the full detail — and still
+    /// returns the typed refusal. Without the record the broad catch would
+    /// discard the original failure and the live cause could not be
+    /// diagnosed (the command boundary logs nothing for a typed refusal).
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins.</b> The live Initialise failure
+    /// (diagnostics chain GC-20261009, re-observed after the
+    /// rollback-masking fix) surfaced only as the CatalogueWriteFailed
+    /// dialog: the original host exception died in the writer's catch with
+    /// no trace in the rolling log.
+    /// </remarks>
+    [Fact]
+    public void A_host_rejection_writes_one_evidence_record_and_still_refuses_typed()
+    {
+        var fake = new ConfigSheetFake();
+        var records = new List<string>();
+        var log = new Mock<GanttCreator.Core.Logging.IRollingLog>();
+        _ = log.Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) => records.Add(
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args)));
+        var writer = ConfigGraph.BuildWriter(fake, log: log.Object);
+
+        // Fail the third table's Add on a fresh (empty) sheet: the types,
+        // styles, and metrics extents are each recorded before their Add,
+        // so the evidence must name exactly those three, in contract order.
+        fake.FailAddAt(3);
+        var outcome = writer.Write();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.HostRejected, outcome.Refusal);
+
+        var record = Assert.Single(records);
+        Assert.StartsWith("CatalogueWriteRejected ", record, StringComparison.Ordinal);
+        Assert.Contains("exception=System.InvalidOperationException", record, StringComparison.Ordinal);
+        Assert.Contains(
+            $"hresult=0x{new InvalidOperationException().HResult:X8}",
+            record,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"written={GanttCatalogues.TypesTableName},{GanttCatalogues.StylesTableName},{GanttCatalogues.MetricsTableName}",
+            record,
+            StringComparison.Ordinal);
+        Assert.Contains("The host refused the table write.", record, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A successful write produces no evidence record: the log hook fires
+    /// only on the host-rejection path, never on every catalogue write.
+    /// </summary>
+    [Fact]
+    public void A_successful_write_produces_no_evidence_record()
+    {
+        var fake = new ConfigSheetFake();
+        var records = new List<string>();
+        var log = new Mock<GanttCreator.Core.Logging.IRollingLog>();
+        _ = log.Setup(l => l.Write(It.IsAny<string>(), It.IsAny<object?[]>()))
+            .Callback<string, object?[]>((format, args) => records.Add(
+                string.Format(System.Globalization.CultureInfo.InvariantCulture, format, args)));
+        var writer = ConfigGraph.BuildWriter(fake, log: log.Object);
+
+        var outcome = writer.Write();
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        Assert.Empty(records);
+    }
+
     [Fact]
     public void Write_clears_the_cells_of_a_table_it_created_when_the_roll_back_runs()
     {

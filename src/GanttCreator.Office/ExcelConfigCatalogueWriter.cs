@@ -1,5 +1,6 @@
 using System.Globalization;
 using GanttCreator.Core;
+using GanttCreator.Core.Logging;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -18,6 +19,12 @@ namespace GanttCreator.Office;
 /// no-active-workbook refusal with no mutation.
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
+/// <param name="log">
+/// Optional rolling log that receives one redacted evidence record when
+/// the host rejects the write (see
+/// <see cref="ConfigWriteRefusalReason.HostRejected"/>). Absent (or
+/// failed) logging degrades to no record, never to a thrown error.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: every proxy is held in a local and used without chained
@@ -40,11 +47,19 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelConfigCatalogueWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IConfigCatalogueWriter
+    IWorksheetProtectionGuard? protectionGuard = null,
+    IRollingLog? log = null) : IConfigCatalogueWriter
 {
     private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    // Evidence sink for a host-rejected write. The broad catch in Write()
+    // converts the host exception into a typed refusal, and the command
+    // boundary logs nothing for a typed refusal — without this record the
+    // original error (type, HRESULT, stack) would be discarded and the live
+    // failure could not be diagnosed (live defect chain GC-20261009).
+    private readonly IRollingLog? _log = log;
 
     /// <summary>
     /// The preservation data captured before any mutation: existing setting
@@ -154,7 +169,7 @@ public class ExcelConfigCatalogueWriter(
             WriteContractTables(config, preservation, written);
         }
 #pragma warning disable CA1031 // Deliberately broad: see the catch body.
-        catch (Exception)
+        catch (Exception exception)
 #pragma warning restore CA1031
         {
             // A host refusal reaching managed code is reported either as a
@@ -164,6 +179,14 @@ public class ExcelConfigCatalogueWriter(
             // ignore-and-continue, because the rollback is the whole point and
             // a failure inside the rollback propagates rather than being
             // swallowed.
+            //
+            // The evidence record runs BEFORE the rollback: the original
+            // exception is about to be discarded in favour of the typed
+            // refusal, and a rollback failure would replace it with its own
+            // exception — so this is the only point the real cause can be
+            // captured. The log write never throws (RollingLog latches its
+            // own failures), matching the DiagnosticsService precedent.
+            WriteHostRejectedEvidence(exception, written);
             RollBack(config, snapshots, written);
             return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
         }
@@ -173,6 +196,32 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return ConfigWriteOutcome.Ok();
+    }
+
+    /// <summary>
+    /// Writes one redacted evidence record for a host-rejected write: the
+    /// exception type, HRESULT, the contract tables whose extents were
+    /// recorded before the refusal (in write order — the last name is where
+    /// the sequence stopped), and the full exception detail. Without this
+    /// record the typed <see cref="ConfigWriteRefusalReason.HostRejected"/>
+    /// refusal discards the original failure and the live cause cannot be
+    /// diagnosed. A missing or failed log degrades to no record.
+    /// </summary>
+    /// <param name="exception">The host exception being converted to a refusal.</param>
+    /// <param name="written">
+    /// The extents recorded before the failure, keyed by contract table name.
+    /// </param>
+    private void WriteHostRejectedEvidence(
+        Exception exception,
+        Dictionary<string, Excel.Range> written)
+    {
+        var progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
+        _log?.Write(
+            "CatalogueWriteRejected exception={0} hresult=0x{1:X8} written={2} detail={3}",
+            exception.GetType().FullName,
+            exception.HResult,
+            progress,
+            exception);
     }
 
     /// <inheritdoc />
