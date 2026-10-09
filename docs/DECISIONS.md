@@ -42,6 +42,7 @@
 | ADR-0036 | Every insert shifts the sheet: a worksheet row, never `ListRows.Add(position)` | Accepted | 2026-10-03 | [`adr/0036-append-inserts-the-worksheet-row-before-claiming-it.md`](adr/0036-append-inserts-the-worksheet-row-before-claiming-it.md) |
 | ADR-0037 | The plot-spanning shapes are anchored into the header row so they stretch | Accepted | 2026-10-03 | [`adr/0037-plot-bands-anchored-into-the-header-row.md`](adr/0037-plot-bands-anchored-into-the-header-row.md) |
 | ADR-0038 | An anchor row below the body lets the plot's BOTTOM stretch, closed by its own line | Accepted (amended 2026-10-03) | 2026-10-03 | [`adr/0038-anchor-row-below-the-body-for-the-plot-bottom.md`](adr/0038-anchor-row-below-the-body-for-the-plot-bottom.md) |
+| ADR-0039 | The month period label steps down MMM → MM when the band is too narrow | Accepted | 2026-10-09 | [`adr/0039-period-label-fit-ladder.md`](adr/0039-period-label-fit-ladder.md) |
 
 **ADR-0034 D3 supersedes ADR-0027's slot-centring.** ADR-0027 records the critical
 interval as centred on its own visual slot; ADR-0034 D3 (owner ruling 2026-10-02)

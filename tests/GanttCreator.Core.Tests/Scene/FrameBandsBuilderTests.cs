@@ -644,6 +644,121 @@ public sealed class FrameBandsBuilderTests
     }
 
     [Fact]
+    public void A_narrow_month_band_steps_the_MMM_label_down_to_MM()
+    {
+        // ADR-0039's fit ladder. A full year across a 300pt plot gives
+        // each month 25pt; the x10 measurer makes "Jan" 30pt, so the
+        // selected form cannot fit while the interval is still above the
+        // 18pt suppression minimum. The two-digit form is emitted instead.
+        FrameBandsResult result = FrameBandsBuilder
+            .TryBuild(
+                CreateFullYearRequest(plotRightPt: 400, minimumHeaderLabelWidthPt: 18),
+                new FixedMeasurer(text => text.Length * 10.0))
+            .Result!;
+
+        SceneText[] periodLabels = [.. result.Primitives.OfType<SceneText>()
+            .Where(text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal))];
+        Assert.Equal(
+            Enumerable.Range(1, 12).Select(month => month.ToString("D2", CultureInfo.InvariantCulture)),
+            periodLabels.Select(text => text.Text));
+        // The label's identity is role-derived (R3.17), so the step down
+        // does not move the reconciliation key a renderer matches on.
+        Assert.Equal(
+            "chart:period:2024-01-01:label",
+            periodLabels.Single(text => text.Text == "01").PrimitiveId);
+    }
+
+    [Fact]
+    public void A_wide_month_band_keeps_the_MMM_label()
+    {
+        // The control for the ladder above: the same x10 measurer, but
+        // each month is 100pt wide, so "Jan" (30pt) fits and the
+        // selected format is emitted verbatim.
+        FrameBandsResult result = FrameBandsBuilder
+            .TryBuild(CreateRequest(), new FixedMeasurer(text => text.Length * 10.0))
+            .Result!;
+
+        Assert.Contains(result.Primitives.OfType<SceneText>(), text =>
+            text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == "Jan");
+        Assert.DoesNotContain(result.Primitives.OfType<SceneText>(), text =>
+            text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == "01");
+    }
+
+    [Fact]
+    public void The_MM_fallback_is_used_even_when_MM_measures_wider_than_the_band()
+    {
+        // The owner's ruling for the ladder's end condition: the step down
+        // is unconditional. A 210pt plot gives each month 17.5pt, so even
+        // "01" (20pt at the x10 measurer) measures wider than its interval;
+        // it is still emitted and left to the existing host clipping.
+        FrameBandsResult result = FrameBandsBuilder
+            .TryBuild(
+                CreateFullYearRequest(plotRightPt: 310, minimumHeaderLabelWidthPt: 10),
+                new FixedMeasurer(text => text.Length * 10.0))
+            .Result!;
+
+        Assert.Equal(
+            Enumerable.Range(1, 12).Select(month => month.ToString("D2", CultureInfo.InvariantCulture)),
+            result.Primitives.OfType<SceneText>()
+                .Where(text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal))
+                .Select(text => text.Text));
+    }
+
+    [Theory]
+    [InlineData(GanttTimeScale.Quarter, GanttPeriodLabelFormat.Quarter, 1, 12, 150, "Q1")]
+    [InlineData(GanttTimeScale.Week, GanttPeriodLabelFormat.Week, 1, 1, 200, "W01")]
+    [InlineData(GanttTimeScale.Month, GanttPeriodLabelFormat.MM, 1, 12, 400, "01")]
+    public void The_step_down_applies_to_no_other_scale_or_format(
+        GanttTimeScale scale,
+        GanttPeriodLabelFormat format,
+        int startMonth,
+        int finishMonth,
+        double plotRightPt,
+        string expectedLabel)
+    {
+        // Each row picks a geometry where the selected label measures wider
+        // than its interval at the x10 measurer ("Q1" 20pt against 12.5pt,
+        // "W01" 30pt against 25pt) or is already at the format floor (MM).
+        // None of these has a defined shorter form, so the label is verbatim.
+        DateOnly finish = new(2024, finishMonth, DateTime.DaysInMonth(2024, finishMonth));
+        TimeScale timeScale = TimeScale
+            .TryCreate(new DateOnly(2024, startMonth, 1), finish, 100, plotRightPt)
+            .Scale!;
+        FrameBandsResult result = FrameBandsBuilder
+            .TryBuild(
+                CreateRequest() with
+                {
+                    TimeScale = timeScale,
+                    Scale = scale,
+                    PeriodLabelFormat = format,
+                    PlotBounds = new RectD(100, 100, plotRightPt - 100, 100),
+                    MinimumHeaderLabelWidthPt = 10,
+                },
+                new FixedMeasurer(text => text.Length * 10.0))
+            .Result!;
+
+        Assert.Contains(result.Primitives.OfType<SceneText>(), text =>
+            text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == expectedLabel);
+    }
+
+    [Fact]
+    public void Suppression_still_wins_over_the_step_down()
+    {
+        // The ladder runs only where ShowLabel is set: a 17.5pt interval
+        // below a 20pt minimum suppresses its label rather than stepping
+        // down to a form that would not have been shown either.
+        FrameBandsCreationOutcome outcome = FrameBandsBuilder
+            .TryBuild(
+                CreateFullYearRequest(plotRightPt: 310, minimumHeaderLabelWidthPt: 20),
+                new FixedMeasurer(text => text.Length * 10.0));
+
+        Assert.True(outcome.Succeeded, $"Refused: {outcome.Refusal}");
+        Assert.DoesNotContain(outcome.Result!.Primitives.OfType<SceneText>(), text =>
+            text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal));
+        Assert.Contains(outcome.Result.Warnings, warning => warning.Code == "AllPeriodLabelsSuppressed");
+    }
+
+    [Fact]
     public void Invalid_requests_return_typed_refusals()
     {
         Assert.Equal(FrameBandsRefusal.NullRequest, FrameBandsBuilder.TryBuild(null, new FixedMeasurer(_ => 1)).Refusal);
@@ -819,6 +934,29 @@ public sealed class FrameBandsBuilderTests
             chartAnchorRowHeightPt,
             _theme
         );
+    }
+
+    /// <summary>
+    /// A Month-scale request spanning all of 2024, whose plot width and
+    /// suppression minimum are the two knobs the ADR-0039 ladder tests
+    /// turn: <paramref name="plotRightPt"/> sets each month's visible
+    /// width (the plot is 100pt to <paramref name="plotRightPt"/>), and
+    /// <paramref name="minimumHeaderLabelWidthPt"/> sets the floor below
+    /// which a label suppresses instead of stepping down.
+    /// </summary>
+    private static FrameBandsRequest CreateFullYearRequest(
+        double plotRightPt,
+        double minimumHeaderLabelWidthPt)
+    {
+        TimeScale scale = TimeScale
+            .TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31), 100, plotRightPt)
+            .Scale!;
+        return CreateRequest() with
+        {
+            TimeScale = scale,
+            PlotBounds = new RectD(100, 100, plotRightPt - 100, 100),
+            MinimumHeaderLabelWidthPt = minimumHeaderLabelWidthPt,
+        };
     }
 
     [Fact]

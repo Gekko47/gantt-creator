@@ -229,6 +229,7 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.9 | Complete Ribbon layout, icons, keytips, accessibility labels, and offline help | Ribbon XML/callback, resource, and offline-link contract tests | Required: keyboard, screen-reader label, high-contrast, and screenshot-layout review |
 | R5.10 | Add single-expanded-entity selection and row fill/line/label overrides | Selection-context, capability, colour, label-position, inheritance, and persistence tests | Required: controls enable only for one expanded entity; edit rectangle/diamond fill and label position |
 | R5.11 | Enforce Refresh-only rendering for all worksheet and property edits | Command/event tests prove edits never invoke the renderer; blocking Refresh preserves the last scene | Required: edit Type/dates/colour/label, confirm shapes stay unchanged, then Refresh once to apply all |
+| R5.12 | Add the month period-label fit ladder (MMM → MM when the band is too narrow) | Ladder tests for the step-down, the wide-band control, the MM-also-clips ruling, the scale/format scope, and suppression precedence; label IDs unchanged | Required: narrow a month plot until labels step down and confirm `09`-style labels render |
 
 > **Phase 5 notes (revision 10):**
 > - **R5.2** keeps the month/quarter/year **scale** selector. The **size-preset

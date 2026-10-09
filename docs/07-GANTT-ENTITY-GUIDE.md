@@ -1,5 +1,9 @@
-# Gantt visual entity guide — revision 10
+# Gantt visual entity guide — revision 11
 
+> **Revision 11 (2026-10-09) adds the month period-label fit ladder (ADR-0039).**
+>
+> **§6 only:** when the `Month` scale is selected with the `MMM` format and a period's three-character label measures wider than its visible interval, the label steps down to the two-digit `MM` form ("Jan" → "01"). The step is unconditional — `MM` is emitted even when it too measures wider, and the host clips it with the existing engine behaviour. Every other scale/format pair and the year band are unchanged, and suppression below `MinimumHeaderLabelWidthPt` is evaluated first and still wins. The label primitive's identity is role-derived (`{parent}:label`), so the text change does not move the R4.7/R4.8 reconciliation keys. The measuring seam is 8pt while the live period header renders at 9pt, so a borderline interval may keep an `MMM` that clips — recorded in ADR-0039's fidelity note.
+>
 > **Revision 10 (2026-10-03) adds a reserved anchor row below the body so the plot's BOTTOM stretches.**
 >
 > (1) **The metric-token table and §7:** a new `ChartAnchorRowHeightPt` (default **0.25**, range 0–4) names the height of a new **reserved anchor row** immediately below the last body row. The bands, vertical grid lines and delineators paint *through* it, so their bottom cell anchor resolves below the row every insert targets and they **stretch** rather than slide when a row is added. `ChartPaddingRowHeightPt` reduces **6 → 5.75**, so the reserved strip below the body is still exactly **6pt** — the same margin it reserved as a single row (ADR-0038 D1/D4). The metric count moves 23 → 24 and the workbook schema version 11 → 12 (no migration; ADR-0029 D6 — the remedy is Initialise, which is also what reserves the anchor row).
@@ -391,7 +395,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
 
-**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear. On the `Month` scale with the `MMM` format, a label that measures wider than its visible interval steps down to the two-digit `MM` form (ADR-0039) — unconditionally, so an `MM` that still does not fit is emitted and clipped by the existing engine behaviour rather than suppressed. Suppression below `MinimumHeaderLabelWidthPt` is evaluated first and still wins; every other scale/format pair and the year band are unaffected.
 
 **The `Year` scale is retired (R5.2).** The upper band is fixed as the year, so a `Year` lower band would duplicate it. A stored `Year` is refused rather than silently coerced, and it is compatible with no format. A workbook written before this ruling carries the older closed set; the reader reports `CatalogueMismatch` and the remedy is `Initialise` (ADR-0029 D6, no migration).
 

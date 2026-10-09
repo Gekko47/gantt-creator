@@ -232,7 +232,7 @@ public static class FrameBandsBuilder
         ];
         List<SceneWarning> warnings = [];
         AddBands(primitives, request, sequence, plotSpanBounds);
-        AddHeaders(primitives, request, sequence, geometry);
+        AddHeaders(primitives, request, sequence, geometry, textMeasurer);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
         AddGrid(primitives, request, sequence, plotSpanBounds);
         AddClosingLine(primitives, request);
@@ -283,6 +283,10 @@ public static class FrameBandsBuilder
     /// <see cref="ChartFrameGeometry.PeriodBounds"/> are the single authority for
     /// where each band sits.
     /// </param>
+    /// <param name="textMeasurer">
+    /// The measuring seam <see cref="ResolvePeriodLabel"/> uses for the
+    /// period-label fit ladder (ADR-0039).
+    /// </param>
     /// <remarks>
     /// <para>
     /// This method previously recomputed both bands from
@@ -311,7 +315,8 @@ public static class FrameBandsBuilder
         List<ScenePrimitive> primitives,
         FrameBandsRequest request,
         BandSequence sequence,
-        ChartFrameGeometry geometry)
+        ChartFrameGeometry geometry,
+        ITextWidthMeasurer textMeasurer)
     {
         for (var index = 0; index < sequence.Years.Count; index++)
         {
@@ -362,7 +367,7 @@ public static class FrameBandsBuilder
                         $"{id}:label",
                         SceneOwnerId.Chart,
                         ZLayer.Frame,
-                        period.Label,
+                        ResolvePeriodLabel(period, request, textMeasurer),
                         bounds,
                         request.Theme.PeriodHeader,
                         GanttTextAlignment.Centre
@@ -370,6 +375,45 @@ public static class FrameBandsBuilder
                 );
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves the text of one period header label (ADR-0039).
+    /// </summary>
+    /// <param name="period">The period interval whose label is emitted.</param>
+    /// <param name="request">The frame/band request.</param>
+    /// <param name="textMeasurer">The measuring seam.</param>
+    /// <returns>
+    /// The selected-format label, or its two-digit month form when the
+    /// selected form measures wider than the interval.
+    /// </returns>
+    /// <remarks>
+    /// ADR-0039's fit ladder, scoped to the Month scale with the MMM
+    /// format: a three-character month name that measures wider than its
+    /// interval steps down to the two-digit form ("Jan" to "01"), the
+    /// narrowest form the format catalogue defines for a month. The step
+    /// is unconditional — when even "MM" measures wider than the interval
+    /// it is still emitted and clipped by the existing host behaviour,
+    /// exactly as the owner ruled. Every other scale/format pair keeps its
+    /// selected label verbatim: Quarter and Week have no defined shorter
+    /// form, and MM is already the floor. The suppression rule is
+    /// untouched — this method runs only for intervals whose
+    /// <c>ShowLabel</c> is set, so a sub-<c>MinimumHeaderLabelWidthPt</c>
+    /// interval still suppresses rather than stepping down. The label's
+    /// identity is role-derived (<c>{parent}:label</c>, R3.17), so the
+    /// text change cannot drift the shape-reconciliation keys.
+    /// </remarks>
+    private static string ResolvePeriodLabel(
+        BandInterval period,
+        FrameBandsRequest request,
+        ITextWidthMeasurer textMeasurer)
+    {
+        return request.Scale == GanttTimeScale.Month
+            && request.PeriodLabelFormat == GanttPeriodLabelFormat.MMM
+            && textMeasurer.TryMeasure(period.Label, out var measuredWidthPt)
+            && measuredWidthPt > period.Width
+            ? period.Start.ToString("MM", CultureInfo.InvariantCulture)
+            : period.Label;
     }
 
     private static void AddTitle(
