@@ -31,13 +31,10 @@
         </group>
         <group id="grpPlotTimeScale" label="Plot Time Scale">
           <dropDown id="ddnPlotTimeScale" getSelectedItemIndex="GetTimeScale" getEnabled="GetEnabled" onAction="OnTimeScaleChange">
-            <item id="Month" label="Month"/>
+            <item id="Month-MM" label="Month (MM)"/>
+            <item id="Month-MMM" label="Month (MMM)"/>
             <item id="Quarter" label="Quarter"/>
             <item id="Week" label="Week"/>
-          </dropDown>
-          <dropDown id="ddnPeriodLabelFormat" getSelectedItemIndex="GetPeriodLabelFormat" getEnabled="GetEnabled" onAction="OnPeriodLabelFormatChange">
-            <item id="MM" label="MM (01)"/>
-            <item id="MMM" label="MMM (Jan)"/>
           </dropDown>
         </group>
         <group id="grpPlotSize" label="Plot Size">

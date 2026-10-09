@@ -690,9 +690,10 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns the index of the current plot time scale. The ribbon
-    /// dropdown asks for this through getSelectedItemIndex; the answer
-    /// comes from the state service snapshot. Never throws.
+    /// Returns the index of the selected row in the plot time-scale dropdown.
+    /// The Month scale owns two rows because the month band has two label
+    /// forms, so the index is derived from the stored scale/format PAIR, not
+    /// from the scale alone. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
     public int GetTimeScale(IRibbonControl control) => GetTimeScale(control, RibbonStateService.Instance);
@@ -704,7 +705,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The zero-based index of the current time scale.</returns>
+    /// <returns>The zero-based index of the selected row.</returns>
     internal static int GetTimeScale(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
@@ -712,25 +713,30 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return (int)stateService.GetTimeScale();
+            return TimeScaleSelectionIndex(
+                stateService.GetTimeScale(),
+                stateService.GetPeriodLabelFormat());
         }
         catch
         {
-            return (int)GanttTimeScale.Month;
+            return TimeScaleSelectionIndex(GanttTimeScale.Month, GanttPeriodLabelFormat.MMM);
         }
 #pragma warning restore CA1031
     }
 
     /// <summary>
-    /// Called when the user picks a plot time scale from the ribbon
-    /// dropdown. Excel's dropDown onAction contract passes the control, the
-    /// selected item id, and the selected index; the scale is set from the
-    /// id, then persisted. An unknown id is refused by the service rather
-    /// than defaulted, so a mistyped selection cannot silently redraw the
-    /// period band with the wrong calendar unit. Never throws.
+    /// Called when the user picks a row from the plot time-scale dropdown.
+    /// Excel's dropDown onAction contract passes the control, the selected item
+    /// id, and the selected index; the id names a scale and, for the month
+    /// band, a label form, and both are committed together then persisted. An
+    /// unknown or incompatible id is refused by the parsers rather than
+    /// defaulted, so a mistyped selection cannot silently redraw the period
+    /// band with the wrong calendar unit or label. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    /// <param name="selectedId">The selected item id (Month, Quarter, or Week).</param>
+    /// <param name="selectedId">
+    /// The selected item id (Month-MM, Month-MMM, Quarter, or Week).
+    /// </param>
     /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
 #pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
     public void OnTimeScaleChange(IRibbonControl control, string selectedId, int selectedIndex)
@@ -739,8 +745,8 @@ public class GanttRibbon : ExcelRibbon
 
     /// <summary>
     /// Runs <see cref="OnTimeScaleChange(IRibbonControl, string, int)"/>
-    /// against an injected state service. Internal so contract tests can
-    /// verify the routing without the session singleton. Never throws.
+    /// against an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="id">The selected item id, or null in tests.</param>
@@ -749,76 +755,78 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        if (GanttChartSettings.TryParseTimeScale(id, out GanttTimeScale scale))
+        if (TryParseTimeScaleSelection(id, out GanttTimeScale scale, out GanttPeriodLabelFormat? format))
         {
-            stateService.SetTimeScale(scale);
+            stateService.SetTimeScale(scale, format);
         }
     }
 
     /// <summary>
-    /// Returns the index of the current month period label format. The ribbon
-    /// dropdown asks for this through getSelectedItemIndex; the answer comes
-    /// from the state service snapshot. Never throws.
+    /// Maps the stored scale/format pair to the dropdown's selected index.
+    /// This is the exact inverse of <see cref="TryParseTimeScaleSelection"/>
+    /// plus the item order declared in Ribbon.xml; both directions are pinned
+    /// by contract tests so the getter cannot drift from the document.
     /// </summary>
-    /// <param name="control">The ribbon control Excel is asking about.</param>
-    public int GetPeriodLabelFormat(IRibbonControl control) => GetPeriodLabelFormat(control, RibbonStateService.Instance);
-
-    /// <summary>
-    /// Runs <see cref="GetPeriodLabelFormat(IRibbonControl)"/> against an
-    /// injected state service. Internal so contract tests can verify the
-    /// routing without the session singleton. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
-    /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The zero-based index of the current format (MM = 0, MMM = 1).</returns>
-    internal static int GetPeriodLabelFormat(IRibbonControl? control, RibbonStateService stateService)
-    {
-        _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-#pragma warning disable CA1031
-        try
+    private static int TimeScaleSelectionIndex(GanttTimeScale scale, GanttPeriodLabelFormat format) =>
+        scale switch
         {
-            return (int)stateService.GetPeriodLabelFormat();
-        }
-        catch
-        {
-            return (int)GanttPeriodLabelFormat.MMM;
-        }
-#pragma warning restore CA1031
-    }
+            GanttTimeScale.Month when format == GanttPeriodLabelFormat.MM => 0,
+            GanttTimeScale.Month => 1,
+            GanttTimeScale.Quarter => 2,
+            GanttTimeScale.Week => 3,
+            _ => 1,
+        };
 
     /// <summary>
-    /// Called when the user picks a period label format from the ribbon
-    /// dropdown. Excel's dropDown onAction contract passes the control, the
-    /// selected item id, and the selected index; the format is set from the
-    /// id, then persisted. An unknown id, or one incompatible with the current
-    /// scale, is refused by the service rather than defaulted, so a mistyped
-    /// selection cannot silently relabel the band. Never throws.
+    /// Parses a dropdown item id into the scale and label format it selects.
+    /// The id is the scale name, optionally suffixed with the label format
+    /// after a hyphen (<c>Month-MM</c>, <c>Month-MMM</c>); a suffix-less id
+    /// (<c>Quarter</c>, <c>Week</c>) names the scale only and leaves the format
+    /// to the service's canonical rule. Both halves go through the closed Core
+    /// parsers, and an incompatible suffix is REFUSED rather than coerced, so
+    /// the stored pair is always one the dropdown could have produced. Never
+    /// throws.
     /// </summary>
-    /// <param name="control">The ribbon control that raised the event.</param>
-    /// <param name="selectedId">The selected item id (MM or MMM).</param>
-    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
-#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
-    public void OnPeriodLabelFormatChange(IRibbonControl control, string selectedId, int selectedIndex)
-        => OnPeriodLabelFormatChange(control, selectedId, RibbonStateService.Instance);
-#pragma warning restore IDE0060
-
-    /// <summary>
-    /// Runs <see cref="OnPeriodLabelFormatChange(IRibbonControl, string, int)"/>
-    /// against an injected state service. Internal so contract tests can verify
-    /// the routing without the session singleton. Never throws.
-    /// </summary>
-    /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="id">The selected item id, or null in tests.</param>
-    /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPeriodLabelFormatChange(IRibbonControl? control, string? id, RibbonStateService stateService)
+    /// <param name="scale">The parsed scale when successful.</param>
+    /// <param name="format">
+    /// The explicitly named format, or null when the id names only the scale.
+    /// </param>
+    /// <returns><see langword="true"/> when the id names a valid selection.</returns>
+    private static bool TryParseTimeScaleSelection(
+        string? id,
+        out GanttTimeScale scale,
+        out GanttPeriodLabelFormat? format)
     {
-        _ = control;
-        ArgumentNullException.ThrowIfNull(stateService);
-        if (GanttChartSettings.TryParsePeriodLabelFormat(id, out GanttPeriodLabelFormat format))
+        scale = default;
+        format = null;
+
+        if (string.IsNullOrEmpty(id))
         {
-            stateService.SetPeriodLabelFormat(format);
+            return false;
         }
+
+        var separator = id.IndexOf('-', StringComparison.Ordinal);
+        if (!GanttChartSettings.TryParseTimeScale(
+            separator < 0 ? id : id[..separator],
+            out scale))
+        {
+            return false;
+        }
+
+        if (separator < 0)
+        {
+            return true;
+        }
+
+        if (!GanttChartSettings.TryParsePeriodLabelFormat(id[(separator + 1)..], out GanttPeriodLabelFormat parsed)
+            || !GanttChartSettings.IsCompatible(scale, parsed))
+        {
+            return false;
+        }
+
+        format = parsed;
+        return true;
     }
 
     /// <summary>

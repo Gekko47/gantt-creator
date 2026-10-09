@@ -434,18 +434,17 @@ public sealed class RibbonStateServiceTests : IDisposable
 
     /// <summary>
     /// The month label form is the user's stored selection, not a derivation of
-    /// the scale: choosing MM persists MM even though the month scale's
+    /// the scale: choosing the MM row persists MM even though the month scale's
     /// canonical form is MMM. Without this pin the persist path would derive
     /// the format from the scale on every commit and silently clobber the
     /// selection back to MMM the next time any ribbon setting changed (R5.12).
     /// </summary>
     [Fact]
-    public void SetPeriodLabelFormat_persists_the_selected_month_form()
+    public void SetTimeScale_persists_the_selected_month_form()
     {
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
         service.SetTimeScale(GanttTimeScale.Month);
-        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
 
         var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
         _ = writer
@@ -453,17 +452,41 @@ public sealed class RibbonStateServiceTests : IDisposable
             .Returns(ConfigWriteOutcome.Ok());
         service.SetCatalogueWriter(writer.Object);
 
-        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MM);
+        service.SetTimeScale(GanttTimeScale.Month, GanttPeriodLabelFormat.MM);
 
         Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
 
         // The predicate IS the assertion: the persisted payload must carry the
-        // selection. A payload that derived the form from the scale would
-        // write MMM, and this Verify finds no matching invocation.
+        // selection. A payload that derived the form from the scale would write
+        // MMM, and this Verify finds no matching invocation.
         writer.Verify(
             w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
                 settings => settings["PeriodLabelFormat"] == nameof(GanttPeriodLabelFormat.MM))),
             Times.Once);
+    }
+
+    /// <summary>
+    /// A named form the scale cannot carry is refused, not coerced, so the
+    /// service cannot be driven into storing a pair the catalogue reader
+    /// rejects. The stored pair is left exactly as it was.
+    /// </summary>
+    [Fact]
+    public void SetTimeScale_refuses_a_named_form_the_scale_cannot_carry()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Month, GanttPeriodLabelFormat.MM);
+
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetTimeScale(GanttTimeScale.Week, GanttPeriodLabelFormat.MM);
+
+        Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
+        Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
+        writer.Verify(
+            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+            Times.Never);
     }
 
     /// <summary>
@@ -477,8 +500,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     {
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
-        service.SetTimeScale(GanttTimeScale.Month);
-        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MM);
+        service.SetTimeScale(GanttTimeScale.Month, GanttPeriodLabelFormat.MM);
 
         service.SetTimeScale(GanttTimeScale.Quarter);
 
@@ -500,7 +522,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         var service = RibbonStateService.Instance;
         service.SetCatalogueWriter(null);
         service.SetTimeScale(GanttTimeScale.Month);
-        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
+        service.SetTimeScale(GanttTimeScale.Month, GanttPeriodLabelFormat.MMM);
 
         var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
         _ = catalogueReader

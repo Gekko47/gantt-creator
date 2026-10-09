@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -390,7 +390,6 @@ public class GanttRibbonTests
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 RibbonControlIds.PlotTimeScale,
-                RibbonControlIds.PeriodLabelFormat,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
@@ -457,7 +456,6 @@ public class GanttRibbonTests
             RibbonControlIds.PlotStartDate,
             RibbonControlIds.PlotFinishDate,
             RibbonControlIds.PlotTimeScale,
-            RibbonControlIds.PeriodLabelFormat,
             RibbonControlIds.Margin,
             RibbonControlIds.MarginCm,
             RibbonControlIds.PlotWidth,
@@ -862,14 +860,15 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void PlotTimeScale_group_declares_the_three_scale_items()
+    public void PlotTimeScale_group_declares_the_scale_and_label_form_rows()
     {
         // R5.2: the lower band's calendar unit is a closed set
         // (month/quarter/week — the year is the fixed upper band,
-        // so a Year lower band would duplicate it). The dropdown
-        // selects the scale through getSelectedItemIndex and commits
-        // it through onAction; every item is one of the three
-        // closed values.
+        // so a Year lower band would duplicate it). R5.12 folds the
+        // month band's two label forms into the same dropdown as two
+        // Month rows, so one control selects the scale AND the form
+        // and there is nothing to grey out: every row the dropdown
+        // offers is a pair the catalogue reader accepts.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
@@ -878,56 +877,27 @@ public class GanttRibbonTests
             .Single(element => element.Attribute("id")?.Value == "grpPlotTimeScale");
         Assert.Equal("Plot Time Scale", group.Attribute("label")?.Value);
 
+        // One dropdown, not two: the label form is a row of the scale
+        // dropdown, so there is no second control to keep in step.
         XElement dropdown = group.Descendants(ns + "dropDown")
             .Single(element => element.Attribute("id")?.Value == "ddnPlotTimeScale");
         Assert.Equal("GetTimeScale", dropdown.Attribute("getSelectedItemIndex")?.Value);
         Assert.Null(dropdown.Attribute("getSelectedIndex"));
         Assert.Equal("GetEnabled", dropdown.Attribute("getEnabled")?.Value);
         Assert.Equal("OnTimeScaleChange", dropdown.Attribute("onAction")?.Value);
+        Assert.Single(group.Descendants(ns + "dropDown"));
 
-        var itemLabels = dropdown.Descendants(ns + "item")
-            .Select(element => element.Attribute("label")?.Value)
-            .ToList();
-        Assert.Equal(["Month", "Quarter", "Week"], itemLabels);
-    }
-
-    /// <summary>
-    /// R5.12: the month band's label form is the user's explicit choice, not
-    /// an automatic step-down. The second dropdown in the same group selects
-    /// MM (01) or MMM (Jan) through getSelectedItemIndex and commits it
-    /// through onAction. The item ids are the exact enum names the closed-set
-    /// parser accepts, and their order matches the GanttPeriodLabelFormat
-    /// ordinals so the index the getter returns is the selected row.
-    /// </summary>
-    [Fact]
-    public void PlotTimeScale_group_declares_the_month_label_form_items()
-    {
-        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
-        XDocument doc = XDocument.Parse(xml);
-        XNamespace ns = NamespaceCustomUI2010;
-
-        XElement group = doc.Descendants(ns + "group")
-            .Single(element => element.Attribute("id")?.Value == "grpPlotTimeScale");
-
-        XElement dropdown = group.Descendants(ns + "dropDown")
-            .Single(element => element.Attribute("id")?.Value == "ddnPeriodLabelFormat");
-        Assert.Equal("GetPeriodLabelFormat", dropdown.Attribute("getSelectedItemIndex")?.Value);
-        Assert.Null(dropdown.Attribute("getSelectedIndex"));
-        Assert.Equal("GetEnabled", dropdown.Attribute("getEnabled")?.Value);
-        Assert.Equal("OnPeriodLabelFormatChange", dropdown.Attribute("onAction")?.Value);
-
-        // The ids must be the exact enum names: the ribbon callback forwards
-        // the id to the closed-set parser, so a display-only label would be
-        // refused at commit time.
         Assert.Equal(
-            [nameof(GanttPeriodLabelFormat.MM), nameof(GanttPeriodLabelFormat.MMM)],
-            dropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value).ToList());
-
-        // The ordinals are the selected indices, so the order is part of the
-        // contract rather than a cosmetic choice.
-        Assert.Equal(
-            ["MM (01)", "MMM (Jan)"],
+            ["Month (MM)", "Month (MMM)", "Quarter", "Week"],
             dropdown.Descendants(ns + "item").Select(element => element.Attribute("label")?.Value).ToList());
+
+        // The ids are what the commit path parses: the scale name, with the
+        // label form suffixed after a hyphen on the two month rows. A
+        // display-only label would be refused at commit time, so the id
+        // encoding is part of the contract.
+        Assert.Equal(
+            ["Month-MM", "Month-MMM", "Quarter", "Week"],
+            dropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value).ToList());
     }
 
     [Fact]
@@ -995,10 +965,9 @@ public class GanttRibbonTests
     }
 
     /// <summary>
-    /// The time-scale commit path forwards the selected item
-    /// id: an exact ordinal match persists the scale, so the
-    /// dropdown and the stored setting cannot disagree. The
-    /// routing itself needs no workbook.
+    /// The time-scale commit path forwards the selected item id: an exact
+    /// ordinal match persists the scale, so the dropdown and the stored setting
+    /// cannot disagree. The routing itself needs no workbook.
     /// </summary>
     [Fact]
     public void OnTimeScaleChange_forwards_the_selected_scale_to_the_service()
@@ -1012,70 +981,92 @@ public class GanttRibbonTests
     }
 
     /// <summary>
-    /// An unknown item id is refused by the closed-set parser,
-    /// so a mistyped or stale selection cannot silently redraw
-    /// the period band with the wrong calendar unit: the
-    /// stored scale is untouched.
+    /// The two Month rows commit the scale AND the label form together, so one
+    /// selection is what reaches storage: the dropdown and the stored setting
+    /// cannot disagree on whether the band shows 01 or Jan.
     /// </summary>
     [Fact]
-    public void OnTimeScaleChange_refuses_an_unknown_scale_id()
+    public void OnTimeScaleChange_commits_the_month_label_form_with_the_scale()
     {
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
-        service.SetTimeScale(GanttTimeScale.Month);
 
-        GanttRibbon.OnTimeScaleChange(null, "Year", service);
+        GanttRibbon.OnTimeScaleChange(null, "Month-MM", service);
 
         Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
-    }
-
-    /// <summary>
-    /// The month label-form commit path forwards the selected item id through
-    /// the closed-set parser, so the dropdown and the stored setting cannot
-    /// disagree on whether the band shows 01 or Jan.
-    /// </summary>
-    [Fact]
-    public void OnPeriodLabelFormatChange_forwards_the_selected_form_to_the_service()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-
-        GanttRibbon.OnPeriodLabelFormatChange(null, "MM", service);
-
         Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
-    }
 
-    /// <summary>
-    /// An unknown item id is refused by the closed-set parser, so the stored
-    /// form is untouched.
-    /// </summary>
-    [Fact]
-    public void OnPeriodLabelFormatChange_refuses_an_unknown_form_id()
-    {
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
+        GanttRibbon.OnTimeScaleChange(null, "Month-MMM", service);
 
-        GanttRibbon.OnPeriodLabelFormatChange(null, "mmm", service);
-
+        Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
         Assert.Equal(GanttPeriodLabelFormat.MMM, service.GetPeriodLabelFormat());
     }
 
     /// <summary>
-    /// A form the current scale cannot carry is refused rather than stored as
-    /// an unreadable pair: switching to the week scale normalises the format
-    /// to Wnn, and a week band therefore rejects the month forms outright.
+    /// A suffix-less id names the scale only, so the service supplies the
+    /// scale's canonical form. Quarter and Week therefore land on their own
+    /// format even when a month form was stored a moment earlier.
     /// </summary>
     [Fact]
-    public void OnPeriodLabelFormatChange_refuses_a_form_incompatible_with_the_scale()
+    public void OnTimeScaleChange_normalises_the_format_for_a_suffix_less_scale()
     {
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
-        service.SetTimeScale(GanttTimeScale.Week);
+        GanttRibbon.OnTimeScaleChange(null, "Month-MM", service);
 
-        GanttRibbon.OnPeriodLabelFormatChange(null, "MM", service);
+        GanttRibbon.OnTimeScaleChange(null, "Quarter", service);
 
-        Assert.Equal(GanttPeriodLabelFormat.Week, service.GetPeriodLabelFormat());
+        Assert.Equal(GanttTimeScale.Quarter, service.GetTimeScale());
+        Assert.Equal(GanttPeriodLabelFormat.Quarter, service.GetPeriodLabelFormat());
+    }
+
+    /// <summary>
+    /// An id the closed-set parsers refuse leaves the stored pair untouched: an
+    /// unknown scale, an unknown format, and a format the named scale cannot
+    /// carry are all refused rather than defaulted, so a mistyped or stale
+    /// selection cannot silently redraw the period band.
+    /// </summary>
+    [Fact]
+    public void OnTimeScaleChange_refuses_an_unusable_selection()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        GanttRibbon.OnTimeScaleChange(null, "Month-MMM", service);
+
+        GanttRibbon.OnTimeScaleChange(null, "Year", service);
+        GanttRibbon.OnTimeScaleChange(null, "Month-mmm", service);
+        GanttRibbon.OnTimeScaleChange(null, "Month-Quarter", service);
+        GanttRibbon.OnTimeScaleChange(null, "Quarter-MM", service);
+        GanttRibbon.OnTimeScaleChange(null, string.Empty, service);
+
+        Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
+        Assert.Equal(GanttPeriodLabelFormat.MMM, service.GetPeriodLabelFormat());
+    }
+
+    /// <summary>
+    /// The getter's selected index is derived from the PAIR, and it is the
+    /// exact inverse of the id parse: each of the four rows round-trips, so the
+    /// highlighted row can never disagree with the committed setting. Without
+    /// this the getter would return the bare scale ordinal and the Month rows
+    /// would both highlight the first one.
+    /// </summary>
+    [Fact]
+    public void GetTimeScale_maps_each_selection_to_its_own_row()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnTimeScaleChange(null, "Month-MM", service);
+        Assert.Equal(0, GanttRibbon.GetTimeScale(null, service));
+
+        GanttRibbon.OnTimeScaleChange(null, "Month-MMM", service);
+        Assert.Equal(1, GanttRibbon.GetTimeScale(null, service));
+
+        GanttRibbon.OnTimeScaleChange(null, "Quarter", service);
+        Assert.Equal(2, GanttRibbon.GetTimeScale(null, service));
+
+        GanttRibbon.OnTimeScaleChange(null, "Week", service);
+        Assert.Equal(3, GanttRibbon.GetTimeScale(null, service));
     }
 
     /// <summary>

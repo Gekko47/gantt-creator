@@ -65,9 +65,6 @@ internal static class RibbonControlIds
     /// <summary>The plot time-scale dropdown (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotTimeScale = "ddnPlotTimeScale";
 
-    /// <summary>The month period-label format dropdown (<c>getEnabled</c> driven by workbook + initialised + month scale).</summary>
-    internal const string PeriodLabelFormat = "ddnPeriodLabelFormat";
-
     /// <summary>The plot margin combobox (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string Margin = "ddnMargin";
 

@@ -109,11 +109,6 @@ internal sealed record RibbonState(
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,
         RibbonControlIds.PlotFinishDate => HasActiveWorkbook && SheetInitialised && !PlotFinishAuto,
         RibbonControlIds.PlotTimeScale => HasActiveWorkbook && SheetInitialised,
-        // The month label form is a month-scale concept: a month format stored
-        // against the quarter or week scale is a pair the catalogue reader
-        // refuses, so the dropdown greys out instead of offering a selection
-        // that cannot be committed.
-        RibbonControlIds.PeriodLabelFormat => HasActiveWorkbook && SheetInitialised && TimeScale == GanttTimeScale.Month,
         RibbonControlIds.Margin => HasActiveWorkbook && SheetInitialised,
         // The width/height displays are outputs, never inputs: they are
         // permanently disabled through the dedicated GetPlotDimensionsEnabled
