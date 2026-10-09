@@ -35,6 +35,10 @@
             <item id="Quarter" label="Quarter"/>
             <item id="Week" label="Week"/>
           </dropDown>
+          <dropDown id="ddnPeriodLabelFormat" getSelectedItemIndex="GetPeriodLabelFormat" getEnabled="GetEnabled" onAction="OnPeriodLabelFormatChange">
+            <item id="MM" label="MM (01)"/>
+            <item id="MMM" label="MMM (Jan)"/>
+          </dropDown>
         </group>
         <group id="grpPlotSize" label="Plot Size">
           <box id="boxPresets" boxStyle="vertical">

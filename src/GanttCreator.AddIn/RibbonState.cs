@@ -32,6 +32,11 @@ namespace GanttCreator.AddIn;
 /// <param name="Preset">The stored output size preset, or null when the workbook names none.</param>
 /// <param name="PlotWidthPt">The plot width the resolver would derive, in points, or null when no preset is known.</param>
 /// <param name="PlotHeightPt">The plot height the resolver would derive, in points, or null when no preset is known.</param>
+/// <param name="PeriodLabelFormat">
+/// The stored period label format: <see cref="GanttPeriodLabelFormat.MM"/> or
+/// <see cref="GanttPeriodLabelFormat.MMM"/> on the month scale, the scale's
+/// canonical form on the quarter and week scales (R5.12).
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -47,7 +52,8 @@ internal sealed record RibbonState(
     double MarginCm,
     SizePreset? Preset,
     double? PlotWidthPt,
-    double? PlotHeightPt)
+    double? PlotHeightPt,
+    GanttPeriodLabelFormat PeriodLabelFormat)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -72,7 +78,8 @@ internal sealed record RibbonState(
         GanttPlotMargins.DefaultCustomCm,
         null,
         null,
-        null);
+        null,
+        GanttPeriodLabelFormat.MMM);
 
     /// <summary>
     /// Gets whether the control with <paramref name="controlId"/> is enabled
@@ -102,6 +109,11 @@ internal sealed record RibbonState(
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,
         RibbonControlIds.PlotFinishDate => HasActiveWorkbook && SheetInitialised && !PlotFinishAuto,
         RibbonControlIds.PlotTimeScale => HasActiveWorkbook && SheetInitialised,
+        // The month label form is a month-scale concept: a month format stored
+        // against the quarter or week scale is a pair the catalogue reader
+        // refuses, so the dropdown greys out instead of offering a selection
+        // that cannot be committed.
+        RibbonControlIds.PeriodLabelFormat => HasActiveWorkbook && SheetInitialised && TimeScale == GanttTimeScale.Month,
         RibbonControlIds.Margin => HasActiveWorkbook && SheetInitialised,
         // The width/height displays are outputs, never inputs: they are
         // permanently disabled through the dedicated GetPlotDimensionsEnabled

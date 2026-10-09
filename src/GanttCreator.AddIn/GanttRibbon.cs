@@ -756,6 +756,72 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns the index of the current month period label format. The ribbon
+    /// dropdown asks for this through getSelectedItemIndex; the answer comes
+    /// from the state service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetPeriodLabelFormat(IRibbonControl control) => GetPeriodLabelFormat(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPeriodLabelFormat(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based index of the current format (MM = 0, MMM = 1).</returns>
+    internal static int GetPeriodLabelFormat(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return (int)stateService.GetPeriodLabelFormat();
+        }
+        catch
+        {
+            return (int)GanttPeriodLabelFormat.MMM;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user picks a period label format from the ribbon
+    /// dropdown. Excel's dropDown onAction contract passes the control, the
+    /// selected item id, and the selected index; the format is set from the
+    /// id, then persisted. An unknown id, or one incompatible with the current
+    /// scale, is refused by the service rather than defaulted, so a mistyped
+    /// selection cannot silently relabel the band. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id (MM or MMM).</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnPeriodLabelFormatChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnPeriodLabelFormatChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnPeriodLabelFormatChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id, or null in tests.</param>
+    /// <param name="stateService">The state service receiving the setting.</param>
+    internal static void OnPeriodLabelFormatChange(IRibbonControl? control, string? id, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (GanttChartSettings.TryParsePeriodLabelFormat(id, out GanttPeriodLabelFormat format))
+        {
+            stateService.SetPeriodLabelFormat(format);
+        }
+    }
+
+    /// <summary>
     /// Returns the index of the current plot margin preset. The ribbon
     /// dropdown asks for this through getSelectedItemIndex; the answer
     /// comes from the state service snapshot. Never throws.

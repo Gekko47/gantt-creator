@@ -432,6 +432,96 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.Equal("15-Mar-26", service.GetPlotStartDate());
     }
 
+    /// <summary>
+    /// The month label form is the user's stored selection, not a derivation of
+    /// the scale: choosing MM persists MM even though the month scale's
+    /// canonical form is MMM. Without this pin the persist path would derive
+    /// the format from the scale on every commit and silently clobber the
+    /// selection back to MMM the next time any ribbon setting changed (R5.12).
+    /// </summary>
+    [Fact]
+    public void SetPeriodLabelFormat_persists_the_selected_month_form()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Month);
+        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
+
+        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+        _ = writer
+            .Setup(w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MM);
+
+        Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
+
+        // The predicate IS the assertion: the persisted payload must carry the
+        // selection. A payload that derived the form from the scale would
+        // write MMM, and this Verify finds no matching invocation.
+        writer.Verify(
+            w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                settings => settings["PeriodLabelFormat"] == nameof(GanttPeriodLabelFormat.MM))),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// A scale switch normalises an incompatible stored form to the new scale's
+    /// canonical format, so the stored pair the catalogue reader validates is
+    /// never MM-against-Week. MM is the notable case: it does not survive the
+    /// round trip, because the pair — not the form — is the stored unit.
+    /// </summary>
+    [Fact]
+    public void SetTimeScale_normalises_an_incompatible_stored_format()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Month);
+        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MM);
+
+        service.SetTimeScale(GanttTimeScale.Quarter);
+
+        Assert.Equal(GanttPeriodLabelFormat.Quarter, service.GetPeriodLabelFormat());
+
+        service.SetTimeScale(GanttTimeScale.Month);
+
+        Assert.Equal(GanttPeriodLabelFormat.MMM, service.GetPeriodLabelFormat());
+    }
+
+    /// <summary>
+    /// The stored month form is adopted on capture, so reopening a workbook
+    /// saved with MM restores the numeric band instead of silently reverting to
+    /// the canonical MMM.
+    /// </summary>
+    [Fact]
+    public void Refresh_adopts_the_stored_month_label_form()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Month);
+        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
+
+        var catalogueReader = new Mock<IConfigCatalogueReader>(MockBehavior.Strict);
+        _ = catalogueReader
+            .Setup(r => r.Read())
+            .Returns(ConfigReadOutcome.Ok(
+                "workbook",
+                new Dictionary<string, string>
+                {
+                    ["PlotStartMode"] = nameof(PlotRangeMode.DataRange),
+                    ["PlotFinishMode"] = nameof(PlotRangeMode.DataRange),
+                    ["TimeScale"] = nameof(GanttTimeScale.Month),
+                    ["PeriodLabelFormat"] = nameof(GanttPeriodLabelFormat.MM),
+                },
+                GanttStyleRegistry.Empty));
+        service.SetCatalogueReader(catalogueReader.Object);
+
+        service.Refresh();
+
+        Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
+    }
+
     [Fact]
     public void TogglePlotStartAuto_from_auto_to_explicit_seeds_from_the_current_plot_bound()
     {

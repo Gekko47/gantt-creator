@@ -1,4 +1,10 @@
-# Gantt visual entity guide — revision 10
+# Gantt visual entity guide — revision 11
+
+> **Revision 11 (2026-10-09) makes the Month period-label format the user's explicit choice.**
+>
+> **§6 (period header band) only.** The Month scale exposes **both** of its permitted `PeriodLabelFormat` values — `MM` (`01`) and `MMM` (`Jan`) — through a second dropdown in the Plot Time Scale ribbon group, and the selected form is emitted **verbatim** by every visible interval, so the band is uniform. There is **no automatic step-down**: an interval at or above `MinimumHeaderLabelWidthPt` carries the selected form, an interval below it is suppressed by the existing rule, and a selected `MMM` that does not fit clips with the existing engine behaviour — the host's job, exactly as before. The dropdown is enabled only on the Month scale; on Quarter/Week the format is the scale's canonical value and the control greys out, because a month format stored against those scales is a pair the config reader refuses.
+>
+> **This revision replaces an earlier one that was reverted before merge.** Revision 11 as first drafted (2026-10-09, ADR-0039) had added a width-driven `MMM → MM` step-down inside the scene builder. The owner rejected it on review for two reasons, and both are worth keeping: a per-interval ladder makes the band **non-uniform** — some months at `MMM`, some at `MM` — and it is **effectively unobservable in live use**, because a three-character month at the 8pt measuring seam measures narrower than the 18pt `MinimumHeaderLabelWidthPt` suppression floor, so the step-down window is empty and any interval wide enough to escape suppression already fits `MMM`. The scene-model code was reverted in full; only the surface and the §6 wording remain. **No geometry, style, z-layer, label position, metric token, or scene member changes in this revision, and none changed in the reverted draft either** — the label text was the only thing at stake, and it is now the user's to set.
 
 > **Revision 10 (2026-10-03) adds a reserved anchor row below the body so the plot's BOTTOM stretches.**
 >
@@ -391,7 +397,7 @@ An agent must not call `BringToFront` opportunistically. The renderer applies th
 
 **Style:** alternating neutral fills may follow plot bands; minor borders within a year and major border at year transitions.
 
-**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
+**Labels:** `PeriodLabelFormat` is a stored, culture-independent setting with closed values `MM`, `MMM`, `Quarter`, and `Week` (default `MMM`). Compatibility is exact: `Month` permits `MM`/`MMM`, `Quarter` permits `Quarter`, and `Week` permits `Week`; every other combination is invalid. The selected form is emitted **verbatim** — there is no width-driven substitution of any kind, so the whole band carries one form and the choice is the user's, made from the ribbon (revision 11, ADR-0040). Suppress rather than overlap when too narrow; issue a warning if all labels disappear.
 
 **The `Year` scale is retired (R5.2).** The upper band is fixed as the year, so a `Year` lower band would duplicate it. A stored `Year` is refused rather than silently coerced, and it is compatible with no format. A workbook written before this ruling carries the older closed set; the reader reports `CatalogueMismatch` and the remedy is `Initialise` (ADR-0029 D6, no migration).
 

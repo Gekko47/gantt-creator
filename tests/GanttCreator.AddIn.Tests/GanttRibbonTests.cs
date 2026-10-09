@@ -353,9 +353,10 @@ public class GanttRibbonTests
         // control fails the contract instead of silently changing the surface.
         // R5.1 adds the plot start/finish date boxes (gated on workbook +
         // initialised + not AUTO) and R5.2 adds the grpPlotTimeScale and
-        // grpPlotSize groups: the scale dropdown, the margin combobox and its
-        // companion centimetre box, and the four preset buttons are all gated
-        // on workbook + initialised, so they join the pinned set. The two
+        // grpPlotSize groups: the scale dropdown, the month label-form
+        // dropdown beside it, the margin combobox and its companion
+        // centimetre box, and the four preset buttons are all gated on
+        // workbook + initialised, so they join the pinned set. The two
         // read-only width/height displays are permanently disabled through
         // the dedicated GetPlotDimensionsEnabled getter (work item R5.2 D4),
         // so they carry NO getEnabled on the shared truth table and are
@@ -389,6 +390,7 @@ public class GanttRibbonTests
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 RibbonControlIds.PlotTimeScale,
+                RibbonControlIds.PeriodLabelFormat,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
@@ -455,6 +457,7 @@ public class GanttRibbonTests
             RibbonControlIds.PlotStartDate,
             RibbonControlIds.PlotFinishDate,
             RibbonControlIds.PlotTimeScale,
+            RibbonControlIds.PeriodLabelFormat,
             RibbonControlIds.Margin,
             RibbonControlIds.MarginCm,
             RibbonControlIds.PlotWidth,
@@ -888,6 +891,45 @@ public class GanttRibbonTests
         Assert.Equal(["Month", "Quarter", "Week"], itemLabels);
     }
 
+    /// <summary>
+    /// R5.12: the month band's label form is the user's explicit choice, not
+    /// an automatic step-down. The second dropdown in the same group selects
+    /// MM (01) or MMM (Jan) through getSelectedItemIndex and commits it
+    /// through onAction. The item ids are the exact enum names the closed-set
+    /// parser accepts, and their order matches the GanttPeriodLabelFormat
+    /// ordinals so the index the getter returns is the selected row.
+    /// </summary>
+    [Fact]
+    public void PlotTimeScale_group_declares_the_month_label_form_items()
+    {
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        XElement group = doc.Descendants(ns + "group")
+            .Single(element => element.Attribute("id")?.Value == "grpPlotTimeScale");
+
+        XElement dropdown = group.Descendants(ns + "dropDown")
+            .Single(element => element.Attribute("id")?.Value == "ddnPeriodLabelFormat");
+        Assert.Equal("GetPeriodLabelFormat", dropdown.Attribute("getSelectedItemIndex")?.Value);
+        Assert.Null(dropdown.Attribute("getSelectedIndex"));
+        Assert.Equal("GetEnabled", dropdown.Attribute("getEnabled")?.Value);
+        Assert.Equal("OnPeriodLabelFormatChange", dropdown.Attribute("onAction")?.Value);
+
+        // The ids must be the exact enum names: the ribbon callback forwards
+        // the id to the closed-set parser, so a display-only label would be
+        // refused at commit time.
+        Assert.Equal(
+            [nameof(GanttPeriodLabelFormat.MM), nameof(GanttPeriodLabelFormat.MMM)],
+            dropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value).ToList());
+
+        // The ordinals are the selected indices, so the order is part of the
+        // contract rather than a cosmetic choice.
+        Assert.Equal(
+            ["MM (01)", "MMM (Jan)"],
+            dropdown.Descendants(ns + "item").Select(element => element.Attribute("label")?.Value).ToList());
+    }
+
     [Fact]
     public void PlotSize_group_declares_dimensions_presets_and_margin()
     {
@@ -985,6 +1027,55 @@ public class GanttRibbonTests
         GanttRibbon.OnTimeScaleChange(null, "Year", service);
 
         Assert.Equal(GanttTimeScale.Month, service.GetTimeScale());
+    }
+
+    /// <summary>
+    /// The month label-form commit path forwards the selected item id through
+    /// the closed-set parser, so the dropdown and the stored setting cannot
+    /// disagree on whether the band shows 01 or Jan.
+    /// </summary>
+    [Fact]
+    public void OnPeriodLabelFormatChange_forwards_the_selected_form_to_the_service()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+
+        GanttRibbon.OnPeriodLabelFormatChange(null, "MM", service);
+
+        Assert.Equal(GanttPeriodLabelFormat.MM, service.GetPeriodLabelFormat());
+    }
+
+    /// <summary>
+    /// An unknown item id is refused by the closed-set parser, so the stored
+    /// form is untouched.
+    /// </summary>
+    [Fact]
+    public void OnPeriodLabelFormatChange_refuses_an_unknown_form_id()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetPeriodLabelFormat(GanttPeriodLabelFormat.MMM);
+
+        GanttRibbon.OnPeriodLabelFormatChange(null, "mmm", service);
+
+        Assert.Equal(GanttPeriodLabelFormat.MMM, service.GetPeriodLabelFormat());
+    }
+
+    /// <summary>
+    /// A form the current scale cannot carry is refused rather than stored as
+    /// an unreadable pair: switching to the week scale normalises the format
+    /// to Wnn, and a week band therefore rejects the month forms outright.
+    /// </summary>
+    [Fact]
+    public void OnPeriodLabelFormatChange_refuses_a_form_incompatible_with_the_scale()
+    {
+        var service = new RibbonStateService();
+        service.SetCatalogueWriter(null);
+        service.SetTimeScale(GanttTimeScale.Week);
+
+        GanttRibbon.OnPeriodLabelFormatChange(null, "MM", service);
+
+        Assert.Equal(GanttPeriodLabelFormat.Week, service.GetPeriodLabelFormat());
     }
 
     /// <summary>
