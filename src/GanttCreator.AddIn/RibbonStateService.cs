@@ -796,10 +796,10 @@ internal class RibbonStateService
                 // authority and falls back to the catalogue default on an
                 // absent or unknown stored value, so a workbook that never set
                 // a scale renders identically to a freshly initialised one.
-                var timeScale = ReadTimeScale(settings);
-                var margin = ReadMargin(settings);
+                GanttTimeScale timeScale = ReadTimeScale(settings);
+                GanttPlotMargin margin = ReadMargin(settings);
                 var marginCm = ReadMarginCm(settings);
-                var preset = ReadPreset(settings);
+                SizePreset? preset = ReadPreset(settings);
 
                 _state = _state with
                 {
@@ -856,7 +856,7 @@ internal class RibbonStateService
     /// </summary>
     private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
         settings.TryGetValue("MarginCm", out var raw)
-            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
             && double.IsFinite(parsed)
             ? parsed
             : GanttPlotMargins.DefaultCustomCm;

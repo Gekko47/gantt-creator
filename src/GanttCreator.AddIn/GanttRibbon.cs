@@ -749,7 +749,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        if (GanttChartSettings.TryParseTimeScale(id, out var scale))
+        if (GanttChartSettings.TryParseTimeScale(id, out GanttTimeScale scale))
         {
             stateService.SetTimeScale(scale);
         }
@@ -814,7 +814,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        if (GanttPlotMargins.TryParse(id, out var margin))
+        if (GanttPlotMargins.TryParse(id, out GanttPlotMargin margin))
         {
             stateService.SetMargin(margin);
         }
