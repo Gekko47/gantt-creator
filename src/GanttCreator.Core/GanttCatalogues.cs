@@ -47,8 +47,20 @@ public static class GanttCatalogues
     /// <summary>The anchor cell of <see cref="SettingsTableName"/> (ADR-0007 D7).</summary>
     public const string SettingsAnchor = "A70";
 
-    /// <summary>The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).</summary>
-    public const string ConfigAnchor = "A90";
+    /// <summary>
+    /// The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).
+    /// A92 rather than the original A90: the catalogue writer writes each
+    /// table's cell values BEFORE creating the ListObject (so a refused add
+    /// leaves clearable cells), and values written directly adjacent to an
+    /// existing table are claimed by Excel's table auto-expand before the
+    /// add runs — the add is then refused with "A table can't overlap
+    /// another table". R5.2's 19th setting closed the last buffer row
+    /// (tblGanttSettings reached row 89, making A90 adjacent) and every
+    /// live Initialise began failing (defect 2026-10-09). The blank-row
+    /// invariant test ties every anchor to the catalogue sizes, so future
+    /// growth fails there first.
+    /// </summary>
+    public const string ConfigAnchor = "A92";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";

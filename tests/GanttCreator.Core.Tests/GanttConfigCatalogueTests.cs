@@ -45,6 +45,75 @@ public class GanttConfigCatalogueTests
         Assert.Equal(24, GanttCatalogues.Metrics.Count);
 
     /// <summary>
+    /// Every contract anchor must leave at least one blank row between the
+    /// previous table's full extent and the next anchor cell.
+    /// </summary>
+    /// <remarks>
+    /// <b>The regression this pins (live defect 2026-10-09).</b>
+    /// <c>ExcelConfigCatalogueWriter.WriteOrReplaceTable</c> writes a
+    /// table's cell values BEFORE creating the ListObject (so a refused add
+    /// leaves clearable cells for the rollback). When those values land in
+    /// cells directly adjacent to an existing table, Excel's table
+    /// auto-expand claims them into that table before the new
+    /// <c>ListObjects.Add</c> runs, and the add is refused with "A table
+    /// can't overlap another table". R5.2 added the Margin and MarginCm
+    /// settings, growing tblGanttSettings from 17 to 19 keys: its extent
+    /// reached row 89, making the then-anchor A90 directly adjacent, and
+    /// every live Initialise began failing (observed on a fresh fixture
+    /// workbook and on the user's F5 runs alike; reproduced by probe:
+    /// tblGanttSettings reads A70:B89 after its own add but A70:B94 by the
+    /// time the config add is attempted). The blank row is the buffer that
+    /// makes auto-expand impossible; this test ties the anchors to the
+    /// code-owned catalogue sizes so the next catalogue addition can never
+    /// silently consume it again. With ConfigAnchor at A90 this test fails.
+    /// </remarks>
+    [Fact]
+    public void The_contract_anchors_leave_a_blank_row_between_table_extents()
+    {
+        (string Name, string Anchor, int DataRows)[] tables =
+        [
+            (GanttCatalogues.TypesTableName, GanttCatalogues.TypesAnchor, GanttCatalogues.TypeRows.Count),
+            (GanttCatalogues.StylesTableName, GanttCatalogues.StylesAnchor, GanttCatalogues.StylePresets.Count),
+            (GanttCatalogues.MetricsTableName, GanttCatalogues.MetricsAnchor, GanttCatalogues.Metrics.Count),
+            (GanttCatalogues.SettingsTableName, GanttCatalogues.SettingsAnchor, GanttCatalogues.Settings.Count),
+
+            // BuildConfigRows emits exactly four rows (schema version,
+            // catalogue hash, workbook ID, add-in version); a fifth would
+            // need its own line here, which is the point of the pin.
+            (GanttCatalogues.ConfigTableName, GanttCatalogues.ConfigAnchor, 4),
+        ];
+
+        for (var index = 1; index < tables.Length; index++)
+        {
+            // The extent's last row: anchor row plus header plus data, minus one.
+            var previousEndRow = AnchorRow(tables[index - 1].Anchor) + tables[index - 1].DataRows;
+            var blankRows = AnchorRow(tables[index].Anchor) - previousEndRow - 1;
+            Assert.True(
+                blankRows >= 1,
+                $"{tables[index].Name} at {tables[index].Anchor} is adjacent to {tables[index - 1].Name}, "
+                + $"whose extent ends at row {previousEndRow}: Excel table auto-expand would claim the new "
+                + "table's cells before its add, refusing the write. Leave at least one blank row.");
+        }
+    }
+
+    /// <summary>
+    /// Parses the one-based row from an A1-style anchor (any column letters,
+    /// culture-invariant digits) for the blank-row invariant.
+    /// </summary>
+    /// <param name="anchor">The anchor address, e.g. <c>"A92"</c>.</param>
+    /// <returns>The anchor's row number.</returns>
+    private static int AnchorRow(string anchor)
+    {
+        var start = anchor.Length;
+        while (start > 0 && char.IsAsciiDigit(anchor[start - 1]))
+        {
+            start--;
+        }
+
+        return int.Parse(anchor[start..], CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
     /// The overlap must be sub-row, or it becomes visible rather than structural.
     /// </summary>
     /// <remarks>
