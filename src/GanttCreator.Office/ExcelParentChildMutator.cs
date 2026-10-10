@@ -46,10 +46,14 @@ namespace GanttCreator.Office;
 /// </para>
 /// </remarks>
 public class ExcelParentChildMutator(
-    Application? application,
+    object? application,
     IWorksheetProtectionGuard? protectionGuard = null) : IParentChildMutator
 {
-    private readonly Application? _application = application;
+    // object? rather than the interop Application so the AddIn can pass
+    // ExcelDnaUtil.Application without naming the interop type (the CS0433
+    // duplicate-type hazard documented on IExcelApplicationAdapter) — the
+    // same shape ExcelGanttRowInserter uses.
+    private readonly Application? _application = application as Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
 

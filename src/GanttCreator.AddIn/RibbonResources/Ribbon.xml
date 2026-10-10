@@ -11,6 +11,10 @@
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
         </group>
+        <group id="grpOrdering" label="Ordering">
+          <button id="btnPromoteToParent" label="Promote to parent" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
+          <button id="btnDemoteToChild" label="Demote to child" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
+        </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">
             <labelControl id="lblPlotStartDate" label="Start Date"/>

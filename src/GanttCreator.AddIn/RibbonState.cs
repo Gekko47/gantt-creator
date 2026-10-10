@@ -104,6 +104,8 @@ internal sealed record RibbonState(
         RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddDelineator => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PromoteToParent => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.DemoteToChild => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,

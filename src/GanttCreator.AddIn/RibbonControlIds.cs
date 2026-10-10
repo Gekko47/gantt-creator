@@ -50,6 +50,12 @@ internal static class RibbonControlIds
     /// <summary>The Add delineator button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string AddDelineator = "btnAddDelineator";
 
+    /// <summary>The Promote to parent button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PromoteToParent = "btnPromoteToParent";
+
+    /// <summary>The Demote to child button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string DemoteToChild = "btnDemoteToChild";
+
     /// <summary>The Plot start AUTO checkbox (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotStartAuto = "chkPlotStartAuto";
 

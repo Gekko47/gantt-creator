@@ -338,6 +338,54 @@ public class GanttRibbon : ExcelRibbon
     internal static void OnAddDelineatorClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
         => OnAddRowClick(control, boundary, command, nameof(OnAddDelineatorClick), onCompleted);
 
+    /// <summary>
+    /// Called when the user clicks Promote to parent. The callback is a thin error
+    /// boundary, exactly like the add-row clicks: it resolves the command name and
+    /// delegates to <see cref="CommandBoundary"/>, which produces one log record
+    /// and one user-safe dialog on an unexpected failure. A typed planner or
+    /// mutation refusal is presented by the command itself (R5.3 D6); the ribbon
+    /// state is refreshed and invalidated after every run (R1.5 D3).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnPromoteToParentClick(IRibbonControl control) =>
+        OnPromoteToParentClick(control, CommandBoundary.Instance, PromoteToParentCommand.RunForExcel, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnPromoteToParentClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The promote command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnPromoteToParentClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnPromoteToParentClick), onCompleted);
+
+    /// <summary>
+    /// Called when the user clicks Demote to child. The callback is a thin error
+    /// boundary, exactly like the add-row clicks: it resolves the command name and
+    /// delegates to <see cref="CommandBoundary"/>, which produces one log record
+    /// and one user-safe dialog on an unexpected failure. A typed planner or
+    /// mutation refusal is presented by the command itself (R5.3 D6); the ribbon
+    /// state is refreshed and invalidated after every run (R1.5 D3).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnDemoteToChildClick(IRibbonControl control) =>
+        OnDemoteToChildClick(control, CommandBoundary.Instance, DemoteToChildCommand.RunForExcel, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnDemoteToChildClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The demote command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnDemoteToChildClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnDemoteToChildClick), onCompleted);
+
     private static void OnAddRowClick(
         IRibbonControl? control,
         CommandBoundary boundary,
