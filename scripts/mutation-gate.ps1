@@ -64,18 +64,30 @@ Import-PowerShellDataFile -Path (Join-Path $scriptRoot 'tool-versions.psd1') |
 function Test-ToolInstalled {
     param([string]$ToolId, [string]$ExpectedVersion)
 
+    # Returns the installed version string, or $null when the tool is not
+    # installed at all. Matching the first column exactly avoids matching a
+    # tool whose id merely contains this one as a prefix, and returning the
+    # version lets the caller tell "absent" apart from "present but wrong
+    # version" — the two need different remediation (install vs update).
     $list = & dotnet tool list --global 2>$null
-    $match = $list | Where-Object { $_ -match [regex]::Escape($ToolId) }
-    if ($null -eq $match) {
-        return $false
+    foreach ($line in $list) {
+        $columns = $line -split '\s{2,}', 3
+        if ($columns.Count -ge 2 -and $columns[0].Trim() -eq $ToolId) {
+            return $columns[1].Trim()
+        }
     }
-    # Extract version from the tool list output (format: "tool-id   version   commands")
-    $parts = $match -split '\s+'
-    if ($parts.Count -ge 2) {
-        $installedVersion = $parts[1]
-        return $installedVersion -eq $ExpectedVersion
+    return $null
+}
+
+function Assert-DotnetStrykerPin {
+    param([AllowNull()][object]$Settings)
+    # The single guard that keeps an unpinned tool out of the gate.
+    # Extracted so the Pester tests can feed it an invalid fixture
+    # (a missing pin) and assert it throws, rather than only matching
+    # the throw's text in the source.
+    if (-not $Settings) {
+        throw 'tool-versions.psd1 has no dotnet-stryker pin. The mutation tool must be pinned (W11).'
     }
-    return $false
 }
 
 function Invoke-MutationJudge {
@@ -193,6 +205,15 @@ function Invoke-MutationJudge {
         return $result
     }
 
+    # `$exit` is judged FIRST, before any pass branch: a non-zero Stryker
+    # exit means the tool reported a problem, and swallowing it is how a
+    # gate starts lying. This must precede the no-scored-mutants branch —
+    # a zero-mutant run that Stryker failed on is a failure, not a pass.
+    if ($StrykerExitCode -ne 0) {
+        Write-Error "Stryker exited $StrykerExitCode despite a score of $scorePct%. Failing the gate rather than reporting a pass."
+        return $result
+    }
+
     # Detect when changed-code mode has no scored mutants (zero total or only Ignored/NoCoverage)
     # In this case, pass the gate but log the reason.
     $scoredMutants = $killed + $survived + $timeout
@@ -202,13 +223,6 @@ function Invoke-MutationJudge {
         return $result
     }
 
-    # `$exit` is judged TOO: a non-zero Stryker exit with a passing score still
-    # means the tool reported a problem, and swallowing it is how a gate starts
-    # lying. Both conditions must hold for the step to pass.
-    if ($StrykerExitCode -ne 0) {
-        Write-Error "Stryker exited $StrykerExitCode despite a score of $scorePct%. Failing the gate rather than reporting a pass."
-        return $result
-    }
     if ($scorePct -lt $Threshold) {
         Write-Error "Mutation score $scorePct% is below the $Threshold% changed-code threshold. Do NOT lower the threshold to make it pass - investigate the surviving mutants."
         return $result
@@ -238,9 +252,7 @@ if (-not $PSBoundParameters.ContainsKey('Solution')) {
 }
 
 $settings = $script:tools.'dotnet-stryker'
-if (-not $settings) {
-    throw 'tool-versions.psd1 has no dotnet-stryker pin. The mutation tool must be pinned (W11).'
-}
+Assert-DotnetStrykerPin $settings
 if ($PSBoundParameters.ContainsKey('Threshold')) {
     # An override is allowed but must be visible, so it is echoed. Silent
     # threshold drift is how a coverage gate stops meaning anything.
@@ -264,10 +276,16 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 # The tool is installed by the GATE, not by a csproj PackageReference, so it
 # is test-only and can never reach a production project.
 if (-not (Test-ToolInstalled $settings.ToolId $settings.Version)) {
-    Write-Host "mutation-gate: installing $($settings.ToolId) $($settings.Version) as a local tool..."
-    & dotnet tool install --global $settings.ToolId --version $settings.Version
+    $installedVersion = Test-ToolInstalled $settings.ToolId $settings.Version
+    if ($null -eq $installedVersion) {
+        Write-Host "mutation-gate: installing $($settings.ToolId) $($settings.Version) as a global tool..."
+        & dotnet tool install --global $settings.ToolId --version $settings.Version
+    } else {
+        Write-Host "mutation-gate: $($settings.ToolId) $installedVersion is installed but $($settings.Version) is required; updating..."
+        & dotnet tool update --global $settings.ToolId --version $settings.Version
+    }
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install $($settings.ToolId) $($settings.Version)."
+        throw "Failed to bring $($settings.ToolId) to version $($settings.Version) (installed: $installedVersion)."
     }
 } else {
     Write-Host "mutation-gate: $($settings.ToolId) $($settings.Version) already installed."

@@ -44,17 +44,29 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:versions.'dotnet-stryker'.Version | Should -Match '^\d+\.\d+\.\d+$'
         }
 
-        It 'POSITIVE: a missing pin is detected' {
-            # Proves the guard can fail: strip the pin and assert it is gone.
-            $withoutPin = Import-PowerShellDataFile -LiteralPath $script:versionsPath
-            $withoutPin.'dotnet-stryker' = $null
-            $withoutPin.'dotnet-stryker' | Should -BeNullOrEmpty
+        It 'POSITIVE: the pin guard fires when the pin is absent' {
+            # Proves the guard can fail by feeding it the invalid
+            # fixture directly: a null settings object (what the gate
+            # computes when tool-versions.psd1 has no dotnet-stryker
+            # entry). Asserting the throw is what makes this a positive
+            # test instead of a tautology.
+            . $script:gatePath
+            { Assert-DotnetStrykerPin $null } | Should -Throw '*has no dotnet-stryker pin*'
+        }
+
+        It 'accepts a present pin without throwing' {
+            # The negative case for the same guard: a real pin must
+            # pass, so the guard is not simply "always throw".
+            . $script:gatePath
+            { Assert-DotnetStrykerPin $script:versions.'dotnet-stryker' } | Should -Not -Throw
         }
 
         It 'POSITIVE: the gate itself refuses to run without the pin' {
-            # The gate throws when the pin is absent, so a drifted psd1 fails
-            # loudly rather than installing an unpinned tool.
-            $script:gateText | Should -Match 'has no dotnet-stryker pin'
+            # The gate calls the guard before installing or running
+            # anything, so a drifted psd1 fails loudly rather than
+            # installing an unpinned tool. Asserted on the source so
+            # the call site cannot be removed silently.
+            $script:gateText | Should -Match 'Assert-DotnetStrykerPin'
         }
     }
 
@@ -63,10 +75,31 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:versions.'dotnet-stryker'.ThresholdHigh | Should -Be 80
         }
 
-        It 'POSITIVE: a wrong threshold is detected' {
-            # 60 is Stryker's own default low threshold, so it is the realistic
-            # drift a developer would introduce by trusting the tool default.
-            (60 -eq $script:versions.'dotnet-stryker'.ThresholdHigh) | Should -BeFalse
+        It 'POSITIVE: the below-threshold guard fires on a low score' {
+            # The real threshold guard lives in Invoke-MutationJudge
+            # (a score below the threshold throws). It is exercised
+            # directly with a temp JSON report here, so a drifted
+            # threshold is caught by a real run, not by comparing
+            # two literals (the previous test asserted 60 -ne 80,
+            # which is always true and caught nothing).
+            . $script:gatePath
+            $report = @{
+                Files = @{ 'Fixture.cs' = @{ Mutants = @(
+                    @{ Status = 'Killed' }
+                    @{ Status = 'Survived' }
+                    @{ Status = 'Survived' }
+                    @{ Status = 'Survived' }
+                    @{ Status = 'Survived' }
+                ) } }
+            } | ConvertTo-Json -Depth 10
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-thr-' + [guid]::NewGuid().ToString('N') + '.json')
+            Set-Content -LiteralPath $path -Value $report
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
+                    Should -Throw '*below the*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
         }
 
         It 'echoes a threshold override rather than applying it silently' {
@@ -206,13 +239,27 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             ($mutationIndex -ge 0) | Should -BeTrue
         }
 
-        It 'POSITIVE: ordering is detected when the mutation step runs first' {
-            # Proves the ordering guard can fail, using a reversed sequence.
-            # Built with @() so it is an array for the same reason as above.
-            $reversed = @($script:stepName, 'test (OfficeIntegration excluded)')
-            $mutationFirst = [array]::IndexOf($reversed, $script:stepName)
-            $testSecond = [array]::IndexOf($reversed, 'test (OfficeIntegration excluded)')
-            $mutationFirst | Should -BeLessThan $testSecond
+        It 'POSITIVE: the ordering guard fires when the mutation step runs first' {
+            # Proves the ordering guard can fail by running the SAME
+            # extraction the guard uses on an invalid fixture: a
+            # verify-text whose mutation step precedes the test step.
+            # The guard's condition (mutationIndex greater than
+            # testIndex) must then be false. Asserting that is what
+            # makes this a positive test; the previous version built
+            # a reversed array and asserted it was reversed, which
+            # exercised array.IndexOf, not the guard.
+            $invalidText = @(
+                "Invoke-Step '$($script:stepName)'"
+                "Invoke-Step 'test (OfficeIntegration excluded)'"
+            ) -join "`r`n"
+            $names = @(
+                foreach ($line in ($invalidText -split "`r?`n")) {
+                    if ($line -match "Invoke-Step\s+'(?<stepname>[^']+)'") { $Matches['stepname'] }
+                }
+            )
+            $testIndex = [array]::IndexOf($names, 'test (OfficeIntegration excluded)')
+            $mutationIndex = [array]::IndexOf($names, $script:stepName)
+            ($mutationIndex -gt $testIndex) | Should -BeFalse
         }
 
         It 'POSITIVE: a missing step is detected' {
@@ -222,6 +269,111 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             # Asserting on the stripped text rather than on the original is what
             # makes this a positive test instead of a tautology.
             $withoutStep | Should -Not -Match $expected
+        }
+    }
+
+    Context 'Invoke-MutationJudge branches (positive tests)' {
+        # Each branch of the judge is an `if (bad) { throw }` or
+        # an `if (pass) { return }` guard. Per AGENTS.md every
+        # validator ships with a positive test in the same
+        # commit: an invalid fixture the branch must catch (or,
+        # for the pass branches, a report it must accept). The
+        # reports are real Stryker JSON written to temp files, so
+        # the count and status parsing is exercised end to end.
+        #
+        # Dot-sourced here so Invoke-MutationJudge is in scope for
+        # every It in this context. mutation-gate.ps1 returns
+        # (rather than running the gate) when dot-sourced from a
+        # Pester call stack, so this defines the function without
+        # launching Stryker.
+        BeforeAll {
+            . $script:gatePath
+
+            # Writes a real Stryker-shaped JSON report to a temp
+            # file and returns its path. Declared inside this
+            # Context's BeforeAll so it is in scope for every It
+            # here; a function declared at file scope is not
+            # visible inside It under the pinned Pester 6.1.0
+            # (recorded in this file's notes).
+            function New-MutationReport {
+                param([string]$Path, [object[]]$Mutants)
+                $report = @{
+                    Files = @{
+                        'GanttCreator.Core/Fixture.cs' = @{ Mutants = $Mutants }
+                    }
+                }
+                $report | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path
+                $Path
+            }
+        }
+
+        It 'POSITIVE: a nonzero Stryker exit code fails even when the score passes' {
+            # 5/5 killed is 100%, which would clear the 80%
+            # threshold, but a non-zero Stryker exit means the
+            # tool reported a problem. The exit-code branch must
+            # fail the gate rather than report the passing score.
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-exit-' + [guid]::NewGuid().ToString('N') + '.json')
+            New-MutationReport -Path $path -Mutants @(
+                @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' },
+                @{ Status = 'Killed' }, @{ Status = 'Killed' }
+            )
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 1 } |
+                    Should -Throw '*exited 1*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'POSITIVE: a zero-mutant non-baseline report fails' {
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-zero-' + [guid]::NewGuid().ToString('N') + '.json')
+            New-MutationReport -Path $path -Mutants @()
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
+                    Should -Throw '*zero mutants*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'POSITIVE: a zero-mutant baseline report is archived, not judged' {
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-base-' + [guid]::NewGuid().ToString('N') + '.json')
+            New-MutationReport -Path $path -Mutants @()
+            try {
+                $result = Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 -Baseline
+                $result.Mode | Should -Be 'baseline'
+                $result.Total | Should -Be 0
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'POSITIVE: an unrecognized report (no Files) fails' {
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-bad-' + [guid]::NewGuid().ToString('N') + '.json')
+            '{ "unexpected": true }' | Set-Content -LiteralPath $path
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
+                    Should -Throw '*unrecognized*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'accepts a passing report without throwing' {
+            # The negative case for the whole judge: a report
+            # that clears every branch must return a result.
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-ok-' + [guid]::NewGuid().ToString('N') + '.json')
+            New-MutationReport -Path $path -Mutants @(
+                @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' },
+                @{ Status = 'Killed' }, @{ Status = 'Killed' }
+            )
+            try {
+                $result = Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0
+                $result.Mode | Should -Be 'changed-code'
+                $result.ScorePercent | Should -Be 100
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
