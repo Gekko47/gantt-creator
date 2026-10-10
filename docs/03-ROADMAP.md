@@ -259,6 +259,10 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 > the 8pt measuring seam is narrower than the 18pt `MinimumHeaderLabelWidthPt`
 > suppression floor). `PeriodLabelFormat` is already a stored setting with a
 > closed-set parser, so this needs no catalogue, schema, or format-enum change.
+> ADR-0041 then makes period-label **visibility** measured-fit (show iff the
+> interval is at least as wide as the label measures), so the shorter `MM` form
+> survives on narrower intervals than `MMM`; the year band keeps the floor and a
+> failed measurement falls back to it.
 
 > **Phase 5 notes (revision 4):**
 > - **R5.7** extends R2.8's add-delineator row command; it does not replace it. R2.8 is row insertion with defaults; R5.7 is the dialog, edit, delete, and ignored-field warnings.
