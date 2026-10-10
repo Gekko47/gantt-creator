@@ -787,12 +787,14 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Parent_on_a_structural_type_is_a_not_used_warning()
+    public void Parent_on_a_standalone_type_is_a_not_used_warning()
     {
         // The D9 guarantee that nothing becomes silently permitted: a type the
         // matrix does not classify as child-capable still reports NotUsedByType
         // rather than being accepted as a child or blocked as an unresolvable one.
-        foreach (string typeText in new[] { "Splitter", "Spacer", "Delineator" })
+        // R5.3 D1 narrows the standalone set to Splitter/Spacer; Delineator is
+        // child-only, so it is covered by the child-delineator tests instead.
+        foreach (string typeText in new[] { "Splitter", "Spacer" })
         {
             GanttRowDto row = new(
                 2,
@@ -1435,10 +1437,12 @@ public class GanttRowValidatorTests
     [Fact]
     public void Critical_interval_child_of_an_ambiguous_interval_is_blocked_in_either_input_order()
     {
-        // A Critical Interval can itself be a parent. The child is authored
-        // above its parent here, so the direct parent pass decides the child
-        // before the parent is known to be ambiguous; propagation must block it
-        // anyway, and the same rows reversed must produce the same outcome.
+        // R5.3 D1: intervals never own, so the ambiguous interval is refused
+        // for naming a duplicated id. The child's code depends on input order:
+        // child-first, the parent is undecided so the ownership check fires
+        // (ParentNotSpan); parent-first, the parent is already blocked so
+        // propagation fires (ParentInvalid). Either way both intervals drop
+        // out and the two orders agree on which rows survive.
         string ambiguousId = NewId();
         string childId = NewId();
         string duplicatedId = NewId();
@@ -1452,15 +1456,18 @@ public class GanttRowValidatorTests
         GanttValidationOutcome parentFirst = GanttRowValidator.Validate(
             [ambiguousInterval, child, firstDuplicate, secondDuplicate]);
 
-        foreach (GanttValidationOutcome outcome in new[] { childFirst, parentFirst })
-        {
-            Assert.False(outcome.IsValid);
-            Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
-            Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentInvalid);
-            Assert.DoesNotContain(outcome.Events, e => e.RowNumber is 2 or 3);
-        }
+        Assert.False(childFirst.IsValid);
+        Assert.Contains(childFirst.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
+        Assert.Contains(childFirst.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentNotSpan);
+        Assert.DoesNotContain(childFirst.Events, e => e.RowNumber is 2 or 3);
 
-        Assert.Equal(childFirst.Issues, parentFirst.Issues);
+        Assert.False(parentFirst.IsValid);
+        Assert.Contains(parentFirst.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
+        Assert.Contains(parentFirst.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentInvalid);
+        Assert.DoesNotContain(parentFirst.Events, e => e.RowNumber is 2 or 3);
+
+        // Both orders agree on which rows survive, even though the child's
+        // finding code differs by order (see above).
 
         // The canonical duplicate row stays a valid event; only the two
         // Critical Intervals must drop out.

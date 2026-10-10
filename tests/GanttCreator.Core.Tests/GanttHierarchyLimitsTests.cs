@@ -182,16 +182,13 @@ public sealed class GanttHierarchyLimitsTests
     }
 
     /// <summary>
-    /// A Critical Interval parented by an activity, with a Critical Interval child
-    /// of its own, is depth 3 and must be refused. The child used to be exempt from
-    /// the depth check on the grounds that the shape was pre-existing landed
-    /// behaviour; the owner has ruled that a Critical Interval is a level-2 child
-    /// and cannot itself own a child, so the exemption is withdrawn. This is the
-    /// test that pins the withdrawn exemption, so a later re-introduction is a
-    /// deliberate contract change rather than a silent regression.
+    /// R5.3 D1: a Critical Interval never owns, so a Critical Interval child
+    /// of a Critical Interval is refused as an incompatible parent
+    /// (<c>ParentNotSpan</c>), not as depth. Depth still refuses genuine
+    /// three-level chains through owning types.
     /// </summary>
     [Fact]
-    public void A_critical_interval_child_of_a_critical_interval_is_too_deep()
+    public void A_critical_interval_child_of_a_critical_interval_is_an_incompatible_parent()
     {
         var activityId = NewId();
         var outerIntervalId = NewId();
@@ -202,18 +199,16 @@ public sealed class GanttHierarchyLimitsTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate([activity, outerInterval, innerInterval]);
 
         Assert.False(outcome.IsValid);
-        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.ParentNotSpan);
         Assert.Equal(4, issue.RowNumber);
     }
 
     /// <summary>
-    /// A span child of a Critical Interval parent is the same depth-3 case, and is
-    /// refused on the same rule. Together with the test above this shows the depth
-    /// check no longer branches on the child's type at all: the two rows differ
-    /// only in the type of the row being refused, and both are refused.
+    /// R5.3 D1: a span child of a Critical Interval is refused as an
+    /// incompatible parent, for the same reason: intervals never own.
     /// </summary>
     [Fact]
-    public void A_span_child_of_a_critical_interval_is_too_deep()
+    public void A_span_child_of_a_critical_interval_is_an_incompatible_parent()
     {
         var activityId = NewId();
         var outerIntervalId = NewId();
@@ -222,7 +217,7 @@ public sealed class GanttHierarchyLimitsTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
 
         Assert.False(outcome.IsValid);
-        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.ParentNotSpan);
         Assert.Equal(4, issue.RowNumber);
     }
 
@@ -279,8 +274,14 @@ public sealed class GanttHierarchyLimitsTests
         Assert.Equal(GanttValidationCodes.ParentInvalid, childIssue.Code);
         Assert.Contains(parentId, childIssue.Message, StringComparison.Ordinal);
     }
+    /// <summary>
+    /// R5.3 D1: a top-level Critical Interval can never own a child, so this
+    /// pair is refused as an incompatible parent. The old boundary (valid
+    /// level-1 interval with a level-2 child) is withdrawn by the same owner
+    /// ruling that made intervals child-only.
+    /// </summary>
     [Fact]
-    public void A_top_level_critical_interval_may_own_a_child()
+    public void A_top_level_critical_interval_cannot_own_a_child()
     {
         var intervalId = NewId();
         GanttRowDto interval = CriticalIntervalRow(2, intervalId, parentId: null);
@@ -288,30 +289,20 @@ public sealed class GanttHierarchyLimitsTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate(
             [interval, Child(3, NewId(), intervalId)]);
 
-        // The whole point of the boundary: the pair is VALID, not merely free of a
-        // depth finding. A top-level Critical Interval is a level-1 parent with a
-        // level-2 child, which is exactly what EntityHierarchyCatalog lists
-        // CriticalInterval among the child-owning types for. While the validator
-        // still demanded a ParentId for that type, the interval itself was refused,
-        // so this hierarchy could never exist and the catalogue entry was
-        // unreachable -- the assertion below would have passed for the wrong reason.
-        Assert.True(outcome.IsValid);
-        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
-        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ParentMissingOrMalformed);
-        Assert.Equal(2, outcome.Events.Count);
+        Assert.False(outcome.IsValid);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.ParentNotSpan);
+        Assert.Equal(3, issue.RowNumber);
     }
 
     /// <summary>
-    /// The mirror of the boundary above: a Critical Interval that IS a child cannot
-    /// own a child of its own, because that would be depth 3. The depth rule is
-    /// uniform in the type of the row being refused, so this is not a
-    /// Critical-Interval special case -- it is the same rule
-    /// <see cref="A_span_child_of_a_critical_interval_is_too_deep"/> pins for a
-    /// non-critical child. Asserted here so the two ends of the owner's rule sit in
-    /// one place and cannot drift apart.
+    /// The mirror of the boundary above under R5.3 D1: a nested Critical
+    /// Interval names a parent that can never own, so the finding is the
+    /// incompatible-parent code rather than depth. Depth still guards genuine
+    /// three-level chains through owning types
+    /// (<see cref="A_grandchild_is_blocked_as_too_deep"/>).
     /// </summary>
     [Fact]
-    public void A_nested_critical_interval_cannot_own_a_child()
+    public void A_nested_critical_interval_names_a_parent_that_cannot_own()
     {
         var activityId = NewId();
         var intervalId = NewId();
@@ -325,7 +316,7 @@ public sealed class GanttHierarchyLimitsTests
         GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
 
         Assert.False(outcome.IsValid);
-        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.HierarchyTooDeep);
+        GanttValidationIssue issue = Assert.Single(outcome.Issues, i => i.Code == GanttValidationCodes.ParentNotSpan);
         Assert.Equal(4, issue.RowNumber);
     }
 

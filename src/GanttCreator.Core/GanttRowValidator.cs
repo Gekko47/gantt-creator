@@ -808,10 +808,11 @@ public static class GanttRowValidator
             }
 
             // R4.7A D9: a parent must be able to OWN children per the matrix, not
-            // merely be a Span. A child milestone projecting onto a milestone parent
-            // is a legal case (REV5's MilestoneOnParent), so the old Span-only test
-            // would have rejected a hierarchy the matrix permits. The matrix is the
-            // single authority; this check simply consults it.
+            // merely be a Span. R5.3 D1: only activities, procurement, delay
+            // events and custom activities own; milestones are leaves,
+            // CriticalInterval and Delineator are child-only, Splitter/Spacer
+            // are standalone. The matrix is the single authority; this check
+            // simply consults it.
             if (!EntityHierarchyCatalog.MayOwnChildren(parent.Type!.Value))
             {
                 issues.Add(
@@ -827,11 +828,11 @@ public static class GanttRowValidator
             }
         }
 
-        // A Critical Interval can itself be the parent of another Critical
-        // Interval, and the child is commonly authored above its parent. The
-        // loop above therefore decides a child against a parent that has not
-        // been decided yet, so the same rows in the opposite order would block
-        // the child. Propagate each newly blocked parent to its dependents
+        // R5.3 D1: CriticalInterval and Delineator never own, so they can never
+        // be the parent in a resolved hierarchy. The loop above therefore
+        // decides a child against a parent that has not been decided yet, so
+        // the same rows in the opposite order would block the child.
+        // Propagate each newly blocked parent to its dependents
         // until no further row changes, which makes the outcome independent of
         // the input order.
         PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);

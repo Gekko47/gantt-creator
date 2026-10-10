@@ -33,12 +33,20 @@ namespace GanttCreator.Core;
 /// supported. <see cref="MaxDepth"/> is the authority for that limit, and it is
 /// uniform: a parent that is itself a child puts any child of it at depth 3,
 /// whatever that child's type is. A <c>CriticalInterval</c> is therefore a
-/// level-2 child and cannot itself own a child -- its own parent must be
-/// top-level. This matches the depth check in <c>GanttRowValidator</c> and the
-/// check in <c>EntityProjection</c>, which must agree or one would accept a
-/// hierarchy the other refuses to render. The cycle walk in
-/// <c>GanttRowValidator</c> terminates at a span parent, and this classification
-/// is what makes that termination correct rather than incidental.
+/// level-2 child and cannot itself own a child. This matches the depth check in
+/// <c>GanttRowValidator</c> and the check in <c>EntityProjection</c>, which must
+/// agree or one would accept a hierarchy the other refuses to render. The cycle
+/// walk in <c>GanttRowValidator</c> terminates at a span parent, and this
+/// classification is what makes that termination correct rather incidental.
+/// </para>
+/// <para>
+/// <b>R5.3 roles (owner ruling 2026-10-10).</b> <c>Splitter</c> and
+/// <c>Spacer</c> are standalone top-level rows: they neither own nor are
+/// children. Milestones (all four) are leaves: top-level or child, never
+/// owning. Activities, procurement, delay events and <c>CustomActivity</c>
+/// do both. <c>CriticalInterval</c> and <c>Delineator</c> are child-only and
+/// never own; a child <c>Delineator</c> keeps <c>PlotGlobal</c> rendering and
+/// its <c>ParentId</c> exists only so the outline can collapse it.
 /// </para>
 /// </remarks>
 public static class EntityHierarchyCatalog
@@ -66,20 +74,13 @@ public static class EntityHierarchyCatalog
         GanttEntityType.BaselineProcurement,
         GanttEntityType.CustomActivity,
 
-        // A Critical Interval may own a child, but only while it is itself
-        // TOP-LEVEL: a level-1 interval with a level-2 child is within
-        // MaxDepth. Once the interval is a child of an activity, the depth
-        // check refuses any child it might own, because that would be depth 3.
-        // So this entry stays, and the uniform depth rule does the rest --
-        // the capability here is "may own children", not "may always do so at
-        // any depth". A Critical Interval may also own a non-critical child,
-        // which is the same depth-2 case.
-        GanttEntityType.CriticalInterval,
+        // R5.3: Critical Interval is child-only and never owns (owner ruling
+        // 2026-10-10). Milestones are leaves and never own. Splitter, Spacer
+        // and Delineator never own either — none of them appear here.
     ];
 
     private static readonly HashSet<GanttEntityType> _mayBeChild =
     [
-        GanttEntityType.CriticalInterval,
         GanttEntityType.AsBuiltActivity,
         GanttEntityType.AsPlannedActivity,
         GanttEntityType.BaselineActivity,
@@ -92,6 +93,12 @@ public static class EntityHierarchyCatalog
         GanttEntityType.AsPlannedMilestone,
         GanttEntityType.BaselineMilestone,
         GanttEntityType.CriticalMilestone,
+
+        // R5.3: Critical Interval is always a child; Delineator gains a
+        // collapse-only ParentId (owner ruling 2026-10-10). Splitter and
+        // Spacer remain standalone and may never be children.
+        GanttEntityType.CriticalInterval,
+        GanttEntityType.Delineator,
     ];
 
     /// <summary>
@@ -135,10 +142,10 @@ public static class EntityHierarchyCatalog
     public static bool ParentIdIsRelevant(GanttEntityType type) => MayBeChild(type);
 
     /// <summary>
-    /// Whether the type is excluded from hierarchy entirely. Structural rows
-    /// (<c>Splitter</c>, <c>Spacer</c>) and <c>Delineator</c> are chart
-    /// structure rather than schedule entities, so they neither own nor are
-    /// children.
+    /// Whether the type is excluded from hierarchy entirely. Standalone rows
+    /// (<c>Splitter</c>, <c>Spacer</c>) are chart structure rather than schedule
+    /// entities, so they neither own nor are children. Every other type takes
+    /// part in exactly the direction its matrix entries allow.
     /// </summary>
     /// <param name="type">The entity type to test.</param>
     /// <returns><see langword="true"/> when the type takes no part in a hierarchy.</returns>

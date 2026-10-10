@@ -131,14 +131,12 @@ public sealed class ProjectionResolverTests
     }
 
     /// <summary>
-    /// A Critical Interval that is itself a child of an activity cannot own a child
-    /// of its own. The inner interval would be depth 3, and its lane owner (the
-    /// outer interval) is itself a child, so the render lane is ambiguous. This
-    /// refusal is now the same rule the validator applies: the depth check no
-    /// longer exempts Critical Interval children, so the two cannot disagree.
+    /// R5.3 D1: a Critical Interval never owns, so a child of a Critical
+    /// Interval is refused as incompatible, not as too deep. Depth still
+    /// refuses genuine three-level chains through owning types.
     /// </summary>
     [Fact]
-    public void A_critical_interval_child_of_a_critical_interval_refuses_as_too_deep()
+    public void A_critical_interval_child_of_a_critical_interval_refuses_as_incompatible()
     {
         GanttRowId activity = NewId();
         GanttRowId outerInterval = NewId();
@@ -150,18 +148,16 @@ public sealed class ProjectionResolverTests
             Event(4, innerInterval, GanttEntityType.CriticalInterval, outerInterval));
 
         Assert.False(resolution.Succeeded);
-        Assert.Equal(ProjectionRefusal.HierarchyTooDeep, resolution.Refusal);
+        Assert.Equal(ProjectionRefusal.IncompatibleHierarchy, resolution.Refusal);
     }
 
     /// <summary>
-    /// The boundary the owner's rule leaves intact: a TOP-LEVEL Critical Interval
-    /// may own a child, because the lane owner is a level-1 row and the child is a
-    /// level-2 projection on it. This is the case the depth rule must not
-    /// over-reach into, and it is why <c>EntityHierarchyCatalog</c> still lists
-    /// CriticalInterval among the types that may own children.
+    /// R5.3 D1: a top-level Critical Interval can never own a child, so the
+    /// pair is refused as incompatible. The old boundary (a valid level-1
+    /// interval parent) is withdrawn by the same owner ruling.
     /// </summary>
     [Fact]
-    public void A_top_level_critical_interval_projects_its_child_onto_its_own_lane()
+    public void A_top_level_critical_interval_cannot_project_a_child()
     {
         GanttRowId interval = NewId();
         GanttRowId child = NewId();
@@ -170,9 +166,8 @@ public sealed class ProjectionResolverTests
             Event(2, interval, GanttEntityType.CriticalInterval),
             Event(3, child, parentId: interval));
 
-        EntityProjection projection = Assert.Single(resolution.Projections, p => p.SourceEntityId == child);
-        Assert.Equal(interval, projection.RenderLaneOwnerId);
-        Assert.True(projection.IsProjected);
+        Assert.False(resolution.Succeeded);
+        Assert.Equal(ProjectionRefusal.IncompatibleHierarchy, resolution.Refusal);
     }
 
     /// <summary>
@@ -229,11 +224,12 @@ public sealed class ProjectionResolverTests
     }
 
     /// <summary>
-    /// A child of a type the hierarchy matrix does not permit is refused, so the
-    /// scene cannot disagree with what Add Child would allow.
+    /// A child of a Delineator is refused: R5.3 D1 makes Delineator child-only
+    /// and never owning, so the scene cannot disagree with what Demote would
+    /// allow.
     /// </summary>
     [Fact]
-    public void A_child_of_a_non_child_capable_parent_refuses()
+    public void A_child_of_a_delineator_refuses()
     {
         GanttRowId parent = NewId();
         GanttRowId child = NewId();
@@ -244,6 +240,27 @@ public sealed class ProjectionResolverTests
 
         Assert.False(resolution.Succeeded);
         Assert.Equal(ProjectionRefusal.IncompatibleHierarchy, resolution.Refusal);
+    }
+
+    /// <summary>
+    /// R5.3 D1: a child Delineator keeps PlotGlobal rendering (the plot is
+    /// unchanged); its ParentId exists only so the outline can collapse it.
+    /// </summary>
+    [Fact]
+    public void A_child_delineator_stays_plot_global()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId line = NewId();
+
+        ProjectionResolution resolution = Resolve(
+            Event(2, parent),
+            Event(3, line, GanttEntityType.Delineator, parent));
+
+        Assert.True(resolution.Succeeded);
+        EntityProjection projection = Assert.Single(resolution.Projections, p => p.SourceEntityId == line);
+        Assert.Equal(ProjectionMode.PlotGlobal, projection.Mode);
+        Assert.Equal(line, projection.RenderLaneOwnerId);
+        Assert.False(projection.IsProjected);
     }
 
     /// <summary>
