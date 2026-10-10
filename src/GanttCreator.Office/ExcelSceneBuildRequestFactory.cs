@@ -578,7 +578,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 "No row carries a start date, so the chart has no date range to draw.",
             PlotRangeRefusal.UnknownMode =>
                 "A plot-range mode is '"
-                + (ReadString(settings, _plotStartModeKey) ?? ReadString(settings, _plotFinishModeKey))
+                + FailingPlotRangeMode(settings)
                 + "'. Set '"
                 + _plotStartModeKey
                 + "' and '"
@@ -593,15 +593,40 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 + _plotStartDateKey
                 + "' and '"
                 + _plotFinishDateKey
-                + "' (dd/MM/yyyy).",
+                + "' as "
+                + GanttDateFormatting.DdMMMyyPattern
+                + " (e.g. 10-Jan-25).",
             PlotRangeRefusal.UnparsableExplicitDate =>
-                "An explicit plot date does not parse as a calendar date. Enter it as dd/MM/yyyy.",
+                "An explicit plot date does not parse. Enter it as "
+                + GanttDateFormatting.DdMMMyyPattern
+                + " (e.g. 10-Jan-25).",
             PlotRangeRefusal.DefaultDates =>
-                "An explicit plot date is blank. Enter the date as dd/MM/yyyy.",
+                "An explicit plot date is blank. Enter the date as "
+                + GanttDateFormatting.DdMMMyyPattern
+                + " (e.g. 10-Jan-25).",
             PlotRangeRefusal.StartAfterFinish =>
                 "The plot start is after the plot finish. Swap the two dates.",
             _ => "The plot range could not be resolved from the configured modes and dates.",
         };
+
+    /// <summary>
+    /// The plot-range mode value the resolver rejected, for the
+    /// <see cref="PlotRangeRefusal.UnknownMode"/> refusal message. The
+    /// resolver refuses as soon as it meets a mode it does not recognise,
+    /// so the message names that value — not the valid sibling, which
+    /// would send the user to edit the wrong box.
+    /// </summary>
+    private static string FailingPlotRangeMode(IReadOnlyDictionary<string, string> settings)
+    {
+        var startModeText = ReadString(settings, _plotStartModeKey);
+        var finishModeText = ReadString(settings, _plotFinishModeKey);
+        return (startModeText, finishModeText) switch
+        {
+            (string start, _) when !Enum.TryParse<PlotRangeMode>(start, out _) => start,
+            (_, string finish) when !Enum.TryParse<PlotRangeMode>(finish, out _) => finish,
+            _ => startModeText ?? finishModeText ?? string.Empty,
+        };
+    }
 
     /// <summary>
     /// Resolves the size preset, refusing an unknown key rather than defaulting.
