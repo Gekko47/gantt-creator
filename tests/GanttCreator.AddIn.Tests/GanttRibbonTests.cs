@@ -1466,27 +1466,47 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotStartAuto_uncheck_with_a_stored_date_persists_explicit()
     {
+        // CommandBoundary.Instance is a process-wide singleton: save
+        // its log and restore it afterwards so this test's mock does
+        // not leak into other tests. SetLog(null) throws, so a null
+        // original is restored by resetting the boundary to its
+        // pristine state.
+        var originalLog = CommandBoundary.Instance.GetLog();
         var log = new Mock<IRollingLog>();
         CommandBoundary.Instance.SetLog(log.Object);
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15-Mar-26");
-        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
-        _ = writer
-            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
-                settings =>
-                    settings["PlotStartMode"] == "Explicit"
-                    && settings["PlotStartDate"] == "15-Mar-26")))
-            .Returns(ConfigWriteOutcome.Ok());
-        service.SetCatalogueWriter(writer.Object);
+        try
+        {
+            var service = new RibbonStateService();
+            service.SetCatalogueWriter(null);
+            service.SetPlotStartDate("15-Mar-26");
+            var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+            _ = writer
+                .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                    settings =>
+                        settings["PlotStartMode"] == "Explicit"
+                        && settings["PlotStartDate"] == "15-Mar-26")))
+                .Returns(ConfigWriteOutcome.Ok());
+            service.SetCatalogueWriter(writer.Object);
 
-        service.SetPlotStartAuto(false);
+            service.SetPlotStartAuto(false);
 
-        writer.Verify(
-            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
-            Times.Once);
-        Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
+            writer.Verify(
+                w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+                Times.Once);
+            Assert.False(service.IsPlotStartAuto());
+            Assert.Equal("15-Mar-26", service.GetPlotStartDate());
+        }
+        finally
+        {
+            if (originalLog is null)
+            {
+                CommandBoundary.Reset();
+            }
+            else
+            {
+                CommandBoundary.Instance.SetLog(originalLog);
+            }
+        }
     }
 
     /// <summary>
@@ -1497,27 +1517,47 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotFinishAuto_uncheck_with_a_stored_date_persists_explicit()
     {
+        // CommandBoundary.Instance is a process-wide singleton: save
+        // its log and restore it afterwards so this test's mock does
+        // not leak into other tests. SetLog(null) throws, so a null
+        // original is restored by resetting the boundary to its
+        // pristine state.
+        var originalLog = CommandBoundary.Instance.GetLog();
         var log = new Mock<IRollingLog>();
         CommandBoundary.Instance.SetLog(log.Object);
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        service.SetPlotFinishDate("30-Jun-26");
-        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
-        _ = writer
-            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
-                settings =>
-                    settings["PlotFinishMode"] == "Explicit"
-                    && settings["PlotFinishDate"] == "30-Jun-26")))
-            .Returns(ConfigWriteOutcome.Ok());
-        service.SetCatalogueWriter(writer.Object);
+        try
+        {
+            var service = new RibbonStateService();
+            service.SetCatalogueWriter(null);
+            service.SetPlotFinishDate("30-Jun-26");
+            var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+            _ = writer
+                .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                    settings =>
+                        settings["PlotFinishMode"] == "Explicit"
+                        && settings["PlotFinishDate"] == "30-Jun-26")))
+                .Returns(ConfigWriteOutcome.Ok());
+            service.SetCatalogueWriter(writer.Object);
 
-        service.SetPlotFinishAuto(false);
+            service.SetPlotFinishAuto(false);
 
-        writer.Verify(
-            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
-            Times.Once);
-        Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
+            writer.Verify(
+                w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+                Times.Once);
+            Assert.False(service.IsPlotFinishAuto());
+            Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
+        }
+        finally
+        {
+            if (originalLog is null)
+            {
+                CommandBoundary.Reset();
+            }
+            else
+            {
+                CommandBoundary.Instance.SetLog(originalLog);
+            }
+        }
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>

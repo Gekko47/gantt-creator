@@ -511,7 +511,14 @@ internal class RibbonStateService
         }
 
         var customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
+        // Commit first, then re-measure: C# evaluates every `with`
+        // initializer against the OLD snapshot, so measuring inside
+        // the same expression would read the previous margin and
+        // leave the width display one click behind (same two-step
+        // shape as SetPreset, so the displayed figure and the
+        // rendered plot cannot drift — R5.2 D4).
         _state = _state with { Margin = selected, MarginCm = customCm };
+        _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
 #pragma warning disable CA1031
         try
@@ -545,6 +552,9 @@ internal class RibbonStateService
         }
 
         _state = _state with { MarginCm = clamped };
+        // Re-measure after the commit (see SetMargin) so the width
+        // display tracks the new margin rather than the previous one.
+        _state = _state with { PlotWidthPt = MeasurePlotWidth() };
 
 #pragma warning disable CA1031
         try
@@ -1107,11 +1117,26 @@ internal class RibbonStateService
         // refusals mean it exists but is corrupted (still counts as initialised
         // for gating purposes — the user can still repair). NoActiveWorkbook
         // means no workbook at all.
-        var sheetInitialised = false;
+        // Start from the last known state so a transient probe failure
+        // cannot grey the Refresh gate: a fresh `false` would. The
+        // probe is guarded for the same reason as the source probes —
+        // this method never throws, and a COM failure here must not
+        // escape that contract.
+        var sheetInitialised = _state.SheetInitialised;
         if (_tableReader is not null)
         {
-            GanttTableReadOutcome tableOutcome = _tableReader.Read();
-            sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
+#pragma warning disable CA1031
+            try
+            {
+                GanttTableReadOutcome tableOutcome = _tableReader.Read();
+                sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
+            }
+            catch
+            {
+                // Keep the previous value: a transient COM failure must
+                // not grey the controls (same policy as the source probes).
+            }
+#pragma warning restore CA1031
         }
 
         _state = CaptureSnapshot(_state, sheetInitialised);
