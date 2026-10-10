@@ -1,4 +1,4 @@
-﻿using GanttCreator.AddIn;
+using GanttCreator.AddIn;
 using GanttCreator.Core;
 
 namespace GanttCreator.AddIn.Tests;
@@ -20,7 +20,7 @@ public class DebugForceRibbonStateTests
         Environment.SetEnvironmentVariable(DebugForceRibbonState.EnvironmentVariableName, null);
         try
         {
-            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null);
+            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null, GanttPeriodLabelFormat.MMM);
             var result = DebugForceRibbonState.Apply(state);
             Assert.Equal(state, result);
             Assert.True(result.HasActiveWorkbook);
@@ -46,7 +46,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceWorkbookValue);
         try
         {
-            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null);
+            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null, GanttPeriodLabelFormat.MMM);
             var result = DebugForceRibbonState.Apply(state);
             Assert.False(result.HasActiveWorkbook);
             Assert.True(result.LogAvailable);
@@ -64,7 +64,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceLogValue);
         try
         {
-            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null);
+            var state = new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null, GanttPeriodLabelFormat.MMM);
             var result = DebugForceRibbonState.Apply(state);
             Assert.True(result.HasActiveWorkbook);
             Assert.False(result.LogAvailable);
@@ -82,7 +82,7 @@ public class DebugForceRibbonStateTests
         SetVar("unknown-value");
         try
         {
-            var state = new RibbonState(false, false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null);
+            var state = new RibbonState(false, false, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null, GanttPeriodLabelFormat.MMM);
             var result = DebugForceRibbonState.Apply(state);
             Assert.Equal(state, result);
         }
@@ -100,7 +100,7 @@ public class DebugForceRibbonStateTests
         SetVar(ForceWorkbookValue.ToUpperInvariant());
         try
         {
-            Assert.False(DebugForceRibbonState.Apply(new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null)).HasActiveWorkbook);
+            Assert.False(DebugForceRibbonState.Apply(new RibbonState(true, true, false, true, true, string.Empty, string.Empty, string.Empty, string.Empty, GanttTimeScale.Month, GanttPlotMargin.Normal, GanttPlotMargins.DefaultCustomCm, null, null, null, GanttPeriodLabelFormat.MMM)).HasActiveWorkbook);
         }
         finally
         {

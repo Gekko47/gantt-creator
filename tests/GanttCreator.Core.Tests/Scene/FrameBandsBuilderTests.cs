@@ -634,13 +634,91 @@ public sealed class FrameBandsBuilderTests
     [Fact]
     public void Narrow_periods_suppress_labels_and_warn()
     {
-        FrameBandsResult result = Build(CreateRequest() with { MinimumHeaderLabelWidthPt = 1_000 }).Result!;
+        // Under fit-gating the period floor no longer drives suppression, so this
+        // drives it through the measurer instead: a width larger than any interval
+        // makes every period label fail to fit, which is the suppression the warning
+        // reports. The year band is unaffected (it always spans the whole plot).
+        FrameBandsResult result = Build(CreateRequest(), new FixedMeasurer(_ => 10_000)).Result!;
 
         Assert.All(
             result.Primitives.OfType<SceneText>().Where(text => text.PrimitiveId.Contains(":label", StringComparison.Ordinal)),
             text => Assert.False(text.PrimitiveId.Contains("period", StringComparison.Ordinal))
         );
         Assert.Contains(result.Warnings, warning => warning.Code == "AllPeriodLabelsSuppressed");
+    }
+
+    [Fact]
+    public void MM_is_shown_where_MMM_is_suppressed_on_the_same_plot()
+    {
+        // The direct pairing for the ruling: on ONE plot, the MM format shows period
+        // labels that the MMM format suppresses, because MM measures shorter. The
+        // interval widths come from the TimeScale (the builder refuses a TimeScale
+        // that disagrees with PlotBounds), so the narrow scale and its matching
+        // PlotBounds are set together. Over Jan-Mar 2024 at 100..145 (~15pt/month)
+        // the default measurer charges "Jan" 18pt (suppressed) and "01" 12pt (shown).
+        TimeScale narrow = TimeScale.TryCreate(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), 100, 145).Scale!;
+        FrameBandsRequest plot = CreateRequest() with
+        {
+            TimeScale = narrow,
+            PlotBounds = new RectD(100, 100, 45, 100),
+        };
+
+        FrameBandsResult asMmm = Build(plot with { PeriodLabelFormat = GanttPeriodLabelFormat.MMM }).Result!;
+        FrameBandsResult asMm = Build(plot with { PeriodLabelFormat = GanttPeriodLabelFormat.MM }).Result!;
+
+        Assert.DoesNotContain(
+            asMmm.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)
+        );
+        Assert.Contains(
+            asMm.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == "01"
+        );
+    }
+
+    [Fact]
+    public void A_failed_measurement_falls_back_to_the_floor()
+    {
+        // A measurer that refuses a PERIOD label must not open the gate: that period
+        // falls back to the fixed floor. It must still measure the title, or the
+        // builder's title guard refuses the whole build first (a measurer that fails
+        // everything is a different, already-tested refusal). Keying on length keeps
+        // the title ("Gantt Chart", 11 chars) measurable while every period label
+        // (<= 3 chars) fails, so on the default plot (each month ~100pt, floor 18pt)
+        // the periods are shown from the floor exactly as before fit-gating.
+        FrameBandsResult result = Build(
+            CreateRequest(),
+            new FixedMeasurer(text => text.Length <= 3 ? double.NaN : text.Length * 6.0)
+        ).Result!;
+
+        Assert.Contains(
+            result.Primitives.OfType<SceneText>(),
+            text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal) && text.Text == "Jan"
+        );
+    }
+
+    [Fact]
+    public void Quarter_and_week_labels_are_also_fit_gated()
+    {
+        // Fit-gating is not Month-specific: a quarter ("Q1") or week ("W01") label is
+        // shown only when it measures to fit, so a width larger than any interval
+        // suppresses them and fires the warning on either scale.
+        foreach (GanttTimeScale scale in new[] { GanttTimeScale.Quarter, GanttTimeScale.Week })
+        {
+            GanttPeriodLabelFormat format = scale == GanttTimeScale.Quarter
+                ? GanttPeriodLabelFormat.Quarter
+                : GanttPeriodLabelFormat.Week;
+            FrameBandsResult result = Build(
+                CreateRequest() with { Scale = scale, PeriodLabelFormat = format },
+                new FixedMeasurer(_ => 10_000)
+            ).Result!;
+
+            Assert.DoesNotContain(
+                result.Primitives.OfType<SceneText>(),
+                text => text.PrimitiveId.StartsWith("chart:period:", StringComparison.Ordinal)
+            );
+            Assert.Contains(result.Warnings, warning => warning.Code == "AllPeriodLabelsSuppressed");
+        }
     }
 
     [Fact]
@@ -791,6 +869,9 @@ public sealed class FrameBandsBuilderTests
 
     private static FrameBandsCreationOutcome Build(FrameBandsRequest request) =>
         FrameBandsBuilder.TryBuild(request, new FixedMeasurer(text => text.Length * 6.0));
+
+    private static FrameBandsCreationOutcome Build(FrameBandsRequest request, ITextWidthMeasurer measurer) =>
+        FrameBandsBuilder.TryBuild(request, measurer);
 
     private static FrameBandsRequest CreateRequest(
         double plotBandHeaderOverlapPt = 0.5,

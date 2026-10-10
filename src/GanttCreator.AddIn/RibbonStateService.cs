@@ -434,21 +434,50 @@ internal class RibbonStateService
     /// Commits a user-selected plot time scale (R5.2). The value is validated
     /// against the closed <see cref="GanttTimeScale"/> set, so an unknown scale
     /// is refused rather than defaulted: a silently wrong scale would redraw the
-    /// whole period band with the wrong calendar unit. Persists through the
-    /// injected catalogue writer so it survives a close/reopen, and updates the
-    /// in-memory state immediately since the commit happens outside a workbook
-    /// load. Never refreshes the chart: the next Refresh chart applies the
-    /// stored scale.
+    /// whole period band with the wrong calendar unit.
+    /// <para>
+    /// The month band carries two label forms, so the dropdown's two Month rows
+    /// name one explicitly through <paramref name="periodLabelFormat"/>. A
+    /// suffix-less selection (<c>Quarter</c>, <c>Week</c>) passes null and takes
+    /// the scale's canonical form; a named form the scale cannot carry is
+    /// refused rather than coerced, and an incompatible stored form is
+    /// normalised, so the stored pair the catalogue reader validates is always
+    /// one the dropdown could have produced.
+    /// </para>
+    /// Persists through the injected catalogue writer so it survives a
+    /// close/reopen, and updates the in-memory state immediately since the
+    /// commit happens outside a workbook load. Never refreshes the chart: the
+    /// next Refresh chart applies the stored scale.
     /// </summary>
     /// <param name="timeScale">The selected scale, or null when the dropdown reported none.</param>
-    internal void SetTimeScale(GanttTimeScale? timeScale)
+    /// <param name="periodLabelFormat">
+    /// The explicitly selected label format, or null when the selection names
+    /// only the scale.
+    /// </param>
+    internal void SetTimeScale(GanttTimeScale? timeScale, GanttPeriodLabelFormat? periodLabelFormat = null)
     {
         if (timeScale is not GanttTimeScale scale)
         {
             return;
         }
 
-        _state = _state with { TimeScale = scale };
+        // A named form the scale cannot carry is refused, not coerced: storing
+        // it would write a pair the catalogue reader rejects.
+        if (periodLabelFormat is GanttPeriodLabelFormat requested
+            && !GanttChartSettings.IsCompatible(scale, requested))
+        {
+            return;
+        }
+
+        // The pair is normalised here, not at persist time, so the dropdown and
+        // the stored setting agree the moment the selection changes.
+        GanttPeriodLabelFormat format = periodLabelFormat is GanttPeriodLabelFormat selected
+            ? selected
+            : GanttChartSettings.IsCompatible(scale, _state.PeriodLabelFormat)
+                ? _state.PeriodLabelFormat
+                : CanonicalPeriodLabelFormat(scale);
+
+        _state = _state with { TimeScale = scale, PeriodLabelFormat = format };
 
 #pragma warning disable CA1031
         try
@@ -610,6 +639,16 @@ internal class RibbonStateService
     internal virtual GanttTimeScale GetTimeScale() => _state.TimeScale;
 
     /// <summary>
+    /// Gets the stored period label format. Read alongside
+    /// <see cref="GetTimeScale"/> by the ribbon's <c>getSelectedItemIndex</c>
+    /// getter: the Month scale owns two dropdown rows (one per label form), so
+    /// the selected index is derived from the PAIR, not from the scale alone.
+    /// A pure snapshot read.
+    /// </summary>
+    /// <returns>The stored format.</returns>
+    internal virtual GanttPeriodLabelFormat GetPeriodLabelFormat() => _state.PeriodLabelFormat;
+
+    /// <summary>
     /// Gets the stored plot margin preset for the ribbon combobox's
     /// <c>getSelectedItemIndex</c> getter. A pure snapshot read.
     /// </summary>
@@ -733,17 +772,14 @@ internal class RibbonStateService
             ["PlotStartDate"] = _state.PlotStartDate,
             ["PlotFinishDate"] = _state.PlotFinishDate,
             ["TimeScale"] = _state.TimeScale.ToString(),
-            // The period label format is derived from the scale through the
-            // compatibility table (GanttChartSettings.IsCompatible), so the
-            // pair is always valid. Each scale has exactly one canonical
-            // format: MMM for months, Qn for quarters, Wnn for weeks.
-            ["PeriodLabelFormat"] = _state.TimeScale switch
-            {
-                GanttTimeScale.Month => nameof(GanttPeriodLabelFormat.MMM),
-                GanttTimeScale.Quarter => nameof(GanttPeriodLabelFormat.Quarter),
-                GanttTimeScale.Week => nameof(GanttPeriodLabelFormat.Week),
-                _ => nameof(GanttPeriodLabelFormat.MMM),
-            },
+            // The month band carries two label forms (MM and MMM), so the
+            // format is the user's stored selection rather than a derivation
+            // of the scale. The pair is kept compatible by the setter and by
+            // the load path (both normalise through
+            // GanttChartSettings.IsCompatible), so
+            // persisting the selection cannot write a pair the catalogue
+            // reader refuses.
+            ["PeriodLabelFormat"] = _state.PeriodLabelFormat.ToString(),
             ["Margin"] = _state.Margin.ToString(),
             ["MarginCm"] = _state.MarginCm.ToString("R", CultureInfo.InvariantCulture),
             ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
@@ -811,6 +847,7 @@ internal class RibbonStateService
                 GanttPlotMargin margin = ReadMargin(settings);
                 var marginCm = ReadMarginCm(settings);
                 SizePreset? preset = ReadPreset(settings);
+                GanttPeriodLabelFormat periodLabelFormat = ReadPeriodLabelFormat(settings, timeScale);
 
                 _state = _state with
                 {
@@ -819,6 +856,7 @@ internal class RibbonStateService
                     PlotStartDate = startDate,
                     PlotFinishDate = finishDate,
                     TimeScale = timeScale,
+                    PeriodLabelFormat = periodLabelFormat,
                     Margin = margin,
                     MarginCm = marginCm,
                     Preset = preset,
@@ -836,6 +874,35 @@ internal class RibbonStateService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// The one canonical period format for a scale: MMM for months, Qn for
+    /// quarters, Wnn for weeks. Used when a stored format is absent, names an
+    /// unknown value, or is incompatible with the scale it is stored against.
+    /// </summary>
+    private static GanttPeriodLabelFormat CanonicalPeriodLabelFormat(GanttTimeScale scale) => scale switch
+    {
+        GanttTimeScale.Month => GanttPeriodLabelFormat.MMM,
+        GanttTimeScale.Quarter => GanttPeriodLabelFormat.Quarter,
+        GanttTimeScale.Week => GanttPeriodLabelFormat.Week,
+        _ => GanttPeriodLabelFormat.MMM,
+    };
+
+    /// <summary>
+    /// Reads the stored period label format, falling back to the scale's
+    /// canonical form when the key is absent, names an unknown format, or is
+    /// incompatible with the scale it is stored against (R5.12). A workbook
+    /// last saved on the quarter scale therefore renders the quarter's
+    /// canonical form rather than an unreadable month label.
+    /// </summary>
+    private static GanttPeriodLabelFormat ReadPeriodLabelFormat(
+        IReadOnlyDictionary<string, string> settings,
+        GanttTimeScale scale) =>
+        settings.TryGetValue("PeriodLabelFormat", out var text)
+        && GanttChartSettings.TryParsePeriodLabelFormat(text, out GanttPeriodLabelFormat parsed)
+        && GanttChartSettings.IsCompatible(scale, parsed)
+            ? parsed
+            : CanonicalPeriodLabelFormat(scale);
 
     /// <summary>
     /// Reads the stored plot time scale, falling back to the catalogue default
@@ -1157,7 +1224,8 @@ internal class RibbonStateService
                 previous.MarginCm,
                 previous.Preset,
                 previous.PlotWidthPt,
-                previous.PlotHeightPt));
+                previous.PlotHeightPt,
+                previous.PeriodLabelFormat));
         }
         catch
         {

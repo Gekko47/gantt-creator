@@ -127,7 +127,8 @@ public static class FrameBandsBuilder
             request.Scale,
             request.PeriodLabelFormat,
             request.PlotBounds,
-            request.MinimumHeaderLabelWidthPt
+            request.MinimumHeaderLabelWidthPt,
+            textMeasurer
         );
         if (sequenceOutcome.Sequence is not { } sequence)
         {

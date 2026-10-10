@@ -35,13 +35,40 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     /// <param name="format">The selected period label format.</param>
     /// <param name="plotBounds">The measured plot bounds.</param>
     /// <param name="minimumLabelWidthPt">The minimum visible label width.</param>
+    /// <param name="periodMeasurer">
+    /// The width seam used to fit each period label to its interval, or
+    /// <see langword="null"/> to fall back to the fixed floor for every period.
+    /// </param>
     /// <returns>A typed sequence outcome.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Years keep the fixed floor; periods are fit-gated.</b> A year interval
+    /// always spans a whole plot, so its four-digit label is shown whenever the
+    /// interval clears <paramref name="minimumLabelWidthPt"/>. A period interval
+    /// can be far narrower than its label, so when <paramref name="periodMeasurer"/>
+    /// is supplied the period label is shown only when the interval is at least as
+    /// wide as the label measures. This is uniform by construction: the format is a
+    /// single scene-wide choice, so every shown period label carries the same form
+    /// (all <c>MMM</c> or all <c>MM</c>) and only the show/hide decision varies per
+    /// interval. <c>MM</c> measures shorter than <c>MMM</c>, so it survives on
+    /// narrower intervals -- the intent of exposing the two forms.
+    /// </para>
+    /// <para>
+    /// The measurement uses the same single seam the chart title already uses, so
+    /// the period header inherits that seam's residual against its own render size
+    /// rather than introducing a second font-size authority. With no measurer, or a
+    /// measurement that fails, a period falls back to the floor, so fit-gating
+    /// activates only when a measurement actually succeeds and a missing seam can
+    /// never silently open the gate.
+    /// </para>
+    /// </remarks>
     public static BandSequenceCreationOutcome TryCreate(
         TimeScale? timeScale,
         GanttTimeScale scale,
         GanttPeriodLabelFormat format,
         RectD plotBounds,
-        double minimumLabelWidthPt
+        double minimumLabelWidthPt,
+        ITextWidthMeasurer? periodMeasurer = null
     )
     {
         return timeScale is not { } validScale ? Refused(BandSequenceRefusal.NullTimeScale)
@@ -50,7 +77,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
             : new BandSequenceCreationOutcome(
                 new BandSequence(
                     CreateYears(validScale, minimumLabelWidthPt),
-                    CreatePeriods(validScale, scale, format, minimumLabelWidthPt)
+                    CreatePeriods(validScale, scale, format, minimumLabelWidthPt, periodMeasurer)
                 ),
                 null
             );
@@ -84,7 +111,8 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         TimeScale scale,
         GanttTimeScale periodScale,
         GanttPeriodLabelFormat format,
-        double minimumWidth
+        double minimumWidth,
+        ITextWidthMeasurer? periodMeasurer
     )
     {
         List<BandInterval> intervals = [];
@@ -106,12 +134,33 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
                 _ => throw new ArgumentOutOfRangeException(nameof(periodScale)),
             };
             DateOnly periodFinish = next.AddDays(-1);
-            AddInterval(intervals, scale, periodStart, periodFinish, FormatPeriod(periodStart, format), minimumWidth);
+            var label = FormatPeriod(periodStart, format);
+            AddInterval(intervals, scale, periodStart, periodFinish, label, RequiredPeriodWidth(label, minimumWidth, periodMeasurer));
             periodStart = next;
         }
 
         return intervals;
     }
+
+    /// <summary>
+    /// The minimum interval width a period label needs to be shown: its measured
+    /// width when a measurer is supplied and succeeds, otherwise the fixed floor.
+    /// </summary>
+    /// <param name="label">The formatted period label.</param>
+    /// <param name="floorWidthPt">The fixed suppression floor.</param>
+    /// <param name="measurer">The optional width seam.</param>
+    /// <returns>The required interval width in points.</returns>
+    /// <remarks>
+    /// A non-finite or negative measurement is treated as a failure and falls back
+    /// to the floor, matching <see cref="ITextWidthMeasurer"/>'s own contract that a
+    /// successful measure is finite and non-negative. This keeps a misbehaving seam
+    /// from either opening the gate (a zero/negative width shows every label) or
+    /// closing it (an infinite width suppresses every label).
+    /// </remarks>
+    private static double RequiredPeriodWidth(string label, double floorWidthPt, ITextWidthMeasurer? measurer) =>
+        measurer is not null && measurer.TryMeasure(label, out var widthPt) && double.IsFinite(widthPt) && widthPt >= 0
+            ? widthPt
+            : floorWidthPt;
 
     private static void AddInterval(
         List<BandInterval> intervals,
@@ -119,14 +168,14 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
         DateOnly periodStart,
         DateOnly periodFinish,
         string label,
-        double minimumWidth
+        double requiredWidth
     )
     {
         DateOnly visibleStart = periodStart < scale.PlotStart ? scale.PlotStart : periodStart;
         DateOnly visibleFinish = periodFinish > scale.PlotFinish ? scale.PlotFinish : periodFinish;
         var left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
         var right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
-        intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, right - left >= minimumWidth));
+        intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, right - left >= requiredWidth));
     }
 
     private static string FormatPeriod(DateOnly start, GanttPeriodLabelFormat format) =>
