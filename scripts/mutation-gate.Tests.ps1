@@ -295,7 +295,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             # here; a function declared at file scope is not
             # visible inside It under the pinned Pester 6.1.0
             # (recorded in this file's notes).
-            function New-MutationReport {
+            function Write-MutationReport {
                 param([string]$Path, [object[]]$Mutants)
                 $report = @{
                     Files = @{
@@ -313,7 +313,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             # tool reported a problem. The exit-code branch must
             # fail the gate rather than report the passing score.
             $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-exit-' + [guid]::NewGuid().ToString('N') + '.json')
-            New-MutationReport -Path $path -Mutants @(
+            Write-MutationReport -Path $path -Mutants @(
                 @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' },
                 @{ Status = 'Killed' }, @{ Status = 'Killed' }
             )
@@ -327,7 +327,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
 
         It 'POSITIVE: a zero-mutant non-baseline report fails' {
             $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-zero-' + [guid]::NewGuid().ToString('N') + '.json')
-            New-MutationReport -Path $path -Mutants @()
+            Write-MutationReport -Path $path -Mutants @()
             try {
                 { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
                     Should -Throw '*zero mutants*'
@@ -338,7 +338,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
 
         It 'POSITIVE: a zero-mutant baseline report is archived, not judged' {
             $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-base-' + [guid]::NewGuid().ToString('N') + '.json')
-            New-MutationReport -Path $path -Mutants @()
+            Write-MutationReport -Path $path -Mutants @()
             try {
                 $result = Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 -Baseline
                 $result.Mode | Should -Be 'baseline'
@@ -363,7 +363,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             # The negative case for the whole judge: a report
             # that clears every branch must return a result.
             $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-ok-' + [guid]::NewGuid().ToString('N') + '.json')
-            New-MutationReport -Path $path -Mutants @(
+            Write-MutationReport -Path $path -Mutants @(
                 @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' },
                 @{ Status = 'Killed' }, @{ Status = 'Killed' }
             )

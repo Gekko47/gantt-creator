@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 <#
 .SYNOPSIS
     Mutation-testing gate for changed Core code (R3.13, the R0.5 deferral).
