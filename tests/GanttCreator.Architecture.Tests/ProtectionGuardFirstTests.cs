@@ -89,6 +89,12 @@ public sealed class ProtectionGuardFirstTests
         // its first mutating member. It also reads the same code-owned GanttTableSchema
         // as the initialiser, so the classification has one authority.
         new("src/GanttCreator.Office/ExcelColumnPresentationRestorer.cs", "EnsureClassification"),
+        // R5.3 D2: the parent/child mutator rewrites the user's VISIBLE table -- a
+        // promote rotates a sibling run and clears the moved row's ParentId, a demote
+        // assigns a ParentId and a SiblingOrder -- so it is a data mutation under
+        // ADR-0008 D4. Listed at "Mutate", the shared entry both Promote and Demote
+        // delegate to, so the guard is reached before any ranged write.
+        new("src/GanttCreator.Office/ExcelParentChildMutator.cs", "Mutate"),
     ];
 
     /// <summary>
@@ -147,6 +153,10 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ProtectionGuardOutcome.cs",
         "src/GanttCreator.Office/ValidationReportComposer.cs",
         "src/GanttCreator.Office/WorkbookInitialiseOutcome.cs",
+        // R5.3 D2: the parent/child mutation port and its outcome. The port declares
+        // Promote/Demote and the typed outcome; it performs no mutation of its own --
+        // the mutating implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IParentChildMutator.cs",
         // R4.3: the origin translation and the scene-to-request renderer. Both
         // are pure functions over already-resolved Core values - neither holds a
         // COM proxy, names an interop type, or mutates anything - so a protection
