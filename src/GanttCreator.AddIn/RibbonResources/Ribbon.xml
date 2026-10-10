@@ -31,39 +31,47 @@
         </group>
         <group id="grpPlotTimeScale" label="Plot Time Scale">
           <dropDown id="ddnPlotTimeScale" getSelectedItemIndex="GetTimeScale" getEnabled="GetEnabled" onAction="OnTimeScaleChange">
-            <item id="Month" label="Month"/>
+            <item id="Month-MM" label="Month (MM)"/>
+            <item id="Month-MMM" label="Month (MMM)"/>
             <item id="Quarter" label="Quarter"/>
             <item id="Week" label="Week"/>
           </dropDown>
         </group>
         <group id="grpPlotSize" label="Plot Size">
-          <box id="boxPlotSize" boxStyle="vertical">
-            <box id="boxPlotDimensions" boxStyle="horizontal">
-              <box id="boxPlotWidth" boxStyle="vertical">
-                <labelControl id="lblPlotWidth" label="Width (pt)"/>
-                <editBox id="edtPlotWidth" getText="GetPlotWidth" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
-              </box>
-              <box id="boxPlotHeight" boxStyle="vertical">
-                <labelControl id="lblPlotHeight" label="Height (pt)"/>
-                <editBox id="edtPlotHeight" getText="GetPlotHeight" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
-              </box>
-            </box>
-            <box id="boxPresetsA4" boxStyle="horizontal">
+          <box id="boxPresets" boxStyle="vertical">
+            <box id="boxPresetsA4" boxStyle="vertical">
               <button id="btnPresetA4Portrait" label="A4 portrait" imageMso="PageOrientationPortrait" getEnabled="GetEnabled" onAction="OnPresetClick"/>
               <button id="btnPresetA4Landscape" label="A4 landscape" imageMso="PageOrientationLandscape" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+              <box id="boxPresetsPresentation" boxStyle="horizontal">
+                <button id="btnPresetPresentation16x9" label="16:9" imageMso="PageOrientationLandscape" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+                <button id="btnPresetPresentation4x3" label="4:3" imageMso="PageOrientationPortrait" getEnabled="GetEnabled" onAction="OnPresetClick"/>
+              </box>
             </box>
-            <box id="boxPresetsPresentation" boxStyle="horizontal">
-              <button id="btnPresetPresentation16x9" label="16:9" imageMso="PageOrientationLandscape" getEnabled="GetEnabled" onAction="OnPresetClick"/>
-              <button id="btnPresetPresentation4x3" label="4:3" imageMso="PageOrientationPortrait" getEnabled="GetEnabled" onAction="OnPresetClick"/>
-            </box>
-            <box id="boxMargin" boxStyle="horizontal">
-              <dropDown id="ddnMargin" getSelectedItemIndex="GetMargin" getEnabled="GetEnabled" onAction="OnMarginChange">
-                <item id="Narrow" label="Narrow (0.635 cm)"/>
-                <item id="Normal" label="Normal (1.78 cm)"/>
-                <item id="Wide" label="Wide (2.54 cm)"/>
-                <item id="Custom" label="Custom"/>
-              </dropDown>
+          </box>
+          <box id="boxMargin" boxStyle="vertical">
+            <labelControl id="lblMargin" label="Margin"/>
+            <dropDown id="ddnMargin" getSelectedItemIndex="GetMargin" getEnabled="GetEnabled" onAction="OnMarginChange">
+              <item id="Narrow" label="Narrow (0.635 cm)"/>
+              <item id="Normal" label="Normal (1.78 cm)"/>
+              <item id="Wide" label="Wide (2.54 cm)"/>
+              <item id="Custom" label="Custom"/>
+            </dropDown>
+            <box id="boxMarginCm" boxStyle="horizontal">
               <editBox id="edtMarginCm" getText="GetMarginCm" getEnabled="GetMarginCmEnabled" onChange="OnMarginCmChange" sizeString="0.00"/>
+              <labelControl id="lblMarginUnit" label="(cm)"/>
+            </box>
+          </box>
+          <box id="boxPlotDimensions" boxStyle="vertical">
+            <labelControl id="lblPlotDimensions" label="Dimensions"/>
+            <box id="boxPlotWidth" boxStyle="horizontal">
+              <labelControl id="lblPlotWidth" label="Width"/>
+              <editBox id="edtPlotWidth" getText="GetPlotWidth" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
+              <labelControl id="lblPlotWidthUnit" label="(pt)"/>
+            </box>
+            <box id="boxPlotHeight" boxStyle="horizontal">
+              <labelControl id="lblPlotHeight" label="Height"/>
+              <editBox id="edtPlotHeight" getText="GetPlotHeight" getEnabled="GetPlotDimensionsEnabled" sizeString="0.00"/>
+              <labelControl id="lblPlotHeightUnit" label="(pt)"/>
             </box>
           </box>
         </group>

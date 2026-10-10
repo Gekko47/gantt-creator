@@ -229,6 +229,7 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.9 | Complete Ribbon layout, icons, keytips, accessibility labels, and offline help | Ribbon XML/callback, resource, and offline-link contract tests | Required: keyboard, screen-reader label, high-contrast, and screenshot-layout review |
 | R5.10 | Add single-expanded-entity selection and row fill/line/label overrides | Selection-context, capability, colour, label-position, inheritance, and persistence tests | Required: controls enable only for one expanded entity; edit rectangle/diamond fill and label position |
 | R5.11 | Enforce Refresh-only rendering for all worksheet and property edits | Command/event tests prove edits never invoke the renderer; blocking Refresh preserves the last scene | Required: edit Type/dates/colour/label, confirm shapes stay unchanged, then Refresh once to apply all |
+| R5.12 | Select the Month period-label format (MM or MMM) from the Plot Time Scale ribbon | Ribbon XML/callback contract tests for the format dropdown; persist tests prove a user-chosen MM is stored and recalled and not clobbered by other settings | Required: choose MM, Refresh, confirm `01`-style month headers render, then MMM returns `Jan`-style |
 
 > **Phase 5 notes (revision 10):**
 > - **R5.2** keeps the month/quarter/year **scale** selector. The **size-preset
@@ -250,6 +251,18 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 > only that entity. A collapsed parent gives group context for navigation and
 > expand/collapse, but it is **not** a styleable group — Row Styling must never
 > implicitly style children.
+> - **R5.12** is rescoped from the automatic MMM→MM fit ladder (ADR-0039,
+> superseded) to an explicit **format** dropdown in the Plot Time Scale group:
+> the user chooses `MM` or `MMM` and the selected form is emitted verbatim.
+> The ladder was rejected because a per-interval step makes the band
+> non-uniform and is effectively unobservable live (a three-character month at
+> the 8pt measuring seam is narrower than the 18pt `MinimumHeaderLabelWidthPt`
+> suppression floor). `PeriodLabelFormat` is already a stored setting with a
+> closed-set parser, so this needs no catalogue, schema, or format-enum change.
+> ADR-0041 then makes period-label **visibility** measured-fit (show iff the
+> interval is at least as wide as the label measures), so the shorter `MM` form
+> survives on narrower intervals than `MMM`; the year band keeps the floor and a
+> failed measurement falls back to it.
 
 > **Phase 5 notes (revision 4):**
 > - **R5.7** extends R2.8's add-delineator row command; it does not replace it. R2.8 is row insertion with defaults; R5.7 is the dialog, edit, delete, and ignored-field warnings.
