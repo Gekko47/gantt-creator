@@ -217,8 +217,10 @@ public static class HierarchyMutations
     /// Plans one child-to-parent promotion (R5.3 D2). The target must be a
     /// child of a promotable type that owns no children of its own; its table
     /// content moves to the bottom of its former sibling run, its
-    /// <c>ParentId</c> is cleared, and the remaining run is resequenced
-    /// densely (R5.3 D4). Nothing is mutated; the caller applies the plan.
+    /// <c>ParentId</c> is cleared, the remaining run is resequenced
+    /// densely, and the promoted row joins the top-level run at its new
+    /// position with the run resequenced around it (R5.3 D4). Nothing is
+    /// mutated; the caller applies the plan.
     /// </summary>
     /// <param name="rows">The validated rows, in any order. Not mutated.</param>
     /// <param name="selectedId">The identifier of the row being promoted.</param>
@@ -292,6 +294,16 @@ public static class HierarchyMutations
             writes.Add(new SiblingOrderWrite(sibling.Id, order));
             order++;
         }
+
+        // The promoted row joins the top-level run at its
+        // new position -- the bottom of its former sibling
+        // run -- and the run resequences densely around it,
+        // exactly as a demote resequences the run a row
+        // leaves. The promoted row's stale child-run value
+        // is never carried into the top-level run: the
+        // planner is the authority (R5.3 D4, D2 amended
+        // 2026-10-11).
+        writes.AddRange(ResequenceTopLevelRunWithJoin(rows, selectedId, moveTo));
 
         return new PromotePlan(selectedId, parentId, moveTo, writes, null);
     }
@@ -477,6 +489,47 @@ public static class HierarchyMutations
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Dense resequencing of the top-level run after a row
+    /// joins it at <paramref name="joinedRowNumber"/> (R5.3
+    /// D2). The joining row takes its position in row order
+    /// and the rows below it shift to make room. Existing
+    /// <c>SiblingOrder</c> values are ignored: the planner
+    /// is the authority (R5.3 D4).
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="joinedId">The row joining the top-level run.</param>
+    /// <param name="joinedRowNumber">The row's body index after its content moves.</param>
+    /// <returns>The dense resequencing of the whole top-level run, ascending row order.</returns>
+    private static List<SiblingOrderWrite> ResequenceTopLevelRunWithJoin(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId joinedId,
+        int joinedRowNumber)
+    {
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent row in rows
+            .Where(row => row.ParentId is null && row.RowNumber < joinedRowNumber)
+            .OrderBy(static row => row.RowNumber))
+        {
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        writes.Add(new SiblingOrderWrite(joinedId, order));
+        order++;
+
+        foreach (GanttEvent row in rows
+            .Where(row => row.ParentId is null && row.RowNumber > joinedRowNumber)
+            .OrderBy(static row => row.RowNumber))
+        {
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        return writes;
     }
 
     /// <summary>

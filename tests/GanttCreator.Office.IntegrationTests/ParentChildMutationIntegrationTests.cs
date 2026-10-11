@@ -86,7 +86,9 @@ public class ParentChildMutationIntegrationTests(ITestOutputHelper output)
             // The promote moves the selected row's CONTENT to the bottom of its
             // sibling run (rows 2..4), so afterwards:
             //   row 2 = b (resequenced 0), row 3 = d (resequenced 1),
-            //   row 4 = c, the promoted row, with its ParentId cleared.
+            //   row 4 = c, the promoted row, with its ParentId cleared
+            //   and its SiblingOrder its position in the top-level run:
+            //   a is 0 (row 1), c is 1 (row 4) (R5.3 D2, amended 2026-10-11).
             Assert.Equal(Id('b').Value, IdText(table, 2));
             Assert.Equal(Id('d').Value, IdText(table, 3));
             Assert.Equal(Id('c').Value, IdText(table, 4));
@@ -96,11 +98,15 @@ public class ParentChildMutationIntegrationTests(ITestOutputHelper output)
             // The remaining run resequenced densely from the top.
             Assert.Equal(0d, OrderValue(table, 2));
             Assert.Equal(1d, OrderValue(table, 3));
+            // The promoted row joined the top-level run at its new
+            // position, after the only other top-level row (a).
+            Assert.Equal(1d, OrderValue(table, 4));
 
-            // The cell written ABOVE the moved window is the exact call the
-            // refused accessor sat on. 2 rows x 16 columns plus that one cell
-            // is the proof it landed; a refusal returns 0 cells.
-            Assert.Equal((2 * GanttTableSchema.Default.Columns.Count) + 1, outcome.CellsWritten);
+            // The cells written ABOVE the moved window are the exact call the
+            // refused accessor sat on. 2 rows x 16 columns plus the two
+            // cells above the window (b's run cell and a's top-level run
+            // cell) is the proof they landed; a refusal returns 0 cells.
+            Assert.Equal((2 * GanttTableSchema.Default.Columns.Count) + 2, outcome.CellsWritten);
         }
         finally
         {

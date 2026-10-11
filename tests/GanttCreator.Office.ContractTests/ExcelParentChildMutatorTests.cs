@@ -711,9 +711,12 @@ public class ExcelParentChildMutatorTests
         Assert.Null(outcome.Refusal);
         Assert.Null(outcome.PlanRefusal);
         Assert.Equal(2, outcome.SelectedRowNumber);
-        // The two-row window moves full width: 2 rows x 16 columns.
-        Assert.Equal(2 * GanttTableSchema.Default.Columns.Count, outcome.CellsWritten);
-        Assert.Empty(graph.WrittenCells);
+        // The two-row window moves full width, plus the
+        // parent's resequenced SiblingOrder cell above
+        // the window: the promoted row joins the
+        // top-level run (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(2 * GanttTableSchema.Default.Columns.Count + 1, outcome.CellsWritten);
+        Assert.Single(graph.WrittenCells);
         Assert.Equal(2, graph.WrittenRows.Count);
 
         // Row 2 now holds the second child's content, resequenced to 0.
@@ -725,15 +728,23 @@ public class ExcelParentChildMutatorTests
         Assert.Equal(0, movedUp["SiblingOrder"]);
 
         // Row 3 now holds the promoted child with its ParentId
-        // cleared. Its own SiblingOrder keeps its pre-move value:
-        // the plan emits no write for the promoted row, and the
-        // adapter invents none (R5.3 D4).
+        // cleared. Its own SiblingOrder is its position in the
+        // top-level run -- the parent keeps 0 and the promoted
+        // row takes 1 -- so its stale child-run value (7) is
+        // never carried over (R5.3 D2, amended 2026-10-11).
         Assert.Equal(3, graph.WrittenRows[1].Row);
         Dictionary<string, object?> promoted = Graph.ValuesOf(graph.WrittenRows[1].Payload);
         Assert.Equal(ChildOneId, promoted["Id"]);
         Assert.Equal("First child", promoted["Description"]);
         Assert.Null(promoted["ParentId"]);
-        Assert.Equal(7, promoted["SiblingOrder"]);
+        Assert.Equal(1, promoted["SiblingOrder"]);
+
+        // The parent's SiblingOrder cell is written above the
+        // moved window: the top-level run it anchors resequences
+        // around the row joining it.
+        Assert.Equal(1, graph.WrittenCells[0].Row);
+        Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[0].Column);
+        Assert.Equal(0, graph.WrittenCells[0].Value);
     }
 
     [Fact]
@@ -768,11 +779,13 @@ public class ExcelParentChildMutatorTests
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(3, outcome.SelectedRowNumber);
-        // The two-row window moves full width, plus one
-        // SiblingOrder cell above the window.
-        Assert.Equal(2 * GanttTableSchema.Default.Columns.Count + 1, outcome.CellsWritten);
+        // The two-row window moves full width, plus the
+        // SiblingOrder cells above the window: the first
+        // child's resequenced run cell and the parent's
+        // top-level run cell (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(2 * GanttTableSchema.Default.Columns.Count + 2, outcome.CellsWritten);
         Assert.Equal(2, graph.WrittenRows.Count);
-        Assert.Single(graph.WrittenCells);
+        Assert.Equal(2, graph.WrittenCells.Count);
 
         // Row 3 now holds the third child, resequenced to 1.
         Assert.Equal(3, graph.WrittenRows[0].Row);
@@ -780,17 +793,27 @@ public class ExcelParentChildMutatorTests
         Assert.Equal(ChildThreeId, shiftedUp["Id"]);
         Assert.Equal(1, shiftedUp["SiblingOrder"]);
 
-        // Row 4 now holds the promoted second child, parent cleared.
+        // Row 4 now holds the promoted second child, parent
+        // cleared, its SiblingOrder its position in the
+        // top-level run (the parent is 0, the promoted
+        // row is 1).
         Assert.Equal(4, graph.WrittenRows[1].Row);
         Dictionary<string, object?> promoted = Graph.ValuesOf(graph.WrittenRows[1].Payload);
         Assert.Equal(ChildTwoId, promoted["Id"]);
         Assert.Null(promoted["ParentId"]);
+        Assert.Equal(1, promoted["SiblingOrder"]);
 
-        // The first child sits above the moved window: only
-        // its SiblingOrder cell is written.
+        // The first child and the parent sit above the moved
+        // window: only their SiblingOrder cells are written,
+        // in plan order -- the run member first, then the
+        // top-level run the promoted row joins.
+        Assert.Equal(2, graph.WrittenCells.Count);
         Assert.Equal(2, graph.WrittenCells[0].Row);
         Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[0].Column);
         Assert.Equal(0, graph.WrittenCells[0].Value);
+        Assert.Equal(1, graph.WrittenCells[1].Row);
+        Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[1].Column);
+        Assert.Equal(0, graph.WrittenCells[1].Value);
     }
 
     [Fact]
@@ -804,20 +827,33 @@ public class ExcelParentChildMutatorTests
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(3, outcome.SelectedRowNumber);
-        // One full-width row plus the first child's
-        // resequenced SiblingOrder cell above the window.
-        Assert.Equal(GanttTableSchema.Default.Columns.Count + 1, outcome.CellsWritten);
+        // One full-width row plus the SiblingOrder cells
+        // above the window: the first child's resequenced
+        // run cell and the parent's top-level run cell
+        // (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(GanttTableSchema.Default.Columns.Count + 2, outcome.CellsWritten);
         Assert.Single(graph.WrittenRows);
-        Assert.Single(graph.WrittenCells);
+        Assert.Equal(2, graph.WrittenCells.Count);
 
         Assert.Equal(3, graph.WrittenRows[0].Row);
         Dictionary<string, object?> promoted = Graph.ValuesOf(graph.WrittenRows[0].Payload);
         Assert.Equal(ChildTwoId, promoted["Id"]);
         Assert.Null(promoted["ParentId"]);
+        // The promoted row's SiblingOrder is its position in
+        // the top-level run: the parent is 0, the promoted
+        // row is 1 (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(1, promoted["SiblingOrder"]);
 
+        Assert.Equal(2, graph.WrittenCells.Count);
+        // Plan order: the run member above the window
+        // first, then the top-level run the promoted
+        // row joins.
         Assert.Equal(2, graph.WrittenCells[0].Row);
         Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[0].Column);
         Assert.Equal(0, graph.WrittenCells[0].Value);
+        Assert.Equal(1, graph.WrittenCells[1].Row);
+        Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[1].Column);
+        Assert.Equal(0, graph.WrittenCells[1].Value);
     }
 
     [Fact]

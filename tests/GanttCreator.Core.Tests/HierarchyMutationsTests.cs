@@ -249,7 +249,19 @@ public sealed class HierarchyMutationsTests
         Assert.Equal(first, plan.TargetId);
         Assert.Equal(parent, plan.ClearedParentId);
         Assert.Equal(4, plan.MoveToBodyIndex);
-        Assert.Equal([new SiblingOrderWrite(second, 0)], plan.SiblingOrderWrites);
+        // The remaining run resequences densely, and the
+        // promoted row joins the top-level run at its new
+        // position (the run bottom): the parent keeps 0 and
+        // the promoted row takes 1, so its stale child-run
+        // value is never carried over (R5.3 D2, amended
+        // 2026-10-11).
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(second, 0),
+                new SiblingOrderWrite(parent, 0),
+                new SiblingOrderWrite(first, 1),
+            ],
+            plan.SiblingOrderWrites);
     }
 
     /// <summary>
@@ -272,7 +284,64 @@ public sealed class HierarchyMutationsTests
 
         Assert.True(plan.Succeeded);
         Assert.Equal(4, plan.MoveToBodyIndex);
-        Assert.Equal([new SiblingOrderWrite(first, 0)], plan.SiblingOrderWrites);
+        // The remaining run resequences densely, and the
+        // promoted row joins the top-level run at its new
+        // position (the run bottom, unchanged here): the
+        // parent keeps 0 and the promoted row takes 1
+        // (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(first, 0),
+                new SiblingOrderWrite(parent, 0),
+                new SiblingOrderWrite(second, 1),
+            ],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A promote between top-level rows inserts the promoted
+    /// row into the top-level run at its new position -- the
+    /// bottom of its former sibling run -- and the run
+    /// resequences densely around it: the rows below it shift
+    /// to make room, and the promoted row's stale child-run
+    /// value is never carried over (R5.3 D2, amended
+    /// 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Promoting_a_child_between_top_level_rows_resequences_the_run_it_joins()
+    {
+        GanttRowId top = NewId();
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        GanttRowId below = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, top),
+            Row(3, parent),
+            Row(4, first, parentId: parent),
+            Row(5, second, parentId: parent),
+            Row(6, below),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, first);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(5, plan.MoveToBodyIndex);
+        // The remaining run resequences densely; the
+        // top-level run resequences around the joined
+        // row: both top-level rows above it keep their
+        // order, the promoted row takes its position,
+        // and the row below shifts to make room.
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(second, 0),
+                new SiblingOrderWrite(top, 0),
+                new SiblingOrderWrite(parent, 1),
+                new SiblingOrderWrite(first, 2),
+                new SiblingOrderWrite(below, 3),
+            ],
+            plan.SiblingOrderWrites);
     }
 
     /// <summary>

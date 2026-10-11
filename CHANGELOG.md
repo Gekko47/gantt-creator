@@ -140,6 +140,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **fix(office)**: Preserve the user's collapsed outline groups across Refresh — the outline reset pass no longer writes level 1 over a level-1 parent that still carries a collapsed group
 - **fix(office)**: Route the R5.3 parent/child mutator's single-cell writes through `Range.Cells` — live Excel 16.0 refuses the two-argument `Range` indexer (`COMException 0x800A03EC`), so Promote and Demote always failed
 - **fix(core)**: Refuse a Demote to Child whose landing the Excel outline cannot represent — the scan now requires the selection to land directly beneath the target parent's existing child run, so a demotion separated by a milestone, splitter or other non-owner row refuses with the new `LandingNotAdjacent` reason instead of writing a `ParentId` the outline parks as top-level on every Refresh; an adjacent parent at capacity refuses with `ParentUnavailable`
+- **fix(core)**: Assign the promoted row its top-level `SiblingOrder` on Promote to Parent — the promoted row kept its stale child-run value after becoming top-level, colliding with the top-level run's dense ordering; the top-level run now resequences densely around the row's new position, mirroring the demote
 
 ### Chore
 
