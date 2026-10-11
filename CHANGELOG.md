@@ -64,6 +64,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Fixed
 
+- **fix(office)**: unbox `Range.OutlineLevel`'s Variant in every whole-number shape, so Promote to Parent clears the row's old outline group
 - **fix**: Update AddInLogFactory with IsFailed fallback and isolated temp test directories
 - **fix**: Update active work item status and enhance verification scripts
 - **fix**: Anchor verify.ps1 dirty-tree check to repo root with git -C

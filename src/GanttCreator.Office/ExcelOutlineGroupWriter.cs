@@ -398,16 +398,53 @@ public class ExcelOutlineGroupWriter(
         string.Create(CultureInfo.InvariantCulture, $"{firstRow}:{lastRow}");
 
     /// <summary>
-    /// Reads the outline level of a single row range. The COM <c>OutlineLevel</c>
-    /// property is <c>Object</c>-typed in the PIA, so the value is boxed and
-    /// needs to be unchecked here; contract tests override this seam to return
-    /// known levels.
+    /// Reads the outline level of a single row range: the raw boxed
+    /// value from <see cref="ReadOutlineLevelValue"/>, unboxed by
+    /// <see cref="UnboxOutlineLevel"/>.
     /// </summary>
-    internal virtual int? ReadOutlineLevel(Excel.Range range)
+    internal int? ReadOutlineLevel(Excel.Range range)
     {
         ArgumentNullException.ThrowIfNull(range);
-        return range.OutlineLevel as int?;
+        return UnboxOutlineLevel(ReadOutlineLevelValue(range));
     }
+
+    /// <summary>
+    /// Reads the outline level exactly as the host boxed it. The COM
+    /// <c>OutlineLevel</c> property is <c>Object</c>-typed in the PIA,
+    /// so the value arrives as a Variant whose boxed runtime type the
+    /// host chooses; contract tests override this seam to return known
+    /// levels.
+    /// </summary>
+    internal virtual object? ReadOutlineLevelValue(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return range.OutlineLevel;
+    }
+
+    /// <summary>
+    /// Unboxes an outline level the host returned as a Variant.
+    /// </summary>
+    /// <returns>
+    /// The level the Variant carries, or <see langword="null"/> when the
+    /// value is not a whole number in a shape this list covers.
+    /// </returns>
+    /// <remarks>
+    /// The level is a whole number, but <c>OutlineLevel</c> is
+    /// <c>Object</c>-typed in the interop assembly and the host's Variant
+    /// marshaling picks the boxed runtime type: a boxed <see cref="int"/>
+    /// is the common shape, while other hosts box the same value as a
+    /// <see cref="short"/>, <see cref="long"/>, <see cref="double"/>,
+    /// or <see cref="decimal"/>.
+    /// </remarks>
+    internal static int? UnboxOutlineLevel(object? boxed) => boxed switch
+    {
+        int value => value,
+        short value => value,
+        long value => (int)value,
+        double value => (int)value,
+        decimal value => (int)value,
+        _ => null,
+    };
 
     /// <summary>
     /// Writes an outline level to a row range. Test seam over the COM

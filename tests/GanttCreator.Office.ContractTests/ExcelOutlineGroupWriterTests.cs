@@ -59,14 +59,17 @@ public sealed class ExcelOutlineGroupWriterTests
         }
 
         /// <summary>
-        /// Level each body row currently carries, as the test initialises the sheet.
+        /// Level each body row currently carries, as the test initialises the
+        /// sheet. Values hold the boxed shapes the host can return for the
+        /// Variant-typed <c>OutlineLevel</c> property, so a test can pin a
+        /// level the host boxed as something other than an <see cref="int"/>.
         /// </summary>
-        internal Dictionary<int, int> InitialLevels { get; set; } = [];
+        internal Dictionary<int, object?> InitialLevels { get; set; } = [];
 
-        internal override int? ReadOutlineLevel(Excel.Range range)
+        internal override object? ReadOutlineLevelValue(Excel.Range range)
         {
             var bodyRow = _pendingFirst - FirstWorksheetRow + 1;
-            return InitialLevels.TryGetValue(bodyRow, out var level) ? level : (int?)null;
+            return InitialLevels.TryGetValue(bodyRow, out var level) ? level : null;
         }
 
         internal int FirstWorksheetRow { get; set; } = 2;
@@ -295,7 +298,7 @@ public sealed class ExcelOutlineGroupWriterTests
             writes)
         {
             BodyRowCount = 2,
-            InitialLevels = new Dictionary<int, int>
+            InitialLevels = new Dictionary<int, object?>
             {
                 { 1, ExcelOutlineGroupWriter.TopLevelOutlineLevel },
                 { 2, ExcelOutlineGroupWriter.ChildOutlineLevel },
@@ -317,6 +320,69 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// The Variant-shape regression for Promote-to-Parent.
+    /// <c>OutlineLevel</c> is <c>Object</c>-typed in the PIA, so the host
+    /// boxes the level in a runtime type it chooses. A level boxed as a
+    /// <see cref="double"/> instead of an <see cref="int"/> must still read
+    /// as level 2: an exact-type unbox silently yields <see langword="null"/>,
+    /// the row is then believed top-level, the reset pass skips it, and the
+    /// row a promote moved out of its group keeps the group's outline level
+    /// and collapse control.
+    /// </summary>
+    [Fact]
+    public void A_level_the_host_boxed_as_a_double_is_reset_when_its_parent_is_promoted()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId child = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 2,
+            InitialLevels = new Dictionary<int, object?>
+            {
+                { 1, ExcelOutlineGroupWriter.TopLevelOutlineLevel },
+                { 2, 2.0 },
+            },
+        };
+
+        // The parent is gone: the plan groups nothing, so the level-2 row
+        // carries a stale group the reset pass must clear.
+        OutlineGroupOutcome outcome = writer.Apply([Event(1, NewId()), Event(2, child)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.GroupsApplied);
+
+        // The stale level-2 row is reset to top level: one contiguous write.
+        var reset = Assert.Single(writes);
+        Assert.Equal(ExcelOutlineGroupWriter.TopLevelOutlineLevel, reset.Level);
+        Assert.Equal(3, reset.First);
+        Assert.Equal(3, reset.Last);
+    }
+
+    /// <summary>
+    /// The unboxing contract: every whole-number shape a host can box an
+    /// outline level in reads as that level, and anything else reads as
+    /// unknown rather than being guessed.
+    /// </summary>
+    [Fact]
+    public void UnboxOutlineLevel_reads_every_whole_number_shape_the_host_can_box()
+    {
+        Assert.Equal(2, ExcelOutlineGroupWriter.UnboxOutlineLevel(2));
+        Assert.Equal(2, ExcelOutlineGroupWriter.UnboxOutlineLevel((short)2));
+        Assert.Equal(2, ExcelOutlineGroupWriter.UnboxOutlineLevel((long)2));
+        Assert.Equal(2, ExcelOutlineGroupWriter.UnboxOutlineLevel(2.0));
+        Assert.Equal(2, ExcelOutlineGroupWriter.UnboxOutlineLevel(2m));
+        Assert.Null(ExcelOutlineGroupWriter.UnboxOutlineLevel(null));
+        Assert.Null(ExcelOutlineGroupWriter.UnboxOutlineLevel("2"));
+        Assert.Null(ExcelOutlineGroupWriter.UnboxOutlineLevel(true));
+    }
+
+    /// <summary>
     /// A group survives the reset pass: the rows the plan DOES group must not be
     /// reset, or the reset would erase the grouping the next phase is about to apply.
     /// Body row 1 is the parent and rows 2-3 are its children, so only row 1 resets.
@@ -335,7 +401,7 @@ public sealed class ExcelOutlineGroupWriterTests
             writes)
         {
             BodyRowCount = 3,
-            InitialLevels = new Dictionary<int, int>
+            InitialLevels = new Dictionary<int, object?>
             {
                 { 1, ExcelOutlineGroupWriter.TopLevelOutlineLevel },
                 { 2, ExcelOutlineGroupWriter.ChildOutlineLevel },
