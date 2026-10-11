@@ -198,9 +198,11 @@ public static class ProjectionResolver
             // LEVEL-2 child whenever it has a parent, so an interval that is itself a
             // child cannot own a further child -- that would be depth 3. The test is
             // therefore on the parent of the CHILD, which is the same distinction the
-            // validator's depth check uses, so the two cannot disagree. A TOP-LEVEL
-            // Critical Interval (no parent of its own) may own a child; the comment
-            // that claimed otherwise described the withdrawn exemption.
+            // validator's depth check uses, so the two cannot disagree. A Critical
+            // Interval never owns at all (R5.3 D1: child-only), so the
+            // MayOwnChildren check above already refuses an interval parent with
+            // IncompatibleHierarchy and this depth test only ever evaluates
+            // activity-type parents.
             if (parent.ParentId is not null)
             {
                 return new ProjectionResolution([], ProjectionRefusal.HierarchyTooDeep);

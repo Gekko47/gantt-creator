@@ -485,14 +485,16 @@ public static class GanttRowValidator
         //     after its parent is deleted;
         //   * a type the matrix excludes still reports NotUsedByType.
         // The `isCriticalInterval` branch used to make ParentId mandatory for that
-        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, which
-        // lists CriticalInterval among the types that may own children precisely so
-        // a TOP-LEVEL interval can own a level-2 child under the uniform depth
-        // rule -- and it contradicted <c>EntityProjection</c>, which resolves such
-        // a child onto the interval's own lane. The requirement therefore made the
-        // catalogue's entry and the projection's boundary unreachable. A blank
-        // ParentId is now legal for every child-capable type, and the DEPTH rule is
-        // the single authority on what a Critical Interval may parent.
+        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, whose
+        // pre-R5.3 matrix listed CriticalInterval among the types that may own
+        // children -- a rule the R5.3 owner ruling (2026-10-10) withdrew, making
+        // the interval child-only and never an owner -- and it contradicted
+        // <c>EntityProjection</c>, which resolves such a child onto the interval's
+        // own lane. The requirement therefore made the catalogue's entry and the
+        // projection's boundary unreachable. A blank ParentId is now legal for
+        // every child-capable type, and no Critical Interval may parent anything:
+        // the capability itself is gone (R5.3 D1), so the depth rule below only
+        // ever evaluates activity-type parents.
         // The previous `else if (parentText is not null)` branch was reached by any
         // non-critical row, so a child-capable span carrying a real ParentId emitted
         // a spurious "not used by this Type" warning *alongside* its legitimate
