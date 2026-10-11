@@ -101,6 +101,29 @@ param(
     # ceiling is still a single number. Treat 30 as "highest observed", not as a
     # proven floor.
     #
+    # RAISED 30 -> 35 ON 2026-10-11, again with a measured band. Two
+    # live gate runs on the current tree, the same day, both read 35
+    # (the second a deliberate retry with the machine kept quiet, per
+    # the bounded-retry rule). The office suite itself was 54/54 green
+    # on both runs -- the ratchet, not the tests, was red. Per-test
+    # attribution is uniform, not an outlier: every non-fixture
+    # workbook body forces exactly one teardown kill, as it always
+    # has. Against the last re-measurement (2026-10-10, read ~30)
+    # the +5 decomposes as: +2 the ParentChildMutationIntegrationTests
+    # bodies added by the R5.3 work, whose Office gate was never run
+    # (STATUS.md records "Office host gate Not run"), so the ceiling
+    # went stale exactly as the 28 did; +1 the new
+    # RowHeightNormaliserIntegrationTests body (the first live
+    # exercise of the normaliser), the same uniform per-body cost;
+    # +2 net OfficeFixture CreateWorkbook/Packed_XLL-family teardowns
+    # that ran clean (approx. 4 s) on 2026-10-04 and 2026-10-10 and
+    # flap to forced-kill on 2026-10-11, with a different member
+    # flapping in each run -- the non-determinism KNOWN-LIMITATIONS
+    # L19 already documents for that family. WHAT THIS COSTS: at 35 a
+    # future regression that adds up to five leaked proxy chains
+    # passes silently. 34 was rejected for the same reason 29 was: it
+    # would make the gate flap on a passing tree.
+    #
     # The end state is still 0. This is a baseline correction, not a licence.
     # `NormaliseLayoutRow` creates a worksheet-row Range per layout row per
     # normalisation and never releases it; releasing that one Range is the
@@ -108,9 +131,9 @@ param(
     # direction.
     #
     # Do not raise it again without a measurement that explains the new figure, and
-    # do not lower it below 30 without a run whose kill count is at or under the
+    # do not lower it below 35 without a run whose kill count is at or under the
     # proposed value.
-    [int]$MaxForcedKills = 30
+    [int]$MaxForcedKills = 35
 )
 
 $ErrorActionPreference = 'Stop'
