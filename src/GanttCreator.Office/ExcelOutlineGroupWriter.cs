@@ -104,7 +104,7 @@ public class ExcelOutlineGroupWriter(
         var currentLevels = new Dictionary<int, int>(bodyRowCount);
         for (var rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
         {
-            var range = GetRowsRange(worksheet, firstWorksheetRow + rowNumber - 1, firstWorksheetRow + rowNumber - 1);
+            Excel.Range? range = GetRowsRange(worksheet, firstWorksheetRow + rowNumber - 1, firstWorksheetRow + rowNumber - 1);
             currentLevels[rowNumber] = range is not null
                 ? ReadOutlineLevel(range) ?? TopLevelOutlineLevel
                 : TopLevelOutlineLevel;
