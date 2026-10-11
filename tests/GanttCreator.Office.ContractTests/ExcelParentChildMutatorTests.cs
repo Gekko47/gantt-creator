@@ -857,9 +857,11 @@ public class ExcelParentChildMutatorTests
     }
 
     [Fact]
-    public void Demote_assigns_the_nearest_eligible_parent_and_writes_only_the_planned_cells()
+    public void Demote_assigns_the_nearest_eligible_parent_and_moves_beneath_its_run()
     {
-        // Two top-level rows: the second is the selection.
+        // Two top-level rows: the second is the selection. It already sits
+        // directly beneath the new parent's (empty) run, so no content
+        // moves, but the parent assignment and resequencing still land.
         Graph graph = SeededGraph(
             Matrix(
                 BodyRow(ParentId, TypeOf(GanttEntityType.AsPlannedActivity)),
@@ -870,21 +872,122 @@ public class ExcelParentChildMutatorTests
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(2, outcome.SelectedRowNumber);
-        // ParentId + the demoted row's tail assignment +
-        // the resequencing of the top-level run it leaves.
-        Assert.Equal(3, outcome.CellsWritten);
-        Assert.Empty(graph.WrittenRows);
-        Assert.Equal(3, graph.WrittenCells.Count);
+        // The one-row window rewrites full width (ParentId + the demoted
+        // row's tail assignment), plus the resequencing of the top-level
+        // run it leaves above the window.
+        Assert.Equal(GanttTableSchema.Default.Columns.Count + 1, outcome.CellsWritten);
+        Assert.Single(graph.WrittenRows);
+        Assert.Single(graph.WrittenCells);
 
-        var expected = new List<(int Row, int Column, object? Value)>
-        {
-            (2, TableIndexOf("ParentId"), ParentId),
-            (2, TableIndexOf("SiblingOrder"), 0),
-            (1, TableIndexOf("SiblingOrder"), 0),
-        };
-        Assert.Equal(
-            expected.OrderBy(cell => (cell.Row, cell.Column)),
-            graph.WrittenCells.OrderBy(cell => (cell.Row, cell.Column)));
+        // Row 2 now holds the demoted row with its new parent.
+        Assert.Equal(2, graph.WrittenRows[0].Row);
+        Dictionary<string, object?> demoted = Graph.ValuesOf(graph.WrittenRows[0].Payload);
+        Assert.Equal(TargetId, demoted["Id"]);
+        Assert.Equal(ParentId, demoted["ParentId"]);
+        Assert.Equal(0, demoted["SiblingOrder"]);
+
+        // The parent sits above the moved window: only its resequenced
+        // top-level SiblingOrder cell is written.
+        Assert.Equal(1, graph.WrittenCells[0].Row);
+        Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[0].Column);
+        Assert.Equal(0, graph.WrittenCells[0].Value);
+    }
+
+    [Fact]
+    public void Demote_across_an_unrelated_row_moves_beneath_the_target_run()
+    {
+        // Parent, its child, a milestone the scan passes over, then the
+        // selection. The selection's content moves up to sit directly
+        // beneath the parent's run; the milestone shifts down one slot.
+        Graph graph = SeededGraph(
+            Matrix(
+                BodyRow(ParentId, TypeOf(GanttEntityType.AsPlannedActivity)),
+                BodyRow(
+                    ChildOneId,
+                    TypeOf(GanttEntityType.AsPlannedActivity),
+                    ParentId,
+                    0,
+                    "First child"),
+                BodyRow(
+                    ChildTwoId,
+                    TypeOf(GanttEntityType.AsPlannedMilestone),
+                    null,
+                    1,
+                    "Milestone"),
+                BodyRow(TargetId, TypeOf(GanttEntityType.AsPlannedActivity), null, 2, "Target")),
+            activeRow: 5);
+
+        ParentChildMutationOutcome outcome = graph.Build(NotProtected()).Demote();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(4, outcome.SelectedRowNumber);
+        // The two-row window rewrites full width, plus the parent's
+        // resequenced top-level cell above it.
+        Assert.Equal(2 * GanttTableSchema.Default.Columns.Count + 1, outcome.CellsWritten);
+        Assert.Equal(2, graph.WrittenRows.Count);
+
+        // Row 3 now holds the demoted row with its new parent and tail order.
+        Assert.Equal(3, graph.WrittenRows[0].Row);
+        Dictionary<string, object?> demoted = Graph.ValuesOf(graph.WrittenRows[0].Payload);
+        Assert.Equal(TargetId, demoted["Id"]);
+        Assert.Equal("Target", demoted["Description"]);
+        Assert.Equal(ParentId, demoted["ParentId"]);
+        Assert.Equal(1, demoted["SiblingOrder"]);
+
+        // Row 4 now holds the shifted-down milestone, unchanged otherwise.
+        // The old first child above the window keeps its run order, so no
+        // write names it.
+        Assert.Equal(4, graph.WrittenRows[1].Row);
+        Dictionary<string, object?> shifted = Graph.ValuesOf(graph.WrittenRows[1].Payload);
+        Assert.Equal(ChildTwoId, shifted["Id"]);
+        Assert.Equal("Milestone", shifted["Description"]);
+        Assert.Null(shifted["ParentId"]);
+
+        // The parent sits above the moved window: only its resequenced
+        // top-level SiblingOrder cell is written.
+        Assert.Single(graph.WrittenCells);
+        Assert.Equal(1, graph.WrittenCells[0].Row);
+        Assert.Equal(TableIndexOf("SiblingOrder"), graph.WrittenCells[0].Column);
+        Assert.Equal(0, graph.WrittenCells[0].Value);
+    }
+
+    [Fact]
+    public void Demote_of_a_parent_rehomes_its_children_to_the_new_parent()
+    {
+        // The selection owns a child of its own. The selection already sits
+        // directly beneath the new parent, so the window is one row and the
+        // child is re-homed by single cell: nobody nests three deep.
+        Graph graph = SeededGraph(
+            Matrix(
+                BodyRow(ParentId, TypeOf(GanttEntityType.AsPlannedActivity)),
+                BodyRow(TargetId, TypeOf(GanttEntityType.AsPlannedActivity), null, 1, "Target"),
+                BodyRow(
+                    ChildOneId,
+                    TypeOf(GanttEntityType.AsPlannedActivity),
+                    TargetId,
+                    0,
+                    "Rehomed child")),
+            activeRow: 3);
+
+        ParentChildMutationOutcome outcome = graph.Build(NotProtected()).Demote();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, outcome.SelectedRowNumber);
+
+        // Row 2 now holds the demoted row with its new parent and tail order.
+        Assert.Single(graph.WrittenRows);
+        Assert.Equal(2, graph.WrittenRows[0].Row);
+        Dictionary<string, object?> demoted = Graph.ValuesOf(graph.WrittenRows[0].Payload);
+        Assert.Equal(TargetId, demoted["Id"]);
+        Assert.Equal(ParentId, demoted["ParentId"]);
+        Assert.Equal(0, demoted["SiblingOrder"]);
+
+        // The re-homed child's ParentId cell is written as a single cell.
+        Assert.Contains(
+            graph.WrittenCells,
+            cell => cell.Row == 3
+                && cell.Column == TableIndexOf("ParentId")
+                && Equals(cell.Value, ParentId));
     }
 
     [Fact]

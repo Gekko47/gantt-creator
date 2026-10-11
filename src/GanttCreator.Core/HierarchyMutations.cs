@@ -68,13 +68,6 @@ public enum ParentChildRefusalReason
 
     /// <summary>A <c>CriticalInterval</c> child would land on a non-span parent.</summary>
     ParentNotSpan = 10,
-
-    /// <summary>
-    /// The selection is separated from the nearest eligible parent's
-    /// child run by rows that are not its children, so the demotion
-    /// could not be drawn as one contiguous outline group.
-    /// </summary>
-    LandingNotAdjacent = 11,
 }
 
 /// <summary>
@@ -112,10 +105,21 @@ public sealed record PromotePlan(
 
 /// <summary>
 /// The result of planning one parent-to-child demotion (R5.3 D3): which row
-/// gains which <c>ParentId</c>, and which <c>SiblingOrder</c> cells resequence.
+/// gains which <c>ParentId</c>, where its content moves, which existing
+/// children move with it to the new parent, and which
+/// <c>SiblingOrder</c> cells resequence.
 /// </summary>
 /// <param name="TargetId">The demoted row.</param>
 /// <param name="NewParentId">The nearest eligible parent above the selection.</param>
+/// <param name="MoveToBodyIndex">
+/// The one-based body index the row's content moves to (directly beneath the
+/// new parent's existing child run, so the demotion stays one contiguous
+/// outline group; equal to its current index when already there).
+/// </param>
+/// <param name="RehomedChildIds">
+/// The demoted row's existing children, in ascending row order, whose
+/// <c>ParentId</c> moves with it to the new parent so they stay depth 2.
+/// </param>
 /// <param name="SiblingOrderWrites">
 /// The demoted row's tail assignment in its new run, plus the dense
 /// resequencing of the top-level run it leaves.
@@ -124,6 +128,8 @@ public sealed record PromotePlan(
 public sealed record DemotePlan(
     GanttRowId? TargetId,
     GanttRowId? NewParentId,
+    int? MoveToBodyIndex,
+    IReadOnlyList<GanttRowId> RehomedChildIds,
     IReadOnlyList<SiblingOrderWrite> SiblingOrderWrites,
     ParentChildRefusalReason? Refusal)
 {
@@ -134,7 +140,7 @@ public sealed record DemotePlan(
     /// <param name="refusal">Why no plan was produced.</param>
     /// <returns>The refusal plan.</returns>
     public static DemotePlan Refused(ParentChildRefusalReason refusal) =>
-        new(null, null, [], refusal);
+        new(null, null, null, [], [], refusal);
 }
 
 /// <summary>
@@ -309,14 +315,15 @@ public static class HierarchyMutations
     }
 
     /// <summary>
-    /// Plans one parent-to-child demotion (R5.3 D3). The target must be a
-    /// top-level row of a demotable type; it inherits the nearest eligible
-    /// parent-capable row above it in body order, provided the selection
-    /// lands directly beneath that parent's existing child run -- Excel's
-    /// outline groups only the contiguous block directly beneath a parent,
-    /// so a separated landing refuses with
-    /// <see cref="ParentChildRefusalReason.LandingNotAdjacent"/>. Nothing
-    /// is mutated; the caller applies the plan.
+    /// Plans one parent-to-child demotion (R5.3 D3, amended 2026-10-11). The
+    /// target must be a top-level row of a demotable type; it joins the
+    /// nearest eligible parent-capable row above it in body order. The
+    /// selection's content moves to sit directly beneath the new parent's
+    /// existing child run, so the demotion stays one contiguous outline
+    /// group; the target's existing children move with it, their
+    /// <c>ParentId</c> rewritten to the new parent so they stay depth 2
+    /// rather than nesting three deep. Nothing is mutated; the caller
+    /// applies the plan.
     /// </summary>
     /// <param name="rows">The validated rows, in any order. Not mutated.</param>
     /// <param name="selectedId">The identifier of the row being demoted.</param>
@@ -330,11 +337,9 @@ public static class HierarchyMutations
         ArgumentNullException.ThrowIfNull(selectedId);
 
         Dictionary<GanttRowId, GanttEvent> byId = [];
-        Dictionary<int, GanttEvent> byRowNumber = [];
         foreach (GanttEvent row in rows)
         {
             _ = byId.TryAdd(row.Id, row);
-            _ = byRowNumber.TryAdd(row.RowNumber, row);
         }
 
         if (!byId.TryGetValue(selectedId, out GanttEvent? target))
@@ -351,6 +356,11 @@ public static class HierarchyMutations
         {
             return DemotePlan.Refused(ParentChildRefusalReason.TypeCannotBeChild);
         }
+
+        List<GanttEvent> rehomed =
+        [
+            .. rows.Where(row => row.ParentId == selectedId).OrderBy(static row => row.RowNumber),
+        ];
 
         Dictionary<GanttRowId, int> childCountByParent = [];
         foreach (GanttEvent row in rows)
@@ -388,76 +398,57 @@ public static class HierarchyMutations
                 return DemotePlan.Refused(ParentChildRefusalReason.Cycle);
             }
 
-            if (!LandsDirectlyBeneath(byRowNumber, candidate, target))
-            {
-                // Excel's outline groups only the contiguous block
-                // directly beneath a parent (OutlineGroupPlanner
-                // anchors a group at parentRow + 1). A selection
-                // separated from this candidate's run by rows that
-                // are not its children would leave the demoted row
-                // top-level on every Refresh despite its new
-                // ParentId. No parent further up can be adjacent
-                // either -- this candidate's own row is an
-                // intervening top-level row for any of them -- so
-                // the demotion refuses rather than writing a
-                // hierarchy the worksheet cannot show (R5.3 D3).
-                return DemotePlan.Refused(ParentChildRefusalReason.LandingNotAdjacent);
-            }
-
-            if (childCountByParent.GetValueOrDefault(candidate.Id) >= EntityHierarchyCatalog.MaxChildrenPerParent)
-            {
-                // The selection extends this parent's run, and no
-                // parent further up can be adjacent, so the
-                // capacity rule refuses instead of skipping to a
-                // landing the outline cannot represent (R5.3 D3).
-                return DemotePlan.Refused(ParentChildRefusalReason.ParentUnavailable);
-            }
-
             if (target.Type == GanttEntityType.CriticalInterval && !IsSpan(candidate.Type))
             {
                 return DemotePlan.Refused(ParentChildRefusalReason.ParentNotSpan);
             }
 
-            var newRunSize = childCountByParent.GetValueOrDefault(candidate.Id);
-            List<SiblingOrderWrite> writes =
-            [
-                new(target.Id, newRunSize),
-                .. ResequenceTopLevelRun(rows, selectedId),
-            ];
+            // The selection's content moves to sit directly beneath the new
+            // parent's existing child run, so the demotion stays one
+            // contiguous outline group: the run's last child's row plus one.
+            var moveTo = candidate.RowNumber + 1;
+            foreach (GanttEvent child in rows
+                .Where(row => row.ParentId == candidate.Id)
+                .OrderBy(static row => row.RowNumber))
+            {
+                if (child.RowNumber >= moveTo)
+                {
+                    moveTo = child.RowNumber + 1;
+                }
+            }
 
-            return new DemotePlan(target.Id, candidate.Id, writes, null);
+            // The demoted row plus its re-homed children all join the run, so
+            // capacity counts them together against the seven-child maximum.
+            var joining = 1 + rehomed.Count;
+            if (childCountByParent.GetValueOrDefault(candidate.Id) + joining > EntityHierarchyCatalog.MaxChildrenPerParent)
+            {
+                // No parent further up can take this landing either: the
+                // rows up there are separated from the selection by this
+                // candidate's run, so skipping would strand the demotion
+                // outside the only contiguous group it can join (R5.3 D3).
+                return DemotePlan.Refused(ParentChildRefusalReason.ParentUnavailable);
+            }
+
+            var order = childCountByParent.GetValueOrDefault(candidate.Id);
+            List<SiblingOrderWrite> writes = [new(target.Id, order)];
+            foreach (GanttEvent child in rehomed)
+            {
+                order++;
+                writes.Add(new SiblingOrderWrite(child.Id, order));
+            }
+
+            writes.AddRange(ResequenceTopLevelRun(rows, selectedId));
+
+            return new DemotePlan(
+                target.Id,
+                candidate.Id,
+                moveTo,
+                [.. rehomed.Select(static child => child.Id)],
+                writes,
+                null);
         }
 
         return DemotePlan.Refused(ParentChildRefusalReason.NoEligibleParentAbove);
-    }
-
-    /// <summary>
-    /// Whether the selection lands directly beneath the candidate's
-    /// existing child run: every row between them is already the
-    /// candidate's child, so the selection extends the run and the
-    /// demotion stays one contiguous outline group. A childless
-    /// candidate qualifies only when it sits immediately above the
-    /// selection.
-    /// </summary>
-    /// <param name="byRowNumber">The rows by body row number.</param>
-    /// <param name="candidate">The parent the scan is considering.</param>
-    /// <param name="target">The row being demoted.</param>
-    /// <returns>Whether the demotion lands directly beneath the candidate.</returns>
-    private static bool LandsDirectlyBeneath(
-        Dictionary<int, GanttEvent> byRowNumber,
-        GanttEvent candidate,
-        GanttEvent target)
-    {
-        for (var rowNumber = candidate.RowNumber + 1; rowNumber < target.RowNumber; rowNumber++)
-        {
-            if (!byRowNumber.TryGetValue(rowNumber, out GanttEvent? between)
-                || between.ParentId != candidate.Id)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>

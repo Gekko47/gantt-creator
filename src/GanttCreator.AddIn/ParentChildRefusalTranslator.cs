@@ -110,10 +110,6 @@ internal static class ParentChildRefusalTranslator
             ParentChildRefusalReason.ParentUnavailable =>
                 row + "cannot become a child: the activities above it are already full "
                 + "(seven children each). Delete or promote one of their children, then try again.",
-            ParentChildRefusalReason.LandingNotAdjacent =>
-                row + "cannot become a child of that activity: the rows between them "
-                + "would break its group. Gantt Creator groups only the rows directly "
-                + "beneath a parent, so remove the rows in between, then try again.",
             ParentChildRefusalReason.TooDeep =>
                 row + "cannot become a child: it would become a grandchild, and Gantt Creator "
                 + "supports one level of children.",

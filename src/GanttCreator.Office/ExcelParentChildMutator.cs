@@ -24,11 +24,13 @@ namespace GanttCreator.Office;
 /// <c>SiblingOrder</c> (R5.3 D4). Refresh re-reads both columns but
 /// never rewrites them, and no other adapter derives them from row
 /// position. A promote rewrites the moved window's full width because
-/// the row's content physically moves (R5.3 D2), plus the resequenced
-/// <c>SiblingOrder</c> cells of run members above the window, which
-/// the move does not touch; a demote writes only the planned
-/// <c>ParentId</c> and <c>SiblingOrder</c> cells because nothing
-/// moves (R5.3 D3).
+/// the row's content physically moves down (R5.3 D2), plus the
+/// resequenced <c>SiblingOrder</c> cells of run members above the
+/// window, which the move does not touch; a demote likewise rewrites
+/// its moved window's full width because the row's content physically
+/// moves up to sit beneath the new parent's child run (R5.3 D3, amended
+/// 2026-10-11), plus the resequenced cells outside the window and the
+/// re-homed children's <c>ParentId</c> cells, which stay put.
 /// </para>
 /// <para>
 /// Every refusal before the first cell write leaves the workbook
@@ -242,10 +244,11 @@ public class ExcelParentChildMutator(
     }
 
     /// <summary>
-    /// Applies a demote plan (R5.3 D3): the target row gains the
-    /// nearest eligible parent above it, takes the tail of that
-    /// parent's run, and the top-level run it leaves resequences
-    /// densely. No physical row move.
+    /// Applies a demote plan (R5.3 D3, amended 2026-10-11): the target
+    /// row's content moves to sit directly beneath the new parent's
+    /// existing child run, it gains the new <c>ParentId</c>, its existing
+    /// children are re-homed to the new parent, and the runs resequence
+    /// densely.
     /// </summary>
     /// <param name="table">The Gantt data table.</param>
     /// <param name="columnMap">Schema-column to table-column index map.</param>
@@ -268,32 +271,99 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.PlanRefused(plan.Refusal!.Value, bodyIndex);
         }
 
-        // Every planned cell is set in the in-memory body before any COM
-        // write, so a lookup failure writes nothing.
-        var targetIndex = bodyIndex - 1;
-        var newParentId = plan.NewParentId!.Value;
-        SetCell(body[targetIndex], columnMap, "ParentId", newParentId);
-        var writes = new List<(int RowIndex, string ColumnName, object? Value)>
+        var fromIndex = bodyIndex - 1;
+        var toIndex = plan.MoveToBodyIndex!.Value - 1;
+        if (toIndex > fromIndex)
         {
-            (targetIndex, "ParentId", newParentId),
-        };
+            // The planner's move target sits at or above the bottom of the
+            // new parent's child run, which is above the selection. Reaching
+            // this branch means the plan and the table disagree about row
+            // positions; refusing is safer than rotating the wrong window.
+            return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.TableInvalid);
+        }
 
-        // The planned SiblingOrder writes: the demoted row's tail
-        // assignment in its new run, plus the dense resequencing of the
-        // top-level run it leaves.
-        Dictionary<GanttRowId, int> positions = IndexById(body, columnMap);
-        foreach (SiblingOrderWrite write in plan.SiblingOrderWrites)
+        // The content move, applied to the in-memory body before any COM
+        // write: the demoted row's content lands beneath the new parent's
+        // child run, and the rows between shift down one slot to make room.
+        var moved = body[fromIndex];
+        for (var index = fromIndex; index > toIndex; index--)
         {
-            if (positions.TryGetValue(write.RowId, out var position))
+            body[index] = body[index - 1];
+        }
+
+        body[toIndex] = moved;
+
+        // The demoted row joins the new parent, and its existing children
+        // move with it so they stay depth 2.
+        var newParentId = plan.NewParentId!.Value;
+        SetCell(body[toIndex], columnMap, "ParentId", newParentId);
+        foreach (GanttRowId rehomedId in plan.RehomedChildIds)
+        {
+            for (var rowIndex = 0; rowIndex < body.Count; rowIndex++)
             {
-                SetCell(body[position], columnMap, "SiblingOrder", write.SiblingOrder);
-                writes.Add((position, "SiblingOrder", write.SiblingOrder));
+                if (CellText(body[rowIndex], columnMap, "Id") == rehomedId.Value)
+                {
+                    SetCell(body[rowIndex], columnMap, "ParentId", newParentId);
+                    break;
+                }
             }
         }
 
-        // Only the planned cells are written: nothing moves, so no other
-        // cell changes.
-        return WriteCells(table, columnMap, writes, bodyIndex);
+        // The planned SiblingOrder writes, keyed by row identifier so they
+        // resolve against the POST-move positions.
+        Dictionary<GanttRowId, int> positions = IndexById(body, columnMap);
+        var outsideCells = new List<(int RowIndex, string ColumnName, object? Value)>();
+        foreach (SiblingOrderWrite write in plan.SiblingOrderWrites)
+        {
+            if (!positions.TryGetValue(write.RowId, out var position))
+            {
+                continue;
+            }
+
+            SetCell(body[position], columnMap, "SiblingOrder", write.SiblingOrder);
+            if (position < toIndex || position > fromIndex)
+            {
+                // A resequenced cell outside the moved window is written as
+                // a single cell: nothing else about the row changes.
+                outsideCells.Add((position, "SiblingOrder", write.SiblingOrder));
+            }
+        }
+
+        // The re-homed children's ParentId cells sit outside the window
+        // (they moved with the selection's own rows, which stay put) and
+        // are written as single cells.
+        var rehomeCells = new List<(int RowIndex, string ColumnName, object? Value)>();
+        for (var index = 0; index < body.Count; index++)
+        {
+            if (index >= toIndex && index <= fromIndex)
+            {
+                continue;
+            }
+
+            if (plan.RehomedChildIds.Any(rehomedId => CellText(body[index], columnMap, "Id") == rehomedId.Value))
+            {
+                rehomeCells.Add((index, "ParentId", newParentId));
+            }
+        }
+
+        // The content move rewrites every column of every row in the moved
+        // window, full width.
+        ParentChildMutationOutcome window = WriteRows(table, body, toIndex, fromIndex, bodyIndex);
+        if (!window.Succeeded)
+        {
+            return window;
+        }
+
+        List<(int RowIndex, string ColumnName, object? Value)> singles = [.. outsideCells, .. rehomeCells];
+        if (singles.Count == 0)
+        {
+            return window;
+        }
+
+        ParentChildMutationOutcome outside = WriteCells(table, columnMap, singles, bodyIndex);
+        return outside.Succeeded
+            ? ParentChildMutationOutcome.Ok(window.CellsWritten + outside.CellsWritten, bodyIndex)
+            : outside;
     }
 
     /// <summary>

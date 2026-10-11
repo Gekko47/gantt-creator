@@ -141,7 +141,6 @@ public class ParentChildCommandTests
     [InlineData(ParentChildRefusalReason.TypeCannotBeChild, "stands on its own")]
     [InlineData(ParentChildRefusalReason.NoEligibleParentAbove, "no activity above it")]
     [InlineData(ParentChildRefusalReason.ParentUnavailable, "seven children each")]
-        [InlineData(ParentChildRefusalReason.LandingNotAdjacent, "break its group")]
     [InlineData(ParentChildRefusalReason.TooDeep, "grandchild")]
     [InlineData(ParentChildRefusalReason.Cycle, "loop in the parent links")]
     [InlineData(ParentChildRefusalReason.ParentNotSpan, "planned span")]

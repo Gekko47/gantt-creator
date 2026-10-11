@@ -4,10 +4,13 @@ namespace GanttCreator.AddIn;
 
 /// <summary>
 /// Demotes the top-level row under the active cell to a child of the
-/// nearest eligible parent above it (R5.3 D3). The command owns
-/// outcome-to-message translation; the selection resolution, planning
-/// and cell writes belong to the Office mutator port, exactly as the
-/// add-row command delegates row discovery to the inserter port.
+/// nearest eligible parent above it (R5.3 D3, amended 2026-10-11): the
+/// row's content moves to sit directly beneath the new parent's child
+/// run, and its existing children are re-homed to the new parent. The
+/// command owns outcome-to-message translation; the selection
+/// resolution, planning and cell writes belong to the Office mutator
+/// port, exactly as the add-row command delegates row discovery to the
+/// inserter port.
 /// </summary>
 internal static class DemoteToChildCommand
 {
