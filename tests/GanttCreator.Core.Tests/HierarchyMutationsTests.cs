@@ -362,10 +362,41 @@ public sealed class HierarchyMutationsTests
     }
 
     /// <summary>
-    /// Demote skips Delineator rows while scanning upward (R5.3 D3).
+    /// A selection directly beneath a parent's existing child run
+    /// extends the run: the demotion lands on that parent, the tail
+    /// assignment follows the run's new length, and the run stays one
+    /// contiguous outline group (R5.3 D3).
     /// </summary>
     [Fact]
-    public void Demote_skips_a_delineator_to_the_parent_above_it()
+    public void Demoting_directly_beneath_a_child_run_extends_the_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, child, parentId: parent),
+            Row(4, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Contains(new SiblingOrderWrite(target, 1), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A delineator between the parent and the selection breaks the
+    /// contiguous run an Excel outline group requires: the run must
+    /// anchor at the row directly beneath the parent, so the demoted
+    /// row could not be drawn under it. The demotion refuses with
+    /// <c>LandingNotAdjacent</c> rather than writing a
+    /// <c>ParentId</c> the outline can never show (R5.3 D3).
+    /// </summary>
+    [Fact]
+    public void Demoting_beneath_a_delineator_is_refused_as_landing_not_adjacent()
     {
         GanttRowId parent = NewId();
         GanttRowId line = NewId();
@@ -379,16 +410,21 @@ public sealed class HierarchyMutationsTests
 
         DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
 
-        Assert.True(plan.Succeeded);
-        Assert.Equal(parent, plan.NewParentId);
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.LandingNotAdjacent, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
     }
 
     /// <summary>
-    /// A group at capacity is skipped upward to the next eligible group
-    /// rather than refused (R5.3 D3).
+    /// A selection adjacent to a full group's run extends that run,
+    /// and no parent further up can be adjacent either -- its run
+    /// would be broken by the full group's children. The capacity
+    /// rule therefore refuses with <c>ParentUnavailable</c> instead
+    /// of skipping to a landing the outline cannot represent
+    /// (R5.3 D3).
     /// </summary>
     [Fact]
-    public void Demote_skips_a_full_group_for_the_next_eligible_parent()
+    public void Demoting_adjacent_to_a_full_group_is_refused_as_parent_unavailable()
     {
         GanttRowId upper = NewId();
         GanttRowId full = NewId();
@@ -403,8 +439,9 @@ public sealed class HierarchyMutationsTests
 
         DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
 
-        Assert.True(plan.Succeeded);
-        Assert.Equal(upper, plan.NewParentId);
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.ParentUnavailable, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
     }
 
     /// <summary>
@@ -467,11 +504,14 @@ public sealed class HierarchyMutationsTests
     }
 
     /// <summary>
-    /// Milestones cannot own, so the scan skips them: a milestone directly
-    /// above is not an eligible parent.
+    /// Milestones cannot own, so the scan passes them over -- but a
+    /// milestone between the parent and the selection also breaks the
+    /// contiguous run an Excel outline group requires. The demotion
+    /// refuses with <c>LandingNotAdjacent</c> rather than writing a
+    /// <c>ParentId</c> the outline can never show (R5.3 D3).
     /// </summary>
     [Fact]
-    public void Demote_skips_a_milestone_to_the_parent_above_it()
+    public void Demoting_beneath_a_milestone_is_refused_as_landing_not_adjacent()
     {
         GanttRowId parent = NewId();
         GanttRowId milestone = NewId();
@@ -485,8 +525,9 @@ public sealed class HierarchyMutationsTests
 
         DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
 
-        Assert.True(plan.Succeeded);
-        Assert.Equal(parent, plan.NewParentId);
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.LandingNotAdjacent, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
     }
 
     /// <summary>

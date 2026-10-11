@@ -852,11 +852,15 @@ public class ExcelParentChildMutatorTests
     }
 
     [Fact]
-    public void Demote_skips_a_parent_at_capacity_and_lands_on_the_next_eligible_group()
+    public void Demoting_adjacent_to_a_full_group_is_refused_as_parent_unavailable()
     {
         // Group one (top-level, no children), group two
         // (top-level, at the seven-child capacity), group
         // two's seven children, then the target (top-level).
+        // The target extends group two's run, and no parent
+        // further up can be adjacent, so the capacity rule
+        // refuses instead of skipping to a landing the
+        // outline cannot represent (R5.3 D3).
         var rows = new List<object?[]>
         {
             BodyRow(GroupOneId, TypeOf(GanttEntityType.AsPlannedActivity), null, 0, "Group one"),
@@ -877,24 +881,13 @@ public class ExcelParentChildMutatorTests
 
         ParentChildMutationOutcome outcome = graph.Build(NotProtected()).Demote();
 
-        Assert.True(outcome.Succeeded);
+        Assert.False(outcome.Succeeded);
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(ParentChildRefusalReason.ParentUnavailable, outcome.PlanRefusal);
         Assert.Equal(10, outcome.SelectedRowNumber);
-        // The target's ParentId, its tail assignment in
-        // group one's run, and the resequencing of the two
-        // top-level rows it leaves.
-        Assert.Equal(4, outcome.CellsWritten);
+        Assert.Equal(0, outcome.CellsWritten);
         Assert.Empty(graph.WrittenRows);
-
-        var expected = new List<(int Row, int Column, object? Value)>
-        {
-            (10, TableIndexOf("ParentId"), GroupOneId),
-            (10, TableIndexOf("SiblingOrder"), 0),
-            (1, TableIndexOf("SiblingOrder"), 0),
-            (2, TableIndexOf("SiblingOrder"), 1),
-        };
-        Assert.Equal(
-            expected.OrderBy(cell => (cell.Row, cell.Column)),
-            graph.WrittenCells.OrderBy(cell => (cell.Row, cell.Column)));
+        Assert.Empty(graph.WrittenCells);
     }
 
     [Fact]
