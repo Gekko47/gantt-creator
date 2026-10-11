@@ -58,6 +58,17 @@ public sealed class ExcelOutlineGroupWriterTests
             return true;
         }
 
+        /// <summary>
+        /// Level each body row currently carries, as the test initialises the sheet.
+        /// </summary>
+        internal Dictionary<int, int> InitialLevels { get; set; } = [];
+
+        internal override int? ReadOutlineLevel(Excel.Range range)
+        {
+            var bodyRow = _pendingFirst - FirstWorksheetRow + 1;
+            return InitialLevels.TryGetValue(bodyRow, out var level) ? level : (int?)null;
+        }
+
         internal int FirstWorksheetRow { get; set; } = 2;
 
         /// <summary>
@@ -274,6 +285,8 @@ public sealed class ExcelOutlineGroupWriterTests
     {
         var (application, worksheet, table) = Graph();
         List<(int First, int Last, int Level)> writes = [];
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
         var writer = new TestableWriter(
             application.Object,
             Guard(ProtectionGuardOutcome.NotProtected),
@@ -281,23 +294,25 @@ public sealed class ExcelOutlineGroupWriterTests
             table.Object,
             writes)
         {
-            // The deleted parent's row is gone from the table, but two of the three
-            // original rows survive: the table body is the two promoted children. The
-            // pass resets body rows 1-2, which are worksheet rows 2-3.
             BodyRowCount = 2,
+            InitialLevels = new Dictionary<int, int>
+            {
+                { 1, ExcelOutlineGroupWriter.TopLevelOutlineLevel },
+                { 2, ExcelOutlineGroupWriter.ChildOutlineLevel },
+            },
         };
 
         // Both children promoted: no ParentId, so the plan has no groups at all.
-        OutlineGroupOutcome outcome = writer.Apply([Event(1, NewId()), Event(2, NewId())]);
+        OutlineGroupOutcome outcome = writer.Apply([Event(1, first), Event(2, second)]);
 
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.GroupsApplied);
 
-        // With no groups every body row resets, so one contiguous range covers both
-        // promoted former children -- including body row 2.
+        // The reset pass clears only the stale level-2 row; the already-top-level
+        // row is left alone. One row, one contiguous write.
         var reset = Assert.Single(writes);
         Assert.Equal(ExcelOutlineGroupWriter.TopLevelOutlineLevel, reset.Level);
-        Assert.Equal(2, reset.First);
+        Assert.Equal(3, reset.First);
         Assert.Equal(3, reset.Last);
     }
 
@@ -320,6 +335,12 @@ public sealed class ExcelOutlineGroupWriterTests
             writes)
         {
             BodyRowCount = 3,
+            InitialLevels = new Dictionary<int, int>
+            {
+                { 1, ExcelOutlineGroupWriter.TopLevelOutlineLevel },
+                { 2, ExcelOutlineGroupWriter.ChildOutlineLevel },
+                { 3, ExcelOutlineGroupWriter.ChildOutlineLevel },
+            },
         };
 
         OutlineGroupOutcome outcome = writer.Apply(
@@ -328,10 +349,8 @@ public sealed class ExcelOutlineGroupWriterTests
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, outcome.GroupsApplied);
 
-        var reset = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.TopLevelOutlineLevel);
-        Assert.Equal(2, reset.First);
-        Assert.Equal(2, reset.Last);
-
+        // The parent is already top-level and the children are planned at level 2,
+        // so the reset pass clears nothing. Only the grouping write lands.
         var grouped = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.ChildOutlineLevel);
         Assert.Equal(3, grouped.First);
         Assert.Equal(4, grouped.Last);

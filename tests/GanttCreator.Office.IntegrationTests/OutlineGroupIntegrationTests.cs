@@ -198,6 +198,71 @@ public class OutlineGroupIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+    /// <summary>
+    /// A collapsed group stays collapsed after a Refresh: the writer re-writes the
+    /// grouping but never re-expands a parent the user collapsed.
+    /// </summary>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_collapsed_group_stays_collapsed_after_a_refresh()
+    {
+        var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            (Excel.Worksheet sheet, Excel.ListObject table) = InitialisedGantt(fixture, scope, bodyRows: 4);
+
+            GanttRowId parent = NewId();
+            List<GanttEvent> hierarchy = [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent), Event(4, NewId())];
+
+            var writer = new ExcelOutlineGroupWriter(fixture.Excel);
+
+            // First refresh: produce the collapsible group.
+            OutlineGroupOutcome first = writer.Apply(hierarchy);
+            Assert.True(first.Succeeded, $"First refresh refused: {first.Refusal}");
+            Assert.Equal(1, first.GroupsApplied);
+
+            // Collapse the group through the host's own outline control so a real
+            // expand/collapse state exists on the sheet.
+            int firstBodyRow = scope.Track(table.DataBodyRange!).Row;
+            Excel.Outline outline = scope.Track(sheet.Outline);
+            outline.ShowLevels(1, 1);
+            try
+            {
+                Excel.Range child = scope.Track(sheet.Rows[firstBodyRow + 1]);
+                Assert.True(child.Hidden, "Child row did not hide when the group was collapsed.");
+            }
+            finally
+            {
+                outline.ShowLevels(2, 2);
+            }
+
+            // Second refresh: the writer re-applies the grouping but must not change
+            // the collapse state, so the children hide again.
+            OutlineGroupOutcome second = writer.Apply(hierarchy);
+            Assert.True(second.Succeeded, $"Second refresh refused: {second.Refusal}");
+
+            outline = scope.Track(sheet.Outline);
+            outline.ShowLevels(1, 1);
+            try
+            {
+                Excel.Range child = scope.Track(sheet.Rows[firstBodyRow + 1]);
+                Assert.True(child.Hidden, "Collapsed group re-expanded on refresh.");
+            }
+            finally
+            {
+                outline.ShowLevels(2, 2);
+            }
+
+            _output.WriteLine("Collapsed group stayed collapsed across Refresh.");
+        }
+        finally
+        {
+            scope.Dispose();
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
 
     /// <summary>
     /// Refresh is idempotent for the outline: re-applying the same hierarchy leaves

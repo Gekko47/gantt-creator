@@ -136,6 +136,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **test(R0.5)**: Replace placeholders with sample tests, add VS Code tasks
 - **test**: Strengthen analyzer rules and update tests for compliance
 - **lint**: Enforce whitespace and strengthen test validations across 10 files
+- **fix(office)**: Preserve the user's collapsed outline groups across Refresh — the outline reset pass no longer writes level 1 over a level-1 parent that still carries a collapsed group
 
 ### Chore
 
