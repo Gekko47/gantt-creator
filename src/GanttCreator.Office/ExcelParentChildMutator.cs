@@ -821,12 +821,34 @@ public class ExcelParentChildMutator(
 
     /// <summary>
     /// Returns one cell of a row range by one-based column index.
-    /// Test seam over the COM parameterised <c>Range.Item</c> property.
+    /// Test seam over the COM <c>Range.Cells[row, column]</c> dispatch.
     /// </summary>
+    /// <remarks>
+    /// <b>Why <c>.Cells</c> rather than the bare range indexer.</b> The
+    /// two-argument form of <see cref="Excel.Range"/>'s own indexer
+    /// (<c>row[1, columnIndex]</c>, i.e. the <c>Item</c>/<c>_Default</c>
+    /// property) is <b>refused by the host</b> with
+    /// <c>COMException 0x800A03EC</c> on every range shape this adapter
+    /// addresses, while the identically-shaped <c>row.Cells[1, columnIndex]</c>
+    /// is accepted — measured on a live Excel 16.0
+    /// <c>tblGanttData</c> body row (<c>$A$5:$P$5</c>, 1 row x 16 columns),
+    /// where the row is a one-row range obtained from
+    /// <c>DataBodyRange.Rows[i]</c>. Because the two forms are
+    /// indistinguishable by the shape of the range they address, only a
+    /// live probe or a strict mock pins which one is correct; the
+    /// contract harness overrides this seam and so never executed the
+    /// production line, which is how the refusal reached the user as
+    /// <see cref="ParentChildMutationRefusalReason.WriteFailed"/> on both
+    /// verbs. <c>Range.Cells</c> is also the convention the live-proven
+    /// <c>ExcelGanttRowIdentityRepairer.GetCell</c> already uses for the
+    /// same <c>ParentId</c> write. See the source-shape guard in
+    /// <c>ParentChildCellAccessorTests</c> and the live
+    /// <c>ParentChildMutationIntegrationTests</c>.
+    /// </remarks>
     /// <param name="row">The row range.</param>
     /// <param name="columnIndex">The one-based column index within the row.</param>
     /// <returns>The cell range.</returns>
-    internal virtual Excel.Range GetCellAt(Excel.Range row, int columnIndex) => row[1, columnIndex];
+    internal virtual Excel.Range GetCellAt(Excel.Range row, int columnIndex) => row.Cells[1, columnIndex];
 
     /// <summary>
     /// Returns the bulk <c>Value2</c> payload of a range. Test seam so
