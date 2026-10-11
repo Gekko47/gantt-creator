@@ -25,7 +25,7 @@
 > | R4.7A | **Landed** | identity and hierarchy; took the schema 3 → 4 |
 > | R4.7B | **Landed** | projection; golden regenerated (`14b47f3`, `11130c3`) |
 > | R4.7C | **Landed** | workbook presentation; took the schema 4 → 5 |
-> | R4.7D | **Landed** | row geometry and outline groups; Office gate 46/46; golden regenerated |
+> | R4.7D | **Landed** | row geometry and outline groups; Office gate 46/46; golden regenerated; collapse-preservation defect in the height pass fixed 2026-10-11 (see the amendment note below) |
 > | R4.7E | **Complete** | critical interval as a parent-independent filled rectangle; golden regenerated (`806a632`) |
 > | R4.7F | **Implemented** | derived `Duration`; Office gate **not run**, so the row is not complete |
 > | R4.7G | **Landed** | horizontal-only label positions; took the schema 5 → 6 |
@@ -46,6 +46,18 @@
 > **unrepresentable** — `PanelCellGrid` carried no absolute sheet origin, and the
 > plot's top and height came from the size preset's page coordinates — so no bar
 > could line up with its row. It is sequenced before R4.9's live Refresh gate.
+>
+> **R4.7D amendment (2026-10-11):** a live defect showed Refresh
+> re-expanding a parent the user had collapsed. D5's promise ("collapse/expand
+> state is preserved across Refresh") was violated by the row-height
+> normaliser, not the outline writer: its level-1 padding pass wrote
+> `OutlineLevel` across every body row. The normaliser's two passes are now
+> disjoint (level 1 → ungrouped rows only, level 2 → grouped rows only), so
+> a grouped row's outline is written exactly once. Pinned live by
+> `RowHeightNormaliserIntegrationTests.A_collapsed_group_stays_collapsed_through_height_normalisation`
+> (Excel 16.0.20430.20146) and by the pass-split contract tests. The
+> outline writer's own reset pass was fixed the same day by `b9e2145`;
+> both `OutlineLevel`-writing paths now honour D5.
 >
 > **The schema version is now 7**, four bumps past the 3 this header predates
 > (3→4 R4.7A, 4→5 R4.7C, 5→6 R4.7G, 6→7 the R4 QA review's `SizePreset` and

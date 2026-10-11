@@ -64,6 +64,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Fixed
 
+- **fix(office)**: keep a collapsed outline group collapsed across a Refresh — the row-height normaliser's level-1 padding pass wrote `OutlineLevel` across every body row, re-expanding any parent the user had collapsed (the outline writer's reset pass was already fixed by `b9e2145`). The normaliser's two passes are now disjoint — level 1 writes only ungrouped rows, level 2 only grouped rows — so a grouped row's outline is written exactly once. `ExcelRowHeightNormaliserTests` pins the pass split; `RowHeightNormaliserIntegrationTests.A_collapsed_group_stays_collapsed_through_height_normalisation` is the live-Excel gate.
 - **fix(office)**: unbox `Range.OutlineLevel`'s Variant in every whole-number shape, so Promote to Parent clears the row's old outline group
 - **fix**: Update AddInLogFactory with IsFailed fallback and isolated temp test directories
 - **fix**: Update active work item status and enhance verification scripts

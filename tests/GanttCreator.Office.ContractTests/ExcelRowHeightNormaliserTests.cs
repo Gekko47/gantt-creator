@@ -98,6 +98,10 @@ public sealed class ExcelRowHeightNormaliserTests
             _ = row.SetupGet(r => r.RowHeight).Returns(heights[index - 1]);
             _ = row.SetupSet(r => r.RowHeight = It.IsAny<object>())
                 .Callback<object>(_ => written.Add(index));
+            _ = row.SetupGet(r => r.Hidden).Returns((object)HiddenRows.Contains(index));
+            _ = row.SetupSet(r => r.Hidden = It.IsAny<object>())
+                .Callback<object>(value => HiddenWrites.Add(
+                    (index, Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture))));
             return row.Object;
         }
 
@@ -147,6 +151,21 @@ public sealed class ExcelRowHeightNormaliserTests
 
     /// <summary>Whether the fixture pretends the PADDING row carries content.</summary>
     internal bool PaddingRowOccupied { get; set; }
+
+    /// <summary>
+    /// The body rows the fixture reports as hidden (outline-collapsed).
+    /// </summary>
+    /// <remarks>
+    /// A live host un-hides a row when its <c>RowHeight</c> is written,
+    /// so the adapter must read the hidden state before the write and
+    /// restore it after. These members let a test observe both halves.
+    /// </remarks>
+    internal HashSet<int> HiddenRows { get; } = [];
+
+    /// <summary>
+    /// The hidden-state writes the fixture recorded, as (row, hidden).
+    /// </summary>
+    internal List<(int Row, bool Hidden)> HiddenWrites { get; } = [];
 
     /// <summary>
     /// Whether the fixture pretends the ANCHOR row carries content (ADR-0038 D6).
@@ -709,6 +728,66 @@ public sealed class ExcelRowHeightNormaliserTests
         Assert.True(outcome.Succeeded);
         Assert.Equal(0, outcome.RowsWritten);
         Assert.Empty(written);
+    }
+
+    /// <summary>
+    /// A collapsed (hidden) row off its token is restored to the token
+    /// AND put back to hidden. A live host un-hides a row when its
+    /// <c>RowHeight</c> is written, and this pass runs after the outline
+    /// pass on every Refresh, so an unrestored write re-expands every
+    /// collapsed group whose rows are off-token -- the reported defect.
+    /// The third row is visible and off-token: it must receive the height
+    /// write and NO hidden-state write, which pins that the restore is
+    /// driven by the row's own state rather than applied everywhere.
+    /// </summary>
+    [Fact]
+    public void A_collapsed_child_row_is_restored_and_stays_hidden()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            [45, ManagedPt, 30],
+            written);
+        normaliser.HiddenRows.Add(1);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(2, outcome.RowsWritten);
+        Assert.Equal([1, 3], written);
+        var (hiddenRow, hidden) = Assert.Single(normaliser.HiddenWrites);
+        Assert.Equal(1, hiddenRow);
+        Assert.True(hidden);
+    }
+
+    /// <summary>
+    /// A collapsed row already at its token is left entirely alone: no
+    /// height write, and therefore no hidden-state write either.
+    /// </summary>
+    [Fact]
+    public void A_collapsed_row_already_at_token_is_left_entirely_alone()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            [ManagedPt, ManagedPt, ManagedPt],
+            written);
+        normaliser.HiddenRows.Add(2);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.RowsWritten);
+        Assert.Empty(written);
+        Assert.Empty(normaliser.HiddenWrites);
     }
 
     /// <summary>
