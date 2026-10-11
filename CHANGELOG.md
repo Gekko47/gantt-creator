@@ -47,6 +47,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **docs**: Update STATUS.md and SYNC.md to reflect current state
 - **docs**: Add .clinerules/SYNC.md
 - **ci**: Bump GitHub Actions to v5 to clear Node.js 20 deprecation warning
+- **feat(R5.3)**: Add Promote to Parent / Demote to Child commands in a new Ordering ribbon group — hierarchy role catalogue (`EntityHierarchyCatalog`), pure promote/demote planners, and a guarded mutator that writes `ParentId`/`SiblingOrder` only
 
 ### Changed
 
@@ -137,6 +138,7 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **test**: Strengthen analyzer rules and update tests for compliance
 - **lint**: Enforce whitespace and strengthen test validations across 10 files
 - **fix(office)**: Preserve the user's collapsed outline groups across Refresh — the outline reset pass no longer writes level 1 over a level-1 parent that still carries a collapsed group
+- **fix(office)**: Route the R5.3 parent/child mutator's single-cell writes through `Range.Cells` — live Excel 16.0 refuses the two-argument `Range` indexer (`COMException 0x800A03EC`), so Promote and Demote always failed
 
 ### Chore
 
