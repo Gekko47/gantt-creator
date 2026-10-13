@@ -10,10 +10,22 @@
           <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+          <button id="btnRemove" label="Remove" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
         <group id="grpOrdering" label="Ordering">
-          <button id="btnPromoteToParent" label="Promote to parent" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
-          <button id="btnDemoteToChild" label="Demote to child" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
+          <box id="boxOrdering" boxStyle="vertical">
+            <button id="btnPromoteToParent" label="Promote to parent" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
+            <button id="btnDemoteToChild" label="Demote to child" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
+            <!-- TODO(R5.10): getEnabled on both move buttons is workbook+initialised only. Once the
+                 add-in tracks the active cell (R5.10 cell tracking), gate these on a resolved table
+                 body selection and disable them at the top/bottom of the selection's set, so a
+                 boundary no-op cannot be requested from the ribbon. Until then the command is a
+                 quiet no-op by design (R5.4 D4). -->
+            <box id="boxMoveRows" boxStyle="horizontal">
+              <button id="btnMoveUp" label="Up" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnMoveUpClick"/>
+              <button id="btnMoveDown" label="Down" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnMoveDownClick"/>
+            </box>
+          </box>
         </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">

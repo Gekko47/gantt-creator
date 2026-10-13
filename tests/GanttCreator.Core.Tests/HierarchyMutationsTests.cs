@@ -696,7 +696,7 @@ public sealed class HierarchyMutationsTests
     }
 
     /// <summary>
-    /// Planner input is never mutated by either new plan.
+    /// Planner input is never mutated by any plan.
     /// </summary>
     [Fact]
     public void Parent_child_planning_does_not_mutate_its_input()
@@ -708,7 +708,298 @@ public sealed class HierarchyMutationsTests
 
         _ = HierarchyMutations.PlanPromoteToParent(rows, child);
         _ = HierarchyMutations.PlanDemoteToChild(rows, parent);
+        _ = HierarchyMutations.PlanMove(rows, child, moveUp: true);
 
         Assert.Equal(snapshot, rows);
+    }
+
+    // ---- R5.4: PlanMove (move-up / move-down) ----
+
+    /// <summary>
+    /// Moving a top-level group up swaps its whole window (row + child run)
+    /// with the group above it.
+    /// </summary>
+    [Fact]
+    public void Moving_a_top_level_group_up_swaps_it_with_the_group_above()
+    {
+        GanttRowId a = NewId();
+        GanttRowId aChild = NewId();
+        GanttRowId b = NewId();
+        GanttRowId bChild = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, a),
+            Row(3, aChild, parentId: a),
+            Row(4, b),
+            Row(5, bChild, parentId: b),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(b, plan.TargetId);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(2, plan.WindowLength);
+        Assert.Equal(0, plan.SwapStart);
+        Assert.Equal(2, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// Moving a top-level group down swaps it with the group below, taking
+    /// its child run with it.
+    /// </summary>
+    [Fact]
+    public void Moving_a_top_level_group_down_takes_its_child_run_with_it()
+    {
+        GanttRowId a = NewId();
+        GanttRowId aChild = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, a),
+            Row(3, aChild, parentId: a),
+            Row(4, b),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(0, plan.WindowStart);
+        Assert.Equal(2, plan.WindowLength);
+        Assert.Equal(2, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// Move-up at the top of the table is a silent no-op: succeeded, but it
+    /// moves nothing and plans no writes (R5.4 D4).
+    /// </summary>
+    [Fact]
+    public void Moving_the_top_group_up_is_a_silent_no_op()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, a, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Move-down at the bottom of the table is a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_bottom_group_down_is_a_silent_no_op()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: false);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A child moves up within its sibling run only, swapping single rows.
+    /// </summary>
+    [Fact]
+    public void Moving_a_child_up_swaps_it_with_the_previous_sibling()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, second, moveUp: true);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(1, plan.WindowLength);
+        Assert.Equal(1, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// The first child cannot move up past its own parent: that is the run
+    /// boundary, a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_first_child_up_is_a_silent_no_op()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        List<GanttEvent> rows = [Row(2, parent), Row(3, child, parentId: parent)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, child, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// The last child cannot move down past the end of its run: the next row
+    /// is top-level, so this is a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_last_child_down_is_a_silent_no_op()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        GanttRowId other = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, child, parentId: parent),
+            Row(4, other),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, child, moveUp: false);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+    }
+
+    /// <summary>
+    /// A top-level group's move-up resequences the whole top-level run
+    /// densely in post-swap row order (R5.3 D4: the planner is the
+    /// authority).
+    /// </summary>
+    [Fact]
+    public void Moving_a_group_resequences_the_top_level_run_in_post_swap_order()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        GanttRowId c = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b), Row(4, c)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.Equal(
+            [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1), new SiblingOrderWrite(c, 2)],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A child's move resequences only its own sibling run; top-level rows
+    /// are untouched.
+    /// </summary>
+    [Fact]
+    public void Moving_a_child_resequences_only_its_sibling_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        GanttRowId other = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+            Row(5, other),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, second, moveUp: true);
+
+        Assert.Equal(
+            [new SiblingOrderWrite(second, 0), new SiblingOrderWrite(first, 1)],
+            plan.SiblingOrderWrites);
+        Assert.DoesNotContain(plan.SiblingOrderWrites, write => write.RowId == parent);
+    }
+
+    /// <summary>
+    /// An unknown selection is the one typed refusal a move can produce.
+    /// </summary>
+    [Fact]
+    public void Moving_an_unknown_selection_is_refused()
+    {
+        GanttRowId a = NewId();
+        List<GanttEvent> rows = [Row(2, a)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, NewId(), moveUp: true);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
+
+    /// <summary>
+    /// Repeated planning of the same input is deterministic, and the mirror
+    /// move returns the group to its original slot (stability).
+    /// </summary>
+    [Fact]
+    public void Repeated_moves_are_deterministic_and_round_trip()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        GanttRowId c = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b), Row(4, c)];
+
+        MovePlan first = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+        MovePlan again = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+        Assert.True(first.Succeeded);
+        Assert.True(again.Succeeded);
+        Assert.Equal(first.WindowStart, again.WindowStart);
+        Assert.Equal(first.WindowLength, again.WindowLength);
+        Assert.Equal(first.SwapStart, again.SwapStart);
+        Assert.Equal(first.SwapLength, again.SwapLength);
+        Assert.Equal(first.SiblingOrderWrites, again.SiblingOrderWrites);
+
+        // Simulate the first swap as the Office layer would leave it: the
+        // content of body rows 2 and 3 exchanged, so row number follows
+        // position. The mirror move-up of the same group (now at index 1)
+        // must land back at index 0.
+        List<GanttEvent> moved =
+        [
+            Row(2, b),
+            Row(3, a),
+            Row(4, c),
+        ];
+        MovePlan back = HierarchyMutations.PlanMove(moved, a, moveUp: true);
+        Assert.True(back.MovesAnything);
+        Assert.Equal(1, back.WindowStart);
+        Assert.Equal(0, back.SwapStart);
+    }
+
+    /// <summary>
+    /// A malformed gap row between two groups stays in place: it is neither
+    /// moved with either group nor repaired.
+    /// </summary>
+    [Fact]
+    public void A_gap_row_between_groups_stays_in_place()
+    {
+        GanttRowId a = NewId();
+        GanttRowId orphan = NewId();
+        GanttRowId ghost = NewId();
+        GanttRowId b = NewId();
+
+        // The orphan names a parent that is not in the table, so it is not
+        // part of either group's contiguous window.
+        List<GanttEvent> rows = [Row(2, a), Row(3, orphan, parentId: ghost), Row(4, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(1, plan.WindowLength);
+        Assert.Equal(0, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+
+        // Post-swap top-level order is B then A; the orphan is not a
+        // top-level run member and receives no write.
+        Assert.Equal(
+            [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1)],
+            plan.SiblingOrderWrites);
     }
 }

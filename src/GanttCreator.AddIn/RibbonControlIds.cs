@@ -56,6 +56,34 @@ internal static class RibbonControlIds
     /// <summary>The Demote to child button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string DemoteToChild = "btnDemoteToChild";
 
+    /// <summary>
+    /// The Move up button (<c>getEnabled</c> driven by workbook + initialised).
+    /// </summary>
+    /// <remarks>
+    /// Gated on workbook + initialised only, exactly as promote and demote are: the
+    /// top of the selection's set is a quiet no-op by design (R5.4 D4), and a
+    /// wrong-kind selection refuses at execution time with a message. Selection-aware
+    /// gating is owed work (see the <c>TODO(R5.10)</c> note in <c>Ribbon.xml</c>).
+    /// </remarks>
+    internal const string MoveUp = "btnMoveUp";
+
+    /// <summary>
+    /// The Move down button (<c>getEnabled</c> driven by workbook + initialised).
+    /// </summary>
+    /// <remarks>
+    /// The mirror of <see cref="MoveUp"/>; the bottom of the selection's set is a
+    /// quiet no-op by design (R5.4 D4).
+    /// </remarks>
+    internal const string MoveDown = "btnMoveDown";
+
+    /// <summary>
+    /// The Remove button (<c>getEnabled</c> driven by workbook +
+    /// initialised). Destructive under ADR-0008: the command itself
+    /// confirms before the mutator runs, so the enabled gate stays
+    /// at workbook + initialised like every other Data-group button.
+    /// </summary>
+    internal const string Remove = "btnRemove";
+
     /// <summary>The Plot start AUTO checkbox (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotStartAuto = "chkPlotStartAuto";
 

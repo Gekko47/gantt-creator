@@ -12,8 +12,12 @@ public class ParentChildCommandTests
         var mutator = new Mock<IParentChildMutator>();
         _ = mutator.Setup(m => m.Promote()).Returns(outcome);
         _ = mutator.Setup(m => m.Demote()).Returns(outcome);
+        _ = mutator.Setup(m => m.MoveUp()).Returns(outcome);
+        _ = mutator.Setup(m => m.MoveDown()).Returns(outcome);
         return mutator;
     }
+
+    private static Mock<IInsertedRowSelector> Selector() => new();
 
     [Fact]
     public void Promote_throws_for_a_null_mutator()
@@ -48,6 +52,38 @@ public class ParentChildCommandTests
     }
 
     [Fact]
+    public void MoveUp_throws_for_a_null_mutator()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => MoveUpCommand.Run(null!, Selector().Object, _ => { }));
+    }
+
+    [Fact]
+    public void MoveUp_throws_for_a_null_presenter()
+    {
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(2, 4));
+        Assert.Throws<ArgumentNullException>(
+            () => MoveUpCommand.Run(mutator.Object, Selector().Object, null!));
+    }
+
+    [Fact]
+    public void MoveDown_throws_for_a_null_mutator()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => MoveDownCommand.Run(null!, Selector().Object, _ => { }));
+    }
+
+    [Fact]
+    public void MoveDown_throws_for_a_null_presenter()
+    {
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(2, 4));
+        Assert.Throws<ArgumentNullException>(
+            () => MoveDownCommand.Run(mutator.Object, Selector().Object, null!));
+    }
+
+    [Fact]
     public void Promote_success_is_silent_and_calls_promote_exactly_once()
     {
         var messages = new List<string>();
@@ -73,6 +109,58 @@ public class ParentChildCommandTests
         Assert.Empty(messages);
         mutator.Verify(m => m.Demote(), Times.Once);
         mutator.Verify(m => m.Promote(), Times.Never);
+    }
+
+    [Fact]
+    public void MoveUp_success_is_silent_and_calls_move_up_exactly_once()
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(5, 3));
+
+        MoveUpCommand.Run(mutator.Object, Selector().Object, messages.Add);
+
+        Assert.Empty(messages);
+        mutator.Verify(m => m.MoveUp(), Times.Once);
+        mutator.Verify(m => m.MoveDown(), Times.Never);
+    }
+
+    [Fact]
+    public void MoveDown_success_is_silent_and_calls_move_down_exactly_once()
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(5, 3));
+
+        MoveDownCommand.Run(mutator.Object, Selector().Object, messages.Add);
+
+        Assert.Empty(messages);
+        mutator.Verify(m => m.MoveDown(), Times.Once);
+        mutator.Verify(m => m.MoveUp(), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_move_at_the_boundary_of_the_set_is_a_silent_no_op(bool moveUp)
+    {
+        // R5.4 D4: the top/bottom of the selection's set is a success with
+        // zero cells written. The command reports nothing — the user asked
+        // for a move that cannot happen.
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Ok(cellsWritten: 0, selectedRowNumber: 1));
+
+        if (moveUp)
+        {
+            MoveUpCommand.Run(mutator.Object, Selector().Object, messages.Add);
+        }
+        else
+        {
+            MoveDownCommand.Run(mutator.Object, Selector().Object, messages.Add);
+        }
+
+        Assert.Empty(messages);
     }
 
     [Theory]
@@ -115,6 +203,63 @@ public class ParentChildCommandTests
 
         string message = Assert.Single(messages);
         Assert.Contains(expectedText, message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(ParentChildMutationRefusalReason.NoActiveWorkbook, "open workbook")]
+    [InlineData(ParentChildMutationRefusalReason.TableMissing, "tblGanttData")]
+    [InlineData(ParentChildMutationRefusalReason.TargetProtected, "protected")]
+    [InlineData(ParentChildMutationRefusalReason.SelectionOutsideTable, "Click a cell inside")]
+    [InlineData(ParentChildMutationRefusalReason.TableInvalid, "Run Validate")]
+    [InlineData(ParentChildMutationRefusalReason.WriteFailed, "Refresh the chart")]
+    public void MoveUp_infrastructure_refusal_surfaces_exactly_one_actionable_message(
+        ParentChildMutationRefusalReason refusal,
+        string expectedText)
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Refused(refusal));
+
+        MoveUpCommand.Run(mutator.Object, Selector().Object, messages.Add);
+
+        string message = Assert.Single(messages);
+        Assert.Contains(expectedText, message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(ParentChildMutationRefusalReason.NoActiveWorkbook, "open workbook")]
+    [InlineData(ParentChildMutationRefusalReason.TableMissing, "tblGanttData")]
+    [InlineData(ParentChildMutationRefusalReason.TargetProtected, "protected")]
+    [InlineData(ParentChildMutationRefusalReason.SelectionOutsideTable, "Click a cell inside")]
+    [InlineData(ParentChildMutationRefusalReason.TableInvalid, "Run Validate")]
+    [InlineData(ParentChildMutationRefusalReason.WriteFailed, "Refresh the chart")]
+    public void MoveDown_infrastructure_refusal_surfaces_exactly_one_actionable_message(
+        ParentChildMutationRefusalReason refusal,
+        string expectedText)
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.Refused(refusal));
+
+        MoveDownCommand.Run(mutator.Object, Selector().Object, messages.Add);
+
+        string message = Assert.Single(messages);
+        Assert.Contains(expectedText, message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Move_planner_refusal_reports_the_selection_failure()
+    {
+        var messages = new List<string>();
+        Mock<IParentChildMutator> mutator = MutatorReturning(
+            ParentChildMutationOutcome.PlanRefused(ParentChildRefusalReason.SelectionUnknown, selectedRowNumber: 2));
+
+        MoveUpCommand.Run(mutator.Object, Selector().Object, messages.Add);
+
+        // SelectionUnknown carries no row context: the translator reports it
+        // as a selection-resolution failure, which is what the refusal is.
+        string message = Assert.Single(messages);
+        Assert.Contains("could not find the selected", message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

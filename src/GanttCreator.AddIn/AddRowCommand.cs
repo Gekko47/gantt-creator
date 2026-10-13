@@ -14,7 +14,9 @@ internal static class AddRowCommand
     /// <param name="type">The canonical catalogue type to insert.</param>
     internal static void RunForExcel(GanttEntityType type) =>
         Run(
-            new ExcelGanttRowInserter(ExcelDna.Integration.ExcelDnaUtil.Application),
+            new ExcelGanttRowInserter(
+                ExcelDna.Integration.ExcelDnaUtil.Application,
+                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             GanttRowId.New,
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,

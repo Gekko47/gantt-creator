@@ -143,6 +143,48 @@ public sealed record DemotePlan(
         new(null, null, null, [], [], refusal);
 }
 
+/// <summary>The result of planning one move-up or move-down (R5.4 D5):
+/// which two contiguous windows of body rows swap content, and which
+/// <c>SiblingOrder</c> cells resequence the affected run. A plan with
+/// <see cref="WindowLength"/> 0 is a silent boundary no-op (R5.4 D4):
+/// the selection already sits at the top or bottom of its set and
+/// nothing changes.</summary>
+/// <param name="TargetId">The moved row, or <see langword="null"/> on refusal.</param>
+/// <param name="WindowStart">The zero-based body index the selection's window starts at (0 when no-op).</param>
+/// <param name="WindowLength">How many rows the selection's window contains (0 when no-op).</param>
+/// <param name="SwapStart">The zero-based body index the neighbour's window starts at (0 when no-op).</param>
+/// <param name="SwapLength">How many rows the neighbour's window contains (0 when no-op).</param>
+/// <param name="SiblingOrderWrites">Dense resequencing of the affected run in post-swap row order. Empty on refusal or no-op.</param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/>.</param>
+public sealed record MovePlan(
+    GanttRowId? TargetId,
+    int WindowStart,
+    int WindowLength,
+    int SwapStart,
+    int SwapLength,
+    IReadOnlyList<SiblingOrderWrite> SiblingOrderWrites,
+    ParentChildRefusalReason? Refusal)
+{
+    /// <summary>Gets whether planning succeeded (a no-op plan succeeds).</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Gets whether the plan swaps anything at all (false at a boundary).</summary>
+    public bool MovesAnything => Succeeded && WindowLength > 0;
+
+    /// <summary>Creates a refusal plan. Nothing is mutated.</summary>
+    /// <param name="refusal">Why no plan was produced.</param>
+    /// <returns>The refusal plan.</returns>
+    public static MovePlan Refused(ParentChildRefusalReason refusal) =>
+        new(null, 0, 0, 0, 0, [], refusal);
+
+    /// <summary>Creates a silent boundary no-op plan: the selection is
+    /// already at the top or bottom of its set.</summary>
+    /// <param name="targetId">The selected row.</param>
+    /// <returns>The no-op plan.</returns>
+    public static MovePlan NoChange(GanttRowId targetId) =>
+        new(targetId, 0, 0, 0, 0, [], null);
+}
+
 /// <summary>
 /// Pure, deterministic hierarchy mutations that do not touch Excel. Every result
 /// is a <em>plan</em>: the caller applies it. Nothing here writes a cell, reads a
@@ -449,6 +491,216 @@ public static class HierarchyMutations
         }
 
         return DemotePlan.Refused(ParentChildRefusalReason.NoEligibleParentAbove);
+    }
+
+    /// <summary>
+    /// Plans one move-up or move-down (R5.4 D5, D1-amended). A top-level
+    /// selection moves the contiguous window of its row plus its child run
+    /// past the adjacent top-level group's window; a child selection swaps
+    /// with the adjacent row carrying the same <c>ParentId</c>. At the top
+    /// or bottom of the selection's set the plan is a silent no-op (R5.4
+    /// D4) rather than a refusal. Hierarchy relations never change, so no
+    /// type rules apply and IDs are never written (R2.3). Nothing is
+    /// mutated; the caller applies the plan.
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="selectedId">The identifier of the row being moved.</param>
+    /// <param name="moveUp"><see langword="true"/> for move-up, <see langword="false"/> for move-down.</param>
+    /// <returns>The move plan (possibly a boundary no-op), or a typed refusal that mutates nothing.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    public static MovePlan PlanMove(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId selectedId,
+        bool moveUp)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(selectedId);
+
+        List<GanttEvent> ordered = [.. rows.OrderBy(static row => row.RowNumber)];
+        var index = -1;
+        for (var position = 0; position < ordered.Count; position++)
+        {
+            if (ordered[position].Id == selectedId)
+            {
+                index = position;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return MovePlan.Refused(ParentChildRefusalReason.SelectionUnknown);
+        }
+
+        GanttEvent target = ordered[index];
+        int windowStart;
+        int windowLength;
+        int swapStart;
+        int swapLength;
+        GanttRowId? affectedRun;
+
+        if (target.ParentId is null)
+        {
+            // Top-level: the window is the row plus its contiguous child
+            // run (the same "child run" definition R5.3 D3 lands a demote
+            // beneath). Children of the selection that a malformed table
+            // scattered beyond the contiguous run do not move.
+            windowStart = index;
+            windowLength = 1;
+            while (index + windowLength < ordered.Count
+                && ordered[index + windowLength].ParentId == selectedId)
+            {
+                windowLength++;
+            }
+
+            var neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
+            if (neighbour < 0)
+            {
+                return MovePlan.NoChange(selectedId);
+            }
+
+            swapStart = neighbour;
+            swapLength = 1;
+            var next = neighbour + 1;
+            var limit = moveUp ? windowStart : ordered.Count;
+            while (next < limit && ordered[next].ParentId == ordered[neighbour].Id)
+            {
+                swapLength++;
+                next++;
+            }
+
+            // Both windows start with a top-level row and contain only
+            // their own children below it, so the top-level run's member
+            // set is unchanged by the swap; only its order moves.
+            affectedRun = null;
+        }
+        else
+        {
+            // A child swaps with the adjacent row of the same run only.
+            // Anything else (its parent, another parent's child, a
+            // top-level row, the body edge) is the run boundary: the
+            // selection is already at the top or bottom of its set.
+            var neighbour = moveUp ? index - 1 : index + 1;
+            if (neighbour < 0
+                || neighbour >= ordered.Count
+                || ordered[neighbour].ParentId != target.ParentId)
+            {
+                return MovePlan.NoChange(selectedId);
+            }
+
+            windowStart = index;
+            windowLength = 1;
+            swapStart = neighbour;
+            swapLength = 1;
+            affectedRun = target.ParentId;
+        }
+
+        // Resequencing is keyed by row identifier and resolved against
+        // POST-swap positions, so the dense order is computed from the
+        // row order the swap produces (R5.3 D4: the planner is the
+        // authority; existing values are ignored).
+        List<GanttEvent> post = [.. ordered];
+        BlockSwap(post, windowStart, windowLength, swapStart, swapLength);
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent row in post)
+        {
+            if (row.ParentId != affectedRun)
+            {
+                continue;
+            }
+
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        return new MovePlan(selectedId, windowStart, windowLength, swapStart, swapLength, writes, null);
+    }
+
+    /// <summary>
+    /// Finds the adjacent top-level neighbour of a top-level group: the
+    /// closest row with a blank <c>ParentId</c> above the window for
+    /// move-up, or below it for move-down.
+    /// </summary>
+    /// <param name="ordered">The rows in body order.</param>
+    /// <param name="windowStart">The zero-based index of the group's window.</param>
+    /// <param name="windowLength">The length of the group's window.</param>
+    /// <param name="moveUp">The move direction.</param>
+    /// <returns>The neighbour's zero-based index, or -1 at the boundary.</returns>
+    private static int FindAdjacentTopLevel(
+        List<GanttEvent> ordered,
+        int windowStart,
+        int windowLength,
+        bool moveUp)
+    {
+        if (moveUp)
+        {
+            for (var position = windowStart - 1; position >= 0; position--)
+            {
+                if (ordered[position].ParentId is null)
+                {
+                    return position;
+                }
+            }
+
+            return -1;
+        }
+
+        for (var position = windowStart + windowLength; position < ordered.Count; position++)
+        {
+            if (ordered[position].ParentId is null)
+            {
+                return position;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Swaps two disjoint contiguous blocks of the list in place. Rows in
+    /// any gap between the blocks keep their positions (a malformed
+    /// table's orphan rows are neither moved nor repaired). Deterministic:
+    /// the same input always produces the same post-swap order.
+    /// </summary>
+    /// <param name="list">The list to swap within.</param>
+    /// <param name="firstStart">The zero-based start of the first block.</param>
+    /// <param name="firstLength">The length of the first block.</param>
+    /// <param name="secondStart">The zero-based start of the second block.</param>
+    /// <param name="secondLength">The length of the second block.</param>
+    private static void BlockSwap(
+        List<GanttEvent> list,
+        int firstStart,
+        int firstLength,
+        int secondStart,
+        int secondLength)
+    {
+        var lowStart = Math.Min(firstStart, secondStart);
+        var highStart = Math.Max(firstStart, secondStart);
+        var lowLength = firstStart < secondStart ? firstLength : secondLength;
+        var highLength = firstStart < secondStart ? secondLength : firstLength;
+
+        List<GanttEvent> span = list.GetRange(lowStart, highStart - lowStart + highLength);
+        List<GanttEvent> low = span.GetRange(0, lowLength);
+        var secondOffset = highStart - lowStart;
+        List<GanttEvent> gap = span.GetRange(lowLength, secondOffset - lowLength);
+        List<GanttEvent> high = span.GetRange(secondOffset, highLength);
+
+        var writeIndex = lowStart;
+        foreach (GanttEvent row in high)
+        {
+            list[writeIndex++] = row;
+        }
+
+        foreach (GanttEvent row in gap)
+        {
+            list[writeIndex++] = row;
+        }
+
+        foreach (GanttEvent row in low)
+        {
+            list[writeIndex++] = row;
+        }
     }
 
     /// <summary>

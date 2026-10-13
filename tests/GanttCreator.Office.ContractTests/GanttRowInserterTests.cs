@@ -101,6 +101,22 @@ public class GanttRowInserterTests
         }
     }
 
+    /// <summary>
+    /// A stub <see cref="IOutlineGroupPort"/> that records the events it
+    /// was asked to apply, so a test can assert the post-insert regroup
+    /// ran and inspect the hierarchy it was handed.
+    /// </summary>
+    private sealed class StubOutlineGroupPort : IOutlineGroupPort
+    {
+        public List<IReadOnlyList<GanttEvent>> Applied { get; } = [];
+
+        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+        {
+            Applied.Add(events);
+            return OutlineGroupOutcome.Ok(events.Count, 0);
+        }
+    }
+
     private sealed class TestableInserter(
         Excel.Application application,
         IWorksheetProtectionGuard guard,
@@ -126,9 +142,11 @@ public class GanttRowInserterTests
         Action<Excel.ListObject, int> insertWorksheetRowAt,
         Func<Excel.ListRows, int, Excel.ListRow> listRowAt,
         List<int> insertedWorksheetRows,
+        Func<Excel.ListObject, Excel.Range?> dataBodyRangeAt,
         ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
-        IRowHeightNormalisationPort? rowHeightNormaliser = null)
-        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser)
+        IRowHeightNormalisationPort? rowHeightNormaliser = null,
+        IOutlineGroupPort? outlineGroups = null)
+        : ExcelGanttRowInserter(application, guard, typeOptionsMaterialiser, rowHeightNormaliser, outlineGroups)
     {
         private readonly Func<Excel.Sheets, int, Excel.Worksheet> _sheetAt = sheetAt;
         private readonly Func<Excel.ListObjects, int, Excel.ListObject> _tableAt = tableAt;
@@ -151,6 +169,7 @@ public class GanttRowInserterTests
         private readonly List<string> _callOrder = callOrder;
         private readonly Action<Excel.ListObject, int> _insertWorksheetRowAt = insertWorksheetRowAt;
         private readonly Func<Excel.ListRows, int, Excel.ListRow> _listRowAt = listRowAt;
+        private readonly Func<Excel.ListObject, Excel.Range?> _dataBodyRangeAt = dataBodyRangeAt;
         private readonly List<int> _insertedWorksheetRows = insertedWorksheetRows;
 
         internal override Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => _sheetAt(sheets, index);
@@ -158,6 +177,7 @@ public class GanttRowInserterTests
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => _columnAt(columns, index);
         internal override Excel.ListRows GetListRows(Excel.ListObject table) => _rowsAt(table);
         internal override Excel.Range GetTableRange(Excel.ListObject table) => _tableRangeAt(table);
+        internal override Excel.Range? GetDataBodyRange(Excel.ListObject table) => _dataBodyRangeAt(table);
         internal override Excel.Range GetRangeRows(Excel.Range range) => _rangeRowsAt(range);
         internal override int GetRangeRowCount(Excel.Range rows) => _rangeRowCountAt(rows);
         internal override Excel.Range GetRangeAt(Excel.Range rows, int index) => _rangeAt(rows, index);
@@ -264,6 +284,7 @@ public class GanttRowInserterTests
         public Mock<Excel.Range> TableRows { get; } = new();
         public Mock<Excel.Range> InitialBlankRow { get; } = new();
         public Mock<Excel.Range> ActiveCell { get; } = new();
+        public Mock<Excel.Range> DataBodyRange { get; } = new();
         public object? WrittenValue { get; private set; }
         public int AddRowCalls { get; private set; }
         public int LastInsertionPosition { get; private set; }
@@ -291,6 +312,17 @@ public class GanttRowInserterTests
 
         /// <summary>Body-row indexes the adapter read back after inserting.</summary>
         public List<int> ListRowAtCalls { get; } = [];
+
+        /// <summary>
+        /// The table body the group-aware inserter reads, as a one-based
+        /// <c>Value2</c> SAFEARRAY. Null until a test sets it, which makes
+        /// the body read return no rows -- the pre-R5.13 behaviour.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
+        public object?[,]? BodyMatrix { get; set; }
+
+        /// <summary>How many times the adapter read the table body.</summary>
+        public int DataBodyValueReads { get; private set; }
 
         /// <summary>The stub normaliser handed to every built inserter unless a test passes its
         /// own, so the reserved rows can be asserted without driving real COM.
@@ -344,7 +376,8 @@ public class GanttRowInserterTests
         public TestableInserter Build(
             IWorksheetProtectionGuard guard,
             ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
-            StubRowHeightNormaliser? rowHeightNormaliser = null) => new(
+            StubRowHeightNormaliser? rowHeightNormaliser = null,
+            IOutlineGroupPort? outlineGroups = null) => new(
             Application.Object,
             guard,
             (_, _) => Worksheet.Object,
@@ -380,7 +413,16 @@ public class GanttRowInserterTests
                 Assert.Equal(2, index);
                 return InitialBlankRow.Object;
             },
-            range => range == InitialBlankRow.Object ? range.Value2 : null,
+            range =>
+            {
+                if (range == DataBodyRange.Object)
+                {
+                    DataBodyValueReads++;
+                    return BodyMatrix;
+                }
+
+                return range == InitialBlankRow.Object ? range.Value2 : null;
+            },
             range => ClearRangeCalls++,
             rows =>
             {
@@ -434,8 +476,14 @@ public class GanttRowInserterTests
                 return NewRow.Object;
             },
             InsertedWorksheetRows,
+            table =>
+            {
+                Assert.Same(Table.Object, table);
+                return DataBodyRange.Object;
+            },
             typeOptionsMaterialiser ?? new StubTypeOptionsMaterialiser(),
-            rowHeightNormaliser ?? RowHeightNormaliser);
+            rowHeightNormaliser ?? RowHeightNormaliser,
+            outlineGroups);
     }
 
     [Fact]
@@ -1344,5 +1392,216 @@ public class GanttRowInserterTests
 
         Assert.Equal(GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TypeOptionsUnavailable), outcome);
         graph.NewRow.Verify(r => r.Delete(), Times.Once);
+    }
+
+    [Fact]
+    public void An_insert_below_a_group_child_joins_that_group_and_regroups()
+    {
+        var parent = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var childAbove = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var childBelow = GanttRowId.Parse("G-00000000000000000000000000000003");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
+        var third = GanttRowId.Parse("G-00000000000000000000000000000005");
+
+        // The active cell is a child of `parent`, and the row that ends
+        // up below the new row is another child of `parent`. The new row
+        // already carries its Id so the regroup's projection can parse it.
+        var graph = GroupAwareGraph(GroupBodyMatrix(
+            (childAbove.Value, "As-Planned Activity", parent.Value),
+            (newRow.Value, "As-Planned Activity", null),
+            (childBelow.Value, "As-Planned Activity", parent.Value),
+            (third.Value, "As-Planned Activity", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        // Both neighbours are children of `parent`, so the new row joins
+        // that contiguous run instead of landing top-level and splitting it.
+        Assert.Equal(parent.Value, WrittenParentId(graph.WrittenValue));
+        // The native outline was rebuilt from the post-insert body, and the
+        // new row is in the hierarchy it was handed.
+        Assert.Single(outlineGroups.Applied);
+        Assert.Contains(outlineGroups.Applied[0], e => e.Id == newRow);
+    }
+
+    [Fact]
+    public void An_insert_below_a_top_level_parent_becomes_its_first_child()
+    {
+        var parent = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var firstChild = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000003");
+        var third = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // The active cell is a top-level parent; the row that ends up below
+        // the new row is its first child. The new row lands between them.
+        var graph = GroupAwareGraph(GroupBodyMatrix(
+            (parent.Value, "As-Planned Activity", null),
+            (newRow.Value, "As-Planned Activity", null),
+            (firstChild.Value, "As-Planned Activity", parent.Value),
+            (third.Value, "As-Planned Activity", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        // The active cell is a top-level parent and the row below the new row
+        // is its child, so the new row becomes that parent's first child.
+        Assert.Equal(parent.Value, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void An_insert_below_a_top_level_leaf_stays_top_level()
+    {
+        var leaf = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var unrelated = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000003");
+        var third = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // The active cell is a top-level leaf; the row that ends up below the
+        // new row is an unrelated top-level row. Neither neighbour groups.
+        var graph = GroupAwareGraph(GroupBodyMatrix(
+            (leaf.Value, "As-Planned Activity", null),
+            (newRow.Value, "As-Planned Activity", null),
+            (unrelated.Value, "As-Planned Activity", null),
+            (third.Value, "As-Planned Activity", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        // No neighbour groups, so the new row stays top-level -- the blank
+        // ParentId the writer coalesces to string.Empty.
+        Assert.Equal(string.Empty, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void An_append_stays_top_level_even_with_an_outline_writer()
+    {
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000001");
+
+        // The active cell is outside the table, so the insert appends below
+        // it rather than landing at a positional slot.
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(false);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+        _ = graph.TableRows.SetupGet(r => r.Count).Returns(4);
+        graph.BodyMatrix = GroupBodyMatrix(
+            ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+            ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+            ("G-00000000000000000000000000000004", "As-Planned Activity", null),
+            (newRow.Value, "As-Planned Activity", null));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        // An append has no enclosing group, so it stays top-level.
+        Assert.Equal(string.Empty, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void A_refused_positional_insert_with_an_outline_writer_never_reads_or_regroups()
+    {
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000001");
+
+        var graph = GroupAwareGraph(GroupBodyMatrix(
+            ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+            (newRow.Value, "As-Planned Activity", null),
+            ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+            ("G-00000000000000000000000000000004", "As-Planned Activity", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        TestableInserter inserter = graph.Build(guard.Object, outlineGroups: outlineGroups);
+        inserter.PaddingRowReservedByHost = false;
+
+        GanttRowInsertOutcome outcome = inserter.Insert(
+            GanttEntityType.AsPlannedActivity,
+            () => newRow);
+
+        // The worksheet-row insert was refused, so the positional branch
+        // refuses before any read, write, or outline rebuild -- the R5.13
+        // safety invariant holds even when an outline writer is attached.
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.RowInsertRefused, outcome.Refusal);
+        Assert.Equal(0, graph.DataBodyValueReads);
+        Assert.Empty(graph.ListRowAtCalls);
+        Assert.Null(graph.WrittenValue);
+        Assert.Empty(outlineGroups.Applied);
+    }
+
+    /// <summary>
+    /// A three-row table whose active cell is its first body row, so a
+    /// positional insert lands at body position 2: below the active cell
+    /// and above the row that follows it. The post-insert body therefore
+    /// has four rows -- the active cell, the new row, the row that ends
+    /// up below it, and the third row -- supplied by the caller.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
+    private static Graph GroupAwareGraph(object?[,] body)
+    {
+        var graph = new Graph();
+        _ = graph.Table.SetupGet(t => t.Active).Returns(true);
+        _ = graph.ActiveCell.SetupGet(r => r.Row).Returns(2);
+        _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
+        _ = graph.TableRows.SetupGet(r => r.Count).Returns(4);
+        graph.BodyMatrix = body;
+        return graph;
+    }
+
+    /// <summary>
+    /// Builds a one-based body matrix for the group-aware inserter tests.
+    /// Each row names the columns the detection and projection read -- Id,
+    /// Type and ParentId -- and leaves the rest blank, so a column reorder
+    /// cannot silently misalign the fixture (R4.7A's lesson: a positional
+    /// literal broke 20 tests when a column was inserted).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
+    private static object?[,] GroupBodyMatrix(
+        params (string Id, string Type, string? ParentId)[] rows)
+    {
+        var names = GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
+        var matrix = (object?[,])Array.CreateInstance(typeof(object), [rows.Length, names.Count], [1, 1]);
+        for (var row = 1; row <= rows.Length; row++)
+        {
+            var (id, type, parentId) = rows[row - 1];
+            matrix.SetValue(id, row, names.IndexOf("Id") + 1);
+            matrix.SetValue(type, row, names.IndexOf("Type") + 1);
+            if (parentId is not null)
+            {
+                matrix.SetValue(parentId, row, names.IndexOf("ParentId") + 1);
+            }
+        }
+
+        return matrix;
+    }
+
+    /// <summary>Reads the ParentId cell the adapter wrote to the new row.</summary>
+    private static object? WrittenParentId(object? writtenValue)
+    {
+        var matrix = Assert.IsType<object[,]>(writtenValue);
+        var names = GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
+        return matrix[0, names.IndexOf("ParentId")];
     }
 }

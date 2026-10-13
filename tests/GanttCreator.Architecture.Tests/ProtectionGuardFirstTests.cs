@@ -91,9 +91,11 @@ public sealed class ProtectionGuardFirstTests
         new("src/GanttCreator.Office/ExcelColumnPresentationRestorer.cs", "EnsureClassification"),
         // R5.3 D2: the parent/child mutator rewrites the user's VISIBLE table -- a
         // promote rotates a sibling run and clears the moved row's ParentId, a demote
-        // assigns a ParentId and a SiblingOrder -- so it is a data mutation under
-        // ADR-0008 D4. Listed at "Mutate", the shared entry both Promote and Demote
-        // delegate to, so the guard is reached before any ranged write.
+        // assigns a ParentId and a SiblingOrder, a move rotates a sibling window, and
+        // a remove re-homes the deleted row's children and deletes the row -- so it is
+        // a data mutation under ADR-0008 D4. Listed at "Mutate", the shared entry that
+        // Promote, Demote, Move and Remove delegate to, so the guard is reached before
+        // any ranged write.
         new("src/GanttCreator.Office/ExcelParentChildMutator.cs", "Mutate"),
     ];
 
@@ -122,6 +124,12 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
+        // R5.13: the shared body projection. It is pure -- it reads the raw
+        // cell matrix the adapters already bulk-read and projects it into the
+        // neutral GanttEvent list the Core hierarchy and outline planners
+        // consume; it writes nothing and touches no COM object, so it is
+        // read-only and consults no guard.
+        "src/GanttCreator.Office/ExcelGanttRowProjection.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",

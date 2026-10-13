@@ -17,7 +17,9 @@ internal static class DemoteToChildCommand
     /// <summary>Runs the production demote command in the current Excel session.</summary>
     internal static void RunForExcel() =>
         Run(
-            new ExcelParentChildMutator(ExcelDna.Integration.ExcelDnaUtil.Application),
+            new ExcelParentChildMutator(
+                ExcelDna.Integration.ExcelDnaUtil.Application,
+                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             CommandErrorDialog.Show);
 
     /// <summary>Runs an injected demote command.</summary>

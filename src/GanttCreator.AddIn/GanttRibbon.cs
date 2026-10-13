@@ -386,6 +386,71 @@ public class GanttRibbon : ExcelRibbon
     internal static void OnDemoteToChildClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
         => OnAddRowClick(control, boundary, command, nameof(OnDemoteToChildClick), onCompleted);
 
+    /// <summary>
+    /// Called when the user clicks Move up. The callback is a thin error
+    /// boundary, exactly like the promote and demote clicks; the move
+    /// command itself owns outcome-to-message translation and stays silent
+    /// at the boundary of the selection's set (R5.4 D4). The ribbon state is
+    /// refreshed and invalidated after every run (R1.5 D3).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnMoveUpClick(IRibbonControl control) =>
+        OnMoveUpClick(control, CommandBoundary.Instance, MoveUpCommand.RunForExcel, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <c>OnMoveUpClick</c> against an injected boundary. Internal so
+    /// contract tests can verify the routing without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The move-up command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnMoveUpClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnMoveUpClick), onCompleted);
+
+    /// <summary>
+    /// Called when the user clicks Move down: the mirror of
+    /// <c>OnMoveUpClick</c>, silent at the bottom of the selection's
+    /// set (R5.4 D4).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnMoveDownClick(IRibbonControl control) =>
+        OnMoveDownClick(control, CommandBoundary.Instance, MoveDownCommand.RunForExcel, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <c>OnMoveDownClick</c> against an injected boundary. Internal so
+    /// contract tests can verify the routing without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The move-down command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnMoveDownClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnMoveDownClick), onCompleted);
+
+    /// <summary>
+    /// Called when the user clicks Remove: the destructive remove
+    /// command (R5.4 D6) confirms before the mutator runs, so the
+    /// callback is the same thin error boundary as the other
+    /// mutating clicks. A declined confirmation never reaches the
+    /// boundary.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnRemoveClick(IRibbonControl control) =>
+        OnRemoveClick(control, CommandBoundary.Instance, RemoveCommand.RunForExcel, NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnRemoveClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the
+    /// routing without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The remove command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnRemoveClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnRemoveClick), onCompleted);
+
     private static void OnAddRowClick(
         IRibbonControl? control,
         CommandBoundary boundary,

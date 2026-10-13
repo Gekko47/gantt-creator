@@ -6,14 +6,14 @@ using Moq;
 
 namespace GanttCreator.AddIn.Tests;
 
-/// <summary>R2.8 Ribbon and state contracts for the three add-row commands.</summary>
+/// <summary>R2.8 Ribbon and state contracts for the Data-group buttons.</summary>
 public class AddRowRibbonTests
 {
     private const string WorkbookRibbonId = "Microsoft.Excel.Workbook";
     private const string CustomUiNamespace = "http://schemas.microsoft.com/office/2009/07/customui";
 
     [Fact]
-    public void Ribbon_declares_all_three_add_row_buttons_in_data_group()
+    public void Ribbon_declares_the_data_group_buttons()
     {
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
@@ -30,6 +30,7 @@ public class AddRowRibbonTests
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
+                RibbonControlIds.Remove,
             ],
             buttons.Select(button => button.Attribute("id")?.Value));
         Assert.Equal(
@@ -40,6 +41,7 @@ public class AddRowRibbonTests
                 "OnAddActivityClick",
                 "OnAddMilestoneClick",
                 "OnAddDelineatorClick",
+                "OnRemoveClick",
             ],
             buttons.Select(button => button.Attribute("onAction")?.Value));
         Assert.All(buttons, button => Assert.Equal("GetEnabled", button.Attribute("getEnabled")?.Value));

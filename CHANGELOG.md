@@ -48,6 +48,9 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **docs**: Add .clinerules/SYNC.md
 - **ci**: Bump GitHub Actions to v5 to clear Node.js 20 deprecation warning
 - **feat(R5.3)**: Add Promote to Parent / Demote to Child commands in a new Ordering ribbon group — hierarchy role catalogue (`EntityHierarchyCatalog`), pure promote/demote planners, and a guarded mutator that writes `ParentId`/`SiblingOrder` only
+- **feat(R5.4)**: Add Move Up / Move Down commands — physical window swaps of full row content with dense `SiblingOrder` resequencing of the affected run; bounds are a silent success (D1-amended, D4, D5)
+- **feat(R5.4)**: Add Remove command — deletes the selected row, promotes its children to its former parent (or top-level), and densely resequences the surviving run (D6); destructive under ADR-0008 with the Core-pinned warned confirmation, performs no shape operations (R4.7A D1)
+- **feat(R5.13)**: Insert a row below a group child as a child of that group — a positional insert reads the post-insert body (via the shared `ExcelGanttRowProjection`), assigns the enclosing group's parent, and rebuilds the native outline through `IOutlineGroupPort`; an append stays top-level and a refused positional insert refuses before any read, write, or regroup
 
 ### Changed
 

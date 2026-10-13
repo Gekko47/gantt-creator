@@ -44,6 +44,39 @@ internal static class ParentChildRefusalTranslator
             : TranslatePlannerRefusal(outcome.PlanRefusal, outcome.SelectedRowNumber, isPromote: false);
     }
 
+    /// <summary>Translates a move-up outcome to its user-safe message.</summary>
+    /// <param name="outcome">The typed mutation outcome.</param>
+    /// <param name="moveUp"><see langword="true"/> for move-up, <see langword="false"/> for move-down.</param>
+    /// <returns>The actionable message.</returns>
+    internal static string TranslateMove(ParentChildMutationOutcome outcome, bool moveUp)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        // A move plan refuses only on SelectionUnknown (R5.4 D5); every
+        // boundary case is a silent success (R5.4 D4) and never reaches
+        // this translator. The infrastructure table is shared with promote
+        // and demote because the failures are the same host facts.
+        return outcome.Refusal is ParentChildMutationRefusalReason infrastructure
+            ? TranslateInfrastructureRefusal(infrastructure)
+            : TranslateMovePlannerRefusal(outcome.PlanRefusal, outcome.SelectedRowNumber, moveUp);
+    }
+
+    /// <summary>Translates a remove outcome to its user-safe message.</summary>
+    /// <param name="outcome">The typed mutation outcome.</param>
+    /// <returns>The actionable message.</returns>
+    internal static string TranslateRemove(ParentChildMutationOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        // The remove planner (PlanPromotion) has no refusal path, so
+        // a planner refusal cannot reach here through the real pipeline;
+        // the infrastructure table is shared with the other verbs
+        // because the failures are the same host facts.
+        return outcome.Refusal is ParentChildMutationRefusalReason infrastructure
+            ? TranslateInfrastructureRefusal(infrastructure)
+            : TranslateRemovePlannerRefusal(outcome.PlanRefusal, outcome.SelectedRowNumber);
+    }
+
     /// <summary>
     /// Translates the adapter/host refusals, which fire before the
     /// selection resolves to a row and therefore carry no row number.
@@ -122,5 +155,60 @@ internal static class ParentChildRefusalTranslator
                 ? row + "could not be promoted. Run Validate to check the table, then try again."
                 : row + "could not be demoted. Run Validate to check the table, then try again.",
         };
+    }
+
+    /// <summary>
+    /// Translates a Core move plan refusal (R5.4 D5). The move planner has
+    /// exactly one refusal — the selection names no row — and every other
+    /// situation it can plan is a boundary no-op that succeeds silently
+    /// (R5.4 D4), so the table stays small on purpose.
+    /// </summary>
+    /// <param name="planRefusal">The planner's refusal reason, or null for an unknown enum value.</param>
+    /// <param name="selectedRowNumber">The targeted row's one-based body index, when known.</param>
+    /// <param name="moveUp"><see langword="true"/> for move-up, <see langword="false"/> for move-down.</param>
+    /// <returns>The actionable message.</returns>
+    private static string TranslateMovePlannerRefusal(
+        ParentChildRefusalReason? planRefusal,
+        int? selectedRowNumber,
+        bool moveUp)
+    {
+        if (planRefusal is ParentChildRefusalReason.SelectionUnknown)
+        {
+            return "Gantt Creator could not find the selected row in the table. "
+                + "Click a cell inside the Gantt data table, then try again.";
+        }
+
+        // A move plan cannot reach here through either planner; the branch
+        // exists so a future refusal reason still produces a message that
+        // names the verb rather than a blank dialog.
+        var row = selectedRowNumber is int number
+            ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
+            : "The selected row ";
+
+        return moveUp
+            ? row + "could not be moved up. Run Validate to check the table, then try again."
+            : row + "could not be moved down. Run Validate to check the table, then try again.";
+    }
+
+    /// <summary>
+    /// Translates a Core remove plan refusal (R5.4 D6). The remove
+    /// planner has no refusal path -- <c>PlanPromotion</c> always
+    /// returns a plan -- so this branch exists only so a future
+    /// refusal reason still produces a message that names the verb
+    /// rather than a blank dialog.
+    /// </summary>
+    /// <param name="planRefusal">The planner's refusal reason, or null for an unknown enum value.</param>
+    /// <param name="selectedRowNumber">The targeted row's one-based body index, when known.</param>
+    /// <returns>The actionable message.</returns>
+    private static string TranslateRemovePlannerRefusal(
+        ParentChildRefusalReason? planRefusal,
+        int? selectedRowNumber)
+    {
+        _ = planRefusal;
+        var row = selectedRowNumber is int number
+            ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
+            : "The selected row ";
+
+        return row + "could not be removed. Run Validate to check the table, then try again.";
     }
 }
