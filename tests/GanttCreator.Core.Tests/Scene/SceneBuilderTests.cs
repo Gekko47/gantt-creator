@@ -677,8 +677,13 @@ public sealed class SceneBuilderTests
             null,
             styleKey: null);
 
-        // No anchor row: the bottom extension is off entirely.
-        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(only) with { ChartAnchorRowHeightPt = 0 });
+        // No anchor row: the bottom extension is off entirely. The
+        // label style is supplied because the label-corner assertion
+        // below reads the delineator label, and the label is gated on
+        // the resolved label style exactly as every other
+        // description-label pass is (the R5.14 tests do the same).
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(only) with { ChartAnchorRowHeightPt = 0, LabelStyle = new SceneStyle("DefaultText") });
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
 
         SceneLine line = Assert.Single(

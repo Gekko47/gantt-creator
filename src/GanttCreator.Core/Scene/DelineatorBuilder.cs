@@ -3,6 +3,13 @@ namespace GanttCreator.Core.Scene;
 /// <summary>One delineator request.</summary>
 /// <param name="Event">The validated delineator event. Only <c>Start</c> is read.</param>
 /// <param name="LineStyle">The resolved named style; its outline width is replaced by <paramref name="LineWidthPt"/>.</param>
+/// <param name="LabelStyle">
+/// The resolved description-label text style, or <see langword="null"/>
+/// for no label. This is the same predetermined style every other
+/// description-label path is gated on (<see cref="SceneBuildRequest.LabelStyle"/>),
+/// so a delineator label carries it too and renders in the typography the
+/// measuring seam measured at; the line style governs the line alone.
+/// </param>
 /// <param name="LineWidthPt">The line thickness, from the <c>DelineatorLinePt</c> token.</param>
 /// <param name="PlotBounds">The plot rectangle; the line spans its top and bottom exactly.</param>
 /// <param name="ChartBounds">The chart rectangle that must contain every label box.</param>
@@ -31,7 +38,8 @@ public sealed record DelineatorRequest(
     int? LaneOrder = null,
     int? StackIndex = null,
     double? LineBottomPt = null,
-    double? LineTopPt = null
+    double? LineTopPt = null,
+    SceneStyle? LabelStyle = null
 );
 
 /// <summary>The result of building one delineator.</summary>
@@ -241,8 +249,16 @@ public static class DelineatorBuilder
         // §24 allows a blank description only when the label position is None.
         // The value is captured once here so the label path never re-reads a
         // nullable property the compiler cannot prove is non-null.
+        //
+        // A missing resolved label style is the same no-label decision every
+        // other description-label path makes: BuildLabels and SplitterBuilder
+        // both skip silently when the predetermined style is absent, so a
+        // delineator label is gated on it too rather than falling back to the
+        // line's style, which carries no font the measuring seam recognises.
         var description = @event.Description;
-        if (request.LabelPosition == GanttLabelPosition.None || string.IsNullOrEmpty(description))
+        if (request.LabelPosition == GanttLabelPosition.None
+            || string.IsNullOrEmpty(description)
+            || request.LabelStyle is null)
         {
             return new DelineatorCreationOutcome(
                 new DelineatorResult(line, x, null, null, null, warnings), null);
@@ -255,6 +271,7 @@ public static class DelineatorBuilder
             x,
             occupants ?? [],
             stackOffsetPt,
+            warnings,
             out SceneText? label,
             out RectD? labelBounds,
             out GanttLabelPosition? usedPosition);
@@ -278,6 +295,7 @@ public static class DelineatorBuilder
         double lineX,
         IReadOnlyList<RectD> occupants,
         double stackOffsetPt,
+        List<SceneWarning> warnings,
         out SceneText? label,
         out RectD? labelBounds,
         out GanttLabelPosition? usedPosition)
@@ -286,17 +304,42 @@ public static class DelineatorBuilder
         labelBounds = null;
         usedPosition = null;
 
-        if (!request.LabelMetrics.TryMeasure(text, out TextMeasurement? measurement) || measurement is null)
-        {
-            return false;
-        }
-
         IReadOnlyList<GanttLabelPosition> candidates = request.LabelPosition == GanttLabelPosition.Auto
             ? _autoOrder
             : [request.LabelPosition];
 
         foreach (GanttLabelPosition position in candidates)
         {
+            // §22's overflow rule applies to a delineator label exactly
+            // as it applies to a span's: the corner's available width is
+            // the chart-bounded distance from the line (plus the gap) to
+            // the chart's far edge, and a description that measures
+            // wider is clipped with an ellipsis to that width — the one
+            // truncation mechanism Core uses — never shrunk, wrapped, or
+            // suppressed. Measuring the clipped text is what keeps the
+            // box the host draws inside the box the scene measured.
+            var left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
+            var availablePt = left
+                ? lineX - request.LabelGapPt - request.ChartBounds.Left
+                : request.ChartBounds.Right - lineX - request.LabelGapPt;
+            if (availablePt <= 0)
+            {
+                continue;
+            }
+
+            var labelText = text;
+            var truncated = false;
+            if (LabelText.Overflows(text, availablePt, request.LabelMetrics))
+            {
+                labelText = LabelText.Ellipsize(text, availablePt, request.LabelMetrics);
+                truncated = true;
+            }
+
+            if (!request.LabelMetrics.TryMeasure(labelText, out TextMeasurement? measurement) || measurement is null)
+            {
+                return false;
+            }
+
             RectD box = CornerBox(
                 position, lineX, measurement, request.PlotBounds, request.LabelGapPt, stackOffsetPt);
 
@@ -319,9 +362,14 @@ public static class DelineatorBuilder
                 ScenePrimitive.CreateId(owner, "delineator-label"),
                 owner,
                 ZLayer.DelineatorLabel,
-                text,
+                labelText,
                 box,
-                request.LineStyle,
+                // The predetermined description-label style, the same
+                // DefaultText style every other description label carries:
+                // the line style governs the line alone. It carries the
+                // font family and size the measuring seam measured at, so
+                // the host draws the text the box was sized for.
+                request.LabelStyle!,
                 alignment,
                 @event.Type,
                 request.LaneOrder,
@@ -329,6 +377,14 @@ public static class DelineatorBuilder
                 @event.SortOrder);
             labelBounds = box;
             usedPosition = position;
+            if (truncated)
+            {
+                warnings.Add(new SceneWarning(
+                    owner,
+                    LabelPlanner.TruncatedToFitCode,
+                    "The label was truncated with an ellipsis to fit the available space."));
+            }
+
             return true;
         }
 

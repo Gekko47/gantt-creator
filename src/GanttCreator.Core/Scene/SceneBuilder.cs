@@ -1049,7 +1049,8 @@ public static class SceneBuilder
                     request.Metrics!,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     LineBottomPt: lineBottomPt,
-                    LineTopPt: lineTopPt)),
+                    LineTopPt: lineTopPt,
+                    LabelStyle: request.LabelStyle)),
             ];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
