@@ -53,6 +53,21 @@ namespace GanttCreator.AddIn;
 /// (projected from the catalogue/style — R5.5 D1), or null when the
 /// selection is not a single row.
 /// </param>
+/// <param name="DateLabelSelectionAvailable">
+/// True when the selection resolves to exactly one table body row
+/// (R5.14). False disables the date-label dropdown; a collapsed parent
+/// row still qualifies and edits its own cell only.
+/// </param>
+/// <param name="SelectedDateLabelPosition">
+/// The selected row's stored <c>DateLabelPosition</c> (its
+/// date-label choice), or null when the cell is blank (Auto) or the
+/// selection is not a single row.
+/// </param>
+/// <param name="DateLabelOptions">
+/// The selected row's allowed date-label choices in ribbon display
+/// order (projected from the row's Type — R5.14 D1/D4), or null when
+/// the selection is not a single row.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -72,7 +87,10 @@ internal sealed record RibbonState(
     GanttPeriodLabelFormat PeriodLabelFormat,
     bool DescriptionLabelSelectionAvailable = false,
     GanttLabelPosition? SelectedDescriptionLabelPosition = null,
-    IReadOnlyList<GanttLabelPosition>? DescriptionLabelOptions = null)
+    IReadOnlyList<GanttLabelPosition>? DescriptionLabelOptions = null,
+    bool DateLabelSelectionAvailable = false,
+    GanttDateLabelPosition? SelectedDateLabelPosition = null,
+    IReadOnlyList<GanttDateLabelPosition>? DateLabelOptions = null)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -133,6 +151,11 @@ internal sealed record RibbonState(
         // and the command still re-checks at execution time (ruling 1).
         RibbonControlIds.DescriptionLabel =>
             HasActiveWorkbook && SheetInitialised && DescriptionLabelSelectionAvailable,
+        // R5.14: the date-label dropdown is gated on the same single-body-row
+        // selection facts as the description-label dropdown (the capability is
+        // type-only, so the options projection needs no style registry).
+        RibbonControlIds.DateLabel =>
+            HasActiveWorkbook && SheetInitialised && DateLabelSelectionAvailable,
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,

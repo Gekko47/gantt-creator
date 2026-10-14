@@ -404,8 +404,10 @@ public class GanttRibbonTests
                 // R5.5: the description-label dropdown is the first
                 // selection-gated control — it shares the workbook+initialised
                 // part of the truth table and adds the single-row condition
-                // inside it.
+                // inside it. R5.14 adds the parallel date-label dropdown
+                // beside it in the Labels group, gated on the same facts.
                 RibbonControlIds.DescriptionLabel,
+                RibbonControlIds.DateLabel,
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,

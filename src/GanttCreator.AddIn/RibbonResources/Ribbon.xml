@@ -35,6 +35,14 @@
             <labelControl id="lblDescriptionLabel" label="Description label"/>
             <dropDown id="ddnDescriptionLabel" getEnabled="GetEnabled" getItemCount="GetDescriptionLabelCount" getItemID="GetDescriptionLabelItemID" getItemLabel="GetDescriptionLabelItemLabel" getSelectedItemIndex="GetDescriptionLabelSelectedIndex" onAction="OnDescriptionLabelChange"/>
           </box>
+          <!-- R5.14: the parallel date-label dropdown. Its items are the
+               selected row's allowed date-label choices (projected from the
+               row's Type), led by Auto, which clears the cell. The capability
+               is type-only, so no option list is authored twice. -->
+          <box id="boxDateLabel" boxStyle="horizontal">
+            <labelControl id="lblDateLabel" label="Date label"/>
+            <dropDown id="ddnDateLabel" getEnabled="GetEnabled" getItemCount="GetDateLabelCount" getItemID="GetDateLabelItemID" getItemLabel="GetDateLabelItemLabel" getSelectedItemIndex="GetDateLabelSelectedIndex" onAction="OnDateLabelChange"/>
+          </box>
         </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">

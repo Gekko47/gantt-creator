@@ -1091,6 +1091,202 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns how many items the date-label dropdown offers. Excel's
+    /// dynamic dropDown contract asks for this through getItemCount; the
+    /// answer comes from the state service snapshot (the selected row's
+    /// allowed date-label choices, which already include Auto). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetDateLabelCount(IRibbonControl control) =>
+        GetDateLabelCount(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetDateLabelCount(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item count; zero when no single row is selected.</returns>
+    internal static int GetDateLabelCount(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetDateLabelCount();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the item ID at the given index for the date-label dropdown
+    /// (the leading Auto choice carries the Default clear-ID; every other
+    /// choice carries its enum name). Excel's dynamic dropDown contract asks
+    /// for this through getItemID; the answer comes from the state service
+    /// snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetDateLabelItemID(IRibbonControl control, int index) =>
+        GetDateLabelItemID(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetDateLabelItemID(IRibbonControl, int)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
+    internal static string GetDateLabelItemID(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetDateLabelItemID(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the user-facing item label at the given index for the
+    /// date-label dropdown. Excel's dynamic dropDown contract asks for this
+    /// through getItemLabel; the answer comes from the state service
+    /// snapshot, so the enum name is never shown verbatim. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetDateLabelItemLabel(IRibbonControl control, int index) =>
+        GetDateLabelItemLabel(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetDateLabelItemLabel(IRibbonControl, int)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal static string GetDateLabelItemLabel(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetDateLabelItemLabel(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the selected index of the date-label dropdown. Excel's
+    /// dynamic dropDown contract asks for this through
+    /// getSelectedItemIndex; the answer comes from the state service
+    /// snapshot, so the dropdown reflects the selected row's stored cell.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetDateLabelSelectedIndex(IRibbonControl control) =>
+        GetDateLabelSelectedIndex(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetDateLabelSelectedIndex(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based selected index; zero (Auto) when unknown.</returns>
+    internal static int GetDateLabelSelectedIndex(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetDateLabelSelectedIndex();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Handles a date-label dropdown selection change. Excel's
+    /// dropDown onAction contract passes the control, the selected item
+    /// id, and the selected index; the id is authoritative (it names the
+    /// position, or <c>Default</c> to clear the cell) and the index is
+    /// ignored, exactly as the description-label dropdown works. The
+    /// state service parses the id and writes the selected row's
+    /// date-label cell; an unknown id is refused rather than defaulted.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id, or null in tests.</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnDateLabelChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnDateLabelChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnDateLabelChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can
+    /// verify the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id, or null in tests.</param>
+    /// <param name="stateService">The state service applying the selection.</param>
+    internal static void OnDateLabelChange(
+        IRibbonControl? control,
+        string? id,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.SetDateLabelPosition(id);
+        }
+        catch
+        {
+            // Intentionally empty: the command owns its own refusals and
+            // presents them; a failure here degrades to no change.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Returns the index of the current plot margin preset. The ribbon
     /// dropdown asks for this through getSelectedItemIndex; the answer
     /// comes from the state service snapshot. Never throws.

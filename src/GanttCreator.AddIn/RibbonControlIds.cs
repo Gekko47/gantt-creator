@@ -91,6 +91,22 @@ internal static class RibbonControlIds
     internal const string DescriptionLabel = "ddnDescriptionLabel";
 
     /// <summary>
+    /// The date-label dropdown (<c>getEnabled</c> driven by workbook
+    /// + initialised + one body row selected). The ribbon's <c>Labels</c>
+    /// group carries it beside a <c>Date label</c> row label; it is the
+    /// parallel of <see cref="DescriptionLabel"/>.
+    /// </summary>
+    /// <remarks>
+    /// R5.14: the item list is projected at query time from the selected
+    /// row's <c>Type</c> through <c>EntityTypeCatalog.GetAllowedDateLabelPositions</c>
+    /// (the capability is type-only — a Custom Activity style carries no
+    /// date mode, so it cannot narrow the set). The dropdown enables only
+    /// when the selection resolves to exactly one table body row, reusing
+    /// the same selection facts the description-label dropdown uses.
+    /// </remarks>
+    internal const string DateLabel = "ddnDateLabel";
+
+    /// <summary>
     /// The Remove button (<c>getEnabled</c> driven by workbook +
     /// initialised). Destructive under ADR-0008: the command itself
     /// confirms before the mutator runs, so the enabled gate stays

@@ -103,6 +103,12 @@ public sealed class ProtectionGuardFirstTests
         // "SetLabelPosition", the entry point that consults the shared guard before
         // any workbook or table access.
         new("src/GanttCreator.Office/ExcelLabelPositionMutator.cs", "SetLabelPosition"),
+        // R5.14: the date-label mutator writes the user's VISIBLE table --
+        // exactly one DateLabelPosition cell on one body row (bespoke per
+        // entity, never group-applied) -- so it is a data mutation under
+        // ADR-0008 D4. Listed at "SetDateLabelPosition", the entry point
+        // that consults the shared guard before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPosition"),
     ];
 
     /// <summary>
@@ -178,6 +184,10 @@ public sealed class ProtectionGuardFirstTests
         // mutates no workbook content, so a guard consultation would be unreachable
         // code rather than a missing guard.
         "src/GanttCreator.Office/ILabelPositionMutator.cs",
+        // R5.14: the date-label port. The port declares the single
+        // write and its typed outcome -- the mutating implementation is
+        // registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IDateLabelPositionMutator.cs",
         "src/GanttCreator.Office/ISelectionIdentifier.cs",
         "src/GanttCreator.Office/ExcelSelectionIdentifier.cs",
         // R4.3: the origin translation and the scene-to-request renderer. Both

@@ -322,10 +322,12 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     }
 
     [Fact]
-    public void A_selection_change_invalidates_only_the_label_dropdown()
+    public void A_selection_change_invalidates_only_the_two_label_dropdowns()
     {
-        // Ruling 6: moving the selection must not re-query every getter on the
-        // ribbon, so the handler invalidates exactly the one control.
+        // Ruling 6: moving the selection must not re-query every getter on
+        // the ribbon, so the handler invalidates exactly the two label
+        // dropdowns that re-project from the newly selected row — the
+        // description-label and date-label dropdowns — and no other control.
         var ribbon = new Mock<IRibbonUI>();
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
@@ -343,7 +345,7 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
             .Select(item => item.Arguments[0])
             .ToList();
 
-        Assert.Equal([RibbonControlIds.DescriptionLabel], invalidated);
+        Assert.Equal([RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel], invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
 
