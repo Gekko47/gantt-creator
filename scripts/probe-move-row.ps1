@@ -87,7 +87,12 @@ function Show-Table {
 }
 
 function New-MoveSheet {
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param($Workbook, [string] $Name, [int] $BodyRowCount)
+
+    if (-not $PSCmdlet.ShouldProcess($Name, 'Create worksheet')) {
+        return
+    }
 
     $sheet = $Workbook.Worksheets.Add()
     $sheet.Name = $Name
@@ -241,10 +246,8 @@ try {
     }
     Show-Table $rotate.ListObjects.Item('tblRotate') $rotate 'before' $paddingHeightPt
 
-    $inserted = $false
     try {
         $rotate.Rows.Item(3).Insert($xlShiftDown, $xlFormatFromLeftOrAbove)
-        $inserted = $true
         Write-Host '  Rows.Item(3).Insert(xlShiftDown, xlFormatFromLeftOrAbove): accepted'
     }
     catch {
