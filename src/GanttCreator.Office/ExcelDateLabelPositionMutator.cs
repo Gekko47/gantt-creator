@@ -297,6 +297,18 @@ public class ExcelDateLabelPositionMutator(
         try
         {
             var tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
+            // A pre-R5.14 workbook has no DateLabelPosition column. The
+            // column is optional so the table still reads, but there is no
+            // cell to write: refuse with the typed TableMissing refusal --
+            // whose message tells the user to run Initialise, which
+            // materialises the column -- rather than aiming the write at
+            // a non-existent column index.
+            if (tableIndex < 1)
+            {
+                return DateLabelMutationOutcome.Refused(
+                    DateLabelMutationRefusalReason.TableMissing, bodyIndex);
+            }
+
             ListRow row = GetListRowAt(GetListRows(table), rowIndex + 1);
             Excel.Range cell = GetCellAt(GetListRowRange(row), tableIndex);
             SetRangeValues(cell, value);

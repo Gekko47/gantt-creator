@@ -38,9 +38,7 @@ public class ExcelDateLabelPositionMutatorTests
         public Mock<Excel.ListObjects> ListObjects { get; } = new();
         public Mock<Excel.ListObject> Table { get; } = new();
         public Mock<Excel.ListColumns> ListColumns { get; } = new();
-        public Mock<Excel.ListColumn>[] Columns { get; } =
-            Enumerable.Range(0, GanttTableSchema.Default.Columns.Count)
-                .Select(_ => new Mock<Excel.ListColumn>()).ToArray();
+        public Mock<Excel.ListColumn>[] Columns { get; }
         public Mock<Excel.ListRows> ListRows { get; } = new();
         public Mock<Excel.Range> TableRange { get; } = new();
         public Mock<Excel.Range> DataBodyRange { get; } = new();
@@ -59,8 +57,12 @@ public class ExcelDateLabelPositionMutatorTests
 
         public List<(int Row, int Column, object? Value)> WrittenCells { get; } = [];
 
-        public Graph()
+        public Graph(IReadOnlyList<string>? columnNames = null)
         {
+            IReadOnlyList<string> names = columnNames
+                ?? GanttTableSchema.Default.Columns.Select(static c => c.Name).ToArray();
+            Columns = Enumerable.Range(0, names.Count)
+                .Select(_ => new Mock<Excel.ListColumn>()).ToArray();
             Application.SetupGet(a => a.ActiveWorkbook).Returns(Workbook.Object);
             Workbook.SetupGet(w => w.Sheets).Returns(Sheets.Object);
             Sheets.SetupGet(s => s.Count).Returns(1);
@@ -68,10 +70,10 @@ public class ExcelDateLabelPositionMutatorTests
             ListObjects.SetupGet(lo => lo.Count).Returns(() => TablePresent ? 1 : 0);
             Table.SetupGet(t => t.Name).Returns("tblGanttData");
             Table.SetupGet(t => t.ListColumns).Returns(ListColumns.Object);
-            ListColumns.SetupGet(c => c.Count).Returns(GanttTableSchema.Default.Columns.Count);
+            ListColumns.SetupGet(c => c.Count).Returns(names.Count);
             for (var i = 0; i < Columns.Length; i++)
             {
-                Columns[i].SetupGet(c => c.Name).Returns(GanttTableSchema.Default.Columns[i].Name);
+                Columns[i].SetupGet(c => c.Name).Returns(names[i]);
             }
 
             Table.SetupGet(t => t.Range).Returns(TableRange.Object);
@@ -242,6 +244,41 @@ public class ExcelDateLabelPositionMutatorTests
         }
 
         return array;
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Performance",
+        "CA1814:MultiDimArrays",
+        Justification = "Excel Value2 is a SAFEARRAY shaped as a multidimensional array; a jagged array cannot express it.")]
+    private static object?[,] LegacyMatrix(IReadOnlyList<string> legacyColumns, params object?[][] rows)
+    {
+        var array = new object?[rows.Length, legacyColumns.Count];
+        for (var i = 0; i < rows.Length; i++)
+        {
+            for (var j = 0; j < rows[i].Length && j < legacyColumns.Count; j++)
+            {
+                array[i, j] = rows[i][j];
+            }
+        }
+
+        return array;
+    }
+
+    private static object?[] LegacyRow(IReadOnlyList<string> legacyColumns, string id, string type)
+    {
+        var row = new object?[legacyColumns.Count];
+        for (var index = 0; index < legacyColumns.Count; index++)
+        {
+            row[index] = legacyColumns[index] switch
+            {
+                "Id" => id,
+                "Type" => type,
+                "Visible" => true,
+                _ => null,
+            };
+        }
+
+        return row;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -489,6 +526,35 @@ public class ExcelDateLabelPositionMutatorTests
         (int Row, int _, object? Value) write = Assert.Single(graph.WrittenCells);
         Assert.Equal(1, write.Row);
         Assert.Equal(nameof(GanttDateLabelPosition.Finish), write.Value);
+    }
+
+    [Fact]
+    public void SetDateLabelPosition_refuses_when_the_table_predates_the_column()
+    {
+        // R5.14 defect regression: a workbook saved before R5.14 has
+        // no DateLabelPosition column. The column is optional so the
+        // table still reads, but a write has no cell to write: the
+        // mutator refuses with the typed TableMissing refusal (whose
+        // message tells the user to run Initialise, which materialises
+        // the column) instead of aiming the write at a non-existent
+        // column index.
+        IReadOnlyList<string> legacyColumns = GanttTableSchema.Default.Columns
+            .Select(static c => c.Name)
+            .Where(static name => name != "DateLabelPosition")
+            .ToArray();
+        var graph = new Graph(legacyColumns)
+        {
+            BodyMatrix = LegacyMatrix(legacyColumns,
+                LegacyRow(legacyColumns, RowOneId, EntityTypeCatalog.Format(GanttEntityType.AsPlannedActivity))),
+            RowCount = 1,
+            ActiveRow = 2,
+        };
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPosition(GanttDateLabelPosition.Start);
+
+        Assert.Equal(DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing, 1), outcome);
+        Assert.Empty(graph.WrittenCells);
     }
 }
 
