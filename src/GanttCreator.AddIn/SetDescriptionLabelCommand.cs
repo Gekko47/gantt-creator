@@ -10,9 +10,9 @@ namespace GanttCreator.AddIn;
 /// body row). The command owns outcome-to-message translation; selection
 /// resolution and the cell write belong to the Office ports.
 /// </summary>
-internal static class SetLabelPositionCommand
+internal static class SetDescriptionLabelCommand
 {
-    /// <summary>Runs the production label-position command in the current Excel session.</summary>
+    /// <summary>Runs the production description-label command in the current Excel session.</summary>
     /// <param name="position">The position to write, or null to clear the cell (Default).</param>
     internal static void RunForExcel(GanttLabelPosition? position) =>
         Run(
@@ -21,8 +21,8 @@ internal static class SetLabelPositionCommand
             CommandErrorDialog.Show,
             position);
 
-    /// <summary>Runs an injected label-position command.</summary>
-    /// <param name="mutator">The label-position mutation port.</param>
+    /// <summary>Runs an injected description-label command.</summary>
+    /// <param name="mutator">The description-label mutation port.</param>
     /// <param name="selection">The standalone selection identifier (ruling 6).</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     /// <param name="position">The position to write, or null to clear the cell (Default).</param>
@@ -43,7 +43,7 @@ internal static class SetLabelPositionCommand
         SelectionFacts facts = selection.Identify();
         if (!facts.IsSingleBodyRow)
         {
-            Present(presenter, LabelPositionRefusalTranslator.TranslateNotSingleRow(facts));
+            Present(presenter, DescriptionLabelRefusalTranslator.TranslateNotSingleRow(facts));
             return;
         }
 
@@ -56,7 +56,7 @@ internal static class SetLabelPositionCommand
             return;
         }
 
-        Present(presenter, LabelPositionRefusalTranslator.Translate(outcome));
+        Present(presenter, DescriptionLabelRefusalTranslator.Translate(outcome));
     }
 
     /// <summary>

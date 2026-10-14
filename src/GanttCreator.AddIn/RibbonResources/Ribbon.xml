@@ -27,11 +27,14 @@
             </box>
           </box>
         </group>
-        <group id="grpSelectedEntity" label="Selected Entity">
-          <!-- R5.5: dynamic item list — items are projected from the selected
+        <group id="grpLabels" label="Labels">
+          <!-- R5.5: dynamic item lists — items are projected from the selected
                row's Type (EntityTypeCatalog) at query time, so no option list
                is authored twice. R5.10 adds fill/stroke into this group. -->
-          <dropDown id="ddnLabelPosition" getEnabled="GetEnabled" getItemCount="GetLabelPositionCount" getItemID="GetLabelPositionItemID" getItemLabel="GetLabelPositionItemLabel" getSelectedItemIndex="GetLabelPositionSelectedIndex" onAction="OnLabelPositionChange"/>
+          <box id="boxDescriptionLabel" boxStyle="horizontal">
+            <labelControl id="lblDescriptionLabel" label="Description label"/>
+            <dropDown id="ddnDescriptionLabel" getEnabled="GetEnabled" getItemCount="GetDescriptionLabelCount" getItemID="GetDescriptionLabelItemID" getItemLabel="GetDescriptionLabelItemLabel" getSelectedItemIndex="GetDescriptionLabelSelectedIndex" onAction="OnDescriptionLabelChange"/>
+          </box>
         </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">

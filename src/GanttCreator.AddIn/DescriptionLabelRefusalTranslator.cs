@@ -4,16 +4,16 @@ using GanttCreator.Office;
 namespace GanttCreator.AddIn;
 
 /// <summary>
-/// Pure, UI-free translation of a label-position mutation outcome (or a
+/// Pure, UI-free translation of a description-label mutation outcome (or a
 /// selection refusal) into the single simple-English message the command
 /// presents (R5.5 D2; the <see cref="ParentChildRefusalTranslator"/> shape).
 /// Every planner refusal names the row it refused on using the outcome's
 /// one-based body index; infrastructure and selection refusals name the
 /// situation instead.
 /// </summary>
-internal static class LabelPositionRefusalTranslator
+internal static class DescriptionLabelRefusalTranslator
 {
-    /// <summary>Translates a label-position outcome to its user-safe message.</summary>
+    /// <summary>Translates a description-label outcome to its user-safe message.</summary>
     /// <param name="outcome">The typed mutation outcome.</param>
     /// <returns>The actionable message.</returns>
     internal static string Translate(LabelPositionMutationOutcome outcome)

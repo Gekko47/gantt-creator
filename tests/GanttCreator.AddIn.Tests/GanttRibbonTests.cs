@@ -401,10 +401,11 @@ public class GanttRibbonTests
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
-                // R5.5: the label dropdown is the first selection-gated
-                // control — it shares the workbook+initialised part of the
-                // truth table and adds the single-row condition inside it.
-                RibbonControlIds.LabelPosition,
+                // R5.5: the description-label dropdown is the first
+                // selection-gated control — it shares the workbook+initialised
+                // part of the truth table and adds the single-row condition
+                // inside it.
+                RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,

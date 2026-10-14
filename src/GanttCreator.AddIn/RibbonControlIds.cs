@@ -77,8 +77,10 @@ internal static class RibbonControlIds
     internal const string MoveDown = "btnMoveDown";
 
     /// <summary>
-    /// The label-position dropdown (<c>getEnabled</c> driven by workbook +
-    /// initialised + one body row selected).
+    /// The description-label dropdown (<c>getEnabled</c> driven by workbook
+    /// + initialised + one body row selected). The ribbon's <c>Labels</c>
+    /// group carries it beside a <c>Description label</c> row label; the
+    /// date-label dropdown (R5.14) is its parallel.
     /// </summary>
     /// <remarks>
     /// R5.5 owner ruling 6: per-row gating ships with the label controls, so
@@ -86,7 +88,7 @@ internal static class RibbonControlIds
     /// table body row (a collapsed parent qualifies and edits its own cell
     /// only — ruling 7). R5.10 reuses the same selection facts for fill/stroke.
     /// </remarks>
-    internal const string LabelPosition = "ddnLabelPosition";
+    internal const string DescriptionLabel = "ddnDescriptionLabel";
 
     /// <summary>
     /// The Remove button (<c>getEnabled</c> driven by workbook +

@@ -6,7 +6,7 @@ using Moq;
 namespace GanttCreator.AddIn.Tests;
 
 /// <summary>
-/// Contract tests for the R5.5 label-position controls (work item
+/// Contract tests for the R5.5 description-label controls (work item
 /// <c>R5.5-label-controls.md</c>): the item list is projected from the selected
 /// row's <c>Type</c> (D1), the wording table never shows an enum name verbatim
 /// (ruling 3), the dropdown enables only for exactly one body row (ruling 6), a
@@ -20,9 +20,9 @@ namespace GanttCreator.AddIn.Tests;
 /// sequentially, so the host lifecycle tests cannot race these.
 /// </remarks>
 [Collection("diagnostics-service")]
-public sealed class LabelPositionRibbonTests : IDisposable
+public sealed class DescriptionLabelRibbonTests : IDisposable
 {
-    public LabelPositionRibbonTests() => RibbonStateService.Reset();
+    public DescriptionLabelRibbonTests() => RibbonStateService.Reset();
 
     public void Dispose()
     {
@@ -33,7 +33,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
     /// <summary>
     /// Hand-written fake for <see cref="ISelectionIdentifier"/>: returns a fixed
     /// selection and counts subscription attach/detach so the tests can prove
-    /// only the label dropdown is invalidated on a selection change.
+    /// only the description-label dropdown is invalidated on a selection change.
     /// </summary>
     private sealed class FakeSelectionIdentifier : ISelectionIdentifier
     {
@@ -161,7 +161,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
         };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.False(service.GetEnabled(RibbonControlIds.LabelPosition));
+        Assert.False(service.GetEnabled(RibbonControlIds.DescriptionLabel));
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.True(service.GetEnabled(RibbonControlIds.LabelPosition));
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
     }
 
     [Fact]
@@ -181,13 +181,13 @@ public sealed class LabelPositionRibbonTests : IDisposable
 
         // Default (clear) is always offered first, then the catalogue set in
         // display order — D1 projection, never a hand-authored list.
-        Assert.Equal(6, service.GetLabelPositionCount());
-        Assert.Equal("Default", service.GetLabelPositionItemID(0));
-        Assert.Equal("Auto", service.GetLabelPositionItemID(1));
-        Assert.Equal("Left", service.GetLabelPositionItemID(2));
-        Assert.Equal("Right", service.GetLabelPositionItemID(3));
-        Assert.Equal("Inside", service.GetLabelPositionItemID(4));
-        Assert.Equal("None", service.GetLabelPositionItemID(5));
+        Assert.Equal(6, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("Auto", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Left", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Right", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("Inside", service.GetDescriptionLabelItemID(4));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(5));
     }
 
     [Fact]
@@ -198,11 +198,11 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal(5, service.GetLabelPositionCount());
-        Assert.Equal("DataPanelLeft", service.GetLabelPositionItemID(1));
-        Assert.Equal("PlotCentre", service.GetLabelPositionItemID(2));
-        Assert.Equal("Both", service.GetLabelPositionItemID(3));
-        Assert.Equal("None", service.GetLabelPositionItemID(4));
+        Assert.Equal(5, service.GetDescriptionLabelCount());
+        Assert.Equal("DataPanelLeft", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("PlotCentre", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Both", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(4));
     }
 
     [Theory]
@@ -215,9 +215,9 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row(type, null));
 
-        Assert.Equal(2, service.GetLabelPositionCount());
-        Assert.Equal("Default", service.GetLabelPositionItemID(0));
-        Assert.Equal("None", service.GetLabelPositionItemID(1));
+        Assert.Equal(2, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(1));
     }
 
     [Fact]
@@ -228,9 +228,9 @@ public sealed class LabelPositionRibbonTests : IDisposable
 
         // Inside reads Centre (R4.7G D6) and None reads None (hide), so the
         // explicit hide stays distinct from Default.
-        Assert.Equal("Default", service.GetLabelPositionItemLabel(0));
-        Assert.Equal("Centre", service.GetLabelPositionItemLabel(4));
-        Assert.Equal("None (hide)", service.GetLabelPositionItemLabel(5));
+        Assert.Equal("Default", service.GetDescriptionLabelItemLabel(0));
+        Assert.Equal("Centre", service.GetDescriptionLabelItemLabel(4));
+        Assert.Equal("None (hide)", service.GetDescriptionLabelItemLabel(5));
     }
 
     [Fact]
@@ -239,9 +239,9 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Splitter", null));
 
-        Assert.Equal("Data panel", service.GetLabelPositionItemLabel(1));
-        Assert.Equal("Plot centre", service.GetLabelPositionItemLabel(2));
-        Assert.Equal("Both", service.GetLabelPositionItemLabel(3));
+        Assert.Equal("Data panel", service.GetDescriptionLabelItemLabel(1));
+        Assert.Equal("Plot centre", service.GetDescriptionLabelItemLabel(2));
+        Assert.Equal("Both", service.GetDescriptionLabelItemLabel(3));
     }
 
     [Fact]
@@ -250,10 +250,10 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Delineator", null));
 
-        Assert.Equal(7, service.GetLabelPositionCount());
-        Assert.Equal("Top left", service.GetLabelPositionItemLabel(2));
-        Assert.Equal("Bottom right", service.GetLabelPositionItemLabel(5));
-        Assert.Equal("None (hide)", service.GetLabelPositionItemLabel(6));
+        Assert.Equal(7, service.GetDescriptionLabelCount());
+        Assert.Equal("Top left", service.GetDescriptionLabelItemLabel(2));
+        Assert.Equal("Bottom right", service.GetDescriptionLabelItemLabel(5));
+        Assert.Equal("None (hide)", service.GetDescriptionLabelItemLabel(6));
     }
 
     [Fact]
@@ -264,7 +264,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(0, service.GetLabelPositionSelectedIndex());
+        Assert.Equal(0, service.GetDescriptionLabelSelectedIndex());
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", "Right"));
 
-        Assert.Equal(3, service.GetLabelPositionSelectedIndex());
+        Assert.Equal(3, service.GetDescriptionLabelSelectedIndex());
     }
 
     [Fact]
@@ -282,8 +282,8 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(string.Empty, service.GetLabelPositionItemLabel(99));
-        Assert.Equal(string.Empty, service.GetLabelPositionItemID(99));
+        Assert.Equal(string.Empty, service.GetDescriptionLabelItemLabel(99));
+        Assert.Equal(string.Empty, service.GetDescriptionLabelItemID(99));
     }
 
     [Fact]
@@ -294,8 +294,8 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SelectionFacts.None };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(0, service.GetLabelPositionCount());
-        Assert.Equal(0, service.GetLabelPositionSelectedIndex());
+        Assert.Equal(0, service.GetDescriptionLabelCount());
+        Assert.Equal(0, service.GetDescriptionLabelSelectedIndex());
     }
 
     [Fact]
@@ -304,8 +304,8 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Widget", null));
 
-        Assert.Equal(0, service.GetLabelPositionCount());
-        Assert.False(service.GetEnabled(RibbonControlIds.LabelPosition));
+        Assert.Equal(0, service.GetDescriptionLabelCount());
+        Assert.False(service.GetEnabled(RibbonControlIds.DescriptionLabel));
     }
 
     [Fact]
@@ -317,8 +317,8 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.True(service.GetEnabled(RibbonControlIds.LabelPosition));
-        Assert.Equal(6, service.GetLabelPositionCount());
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
+        Assert.Equal(6, service.GetDescriptionLabelCount());
     }
 
     [Fact]
@@ -343,7 +343,7 @@ public sealed class LabelPositionRibbonTests : IDisposable
             .Select(item => item.Arguments[0])
             .ToList();
 
-        Assert.Equal([RibbonControlIds.LabelPosition], invalidated);
+        Assert.Equal([RibbonControlIds.DescriptionLabel], invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
 
@@ -369,12 +369,12 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
         var control = new Mock<IRibbonControl>().Object;
 
-        Assert.Equal(service.GetLabelPositionCount(), GanttRibbon.GetLabelPositionCount(control, service));
-        Assert.Equal(service.GetLabelPositionItemID(4), GanttRibbon.GetLabelPositionItemID(control, 4, service));
-        Assert.Equal(service.GetLabelPositionItemLabel(4), GanttRibbon.GetLabelPositionItemLabel(control, 4, service));
+        Assert.Equal(service.GetDescriptionLabelCount(), GanttRibbon.GetDescriptionLabelCount(control, service));
+        Assert.Equal(service.GetDescriptionLabelItemID(4), GanttRibbon.GetDescriptionLabelItemID(control, 4, service));
+        Assert.Equal(service.GetDescriptionLabelItemLabel(4), GanttRibbon.GetDescriptionLabelItemLabel(control, 4, service));
         Assert.Equal(
-            service.GetLabelPositionSelectedIndex(),
-            GanttRibbon.GetLabelPositionSelectedIndex(control, service));
+            service.GetDescriptionLabelSelectedIndex(),
+            GanttRibbon.GetDescriptionLabelSelectedIndex(control, service));
     }
 
     [Fact]
@@ -385,11 +385,11 @@ public sealed class LabelPositionRibbonTests : IDisposable
         // dropdown in Excel.
         var control = new Mock<IRibbonControl>().Object;
 
-        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetLabelPositionCount(control, null!));
-        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetLabelPositionItemID(control, 0, null!));
-        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetLabelPositionItemLabel(control, 0, null!));
-        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetLabelPositionSelectedIndex(control, null!));
-        Assert.Throws<ArgumentNullException>(() => GanttRibbon.OnLabelPositionChange(control, "Left", null!));
+        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetDescriptionLabelCount(control, null!));
+        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetDescriptionLabelItemID(control, 0, null!));
+        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetDescriptionLabelItemLabel(control, 0, null!));
+        Assert.Throws<ArgumentNullException>(() => GanttRibbon.GetDescriptionLabelSelectedIndex(control, null!));
+        Assert.Throws<ArgumentNullException>(() => GanttRibbon.OnDescriptionLabelChange(control, "Left", null!));
     }
 
     [Fact]
@@ -401,10 +401,10 @@ public sealed class LabelPositionRibbonTests : IDisposable
         var control = new Mock<IRibbonControl>().Object;
         var service = new RibbonStateService();
 
-        Assert.Equal(0, GanttRibbon.GetLabelPositionCount(control, service));
-        Assert.Equal(0, GanttRibbon.GetLabelPositionSelectedIndex(control, service));
-        Assert.Equal(string.Empty, GanttRibbon.GetLabelPositionItemLabel(control, 1, service));
-        Assert.Equal(string.Empty, GanttRibbon.GetLabelPositionItemID(control, 1, service));
+        Assert.Equal(0, GanttRibbon.GetDescriptionLabelCount(control, service));
+        Assert.Equal(0, GanttRibbon.GetDescriptionLabelSelectedIndex(control, service));
+        Assert.Equal(string.Empty, GanttRibbon.GetDescriptionLabelItemLabel(control, 1, service));
+        Assert.Equal(string.Empty, GanttRibbon.GetDescriptionLabelItemID(control, 1, service));
     }
 
     private static int CountInvalidations(Mock<IRibbonUI> ribbon) =>

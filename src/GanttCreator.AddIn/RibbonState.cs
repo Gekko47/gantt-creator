@@ -37,17 +37,19 @@ namespace GanttCreator.AddIn;
 /// <see cref="GanttPeriodLabelFormat.MMM"/> on the month scale, the scale's
 /// canonical form on the quarter and week scales (R5.12).
 /// </param>
-/// <param name="LabelSelectionAvailable">
+/// <param name="DescriptionLabelSelectionAvailable">
 /// True when the selection resolves to exactly one table body row (R5.5
-/// ruling 6). False disables the label-position dropdown; a collapsed
+/// ruling 6). False disables the description-label dropdown; a collapsed
 /// parent row still qualifies (ruling 7) and edits its own cell only.
 /// </param>
-/// <param name="SelectedLabelPosition">
-/// The selected row's stored <c>LabelPosition</c>, or null when the cell
+/// <param name="SelectedDescriptionLabelPosition">
+/// The selected row's stored <c>LabelPosition</c> (its
+/// description-label position), or null when the cell
 /// is blank (Default) or the selection is not a single row.
 /// </param>
-/// <param name="LabelOptions">
-/// The selected row's allowed positions in ribbon display order
+/// <param name="DescriptionLabelOptions">
+/// The selected row's allowed description-label positions in ribbon
+/// display order
 /// (projected from the catalogue/style — R5.5 D1), or null when the
 /// selection is not a single row.
 /// </param>
@@ -68,9 +70,9 @@ internal sealed record RibbonState(
     double? PlotWidthPt,
     double? PlotHeightPt,
     GanttPeriodLabelFormat PeriodLabelFormat,
-    bool LabelSelectionAvailable = false,
-    GanttLabelPosition? SelectedLabelPosition = null,
-    IReadOnlyList<GanttLabelPosition>? LabelOptions = null)
+    bool DescriptionLabelSelectionAvailable = false,
+    GanttLabelPosition? SelectedDescriptionLabelPosition = null,
+    IReadOnlyList<GanttLabelPosition>? DescriptionLabelOptions = null)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -125,12 +127,12 @@ internal sealed record RibbonState(
         RibbonControlIds.DemoteToChild => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.MoveUp => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.MoveDown => HasActiveWorkbook && SheetInitialised,
-        // R5.5 ruling 6: the label dropdown is the first selection-gated
-        // control — it enables only for exactly one resolved body row, so a
-        // header/multi/no selection disables it and the command still
-        // re-checks at execution time (ruling 1).
-        RibbonControlIds.LabelPosition =>
-            HasActiveWorkbook && SheetInitialised && LabelSelectionAvailable,
+        // R5.5 ruling 6: the description-label dropdown is the first
+        // selection-gated control — it enables only for exactly one
+        // resolved body row, so a header/multi/no selection disables it
+        // and the command still re-checks at execution time (ruling 1).
+        RibbonControlIds.DescriptionLabel =>
+            HasActiveWorkbook && SheetInitialised && DescriptionLabelSelectionAvailable,
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,

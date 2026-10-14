@@ -943,31 +943,31 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns how many items the label-position dropdown offers. Excel's
+    /// Returns how many items the description-label dropdown offers. Excel's
     /// dynamic dropDown contract asks for this through getItemCount; the answer
     /// comes from the state service snapshot (the selected row's projected
     /// positions plus the leading Default item). Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    public int GetLabelPositionCount(IRibbonControl control) =>
-        GetLabelPositionCount(control, RibbonStateService.Instance);
+    public int GetDescriptionLabelCount(IRibbonControl control) =>
+        GetDescriptionLabelCount(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetLabelPositionCount(IRibbonControl)"/> against an
+    /// Runs <see cref="GetDescriptionLabelCount(IRibbonControl)"/> against an
     /// injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The item count; zero when no single row is selected.</returns>
-    internal static int GetLabelPositionCount(IRibbonControl? control, RibbonStateService stateService)
+    internal static int GetDescriptionLabelCount(IRibbonControl? control, RibbonStateService stateService)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
 #pragma warning disable CA1031
         try
         {
-            return stateService.GetLabelPositionCount();
+            return stateService.GetDescriptionLabelCount();
         }
         catch
         {
@@ -977,18 +977,18 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns the item ID at the given index for the label-position dropdown
+    /// Returns the item ID at the given index for the description-label dropdown
     /// (<c>Default</c> at 0, otherwise the position name). Excel's dynamic
     /// dropDown contract asks for this through getItemID; the answer comes from
     /// the state service snapshot. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
     /// <param name="index">The zero-based item index.</param>
-    public string GetLabelPositionItemID(IRibbonControl control, int index) =>
-        GetLabelPositionItemID(control, index, RibbonStateService.Instance);
+    public string GetDescriptionLabelItemID(IRibbonControl control, int index) =>
+        GetDescriptionLabelItemID(control, index, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetLabelPositionItemID(IRibbonControl, int)"/> against an
+    /// Runs <see cref="GetDescriptionLabelItemID(IRibbonControl, int)"/> against an
     /// injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
@@ -996,7 +996,7 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="index">The zero-based item index.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The item ID, or an empty string when the index is out of range.</returns>
-    internal static string GetLabelPositionItemID(
+    internal static string GetDescriptionLabelItemID(
         IRibbonControl? control,
         int index,
         RibbonStateService stateService)
@@ -1006,7 +1006,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return stateService.GetLabelPositionItemID(index);
+            return stateService.GetDescriptionLabelItemID(index);
         }
         catch
         {
@@ -1017,17 +1017,17 @@ public class GanttRibbon : ExcelRibbon
 
     /// <summary>
     /// Returns the user-facing item label at the given index for the
-    /// label-position dropdown. Excel's dynamic dropDown contract asks for this
+    /// description-label dropdown. Excel's dynamic dropDown contract asks for this
     /// through getItemLabel; the answer comes from the state service snapshot,
     /// so the enum name is never shown verbatim (R5.5 ruling 3). Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
     /// <param name="index">The zero-based item index.</param>
-    public string GetLabelPositionItemLabel(IRibbonControl control, int index) =>
-        GetLabelPositionItemLabel(control, index, RibbonStateService.Instance);
+    public string GetDescriptionLabelItemLabel(IRibbonControl control, int index) =>
+        GetDescriptionLabelItemLabel(control, index, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetLabelPositionItemLabel(IRibbonControl, int)"/> against
+    /// Runs <see cref="GetDescriptionLabelItemLabel(IRibbonControl, int)"/> against
     /// an injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
@@ -1035,7 +1035,7 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="index">The zero-based item index.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The item label, or an empty string when the index is out of range.</returns>
-    internal static string GetLabelPositionItemLabel(
+    internal static string GetDescriptionLabelItemLabel(
         IRibbonControl? control,
         int index,
         RibbonStateService stateService)
@@ -1045,7 +1045,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return stateService.GetLabelPositionItemLabel(index);
+            return stateService.GetDescriptionLabelItemLabel(index);
         }
         catch
         {
@@ -1055,24 +1055,24 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns the selected index of the label-position dropdown. Excel's
+    /// Returns the selected index of the description-label dropdown. Excel's
     /// dynamic dropDown contract asks for this through
     /// getSelectedItemIndex; the answer comes from the state service snapshot,
     /// so the dropdown reflects the selected row's stored cell. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    public int GetLabelPositionSelectedIndex(IRibbonControl control) =>
-        GetLabelPositionSelectedIndex(control, RibbonStateService.Instance);
+    public int GetDescriptionLabelSelectedIndex(IRibbonControl control) =>
+        GetDescriptionLabelSelectedIndex(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetLabelPositionSelectedIndex(IRibbonControl)"/> against
+    /// Runs <see cref="GetDescriptionLabelSelectedIndex(IRibbonControl)"/> against
     /// an injected state service. Internal so contract tests can verify the
     /// routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
     /// <returns>The zero-based selected index; zero (Default) when unknown.</returns>
-    internal static int GetLabelPositionSelectedIndex(
+    internal static int GetDescriptionLabelSelectedIndex(
         IRibbonControl? control,
         RibbonStateService stateService)
     {
@@ -1081,7 +1081,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            return stateService.GetLabelPositionSelectedIndex();
+            return stateService.GetDescriptionLabelSelectedIndex();
         }
         catch
         {
@@ -1156,7 +1156,7 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Called when the user picks a label position from the ribbon dropdown.
+    /// Called when the user picks a description-label position from the ribbon dropdown.
     /// Excel's dropDown onAction contract passes the control, the selected item
     /// id, and the selected index; the id is authoritative (it names the
     /// position, or <c>Default</c> to clear the cell) and the index is ignored,
@@ -1168,19 +1168,19 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="selectedId">The selected item id, or null in tests.</param>
     /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
 #pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
-    public void OnLabelPositionChange(IRibbonControl control, string selectedId, int selectedIndex)
-        => OnLabelPositionChange(control, selectedId, RibbonStateService.Instance);
+    public void OnDescriptionLabelChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnDescriptionLabelChange(control, selectedId, RibbonStateService.Instance);
 #pragma warning restore IDE0060
 
     /// <summary>
-    /// Runs <see cref="OnLabelPositionChange(IRibbonControl, string, int)"/>
+    /// Runs <see cref="OnDescriptionLabelChange(IRibbonControl, string, int)"/>
     /// against an injected state service. Internal so contract tests can verify
     /// the routing without the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="id">The selected item id, or null in tests.</param>
     /// <param name="stateService">The state service applying the setting.</param>
-    internal static void OnLabelPositionChange(
+    internal static void OnDescriptionLabelChange(
         IRibbonControl? control,
         string? id,
         RibbonStateService stateService)
@@ -1190,7 +1190,7 @@ public class GanttRibbon : ExcelRibbon
 #pragma warning disable CA1031
         try
         {
-            stateService.SetLabelPosition(id);
+            stateService.SetDescriptionLabelPosition(id);
         }
         catch
         {
