@@ -47,8 +47,9 @@ public class ExcelDateLabelPositionMutator(
     /// <inheritdoc />
     public DateLabelMutationOutcome SetDateLabelPosition(GanttDateLabelPosition? position)
     {
-        // ADR-0008 D4: the shared protection guard is intentionally the first
-        // operation in this mutating entry point, before any workbook access.
+        // ADR-0008 D4: the shared protection guard is the first
+        // operation of this mutating entry point, before any
+        // workbook access.
         ProtectionGuardOutcome protection = _protectionGuard.Query();
         if (protection != ProtectionGuardOutcome.NotProtected)
         {
@@ -58,6 +59,57 @@ public class ExcelDateLabelPositionMutator(
                     : DateLabelMutationRefusalReason.TargetProtected);
         }
 
+        DateLabelMutationOutcome? refusal = RunGuards(
+            out ListObject? table,
+            out List<object?[]>? body,
+            out int[]? columnMap,
+            out int bodyIndex);
+        return refusal ?? ApplySetDateLabelPosition(table!, body!, columnMap!, bodyIndex, position);
+    }
+
+    /// <inheritdoc />
+    public DateLabelMutationOutcome SetDateLabelPlacement(GanttLabelPosition? placement)
+    {
+        // ADR-0008 D4: the shared protection guard is the first
+        // operation of this mutating entry point, before any
+        // workbook access.
+        ProtectionGuardOutcome protection = _protectionGuard.Query();
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return DateLabelMutationOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? DateLabelMutationRefusalReason.NoActiveWorkbook
+                    : DateLabelMutationRefusalReason.TargetProtected);
+        }
+
+        DateLabelMutationOutcome? refusal = RunGuards(
+            out ListObject? table,
+            out List<object?[]>? body,
+            out int[]? columnMap,
+            out int bodyIndex);
+        return refusal ?? ApplySetDateLabelPlacement(table!, body!, columnMap!, bodyIndex, placement);
+    }
+
+    /// <summary>
+    /// The table-locating prologue both date-label writes share,
+    /// reached only after the entry point's own guard query
+    /// (ADR-0008 D4): the workbook and table lookup, the target
+    /// worksheet's protection, and the active-cell resolution.
+    /// Returns the typed refusal when any step refuses, or null —
+    /// with the resolved write context in the out parameters —
+    /// when every step passes.
+    /// </summary>
+    private DateLabelMutationOutcome? RunGuards(
+        out ListObject? table,
+        out List<object?[]>? body,
+        out int[]? columnMap,
+        out int bodyIndex)
+    {
+        table = null;
+        body = null;
+        columnMap = null;
+        bodyIndex = 0;
+
         Application? application = _application;
         Workbook? workbook = application?.ActiveWorkbook;
         if (workbook is null)
@@ -66,7 +118,7 @@ public class ExcelDateLabelPositionMutator(
         }
 
         Sheets sheets = workbook.Sheets;
-        if (!TryFindTable(sheets, out Worksheet? worksheet, out ListObject? table) || worksheet is null || table is null)
+        if (!TryFindTable(sheets, out Worksheet? worksheet, out ListObject? foundTable) || worksheet is null || foundTable is null)
         {
             return DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing);
         }
@@ -80,14 +132,21 @@ public class ExcelDateLabelPositionMutator(
                     : DateLabelMutationRefusalReason.TargetProtected);
         }
 
-        ListRows rows = GetListRows(table);
-        var bodyIndex = ResolveActiveBodyIndex(table, rows);
-        return bodyIndex == 0
-            ? DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.SelectionOutsideTable)
-            : !TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
-                || body is null || columnMap is null
-                ? DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing)
-                : ApplySetDateLabelPosition(table, body, columnMap, bodyIndex, position);
+        ListRows rows = GetListRows(foundTable);
+        var resolvedIndex = ResolveActiveBodyIndex(foundTable, rows);
+        if (resolvedIndex == 0)
+        {
+            return DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.SelectionOutsideTable);
+        }
+
+        if (!TryReadBody(foundTable, out body, out columnMap) || body is null || columnMap is null)
+        {
+            return DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing);
+        }
+
+        table = foundTable;
+        bodyIndex = resolvedIndex;
+        return null;
     }
 
     /// <summary>
@@ -146,6 +205,62 @@ public class ExcelDateLabelPositionMutator(
         // a collapsed parent writes its own cell while hidden children keep
         // theirs (owner ruling 2026-10-14).
         return WriteCell(table, columnMap, selectedIndex, "DateLabelPosition", position?.ToString(), bodyIndex);
+    }
+
+    /// <summary>
+    /// Testable apply path for a positionable date label: validates the
+    /// selected row and writes exactly its <c>DateLabelPosition</c> cell.
+    /// Internal so contract tests drive it with a crafted body.
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <param name="body">The raw body matrix, in body order. Not mutated except the target cell.</param>
+    /// <param name="columnMap">The schema-column to table-column index map.</param>
+    /// <param name="bodyIndex">The one-based body index of the selection.</param>
+    /// <param name="placement">The corner to write, or null to clear.</param>
+    /// <returns>The typed mutation outcome.</returns>
+    internal DateLabelMutationOutcome ApplySetDateLabelPlacement(
+        ListObject table,
+        List<object?[]> body,
+        int[] columnMap,
+        int bodyIndex,
+        GanttLabelPosition? placement)
+    {
+        var selectedIndex = bodyIndex - 1;
+        if (selectedIndex < 0 || selectedIndex >= body.Count)
+        {
+            return DateLabelMutationOutcome.Refused(
+                DateLabelMutationRefusalReason.SelectionOutsideTable);
+        }
+
+        if (!GanttRowId.TryParse(
+                ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Id"),
+                out GanttRowId? _))
+        {
+            return DateLabelMutationOutcome.Refused(
+                DateLabelMutationRefusalReason.SelectionUnknown, bodyIndex);
+        }
+
+        var typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
+        if (!EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
+        {
+            return DateLabelMutationOutcome.Refused(
+                DateLabelMutationRefusalReason.TypeUnknown, bodyIndex);
+        }
+
+        // Owner ruling 2026-10-14: only the delineator's date label is
+        // positionable, so a position write is refused for every other
+        // type — the mirror of the which-date write, which a delineator
+        // row refuses because its which-date set is empty.
+        if (type != GanttEntityType.Delineator
+            || (placement.HasValue && !EntityTypeCatalog.IsDateLabelPlacementAllowed(type, placement.Value)))
+        {
+            return DateLabelMutationOutcome.Refused(
+                DateLabelMutationRefusalReason.DateLabelNotAllowedForType, bodyIndex);
+        }
+
+        // A null placement clears the cell (blank = Auto). Only the
+        // selected row's cell is written: bespoke per entity, never the group.
+        return WriteCell(table, columnMap, selectedIndex, "DateLabelPosition", placement?.ToString(), bodyIndex);
     }
 
     /// <summary>

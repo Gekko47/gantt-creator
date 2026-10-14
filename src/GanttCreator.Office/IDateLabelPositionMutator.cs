@@ -82,4 +82,16 @@ public interface IDateLabelPositionMutator
     /// <param name="position">The choice to write, or null to clear.</param>
     /// <returns>The typed mutation outcome.</returns>
     DateLabelMutationOutcome SetDateLabelPosition(GanttDateLabelPosition? position);
+
+    /// <summary>
+    /// Sets the <c>DateLabelPosition</c> cell of the row under the active
+    /// cell to a date-label <em>position</em> — the delineator's positionable
+    /// date label (owner ruling 2026-10-14): a plot-spanning line has no bar
+    /// to anchor a date label Left/Right of, so its cell names a corner from
+    /// the description label's set instead of a which-date choice. A null
+    /// placement clears the cell (blank = Auto).
+    /// </summary>
+    /// <param name="placement">The corner to write, or null to clear.</param>
+    /// <returns>The typed mutation outcome.</returns>
+    DateLabelMutationOutcome SetDateLabelPlacement(GanttLabelPosition? placement);
 }

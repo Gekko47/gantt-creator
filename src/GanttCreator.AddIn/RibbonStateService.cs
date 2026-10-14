@@ -90,6 +90,21 @@ internal class RibbonStateService
         IReadOnlyList<GanttDateLabelPosition>? Options);
 
     /// <summary>
+    /// The date-label dropdown's per-selection context in the
+    /// positionable vocabulary (owner ruling 2026-10-14): whether
+    /// the selection resolves to exactly one table body row whose
+    /// date label is positionable (the delineator), that row's
+    /// stored corner, and the corners the row permits.
+    /// </summary>
+    /// <param name="Available">True when exactly one body row is selected.</param>
+    /// <param name="Selected">The row's stored corner, or null when blank (Auto).</param>
+    /// <param name="Options">The row's allowed corners in display order.</param>
+    private readonly record struct DateLabelPlacementContext(
+        bool Available,
+        GanttLabelPosition? Selected,
+        IReadOnlyList<GanttLabelPosition>? Options);
+
+    /// <summary>
     /// The metric token naming the frame's outer right padding, in points.
     /// Named once here rather than inlined so the display's chrome split and
     /// the Refresh pipeline's cannot drift (R4.8A D5: a literal here is a
@@ -1348,7 +1363,9 @@ internal class RibbonStateService
     /// pure read of the cached snapshot. Never throws.
     /// </summary>
     internal int GetDateLabelCount() =>
-        _state.DateLabelOptions is { Count: > 0 } options ? options.Count : 0;
+        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
+            ? placementOptions.Count
+            : _state.DateLabelOptions is { Count: > 0 } options ? options.Count : 0;
 
     /// <summary>
     /// Returns the item ID at <paramref name="index"/>: the leading
@@ -1361,6 +1378,20 @@ internal class RibbonStateService
     /// <param name="index">The zero-based item index.</param>
     internal string GetDateLabelItemID(int index)
     {
+        // Owner ruling 2026-10-14: a delineator row carries the
+        // positionable vocabulary, whose items are the description
+        // label's corners. Auto clears the cell, so its item id is
+        // the clear marker, not the enum name
+        // (TryParseDateLabelPlacementSelection maps Default to null).
+        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        {
+            return index < 0 || index >= placementOptions.Count
+                ? string.Empty
+                : placementOptions[index] == GanttLabelPosition.Auto
+                    ? EntityTypeCatalog.DefaultDateLabelSelectionId
+                    : placementOptions[index].ToString();
+        }
+
         if (_state.DateLabelOptions is not { Count: > 0 } options
             || index < 0 || index >= options.Count)
         {
@@ -1382,11 +1413,15 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="index">The zero-based item index.</param>
     internal string GetDateLabelItemLabel(int index) =>
-        _state.DateLabelOptions is { Count: > 0 } options
+        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
         && index >= 0
-        && index < options.Count
-            ? DateLabelDisplayText(options[index])
-            : string.Empty;
+        && index < placementOptions.Count
+            ? LabelPositionDisplayText(placementOptions[index])
+            : _state.DateLabelOptions is { Count: > 0 } options
+            && index >= 0
+            && index < options.Count
+                ? DateLabelDisplayText(options[index])
+                : string.Empty;
 
     /// <summary>
     /// Returns the selected item index: <c>Auto</c> (index 0) when the
@@ -1397,6 +1432,24 @@ internal class RibbonStateService
     /// </summary>
     internal int GetDateLabelSelectedIndex()
     {
+        // Owner ruling 2026-10-14: the positionable vocabulary's
+        // leading choice is Auto, exactly as the which-date vocabulary's
+        // is, so a blank cell reads as index 0 in either.
+        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        {
+            // Blank (null) resolves to Auto, and Auto is the leading choice.
+            var selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
+            for (var index = 0; index < placementOptions.Count; index++)
+            {
+                if (placementOptions[index] == selectedPlacement)
+                {
+                    return index;
+                }
+            }
+
+            return 0;
+        }
+
         if (_state.DateLabelOptions is not { Count: > 0 } options)
         {
             return 0;
@@ -1432,15 +1485,29 @@ internal class RibbonStateService
         };
 
     /// <summary>
-    /// Applies one date-label selection to the selected row: the item ID is
-    /// parsed through the catalogue (<c>Default</c> clears the cell to
-    /// blank = Auto, an unknown ID is refused — never defaulted), the
-    /// command runs, and the ribbon refreshes so the dropdown reflects the
+    /// Applies one date-label selection to the selected row. The
+    /// dropdown carries one of two vocabularies (owner ruling
+    /// 2026-10-14): for a delineator row the item is a position,
+    /// parsed through the catalogue (<c>Default</c> clears the cell
+    /// to blank = Auto, an unknown ID is refused — never defaulted)
+    /// and the placement command runs; for every other dated type
+    /// the item is a which-date choice and the date-label command
+    /// runs. The ribbon then refreshes so the dropdown reflects the
     /// written cell (R1.5 D3). Never throws.
     /// </summary>
     /// <param name="selectionId">The selected item ID, or null in tests.</param>
     internal void SetDateLabelPosition(string? selectionId)
     {
+        if (_state.DateLabelPlacementOptions is { Count: > 0 }
+            && EntityTypeCatalog.TryParseDateLabelPlacementSelection(
+                selectionId,
+                out GanttLabelPosition? placement))
+        {
+            SetDateLabelPlacementCommand.RunForExcel(placement);
+            Refresh();
+            return;
+        }
+
         if (!EntityTypeCatalog.TryParseDateLabelSelection(selectionId, out GanttDateLabelPosition? position))
         {
             return;
@@ -1517,6 +1584,7 @@ internal class RibbonStateService
             // the dropdown mid-selection.
             var descriptionLabelContext = CaptureDescriptionLabelContext(previous);
             var dateLabelContext = CaptureDateLabelContext(previous);
+            var dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
@@ -1540,7 +1608,10 @@ internal class RibbonStateService
                 descriptionLabelContext.Options,
                 dateLabelContext.Available,
                 dateLabelContext.Selected,
-                dateLabelContext.Options));
+                dateLabelContext.Options,
+                dateLabelPlacementContext.Available,
+                dateLabelPlacementContext.Selected,
+                dateLabelPlacementContext.Options));
         }
         catch
         {
@@ -1645,9 +1716,13 @@ internal class RibbonStateService
     /// projection). The capability is type-only (D4): a Custom
     /// Activity style carries no date mode, so — unlike the
     /// description-label capture — no catalogue or style registry is
-    /// consulted. Never throws: an indeterminable selection keeps the
-    /// previous context (snapshot stickiness), so a transient COM
-    /// failure cannot grey the dropdown mid-selection.
+    /// consulted. Owner ruling 2026-10-14: the delineator's date
+    /// label is positionable, so its which-date set is empty and this
+    /// context reads as unavailable for a delineator row — the
+    /// positionable context carries that row instead. Never throws:
+    /// an indeterminable selection keeps the previous context
+    /// (snapshot stickiness), so a transient COM failure cannot grey
+    /// the dropdown mid-selection.
     /// </summary>
     /// <param name="previous">The snapshot currently published.</param>
     /// <returns>The captured context, or the previous one when unavailable.</returns>
@@ -1717,6 +1792,87 @@ internal class RibbonStateService
     /// <returns>The unavailable context.</returns>
     private static DateLabelContext UnavailableDateLabelContext(RibbonState previous) =>
         new(false, previous.SelectedDateLabelPosition, previous.DateLabelOptions);
+
+    /// <summary>
+    /// Captures the date-label dropdown's context in the
+    /// positionable vocabulary (owner ruling 2026-10-14): the
+    /// selection identifier and the table reader, like the which-date
+    /// capture, but the option set is the description label's corner
+    /// set and it is available only for the delineator, the one type
+    /// whose date label is positionable. Never throws: an
+    /// indeterminable selection keeps the previous context (snapshot
+    /// stickiness), so a transient COM failure cannot grey the
+    /// dropdown mid-selection.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private DateLabelPlacementContext CaptureDateLabelPlacementContext(RibbonState previous)
+    {
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        IGanttTableReader? reader = _tableReader;
+        if (identifier is null || reader is null)
+        {
+            return UnavailableDateLabelPlacementContext(previous);
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.IsSingleBodyRow || facts.BodyIndex is not int bodyIndex)
+            {
+                return UnavailableDateLabelPlacementContext(previous);
+            }
+
+            GanttTableReadOutcome read = reader.Read();
+            if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+            {
+                return UnavailableDateLabelPlacementContext(previous);
+            }
+
+            GanttRowDto row = read.Rows[bodyIndex - 1];
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type)
+                || type != GanttEntityType.Delineator)
+            {
+                return UnavailableDateLabelPlacementContext(previous);
+            }
+
+            IReadOnlyList<GanttLabelPosition> options =
+                EntityTypeCatalog.GetAllowedDateLabelPlacements(type);
+            if (options.Count == 0)
+            {
+                return UnavailableDateLabelPlacementContext(previous);
+            }
+
+            // The cell stores the corner by name; blank resolves to Auto
+            // (the which-date precedent), so it reads as null.
+            GanttLabelPosition? selected = EntityTypeCatalog.TryParseDateLabelPlacementSelection(
+                row.DateLabelPositionText,
+                out GanttLabelPosition? parsed)
+                ? parsed
+                : null;
+
+            return new DateLabelPlacementContext(true, selected, options);
+        }
+        catch
+        {
+            return UnavailableDateLabelPlacementContext(previous);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The context published when the date-label dropdown's
+    /// positionable vocabulary cannot be resolved: not available,
+    /// carrying the previously published corner and options so a
+    /// transient failure cannot blank a resolved dropdown.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The unavailable context.</returns>
+    private static DateLabelPlacementContext UnavailableDateLabelPlacementContext(RibbonState previous) =>
+        new(false, previous.SelectedDateLabelPlacement, previous.DateLabelPlacementOptions);
 
     /// <summary>
     /// Attaches the selection-change handler, replacing any previous

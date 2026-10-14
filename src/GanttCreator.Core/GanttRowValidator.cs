@@ -606,15 +606,44 @@ public static class GanttRowValidator
             }
         }
 
-        // DateLabelPosition (R5.14): blank resolves to Auto; otherwise
-        // exact-enum plus the selected type's date-mode-derived capability
-        // set. The capability is type-only (R5.14 D4) -- a Custom Activity
-        // style carries no date mode -- so there is no style-resolved branch
-        // and no StyleUnknown refusal, unlike LabelPosition above.
+        // DateLabelPosition (R5.14; delimiter ruling 2026-10-14):
+        // blank resolves to Auto. The cell's vocabulary is
+        // type-dependent: a delineator's date label is
+        // positionable, so its cell names a corner from the
+        // description label's set; every other dated type's cell
+        // names a which-date choice from the type's date-mode-
+        // derived set. The capability is type-only (R5.14 D4) --
+        // a Custom Activity style carries no date mode -- so there
+        // is no style-resolved branch and no StyleUnknown refusal,
+        // unlike LabelPosition above.
         GanttDateLabelPosition? dateLabelPosition = null;
+        GanttLabelPosition? dateLabelPlacement = null;
         if (!dateLabelBlocked && row.DateLabelPositionText is not null && type is not null)
         {
-            if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
+            if (type.Value == GanttEntityType.Delineator)
+            {
+                if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttLabelPosition parsedPlacement) || !Enum.IsDefined(parsedPlacement))
+                {
+                    Add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.UnknownDateLabelPosition,
+                        GanttValidationSeverity.Error,
+                        $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+                }
+                else if (!EntityTypeCatalog.IsDateLabelPlacementAllowed(type.Value, parsedPlacement))
+                {
+                    Add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.DateLabelNotAllowedForType,
+                        GanttValidationSeverity.Error,
+                        $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+                }
+                else
+                {
+                    dateLabelPlacement = parsedPlacement;
+                }
+            }
+            else if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
             {
                 Add(
                     "DateLabelPosition",
@@ -690,7 +719,8 @@ public static class GanttRowValidator
             row.Visible ?? true,
             sortOrder)
         {
-            DateLabelPosition = dateLabelPosition
+            DateLabelPosition = dateLabelPosition,
+            DateLabelPlacement = dateLabelPlacement
         };
 
         return new ValidatedRow(id, type, definition, @event, hasError);

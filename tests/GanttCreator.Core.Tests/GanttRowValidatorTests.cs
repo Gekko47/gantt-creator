@@ -134,7 +134,19 @@ public class GanttRowValidatorTests
         Assert.True(outcome.IsValid);
         Assert.Empty(outcome.Issues);
         GanttEvent @event = Assert.Single(outcome.Events);
-        Assert.Equal(GanttDateLabelPosition.None, @event.DateLabelPosition);
+        // Owner ruling 2026-10-14: a delineator's cell names a
+        // date-label POSITION (None hides the date label), while
+        // every other dated type's cell names a which-date choice.
+        if (typeText == "Delineator")
+        {
+            Assert.Null(@event.DateLabelPosition);
+            Assert.Equal(GanttLabelPosition.None, @event.DateLabelPlacement);
+        }
+        else
+        {
+            Assert.Equal(GanttDateLabelPosition.None, @event.DateLabelPosition);
+            Assert.Null(@event.DateLabelPlacement);
+        }
     }
 
     [Fact]
@@ -190,6 +202,128 @@ public class GanttRowValidatorTests
             outcome.Issues,
             issue => issue.Field == "DateLabelPosition"
                 && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_is_accepted_and_carried_to_the_event()
+    {
+        // Owner ruling 2026-10-14 (positive test for the
+        // positionable vocabulary): a delineator's cell names a
+        // corner from the description label's set, the row is
+        // valid, and the event carries the placement — not a
+        // which-date choice, which the delineator's empty
+        // which-date set forbids.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttLabelPosition.TopLeft));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Null(@event.DateLabelPosition);
+        Assert.Equal(GanttLabelPosition.TopLeft, @event.DateLabelPlacement);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_parses_the_position_vocabulary()
+    {
+        // The vocabulary split, pinned from the bad side: "Start"
+        // is a which-date choice, not a corner, so a delineator
+        // cell carrying it is an unknown date-label position —
+        // reported, never coerced to a neighbouring corner.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttDateLabelPosition.Start));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_outside_the_corner_set_is_reported()
+    {
+        // "Inside" is a description-label position but not one of
+        // the six corners the positionable date-label set names,
+        // so the type-only capability set (D4) refuses it.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttLabelPosition.Inside));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_date_label_position_on_a_non_delineator_does_not_parse_as_a_position()
+    {
+        // The mirror of the vocabulary split: a which-date type's
+        // cell carrying a corner name is an unknown date-label
+        // position, because its cell parses as a which-date choice.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: nameof(GanttLabelPosition.TopLeft));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
     }
 
     [Fact]

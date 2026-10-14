@@ -201,10 +201,14 @@ public sealed class DateLabelRibbonTests : IDisposable
     [Fact]
     public void The_dropdown_omits_finish_for_a_start_only_type()
     {
-        // A StartOnly type (milestone, delineator) has no Finish date, so
-        // Finish is not offered: only Auto, Start, and None, in that order.
+        // A StartOnly type (milestone) has no Finish date, so
+        // Finish is not offered: only Auto, Start, and None, in
+        // that order. The delineator is StartOnly too, but its
+        // date label is positionable (owner ruling 2026-10-14),
+        // so it projects the corner set instead — see
+        // The_dropdown_offers_the_six_corners_for_a_delineator_row.
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
-        var service = ArmWithRow(selection, Row("Delineator", null));
+        var service = ArmWithRow(selection, Row("As-Built Milestone", null));
 
         Assert.Equal(3, service.GetDateLabelCount());
         Assert.Equal("Default", service.GetDateLabelItemID(0));
@@ -266,6 +270,61 @@ public sealed class DateLabelRibbonTests : IDisposable
         var service = ArmWithRow(selection, Row("As-Built Activity", "None"));
 
         Assert.Equal(3, service.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
+    public void The_dropdown_offers_the_six_corners_for_a_delineator_row()
+    {
+        // Owner ruling 2026-10-14: a delineator's date label
+        // is positionable, so the dropdown projects the
+        // description label's corner set — not the which-date
+        // choices a span offers. Auto leads and carries the
+        // Default clear-ID, exactly as in the which-date
+        // vocabulary; the wording is the shared label-position
+        // authority, never the enum name.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), null));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
+        Assert.Equal(6, service.GetDateLabelCount());
+        Assert.Equal("Default", service.GetDateLabelItemID(0));
+        Assert.Equal("TopLeft", service.GetDateLabelItemID(1));
+        Assert.Equal("TopRight", service.GetDateLabelItemID(2));
+        Assert.Equal("BottomLeft", service.GetDateLabelItemID(3));
+        Assert.Equal("BottomRight", service.GetDateLabelItemID(4));
+        Assert.Equal("None", service.GetDateLabelItemID(5));
+        Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
+        Assert.Equal("Top left", service.GetDateLabelItemLabel(1));
+        Assert.Equal("Top right", service.GetDateLabelItemLabel(2));
+        Assert.Equal("Bottom left", service.GetDateLabelItemLabel(3));
+        Assert.Equal("Bottom right", service.GetDateLabelItemLabel(4));
+        Assert.Equal("None (hide)", service.GetDateLabelItemLabel(5));
+    }
+
+    [Fact]
+    public void A_blank_delineator_cell_selects_the_leading_auto_item()
+    {
+        // The placement vocabulary's leading choice is Auto,
+        // exactly as the which-date vocabulary's is, so a
+        // blank cell reads as index 0 in either.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), null));
+
+        Assert.Equal(0, service.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
+    public void A_stored_corner_selects_its_own_item()
+    {
+        // A stored corner name selects its own place in the
+        // projected set — TopLeft is the first corner past
+        // Auto, BottomRight the last before None.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var topLeft = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), "TopLeft"));
+        Assert.Equal(1, topLeft.GetDateLabelSelectedIndex());
+
+        var bottomRight = ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), "BottomRight"));
+        Assert.Equal(4, bottomRight.GetDateLabelSelectedIndex());
     }
 
     [Fact]

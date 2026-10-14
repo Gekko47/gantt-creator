@@ -109,6 +109,14 @@ public sealed class ProtectionGuardFirstTests
         // ADR-0008 D4. Listed at "SetDateLabelPosition", the entry point
         // that consults the shared guard before any workbook or table access.
         new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPosition"),
+        // Owner ruling 2026-10-14: the positionable date label added a
+        // SECOND mutating entry point to the same adapter (a delineator's
+        // corner write). Both entry points carry their own guard query as
+        // their first statement, so both are registered here — the
+        // discovery rule works per file, but the order rule works per
+        // entry point, and an unregistered entry point could silently
+        // drop the guard.
+        new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPlacement"),
     ];
 
     /// <summary>

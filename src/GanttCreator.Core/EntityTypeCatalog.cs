@@ -424,22 +424,47 @@ public static class EntityTypeCatalog
     ];
 
     /// <summary>
+    /// Display order for the delineator's positionable date label:
+    /// the description label's corner set (owner ruling 2026-10-14),
+    /// <c>Auto</c> first and the no-label choice last. The date label
+    /// of a plot-spanning line has no bar to anchor Left/Right of,
+    /// so it shares the description label's corners.
+    /// </summary>
+    private static readonly GanttLabelPosition[] _dateLabelPlacementOrder =
+    [
+        GanttLabelPosition.Auto,
+        GanttLabelPosition.TopLeft,
+        GanttLabelPosition.TopRight,
+        GanttLabelPosition.BottomLeft,
+        GanttLabelPosition.BottomRight,
+        GanttLabelPosition.None,
+    ];
+
+    /// <summary>
     /// Returns the allowed date-label choices for a type in stable
     /// ribbon display order (R5.14 D1 projection), derived from the
     /// type's <see cref="EntityDateMode"/>: a dateless type names
     /// none (the control is disabled), a <c>StartOnly</c> type names
     /// <c>Auto</c>, <c>Start</c>, and <c>None</c>, and a span names
-    /// all four.
+    /// all four. The delineator is the exception (owner ruling
+    /// 2026-10-14): its date label is positionable, not selectable
+    /// per date — it reads Start only, so <see
+    /// cref="GetAllowedDateLabelPlacements"/> projects its set
+    /// instead and the which-date set no longer applies to it.
     /// </summary>
     /// <param name="type">The entity type.</param>
-    /// <returns>The allowed choices in display order; empty for a dateless or unknown type.</returns>
+    /// <returns>The allowed choices in display order; empty for a dateless, delineator, or unknown type.</returns>
     public static IReadOnlyList<GanttDateLabelPosition> GetAllowedDateLabelPositions(
         GanttEntityType type)
     {
         EntityTypeDefinition? definition = GetDefinition(type);
-        return definition is null
-            ? []
-            : definition.DateMode switch
+        // The delineator is the exception (owner ruling 2026-10-14): its
+        // date label is positionable, not selectable per date — it reads
+        // Start only, so <see cref="GetAllowedDateLabelPlacements"/>
+        // projects its set instead and the which-date set no longer
+        // applies to it.
+        return definition is not null && type != GanttEntityType.Delineator
+            ? definition.DateMode switch
             {
                 EntityDateMode.None => [],
                 EntityDateMode.StartOnly
@@ -448,8 +473,26 @@ public static class EntityTypeCatalog
                 // An out-of-range date mode is a catalogue corruption; the
                 // safe default is to treat the type as dateless (no options).
                 _ => [],
-            };
+            }
+            : [];
     }
+
+    /// <summary>
+    /// Returns the allowed date-label positions for a type in
+    /// stable ribbon display order — the description label's
+    /// corner set (owner ruling 2026-10-14). Only the
+    /// delineator's date label is positionable: a plot-spanning
+    /// line has no bar to anchor Left/Right of, and Start is
+    /// its only date, so the cell names a corner instead of a
+    /// which-date choice. Every other type's date label selects
+    /// which date shows (<see cref="GetAllowedDateLabelPositions"/>),
+    /// not where it sits, so the set is empty for them.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The allowed positions in display order; empty for every type but the delineator.</returns>
+    public static IReadOnlyList<GanttLabelPosition> GetAllowedDateLabelPlacements(
+        GanttEntityType type) =>
+        type == GanttEntityType.Delineator ? _dateLabelPlacementOrder : [];
 
     /// <summary>
     /// Returns whether a date-label choice is allowed for a type
@@ -463,6 +506,19 @@ public static class EntityTypeCatalog
     public static bool IsDateLabelPositionAllowed(
         GanttEntityType type, GanttDateLabelPosition position) =>
         GetAllowedDateLabelPositions(type).Contains(position);
+
+    /// <summary>
+    /// Returns whether a date-label position is allowed for a
+    /// type (the delineator-only capability, owner ruling
+    /// 2026-10-14). The capability is type-only, exactly like
+    /// the which-date guard above: a <c>Custom Activity</c>
+    /// style carries no date mode and cannot narrow the set.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate corner.</param>
+    public static bool IsDateLabelPlacementAllowed(
+        GanttEntityType type, GanttLabelPosition position) =>
+        GetAllowedDateLabelPlacements(type).Contains(position);
 
     /// <summary>
     /// Parses a ribbon date-label-selection identifier. <c>Default</c>
@@ -491,6 +547,37 @@ public static class EntityTypeCatalog
         }
 
         position = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Parses a ribbon date-label-selection identifier for a
+    /// positionable date label (the delineator, owner ruling
+    /// 2026-10-14). <c>Default</c> parses to a null position
+    /// (clear the cell to blank = <c>Auto</c>); otherwise the
+    /// identifier must name a defined <see cref="GanttLabelPosition"/>
+    /// Ordinally. Unknown text is refused, never defaulted.
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="placement">The parsed corner, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined position name.</returns>
+    public static bool TryParseDateLabelPlacementSelection(
+        string? selectionId, out GanttLabelPosition? placement)
+    {
+        if (string.Equals(selectionId, DefaultDateLabelSelectionId, StringComparison.Ordinal))
+        {
+            placement = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            placement = parsed;
+            return true;
+        }
+
+        placement = null;
         return false;
     }
 }

@@ -269,16 +269,24 @@ public sealed class DelineatorBuilderTests
     }
 
     [Fact]
-    public void A_label_no_corner_can_hold_is_suppressed_with_exactly_one_warning()
+    public void A_label_no_corner_can_hold_is_suppressed_with_a_warning_per_label()
     {
-        // Positive test for the suppression path: four blockers leave no corner,
-        // and the builder warns once rather than drawing over an obstruction.
+        // Positive test for the suppression path: four blockers leave no
+        // corner, and the builder warns once per label rather than
+        // drawing over an obstruction. The row's date label is
+        // suppressed with the description label: its corner box is
+        // wider than the description's, so the same blockers hold
+        // neither.
         List<RectD> blockers = [.. Corners.Select(c => Build(Event(), position: c).LabelBounds!.Value)];
         DelineatorResult r = Build(Req(Event()), blockers);
 
         Assert.NotNull(r.Primitive);
         Assert.Null(r.Label);
-        Assert.Equal(DelineatorBuilder.LabelSuppressedCode, Assert.Single(r.Warnings).Code);
+        Assert.Null(r.DateLabel);
+        Assert.Equal(2, r.Warnings.Count);
+        Assert.Equal(
+            new[] { DelineatorBuilder.LabelSuppressedCode, DelineatorBuilder.DateLabelSuppressedCode },
+            r.Warnings.Select(warning => warning.Code));
     }
 
     [Fact]
@@ -307,6 +315,108 @@ public sealed class DelineatorBuilderTests
         Assert.Equal("DefaultText", r.Label!.Style.StyleKey);
         Assert.Equal("Aptos", r.Label.Style.FontFamily);
         Assert.Equal(8.0, r.Label.Style.FontSizePt);
+    }
+
+    // ------------------------------------------------------------------
+    // The positionable date label (owner ruling 2026-10-14)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void The_date_label_renders_the_invariant_start_date_at_the_first_free_corner()
+    {
+        // The date label the positionable vocabulary renders: the
+        // row's Start in the invariant dd/mm/yyyy format (ADR-0016),
+        // at the first corner the description label does not already
+        // hold. The description label holds the Auto order's first
+        // corner (TopRight), so the date label takes the second
+        // (TopLeft), right-aligned so it ends against the line — the
+        // §24 alignment rule the description label follows.
+        DelineatorResult r = Build(Event());
+
+        Assert.Equal("12/09/2026", r.DateLabel!.Text);
+        Assert.EndsWith($":{DateLabelBuilder.StartRole}", r.DateLabel.PrimitiveId, StringComparison.Ordinal);
+        Assert.Equal(98.0, r.DateLabel.TextBounds.Left);
+        Assert.Equal(Plot.Top, r.DateLabel.TextBounds.Top);
+        Assert.Equal(40.0, r.DateLabel.TextBounds.Width);
+        Assert.Equal(GanttTextAlignment.Right, r.DateLabel.Alignment);
+        Assert.Equal(ZLayer.Label, r.DateLabel.ZLayer);
+        Assert.Equal("DefaultText", r.DateLabel.Style.StyleKey);
+    }
+
+    [Fact]
+    public void The_date_label_avoids_the_rows_description_label()
+    {
+        // §23's rule, applied to the delineator: the date label is
+        // planned against the description label just placed for the
+        // row, so the two labels of one row never overlap — they sit
+        // at opposite corners of the same stack slot.
+        DelineatorResult r = Build(Event());
+
+        Assert.NotNull(r.Label);
+        Assert.NotNull(r.DateLabel);
+        Assert.False(r.Label.TextBounds.IntersectsWith(r.DateLabel.TextBounds));
+        Assert.Equal(GanttLabelPosition.TopRight, r.LabelPosition);
+        Assert.True(r.DateLabel.TextBounds.Right < r.Primitive!.From.X);
+    }
+
+    [Fact]
+    public void An_explicit_date_label_corner_is_honoured_exactly()
+    {
+        // The explicit-position discipline: a requested corner is
+        // rendered exactly, never re-placed by the Auto order.
+        // BottomRight puts the box below the line's end, reading
+        // away from the line (left-aligned).
+        GanttEvent e = Event() with { DateLabelPlacement = GanttLabelPosition.BottomRight };
+        DelineatorResult r = Build(Req(e));
+
+        Assert.Equal("12/09/2026", r.DateLabel!.Text);
+        Assert.Equal(Left + (2 * Day) + 2.0, r.DateLabel.TextBounds.Left);
+        Assert.Equal(Plot.Bottom - 10.0, r.DateLabel.TextBounds.Top);
+        Assert.Equal(GanttTextAlignment.Left, r.DateLabel.Alignment);
+        Assert.Empty(r.Warnings);
+    }
+
+    [Fact]
+    public void A_none_date_label_placement_emits_no_date_label_and_no_warning()
+    {
+        // None is the explicit no-date-label choice in the
+        // positionable vocabulary, so the gate skips the date label
+        // entirely — no box, no warning.
+        GanttEvent e = Event() with { DateLabelPlacement = GanttLabelPosition.None };
+        DelineatorResult r = Build(Req(e));
+
+        Assert.NotNull(r.Primitive);
+        Assert.Null(r.DateLabel);
+        Assert.Null(r.DateLabelBounds);
+        Assert.Empty(r.Warnings);
+    }
+
+    [Fact]
+    public void An_explicit_date_label_corner_that_fits_nowhere_is_suppressed_with_a_warning()
+    {
+        // Positive test for the explicit-position discipline's
+        // failure path: a requested corner that fits nowhere is
+        // suppressed and reported, never silently moved. The blocker
+        // is the bottom-right box a ten-character date occupies.
+        RectD blocker = new(Left + (2 * Day) + 2.0, Plot.Bottom - 10.0, 40.0, 10.0);
+        GanttEvent e = Event() with { DateLabelPlacement = GanttLabelPosition.BottomRight };
+        DelineatorResult r = Build(Req(e), [blocker]);
+
+        Assert.NotNull(r.Primitive);
+        Assert.Null(r.DateLabel);
+        Assert.Equal(DelineatorBuilder.DateLabelSuppressedCode, Assert.Single(r.Warnings).Code);
+    }
+
+    [Fact]
+    public void A_hidden_date_label_toggle_emits_no_date_label()
+    {
+        // The date-labels toggle gates every date-label path, the
+        // delineator's included.
+        DelineatorResult r = Build(Req(Event()) with { ShowDateLabels = false });
+
+        Assert.NotNull(r.Primitive);
+        Assert.Null(r.DateLabel);
+        Assert.Empty(r.Warnings);
     }
 
     [Fact]
@@ -415,21 +525,35 @@ public sealed class DelineatorBuilderTests
 
         List<SceneText> labels = [.. r.Primitives.OfType<SceneText>()];
 
-        Assert.Equal(2, labels.Count);
+        // Each row contributes two labels — its description and its
+        // date label — which share the row's stack slot at opposite
+        // corners of the line (the date label avoids the description
+        // label's box). The primitives are emitted description-first,
+        // date-second, row by row.
+        Assert.Equal(4, labels.Count);
 
         // §24: distinct labels are "stacked deterministically with StackGapPt", so
         // the gap is the space *between* two labels, not the step from the plot
-        // edge to each one. The second label must therefore clear the first one's
+        // edge to each one. The second row must therefore clear the first row's
         // whole height and then the gap. Advancing by one gap per label put the
         // second label inside the first whenever the gap was smaller than the
         // label height, and it only avoided an intersection by being pushed onto
         // the opposite side of the line -- a different corner, not a stack.
-        Assert.Equal(labels[0].TextBounds.Bottom + 6.0, labels[1].TextBounds.Top);
-        Assert.False(labels[0].TextBounds.IntersectsWith(labels[1].TextBounds));
+        Assert.Equal(labels[0].TextBounds.Top, labels[1].TextBounds.Top);
+        Assert.Equal(labels[2].TextBounds.Top, labels[3].TextBounds.Top);
+        Assert.Equal(labels[0].TextBounds.Bottom + 6.0, labels[2].TextBounds.Top);
+        Assert.Equal(labels[1].TextBounds.Bottom + 6.0, labels[3].TextBounds.Top);
+        Assert.All(labels, label => Assert.Equal(10.0, label.TextBounds.Height));
 
-        // The stack is a stack: both labels sit against the same plot edge, so the
-        // second is directly below the first rather than across the line from it.
-        Assert.Equal(labels[0].TextBounds.Left, labels[1].TextBounds.Left);
+        // The stack is a stack: no two boxes of the group intersect,
+        // however small the gap is relative to the label height.
+        for (var i = 1; i < labels.Count; i++)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                Assert.False(labels[i].TextBounds.IntersectsWith(labels[j].TextBounds));
+            }
+        }
     }
 
     [Fact]
@@ -454,16 +578,30 @@ public sealed class DelineatorBuilderTests
 
         List<SceneText> labels = [.. r.Primitives.OfType<SceneText>()];
 
-        Assert.Equal(3, labels.Count);
+        // Three rows, each contributing its description and its date
+        // label (the date label takes the corner the description
+        // label does not), so six labels in three stacked pairs.
+        Assert.Equal(6, labels.Count);
         Assert.All(labels, label => Assert.Equal(10.0, label.TextBounds.Height));
 
-        // Each label clears the previous one by exactly the gap, so no two boxes
-        // can intersect however small the gap is relative to the label height.
+        // Each row clears the previous row's labels by exactly the gap, so no
+        // two boxes can intersect however small the gap is relative to the
+        // label height.
         for (var i = 1; i < labels.Count; i++)
         {
-            Assert.Equal(labels[i - 1].TextBounds.Bottom + gap, labels[i].TextBounds.Top);
-            Assert.False(labels[i - 1].TextBounds.IntersectsWith(labels[i].TextBounds));
+            for (var j = 0; j < i; j++)
+            {
+                Assert.False(labels[i].TextBounds.IntersectsWith(labels[j].TextBounds));
+            }
         }
+
+        // The pairs stack: the row's two labels share a top, and the
+        // next pair starts one label height plus the gap below.
+        Assert.Equal(labels[0].TextBounds.Top, labels[1].TextBounds.Top);
+        Assert.Equal(labels[0].TextBounds.Bottom + gap, labels[2].TextBounds.Top);
+        Assert.Equal(labels[2].TextBounds.Top, labels[3].TextBounds.Top);
+        Assert.Equal(labels[2].TextBounds.Bottom + gap, labels[4].TextBounds.Top);
+        Assert.Equal(labels[4].TextBounds.Top, labels[5].TextBounds.Top);
     }
 
     [Fact]

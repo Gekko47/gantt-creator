@@ -608,5 +608,112 @@ public class ExcelDateLabelPositionMutatorTests
         Assert.Equal(DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.TableMissing, 1), outcome);
         Assert.Empty(graph.WrittenCells);
     }
+
+    [Fact]
+    public void SetDateLabelPlacement_writes_exactly_the_date_label_cell_of_the_delineator_row()
+    {
+        // Owner ruling 2026-10-14: a delineator's date label is
+        // positionable. The corner name lands in the SAME
+        // DateLabelPosition cell — the vocabulary is
+        // type-dependent, not schema-dependent — and only the
+        // selected row's cell is written.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 4);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPlacement(GanttLabelPosition.TopLeft);
+
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(3, write.Row);
+        Assert.Equal(TableIndexOf("DateLabelPosition"), write.Column);
+        Assert.Equal(nameof(GanttLabelPosition.TopLeft), write.Value);
+    }
+
+    [Fact]
+    public void SetDateLabelPlacement_clears_the_cell_for_a_null_placement()
+    {
+        // The Auto item of the placement dropdown: a null
+        // placement writes a blank cell, which resolves to
+        // Auto (the first free corner) at render time.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 4);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPlacement(placement: null);
+
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(3, write.Row);
+        Assert.Equal(TableIndexOf("DateLabelPosition"), write.Column);
+        Assert.Null(write.Value);
+    }
+
+    [Fact]
+    public void SetDateLabelPlacement_refuses_a_placement_for_a_span_row()
+    {
+        // The mirror of the which-date refusal: a span's date
+        // label selects WHICH date shows, not where it sits,
+        // so a corner write is refused before any cell.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 2);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPlacement(GanttLabelPosition.TopLeft);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DateLabelMutationRefusalReason.DateLabelNotAllowedForType, outcome.Refusal);
+        Assert.Empty(graph.WrittenCells);
+    }
+
+    [Fact]
+    public void SetDateLabelPlacement_refuses_a_corner_outside_the_delineator_set()
+    {
+        // Inside is a description-label position but not one
+        // of the six corners the positionable date-label set
+        // names, so the type-only capability set refuses it.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 4);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPlacement(GanttLabelPosition.Inside);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DateLabelMutationRefusalReason.DateLabelNotAllowedForType, outcome.Refusal);
+        Assert.Empty(graph.WrittenCells);
+    }
+
+    [Fact]
+    public void SetDateLabelPosition_refuses_every_which_date_choice_for_a_delineator()
+    {
+        // The vocabulary split from the which-date side: a
+        // delineator's which-date set is empty (its Start is
+        // its single date), so every which-date choice is
+        // refused and the dropdown offers the corners instead.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 4);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPosition(GanttDateLabelPosition.Finish);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DateLabelMutationRefusalReason.DateLabelNotAllowedForType, outcome.Refusal);
+        Assert.Empty(graph.WrittenCells);
+    }
+
+    [Fact]
+    public void SetDateLabelPlacement_runs_the_protection_guard_before_any_workbook_access()
+    {
+        // Positive guard-first test for the placement entry
+        // point (ADR-0008 D4): the application is NULL, so
+        // reaching the workbook would report NoActiveWorkbook.
+        // Getting TargetProtected back proves the guard ran
+        // before any workbook/application access.
+        var mock = new Mock<IWorksheetProtectionGuard>();
+        mock.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.SheetProtected);
+        var graph = new Graph { BodyMatrix = ThreeRowRun(), RowCount = 3, ActiveRow = 4 };
+        var mutator = new TestableDateLabelMutator(application: null, mock.Object, graph);
+
+        DateLabelMutationOutcome outcome = mutator.SetDateLabelPlacement(GanttLabelPosition.TopLeft);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DateLabelMutationRefusalReason.TargetProtected, outcome.Refusal);
+        Assert.Empty(graph.WrittenCells);
+    }
 }
 

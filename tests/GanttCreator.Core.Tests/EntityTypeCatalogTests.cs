@@ -434,7 +434,6 @@ public class EntityTypeCatalogTests
 
     [Theory]
     [InlineData(GanttEntityType.AsBuiltMilestone)]
-    [InlineData(GanttEntityType.Delineator)]
     public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish(
         GanttEntityType type)
     {
@@ -466,16 +465,117 @@ public class EntityTypeCatalogTests
         Assert.Empty(EntityTypeCatalog.GetAllowedDateLabelPositions((GanttEntityType)999));
     }
 
+    [Fact]
+    public void GetAllowedDateLabelPositions_projects_the_delineator_as_empty()
+    {
+        // Owner ruling 2026-10-14: the delineator's date label is
+        // positionable, not selectable per date — Start is its only
+        // date — so its which-date set is empty and the positionable
+        // set below carries it instead.
+        Assert.Empty(EntityTypeCatalog.GetAllowedDateLabelPositions(GanttEntityType.Delineator));
+    }
+
+    [Fact]
+    public void GetAllowedDateLabelPlacements_projects_the_corner_set_for_the_delineator_only()
+    {
+        // The description label's corner set, in display order, for
+        // the one type whose date label is positionable (owner
+        // ruling 2026-10-14).
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.TopLeft,
+                GanttLabelPosition.TopRight,
+                GanttLabelPosition.BottomLeft,
+                GanttLabelPosition.BottomRight,
+                GanttLabelPosition.None,
+            },
+            EntityTypeCatalog.GetAllowedDateLabelPlacements(GanttEntityType.Delineator));
+
+        // Every other type's date label selects which date shows,
+        // not where it sits, so the positionable set is empty for
+        // them — a span's Left/Right anchoring belongs to the
+        // description label, not to a date label.
+        List<GanttEntityType> nonEmpty =
+        [
+            .. Enum.GetValues<GanttEntityType>()
+                .Where(type => type != GanttEntityType.Delineator)
+                .Where(type => EntityTypeCatalog.GetAllowedDateLabelPlacements(type).Count > 0),
+        ];
+        Assert.Empty(nonEmpty);
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.Auto, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.TopLeft, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.TopRight, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.BottomLeft, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.BottomRight, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.None, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.Left, false)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.Right, false)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.Inside, false)]
+    [InlineData(GanttEntityType.AsPlannedActivity, GanttLabelPosition.TopLeft, false)]
+    public void IsDateLabelPlacementAllowed_accepts_only_the_delineators_corners(
+        GanttEntityType type,
+        GanttLabelPosition position,
+        bool expected)
+    {
+        Assert.Equal(expected, EntityTypeCatalog.IsDateLabelPlacementAllowed(type, position));
+    }
+
+    [Theory]
+    [InlineData("Default")]
+    public void TryParseDateLabelPlacementSelection_default_clears_to_null(string selectionId)
+    {
+        Assert.True(
+            EntityTypeCatalog.TryParseDateLabelPlacementSelection(selectionId, out GanttLabelPosition? placement));
+        Assert.Null(placement);
+    }
+
+    [Theory]
+    [InlineData("Auto", GanttLabelPosition.Auto)]
+    [InlineData("TopLeft", GanttLabelPosition.TopLeft)]
+    [InlineData("TopRight", GanttLabelPosition.TopRight)]
+    [InlineData("BottomLeft", GanttLabelPosition.BottomLeft)]
+    [InlineData("BottomRight", GanttLabelPosition.BottomRight)]
+    [InlineData("None", GanttLabelPosition.None)]
+    public void TryParseDateLabelPlacementSelection_parses_defined_positions(
+        string selectionId,
+        GanttLabelPosition expected)
+    {
+        Assert.True(
+            EntityTypeCatalog.TryParseDateLabelPlacementSelection(selectionId, out GanttLabelPosition? placement));
+        Assert.Equal(expected, placement);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Widget")]
+    // "Start" is a valid DateLabelPosition but NOT a valid
+    // GanttLabelPosition, so this pins that the two enumerations
+    // are distinct authorities.
+    [InlineData("Start")]
+    public void TryParseDateLabelPlacementSelection_refuses_unknown_text(string? selectionId)
+    {
+        Assert.False(
+            EntityTypeCatalog.TryParseDateLabelPlacementSelection(selectionId, out GanttLabelPosition? placement));
+        Assert.Null(placement);
+    }
+
     [Theory]
     [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Finish, true)]
     [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Start, true)]
     [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.None, true)]
     [InlineData(GanttEntityType.AsPlannedMilestone, GanttDateLabelPosition.Finish, false)]
     [InlineData(GanttEntityType.AsPlannedMilestone, GanttDateLabelPosition.None, true)]
-    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.Start, true)]
-    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.None, true)]
     [InlineData(GanttEntityType.Splitter, GanttDateLabelPosition.Auto, false)]
     [InlineData(GanttEntityType.Splitter, GanttDateLabelPosition.None, false)]
+    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.Auto, false)]
+    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.Start, false)]
+    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.None, false)]
     public void IsDateLabelPositionAllowed_refuses_cross_mode_positions(
         GanttEntityType type, GanttDateLabelPosition position, bool expected)
     {

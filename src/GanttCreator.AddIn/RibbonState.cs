@@ -68,6 +68,23 @@ namespace GanttCreator.AddIn;
 /// order (projected from the row's Type — R5.14 D1/D4), or null when
 /// the selection is not a single row.
 /// </param>
+/// <param name="DateLabelPlacementSelectionAvailable">
+/// True when the selection resolves to exactly one body row whose
+/// Type's date label is positionable — the delineator (owner ruling
+/// 2026-10-14). False disables the date-label dropdown for every
+/// other type, whose date label selects which date shows.
+/// </param>
+/// <param name="SelectedDateLabelPlacement">
+/// The selected row's stored <c>DateLabelPosition</c> read as a
+/// date-label <em>position</em> (the delineator's corner), or null
+/// when the cell is blank (Auto) or the selection is not a single
+/// positionable row.
+/// </param>
+/// <param name="DateLabelPlacementOptions">
+/// The selected row's allowed date-label positions in ribbon display
+/// order (the description label's corner set), or null when the
+/// selection is not a single positionable row.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -90,7 +107,10 @@ internal sealed record RibbonState(
     IReadOnlyList<GanttLabelPosition>? DescriptionLabelOptions = null,
     bool DateLabelSelectionAvailable = false,
     GanttDateLabelPosition? SelectedDateLabelPosition = null,
-    IReadOnlyList<GanttDateLabelPosition>? DateLabelOptions = null)
+    IReadOnlyList<GanttDateLabelPosition>? DateLabelOptions = null,
+    bool DateLabelPlacementSelectionAvailable = false,
+    GanttLabelPosition? SelectedDateLabelPlacement = null,
+    IReadOnlyList<GanttLabelPosition>? DateLabelPlacementOptions = null)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -154,8 +174,13 @@ internal sealed record RibbonState(
         // R5.14: the date-label dropdown is gated on the same single-body-row
         // selection facts as the description-label dropdown (the capability is
         // type-only, so the options projection needs no style registry).
+        // Owner ruling 2026-10-14: the dropdown carries one of two
+        // vocabularies — which-date choices for dated types, positions
+        // for the delineator — so it enables when either context
+        // resolved.
         RibbonControlIds.DateLabel =>
-            HasActiveWorkbook && SheetInitialised && DateLabelSelectionAvailable,
+            HasActiveWorkbook && SheetInitialised
+            && (DateLabelSelectionAvailable || DateLabelPlacementSelectionAvailable),
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
