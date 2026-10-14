@@ -410,15 +410,17 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// Display order for ribbon date-label options: <c>Auto</c>
-    /// first, then the two single-date choices in date order. Every
-    /// element is derived from the row type's
-    /// <see cref="EntityDateMode"/> — never a second authority.
+    /// first, then the single-date choices in date order, then
+    /// the no-label choice. Every element is derived from the
+    /// row type's <see cref="EntityDateMode"/> — never a second
+    /// authority.
     /// </summary>
     private static readonly GanttDateLabelPosition[] _dateLabelDisplayOrder =
     [
         GanttDateLabelPosition.Auto,
         GanttDateLabelPosition.Start,
         GanttDateLabelPosition.Finish,
+        GanttDateLabelPosition.None,
     ];
 
     /// <summary>
@@ -426,7 +428,8 @@ public static class EntityTypeCatalog
     /// ribbon display order (R5.14 D1 projection), derived from the
     /// type's <see cref="EntityDateMode"/>: a dateless type names
     /// none (the control is disabled), a <c>StartOnly</c> type names
-    /// <c>Auto</c> and <c>Start</c>, and a span names all three.
+    /// <c>Auto</c>, <c>Start</c>, and <c>None</c>, and a span names
+    /// all four.
     /// </summary>
     /// <param name="type">The entity type.</param>
     /// <returns>The allowed choices in display order; empty for a dateless or unknown type.</returns>

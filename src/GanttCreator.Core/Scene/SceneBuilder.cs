@@ -1223,9 +1223,14 @@ public static class SceneBuilder
             // R5.14 D3: the row's date-label choice selects which of the
             // two date labels the scene plans. A blank cell (Auto) keeps
             // both, which is the behaviour every existing row already
-            // produces, so the default scene is unchanged.
-            var showStart = @event.DateLabelPosition != GanttDateLabelPosition.Finish;
-            var showFinish = @event.DateLabelPosition != GanttDateLabelPosition.Start;
+            // produces, so the default scene is unchanged. D5 (second
+            // owner ruling 2026-10-14): None names no date labels at
+            // all, so both flags clear and the builder plans an empty
+            // set -- it succeeds with no primitives rather than
+            // refusing, so a None row emits no date-label warning.
+            var none = @event.DateLabelPosition == GanttDateLabelPosition.None;
+            var showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
+            var showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,

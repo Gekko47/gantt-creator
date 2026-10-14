@@ -427,6 +427,7 @@ public class EntityTypeCatalogTests
                 GanttDateLabelPosition.Auto,
                 GanttDateLabelPosition.Start,
                 GanttDateLabelPosition.Finish,
+                GanttDateLabelPosition.None,
             },
             choices);
     }
@@ -445,6 +446,7 @@ public class EntityTypeCatalogTests
             {
                 GanttDateLabelPosition.Auto,
                 GanttDateLabelPosition.Start,
+                GanttDateLabelPosition.None,
             },
             choices);
     }
@@ -467,9 +469,13 @@ public class EntityTypeCatalogTests
     [Theory]
     [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Finish, true)]
     [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Start, true)]
+    [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.None, true)]
     [InlineData(GanttEntityType.AsPlannedMilestone, GanttDateLabelPosition.Finish, false)]
+    [InlineData(GanttEntityType.AsPlannedMilestone, GanttDateLabelPosition.None, true)]
     [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.Start, true)]
+    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.None, true)]
     [InlineData(GanttEntityType.Splitter, GanttDateLabelPosition.Auto, false)]
+    [InlineData(GanttEntityType.Splitter, GanttDateLabelPosition.None, false)]
     public void IsDateLabelPositionAllowed_refuses_cross_mode_positions(
         GanttEntityType type, GanttDateLabelPosition position, bool expected)
     {
@@ -487,6 +493,7 @@ public class EntityTypeCatalogTests
     [InlineData("Auto", GanttDateLabelPosition.Auto)]
     [InlineData("Start", GanttDateLabelPosition.Start)]
     [InlineData("Finish", GanttDateLabelPosition.Finish)]
+    [InlineData("None", GanttDateLabelPosition.None)]
     public void TryParseDateLabelSelection_parses_defined_choices(
         string selectionId, GanttDateLabelPosition expected)
     {

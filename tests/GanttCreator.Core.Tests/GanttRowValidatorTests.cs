@@ -94,6 +94,49 @@ public class GanttRowValidatorTests
         Assert.Equal(GanttDateLabelPosition.Finish, @event.DateLabelPosition);
     }
 
+    [Theory]
+    [InlineData("As-Planned Activity", true)]
+    [InlineData("As-Planned Milestone", false)]
+    [InlineData("Delineator", false)]
+    public void A_none_date_label_position_is_accepted_and_carried_to_the_event(
+        string typeText, bool isSpan)
+    {
+        // R5.14 D5 (second owner ruling 2026-10-14): None names
+        // no date labels, so every dated type admits it and the
+        // validated event carries it -- the scene then plans no
+        // date labels for the row. Only a span supplies the
+        // lane/stack/finish cells its type reads (the all-16-types
+        // construction pattern), so the row has no other findings.
+        GanttRowDto row = isSpan
+            ? ValidSpan(
+                typeText: typeText,
+                dateLabelPositionText: nameof(GanttDateLabelPosition.None))
+            : new(
+                2,
+                NewId(),
+                null,
+                null,
+                typeText,
+                "Build frame",
+                new DateOnly(2026, 9, 1),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true,
+                null,
+                nameof(GanttDateLabelPosition.None));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Equal(GanttDateLabelPosition.None, @event.DateLabelPosition);
+    }
+
     [Fact]
     public void A_blank_date_label_position_resolves_to_auto_and_carries_no_choice()
     {
@@ -139,6 +182,31 @@ public class GanttRowValidatorTests
         GanttRowDto row = ValidSpan(
             typeText: "As-Planned Milestone",
             dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_none_date_label_position_is_refused_for_a_dateless_type()
+    {
+        // R5.14 D5 (second owner ruling): None is a date-label
+        // choice, so the type-only capability set (D4) still
+        // governs it -- a dateless type names no choice at all.
+        // The row supplies no dates or lane cells, so the
+        // DateLabelPosition finding is the row's only one.
+        GanttRowDto row = ValidSpan(
+            typeText: "Splitter",
+            laneId: null,
+            stackIndex: null,
+            start: null,
+            finish: null,
+            dateLabelPositionText: nameof(GanttDateLabelPosition.None));
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
 

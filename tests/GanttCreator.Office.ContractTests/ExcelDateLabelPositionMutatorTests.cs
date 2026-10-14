@@ -369,6 +369,58 @@ public class ExcelDateLabelPositionMutatorTests
     }
 
     [Fact]
+    public void SetDateLabelPosition_writes_a_none_choice_for_a_span_type()
+    {
+        // R5.14 D5 (second owner ruling 2026-10-14): None names
+        // no date labels; a span admits it, so exactly the
+        // selected row's cell is written with the enum name.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 2);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPosition(GanttDateLabelPosition.None);
+
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(1, write.Row);
+        Assert.Equal(TableIndexOf("DateLabelPosition"), write.Column);
+        Assert.Equal(nameof(GanttDateLabelPosition.None), write.Value);
+    }
+
+    [Fact]
+    public void SetDateLabelPosition_writes_a_none_choice_for_a_start_only_type()
+    {
+        // A milestone is StartOnly and still admits None (no
+        // date labels), so the choice writes its own row's cell.
+        Graph graph = SeededGraph(ThreeRowRun(), activeRow: 3);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPosition(GanttDateLabelPosition.None);
+
+        Assert.True(outcome.Succeeded);
+        (int, int, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(nameof(GanttDateLabelPosition.None), write.Value);
+    }
+
+    [Fact]
+    public void SetDateLabelPosition_refuses_a_none_choice_for_a_dateless_type()
+    {
+        // None is a date-label choice like any other, so the
+        // type-only capability set (D4) governs it: a Splitter
+        // names no choice at all, so the control would be
+        // disabled and the write is refused before any cell.
+        var matrix = Matrix(
+            DateLabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.Splitter)));
+        Graph graph = SeededGraph(matrix, activeRow: 2);
+
+        DateLabelMutationOutcome outcome = graph.Build(NotProtected())
+            .SetDateLabelPosition(GanttDateLabelPosition.None);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(DateLabelMutationRefusalReason.DateLabelNotAllowedForType, outcome.Refusal);
+        Assert.Empty(graph.WrittenCells);
+    }
+
+    [Fact]
     public void SetDateLabelPosition_writes_a_finish_choice_for_custom_activity_type_only()
     {
         // R5.14 D4: the capability is type-only. Custom Activity is a

@@ -187,28 +187,32 @@ public sealed class DateLabelRibbonTests : IDisposable
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
-        Assert.Equal(3, service.GetDateLabelCount());
+        Assert.Equal(4, service.GetDateLabelCount());
         Assert.Equal("Default", service.GetDateLabelItemID(0));
         Assert.Equal("Start", service.GetDateLabelItemID(1));
         Assert.Equal("Finish", service.GetDateLabelItemID(2));
+        Assert.Equal("None", service.GetDateLabelItemID(3));
         Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
         Assert.Equal("Start", service.GetDateLabelItemLabel(1));
         Assert.Equal("Finish", service.GetDateLabelItemLabel(2));
+        Assert.Equal("None", service.GetDateLabelItemLabel(3));
     }
 
     [Fact]
     public void The_dropdown_omits_finish_for_a_start_only_type()
     {
         // A StartOnly type (milestone, delineator) has no Finish date, so
-        // Finish is not offered: only Auto and Start, in that order.
+        // Finish is not offered: only Auto, Start, and None, in that order.
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var service = ArmWithRow(selection, Row("Delineator", null));
 
-        Assert.Equal(2, service.GetDateLabelCount());
+        Assert.Equal(3, service.GetDateLabelCount());
         Assert.Equal("Default", service.GetDateLabelItemID(0));
         Assert.Equal("Start", service.GetDateLabelItemID(1));
+        Assert.Equal("None", service.GetDateLabelItemID(2));
         Assert.Equal("Auto", service.GetDateLabelItemLabel(0));
         Assert.Equal("Start", service.GetDateLabelItemLabel(1));
+        Assert.Equal("None", service.GetDateLabelItemLabel(2));
     }
 
     [Fact]
@@ -254,6 +258,17 @@ public sealed class DateLabelRibbonTests : IDisposable
     }
 
     [Fact]
+    public void A_stored_none_selects_its_own_item()
+    {
+        // D5 (second owner ruling 2026-10-14): a stored None
+        // (no date labels) selects its own item, past Finish.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("As-Built Activity", "None"));
+
+        Assert.Equal(3, service.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
     public void An_out_of_range_item_index_returns_an_empty_label()
     {
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
@@ -295,7 +310,7 @@ public sealed class DateLabelRibbonTests : IDisposable
         var service = ArmWithRow(selection, Row("As-Built Activity", null));
 
         Assert.True(service.GetEnabled(RibbonControlIds.DateLabel));
-        Assert.Equal(3, service.GetDateLabelCount());
+        Assert.Equal(4, service.GetDateLabelCount());
     }
 
     [Fact]

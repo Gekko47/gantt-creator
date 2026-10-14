@@ -248,6 +248,28 @@ public sealed class SceneBuilderTests
         Assert.EndsWith(":date-finish", only.PrimitiveId, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void None_date_label_selection_renders_no_date_labels()
+    {
+        // R5.14 D5 (second owner ruling 2026-10-14): None names
+        // no date labels, so the scene plans an empty date-label
+        // set -- the build succeeds with no date-start/date-finish
+        // primitives and no warning. The same centred,
+        // description-less bar as the Auto test, so any label the
+        // builder might still plan would have room.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.None)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
     /// <summary>
     /// The section-23 date labels a scene planned, identified by their
     /// stable role-derived ids (<c>:date-start</c> / <c>:date-finish</c>).

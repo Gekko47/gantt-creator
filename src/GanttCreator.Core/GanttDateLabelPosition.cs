@@ -4,8 +4,8 @@ namespace GanttCreator.Core;
 /// Which of a row's section-23 date labels render. Distinct from
 /// <see cref="GanttLabelPosition"/>, which describes <em>where</em> a
 /// label sits: this selects <em>which</em> date label (start, finish,
-/// or both) the row shows. Blank <c>DateLabelPosition</c> resolves to
-/// <see cref="Auto"/>; the permitted set per type is derived by
+/// both, or none) the row shows. Blank <c>DateLabelPosition</c> resolves
+/// to <see cref="Auto"/>; the permitted set per type is derived by
 /// <see cref="EntityTypeCatalog.GetAllowedDateLabelPositions"/>.
 /// </summary>
 /// <remarks>
@@ -13,9 +13,10 @@ namespace GanttCreator.Core;
 /// The set a type may name is derived from
 /// <see cref="EntityTypeDefinition.DateMode"/>, never authored as a
 /// second list: a dateless type names none (the control is disabled),
-/// a <c>StartOnly</c> type names <c>Auto</c> and <c>Start</c>, and a
-/// span names all three. <c>Finish</c> is therefore never offered for a
-/// <c>StartOnly</c> type, which reads no finish date.
+/// a <c>StartOnly</c> type names <c>Auto</c>, <c>Start</c>, and
+/// <c>None</c>, and a span names all four. <c>Finish</c> is therefore
+/// never offered for a <c>StartOnly</c> type, which reads no finish
+/// date.
 /// </para>
 /// </remarks>
 public enum GanttDateLabelPosition
@@ -28,4 +29,7 @@ public enum GanttDateLabelPosition
 
     /// <summary>The finish-date label only (span types only).</summary>
     Finish = 2,
+
+    /// <summary>No date labels (the row's dates are hidden).</summary>
+    None = 3,
 }

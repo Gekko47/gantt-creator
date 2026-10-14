@@ -28,7 +28,8 @@ public static class GanttSchemaVersion
     /// <para>
     /// <b>Version 15 is R5.14.</b> The <c>tblGanttData</c> column schema gains
     /// the engine-hidden <c>DateLabelPosition</c> column (the per-row date-label
-    /// selector: blank/<c>Auto</c>, <c>Start</c>, or <c>Finish</c>), so a
+    /// selector: blank/<c>Auto</c>, <c>Start</c>, <c>Finish</c>, or
+    /// <c>None</c>), so a
     /// version-14 workbook's table lacks a column the running add-in reads and its
     /// stored schema version no longer matches. The date-label capability is
     /// derived from the existing <c>EntityDateMode</c> catalogue metadata, so no

@@ -1427,6 +1427,7 @@ internal class RibbonStateService
             GanttDateLabelPosition.Auto => "Auto",
             GanttDateLabelPosition.Start => "Start",
             GanttDateLabelPosition.Finish => "Finish",
+            GanttDateLabelPosition.None => "None",
             _ => position.ToString(),
         };
 
