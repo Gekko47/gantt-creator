@@ -414,4 +414,96 @@ public class EntityTypeCatalogTests
         Assert.False(EntityTypeCatalog.TryParseLabelSelection(selectionId, out GanttLabelPosition? position));
         Assert.Null(position);
     }
+
+    [Fact]
+    public void GetAllowedDateLabelPositions_projects_span_set_in_date_order()
+    {
+        IReadOnlyList<GanttDateLabelPosition> choices =
+            EntityTypeCatalog.GetAllowedDateLabelPositions(GanttEntityType.AsPlannedActivity);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttDateLabelPosition.Auto,
+                GanttDateLabelPosition.Start,
+                GanttDateLabelPosition.Finish,
+            },
+            choices);
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.AsBuiltMilestone)]
+    [InlineData(GanttEntityType.Delineator)]
+    public void GetAllowedDateLabelPositions_projects_start_only_types_without_finish(
+        GanttEntityType type)
+    {
+        IReadOnlyList<GanttDateLabelPosition> choices =
+            EntityTypeCatalog.GetAllowedDateLabelPositions(type);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttDateLabelPosition.Auto,
+                GanttDateLabelPosition.Start,
+            },
+            choices);
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.Splitter)]
+    [InlineData(GanttEntityType.Spacer)]
+    public void GetAllowedDateLabelPositions_projects_dateless_types_as_empty(
+        GanttEntityType type)
+    {
+        Assert.Empty(EntityTypeCatalog.GetAllowedDateLabelPositions(type));
+    }
+
+    [Fact]
+    public void GetAllowedDateLabelPositions_unknown_type_is_empty()
+    {
+        Assert.Empty(EntityTypeCatalog.GetAllowedDateLabelPositions((GanttEntityType)999));
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Finish, true)]
+    [InlineData(GanttEntityType.AsPlannedActivity, GanttDateLabelPosition.Start, true)]
+    [InlineData(GanttEntityType.AsPlannedMilestone, GanttDateLabelPosition.Finish, false)]
+    [InlineData(GanttEntityType.Delineator, GanttDateLabelPosition.Start, true)]
+    [InlineData(GanttEntityType.Splitter, GanttDateLabelPosition.Auto, false)]
+    public void IsDateLabelPositionAllowed_refuses_cross_mode_positions(
+        GanttEntityType type, GanttDateLabelPosition position, bool expected)
+    {
+        Assert.Equal(expected, EntityTypeCatalog.IsDateLabelPositionAllowed(type, position));
+    }
+
+    [Fact]
+    public void TryParseDateLabelSelection_default_clears_to_null()
+    {
+        Assert.True(EntityTypeCatalog.TryParseDateLabelSelection("Default", out GanttDateLabelPosition? position));
+        Assert.Null(position);
+    }
+
+    [Theory]
+    [InlineData("Auto", GanttDateLabelPosition.Auto)]
+    [InlineData("Start", GanttDateLabelPosition.Start)]
+    [InlineData("Finish", GanttDateLabelPosition.Finish)]
+    public void TryParseDateLabelSelection_parses_defined_choices(
+        string selectionId, GanttDateLabelPosition expected)
+    {
+        Assert.True(EntityTypeCatalog.TryParseDateLabelSelection(selectionId, out GanttDateLabelPosition? position));
+        Assert.Equal(expected, position);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Widget")]
+    // "Both" is a valid LabelPosition but NOT a valid DateLabelPosition,
+    // so this pins that the two enumerations are distinct authorities.
+    [InlineData("Both")]
+    public void TryParseDateLabelSelection_refuses_unknown_text(string? selectionId)
+    {
+        Assert.False(EntityTypeCatalog.TryParseDateLabelSelection(selectionId, out GanttDateLabelPosition? position));
+        Assert.Null(position);
+    }
 }

@@ -280,6 +280,7 @@ public static class GanttRowValidator
         var parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
         var styleRelevant = true;
         var labelRelevant = true;
+        var dateLabelRelevant = true;
         var fillRelevant = true;
         var strokeRelevant = true;
         const bool visibleRelevant = true;
@@ -292,6 +293,7 @@ public static class GanttRowValidator
         var parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
         var styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
         var labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
+        var dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, dateLabelRelevant, Add);
         var fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
         var strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
         _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
@@ -604,6 +606,36 @@ public static class GanttRowValidator
             }
         }
 
+        // DateLabelPosition (R5.14): blank resolves to Auto; otherwise
+        // exact-enum plus the selected type's date-mode-derived capability
+        // set. The capability is type-only (R5.14 D4) -- a Custom Activity
+        // style carries no date mode -- so there is no style-resolved branch
+        // and no StyleUnknown refusal, unlike LabelPosition above.
+        GanttDateLabelPosition? dateLabelPosition = null;
+        if (!dateLabelBlocked && row.DateLabelPositionText is not null && type is not null)
+        {
+            if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
+            {
+                Add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.UnknownDateLabelPosition,
+                    GanttValidationSeverity.Error,
+                    $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+            }
+            else if (!EntityTypeCatalog.IsDateLabelPositionAllowed(type.Value, parsedDateLabel))
+            {
+                Add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.DateLabelNotAllowedForType,
+                    GanttValidationSeverity.Error,
+                    $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+            }
+            else
+            {
+                dateLabelPosition = parsedDateLabel;
+            }
+        }
+
         // Colours: format plus type capability, or the selected Custom style's
         // capability. A Custom row with an unresolved style remains blocked by
         // StyleKeyUnknown and receives no colour-capability finding.
@@ -656,8 +688,10 @@ public static class GanttRowValidator
             fill,
             stroke,
             row.Visible ?? true,
-            sortOrder
-        );
+            sortOrder)
+        {
+            DateLabelPosition = dateLabelPosition
+        };
 
         return new ValidatedRow(id, type, definition, @event, hasError);
     }

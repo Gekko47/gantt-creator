@@ -5,8 +5,8 @@ public class GanttTableSchemaTests
     private static readonly string[] s_requiredColumnNames =
     [
         "Id", "LaneId", "StackIndex", "Type", "Description", "Start", "Finish",
-        "Duration", "ParentId", "SiblingOrder", "StyleKey", "LabelPosition", "FillColour",
-        "StrokeColour", "Visible",
+        "Duration", "ParentId", "SiblingOrder", "StyleKey", "LabelPosition",
+        "DateLabelPosition", "FillColour", "StrokeColour", "Visible",
     ];
 
     [Fact]
@@ -20,9 +20,10 @@ public class GanttTableSchemaTests
     {
         var columns = GanttTableSchema.Default.Columns;
 
-        // 15 required + the optional SortOrder. R4.7A added SiblingOrder, taking
-        // the required count from 13 to 14; R4.7C added Duration, taking it to 15.
-        Assert.Equal(16, columns.Count);
+        // 16 required + the optional SortOrder. R4.7A added SiblingOrder, taking
+        // the required count from 13 to 14; R4.7C added Duration, taking it to 15;
+        // R5.14 added DateLabelPosition, taking it to 16.
+        Assert.Equal(17, columns.Count);
         for (var i = 0; i < s_requiredColumnNames.Length; i++)
         {
             Assert.Equal(s_requiredColumnNames[i], columns[i].Name);

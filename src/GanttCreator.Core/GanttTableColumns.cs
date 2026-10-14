@@ -38,7 +38,7 @@ public enum GanttColumnAccess
     /// <summary>
     /// Engine-hidden and locked: <c>Id</c>, <c>ParentId</c>, <c>SiblingOrder</c>,
     /// <c>LaneId</c>, <c>StackIndex</c>, <c>StyleKey</c>, <c>LabelPosition</c>,
-    /// <c>FillColour</c>, <c>StrokeColour</c>, <c>Visible</c>, <c>SortOrder</c>.
+    /// <c>DateLabelPosition</c>, <c>FillColour</c>, <c>StrokeColour</c>, <c>Visible</c>, <c>SortOrder</c>.
     /// They stay physically in <c>tblGanttData</c> so one logical row is one
     /// table row (ADR-0029 D7).
     /// </summary>
@@ -196,6 +196,7 @@ public sealed class GanttTableSchema
         new GanttTableColumn("SiblingOrder", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StyleKey", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("LabelPosition", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("DateLabelPosition", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("FillColour", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StrokeColour", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("Visible", isRequired: true, GanttColumnAccess.EngineHidden),

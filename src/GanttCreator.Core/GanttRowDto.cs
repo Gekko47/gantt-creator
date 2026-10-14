@@ -22,6 +22,7 @@ public sealed record GanttRowDto
         GanttCell<int?> siblingOrderCell,
         GanttCell<string> styleKeyCell,
         GanttCell<string> labelPositionCell,
+        GanttCell<string> dateLabelPositionCell,
         GanttCell<string> fillColourCell,
         GanttCell<string> strokeColourCell,
         GanttCell<bool?> visibleCell,
@@ -40,6 +41,7 @@ public sealed record GanttRowDto
         SiblingOrderCell = siblingOrderCell;
         StyleKeyCell = styleKeyCell;
         LabelPositionCell = labelPositionCell;
+        DateLabelPositionCell = dateLabelPositionCell;
         FillColourCell = fillColourCell;
         StrokeColourCell = strokeColourCell;
         VisibleCell = visibleCell;
@@ -68,7 +70,8 @@ public sealed record GanttRowDto
         string? fillColourText,
         string? strokeColourText,
         bool? visible,
-        string? sortOrder)
+        string? sortOrder,
+        string? dateLabelPositionText = null)
         : this(
             rowNumber,
             Cell(id),
@@ -83,6 +86,7 @@ public sealed record GanttRowDto
             GanttCells.Empty<int?>(),
             Cell(styleKey),
             Cell(labelPositionText),
+            Cell(dateLabelPositionText),
             Cell(fillColourText),
             Cell(strokeColourText),
             Cell(visible),
@@ -141,6 +145,9 @@ public sealed record GanttRowDto
     /// <summary>Raw typed LabelPosition cell state.</summary>
     public GanttCell<string> LabelPositionCell { get; init; }
 
+    /// <summary>Raw typed DateLabelPosition cell state.</summary>
+    public GanttCell<string> DateLabelPositionCell { get; init; }
+
     /// <summary>Raw typed FillColour cell state.</summary>
     public GanttCell<string> FillColourCell { get; init; }
 
@@ -187,6 +194,9 @@ public sealed record GanttRowDto
 
     /// <summary>Normalized LabelPosition compatibility view.</summary>
     public string? LabelPositionText => LabelPositionCell.Value;
+
+    /// <summary>Normalized DateLabelPosition compatibility view.</summary>
+    public string? DateLabelPositionText => DateLabelPositionCell.Value;
 
     /// <summary>Normalized FillColour compatibility view.</summary>
     public string? FillColourText => FillColourCell.Value;

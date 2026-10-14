@@ -27,7 +27,8 @@ public class GanttRowValidatorTests
         string? fillColourText = null,
         string? strokeColourText = null,
         bool? visible = true,
-        string? sortOrder = null
+        string? sortOrder = null,
+        string? dateLabelPositionText = null
     ) =>
         new(
             rowNumber,
@@ -44,7 +45,8 @@ public class GanttRowValidatorTests
             fillColourText,
             strokeColourText,
             visible,
-            sortOrder
+            sortOrder,
+            dateLabelPositionText
         );
 
     [Fact]
@@ -72,6 +74,79 @@ public class GanttRowValidatorTests
         Assert.Equal(new DateOnly(2026, 9, 1), @event.Start);
         Assert.Equal(new DateOnly(2026, 9, 5), @event.Finish);
         Assert.True(@event.Visible);
+    }
+
+    [Fact]
+    public void A_date_label_position_allowed_for_the_type_is_accepted_and_carried_to_the_event()
+    {
+        // R5.14 positive pin: a span admits Finish, so the choice is
+        // valid and the validated event carries it -- the scene reads
+        // it to plan only the finish date label.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Equal(GanttDateLabelPosition.Finish, @event.DateLabelPosition);
+    }
+
+    [Fact]
+    public void A_blank_date_label_position_resolves_to_auto_and_carries_no_choice()
+    {
+        // R5.14 positive pin: blank is Auto (both date labels), so a row
+        // with no explicit choice stays valid and the event carries no
+        // choice, which the scene reads as "both" -- the pre-R5.14
+        // behaviour every existing row relies on.
+        GanttRowDto row = ValidSpan(typeText: "As-Planned Activity");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Null(@event.DateLabelPosition);
+    }
+
+    [Fact]
+    public void An_unknown_date_label_position_is_reported_and_never_coerced()
+    {
+        // Mirrors the LabelPosition precedent: an unparseable name is
+        // REPORTED, never defaulted to a neighbouring choice. "Both" is
+        // a valid LabelPosition but not a valid DateLabelPosition, so
+        // this also pins that the two enumerations are distinct.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: "Both");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_date_label_position_not_allowed_for_the_type_is_reported()
+    {
+        // A milestone reads only Start (its Finish is null), so Finish is
+        // outside its date-mode-derived capability set (R5.14 D4).
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Milestone",
+            dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
     }
 
     [Theory]

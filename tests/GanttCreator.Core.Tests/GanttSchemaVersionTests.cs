@@ -52,7 +52,11 @@ public class GanttSchemaVersionTests
         // Schema v14 is R5.2: the settings catalogue gains Margin and MarginCm for the
         // plot page margin. The margin is subtracted twice from the width budget to
         // determine the usable plotting area; it never touches the measured text panel.
-        Assert.Equal(14, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v15 is R5.14: the tblGanttData column schema gains the engine-hidden
+        // DateLabelPosition column (the per-row date-label selector). The capability is
+        // derived from the existing EntityDateMode metadata, so no catalogue row or hash
+        // changes -- only the column.
+        Assert.Equal(15, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

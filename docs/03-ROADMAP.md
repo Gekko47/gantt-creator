@@ -231,6 +231,23 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.11 | Enforce Refresh-only rendering for all worksheet and property edits | Command/event tests prove edits never invoke the renderer; blocking Refresh preserves the last scene | Required: edit Type/dates/colour/label, confirm shapes stay unchanged, then Refresh once to apply all |
 | R5.12 | Select the Month period-label format (MM or MMM) from the Plot Time Scale ribbon | Ribbon XML/callback contract tests for the format dropdown; persist tests prove a user-chosen MM is stored and recalled and not clobbered by other settings | Required: choose MM, Refresh, confirm `01`-style month headers render, then MMM returns `Jan`-style |
 | R5.13 | Insert a row below a group child as a child of that group | Group-child join + regroup, top-level parent → first child, top-level leaf stays top-level, append stays top-level, and refused-positional-insert never reads/regroups tests | Required: insert below a group child, confirm the row joins the group and the native `-`/`+` controls reflect it without Refresh |
+| R5.14 | Add a per-row date-label selector (Auto/Start/Finish) in the Labels group | Date-label capability-matrix, exact-enum, and type-capability validation tests; scene Auto/Start/Finish snapshot tests | Required: set Auto/Start/Finish on a span, Refresh, confirm the start/finish date labels show and hide accordingly |
+
+> **Phase 5 notes (revision 11):** inserts one row, `R5.14`, which adds a
+> per-row **date-label selector** to the ribbon's **Labels** group (the group
+> R5.5's description-label dropdown owns). The selector writes a new
+> engine-hidden `DateLabelPosition` cell — blank/`Auto` keeps the current
+> behaviour (both date labels for a span, the start label for a milestone or
+> delineator, none for a dateless type); `Start` and `Finish` restrict the row
+> to one date label. This is **D5**, settled by the product owner 2026-10-14.
+> The row advances the workbook schema version **14 → 15** because
+> `tblGanttData` gains a column (ADR-0029 D6: no migration — a version-14
+> workbook reports a mismatch and the remedy is Initialise, which materialises
+> the column). The date-label capability is **derived** from the existing
+> `EntityDateMode` catalogue metadata, so no catalogue row or stored hash
+> changes. The selector is a second dropdown beside R5.5's, gated by the same
+> single-row selection context R5.5 introduced. This revision contains 125
+> commit-sized work items.
 
 > **Phase 5 notes (revision 10):**
 > - **R5.2** keeps the month/quarter/year **scale** selector. The **size-preset

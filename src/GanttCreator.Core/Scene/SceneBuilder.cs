@@ -1220,6 +1220,12 @@ public static class SceneBuilder
             // placed inside a body, so it always takes the outside style. Passing
             // the inside style here would put a delay event's DelayText beside its
             // bar, where white-on-white is unreadable.
+            // R5.14 D3: the row's date-label choice selects which of the
+            // two date labels the scene plans. A blank cell (Auto) keeps
+            // both, which is the behaviour every existing row already
+            // produces, so the default scene is unchanged.
+            var showStart = @event.DateLabelPosition != GanttDateLabelPosition.Finish;
+            var showFinish = @event.DateLabelPosition != GanttDateLabelPosition.Start;
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -1229,6 +1235,8 @@ public static class SceneBuilder
                     request.Metrics!,
                     request.DateFormat,
                     outsideLabelStyle,
+                    ShowStart: showStart,
+                    ShowFinish: showFinish,
                     Occupants: VerticalBand(occupants, shapeBounds),
                     LaneOrder: placement.LaneOrder,
                     StackIndex: placement.EffectiveStackIndex));

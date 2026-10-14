@@ -239,6 +239,7 @@ public class ExcelGanttTableReader(
             ToIntCell(byName["SiblingOrder"], ExcelCellConverter.TryConvertStackIndex(byName["SiblingOrder"], out var siblingOrder) ? siblingOrder : null),
             ToTextCell(byName["StyleKey"]),
             ToTextCell(byName["LabelPosition"]),
+            ToTextCell(byName["DateLabelPosition"]),
             ToTextCell(byName["FillColour"]),
             ToTextCell(byName["StrokeColour"]),
             ToBoolCell(byName["Visible"], visible),

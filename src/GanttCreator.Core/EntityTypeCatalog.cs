@@ -398,4 +398,96 @@ public static class EntityTypeCatalog
         position = null;
         return false;
     }
+
+    /// <summary>
+    /// The ribbon item identifier that clears the row's
+    /// <c>DateLabelPosition</c> cell (blank), resolving to
+    /// <c>Auto</c> per R5.14 D3. It is the absence of a value,
+    /// not a catalogue choice, so it never appears in
+    /// <see cref="GetAllowedDateLabelPositions"/>.
+    /// </summary>
+    public const string DefaultDateLabelSelectionId = "Default";
+
+    /// <summary>
+    /// Display order for ribbon date-label options: <c>Auto</c>
+    /// first, then the two single-date choices in date order. Every
+    /// element is derived from the row type's
+    /// <see cref="EntityDateMode"/> — never a second authority.
+    /// </summary>
+    private static readonly GanttDateLabelPosition[] _dateLabelDisplayOrder =
+    [
+        GanttDateLabelPosition.Auto,
+        GanttDateLabelPosition.Start,
+        GanttDateLabelPosition.Finish,
+    ];
+
+    /// <summary>
+    /// Returns the allowed date-label choices for a type in stable
+    /// ribbon display order (R5.14 D1 projection), derived from the
+    /// type's <see cref="EntityDateMode"/>: a dateless type names
+    /// none (the control is disabled), a <c>StartOnly</c> type names
+    /// <c>Auto</c> and <c>Start</c>, and a span names all three.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The allowed choices in display order; empty for a dateless or unknown type.</returns>
+    public static IReadOnlyList<GanttDateLabelPosition> GetAllowedDateLabelPositions(
+        GanttEntityType type)
+    {
+        EntityTypeDefinition? definition = GetDefinition(type);
+        return definition is null
+            ? []
+            : definition.DateMode switch
+            {
+                EntityDateMode.None => [],
+                EntityDateMode.StartOnly
+                    => [.. _dateLabelDisplayOrder.Where(p => p != GanttDateLabelPosition.Finish)],
+                EntityDateMode.StartFinish => [.. _dateLabelDisplayOrder],
+                // An out-of-range date mode is a catalogue corruption; the
+                // safe default is to treat the type as dateless (no options).
+                _ => [],
+            };
+    }
+
+    /// <summary>
+    /// Returns whether a date-label choice is allowed for a type
+    /// (R5.14 D1/D4 guard). The capability is type-only: a
+    /// <c>Custom Activity</c> style carries no date mode, so it
+    /// cannot narrow the set the way it narrows
+    /// <see cref="GanttLabelPosition"/>.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate choice.</param>
+    public static bool IsDateLabelPositionAllowed(
+        GanttEntityType type, GanttDateLabelPosition position) =>
+        GetAllowedDateLabelPositions(type).Contains(position);
+
+    /// <summary>
+    /// Parses a ribbon date-label-selection identifier. <c>Default</c>
+    /// parses to a null choice (clear the cell to blank = <c>Auto</c>);
+    /// otherwise the identifier must name a defined
+    /// <see cref="GanttDateLabelPosition"/> Ordinally. Unknown text is
+    /// refused, never defaulted (the label-selection precedent).
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="position">The parsed choice, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined choice name.</returns>
+    public static bool TryParseDateLabelSelection(
+        string? selectionId, out GanttDateLabelPosition? position)
+    {
+        if (string.Equals(selectionId, DefaultDateLabelSelectionId, StringComparison.Ordinal))
+        {
+            position = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttDateLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            position = parsed;
+            return true;
+        }
+
+        position = null;
+        return false;
+    }
 }
