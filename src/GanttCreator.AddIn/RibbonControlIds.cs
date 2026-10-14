@@ -77,6 +77,18 @@ internal static class RibbonControlIds
     internal const string MoveDown = "btnMoveDown";
 
     /// <summary>
+    /// The label-position dropdown (<c>getEnabled</c> driven by workbook +
+    /// initialised + one body row selected).
+    /// </summary>
+    /// <remarks>
+    /// R5.5 owner ruling 6: per-row gating ships with the label controls, so
+    /// the dropdown enables only when the selection resolves to exactly one
+    /// table body row (a collapsed parent qualifies and edits its own cell
+    /// only — ruling 7). R5.10 reuses the same selection facts for fill/stroke.
+    /// </remarks>
+    internal const string LabelPosition = "ddnLabelPosition";
+
+    /// <summary>
     /// The Remove button (<c>getEnabled</c> driven by workbook +
     /// initialised). Destructive under ADR-0008: the command itself
     /// confirms before the mutator runs, so the enabled gate stays

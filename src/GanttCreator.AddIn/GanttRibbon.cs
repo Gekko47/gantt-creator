@@ -943,6 +943,154 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns how many items the label-position dropdown offers. Excel's
+    /// dynamic dropDown contract asks for this through getItemCount; the answer
+    /// comes from the state service snapshot (the selected row's projected
+    /// positions plus the leading Default item). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetLabelPositionCount(IRibbonControl control) =>
+        GetLabelPositionCount(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetLabelPositionCount(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item count; zero when no single row is selected.</returns>
+    internal static int GetLabelPositionCount(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetLabelPositionCount();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the item ID at the given index for the label-position dropdown
+    /// (<c>Default</c> at 0, otherwise the position name). Excel's dynamic
+    /// dropDown contract asks for this through getItemID; the answer comes from
+    /// the state service snapshot. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetLabelPositionItemID(IRibbonControl control, int index) =>
+        GetLabelPositionItemID(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetLabelPositionItemID(IRibbonControl, int)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
+    internal static string GetLabelPositionItemID(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetLabelPositionItemID(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the user-facing item label at the given index for the
+    /// label-position dropdown. Excel's dynamic dropDown contract asks for this
+    /// through getItemLabel; the answer comes from the state service snapshot,
+    /// so the enum name is never shown verbatim (R5.5 ruling 3). Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetLabelPositionItemLabel(IRibbonControl control, int index) =>
+        GetLabelPositionItemLabel(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetLabelPositionItemLabel(IRibbonControl, int)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal static string GetLabelPositionItemLabel(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetLabelPositionItemLabel(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the selected index of the label-position dropdown. Excel's
+    /// dynamic dropDown contract asks for this through
+    /// getSelectedItemIndex; the answer comes from the state service snapshot,
+    /// so the dropdown reflects the selected row's stored cell. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetLabelPositionSelectedIndex(IRibbonControl control) =>
+        GetLabelPositionSelectedIndex(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetLabelPositionSelectedIndex(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based selected index; zero (Default) when unknown.</returns>
+    internal static int GetLabelPositionSelectedIndex(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetLabelPositionSelectedIndex();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Returns the index of the current plot margin preset. The ribbon
     /// dropdown asks for this through getSelectedItemIndex; the answer
     /// comes from the state service snapshot. Never throws.
@@ -1005,6 +1153,51 @@ public class GanttRibbon : ExcelRibbon
         {
             stateService.SetMargin(margin);
         }
+    }
+
+    /// <summary>
+    /// Called when the user picks a label position from the ribbon dropdown.
+    /// Excel's dropDown onAction contract passes the control, the selected item
+    /// id, and the selected index; the id is authoritative (it names the
+    /// position, or <c>Default</c> to clear the cell) and the index is ignored,
+    /// exactly as the time-scale and margin dropdowns work. The command writes
+    /// the selected row's <c>LabelPosition</c> cell; an unknown id is refused
+    /// rather than defaulted. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id, or null in tests.</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnLabelPositionChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnLabelPositionChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnLabelPositionChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id, or null in tests.</param>
+    /// <param name="stateService">The state service applying the setting.</param>
+    internal static void OnLabelPositionChange(
+        IRibbonControl? control,
+        string? id,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.SetLabelPosition(id);
+        }
+        catch
+        {
+            // Intentionally empty: the command owns its own refusals and
+            // presents them; a failure here degrades to no change.
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>

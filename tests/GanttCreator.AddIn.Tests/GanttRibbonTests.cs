@@ -51,6 +51,13 @@ public class GanttRibbonTests
         "getShowLabel",
         "getShowImage",
         "getSelectedItemIndex",
+
+        // R5.5: the dynamic dropDown item callbacks. Excel calls getItemCount
+        // first, then getItemID/getItemLabel for each index, then
+        // getSelectedItemIndex — all four must resolve to a public method.
+        "getItemCount",
+        "getItemID",
+        "getItemLabel",
     ];
 
     private const string NamespaceCustomUI2010 =
@@ -394,6 +401,10 @@ public class GanttRibbonTests
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
+                // R5.5: the label dropdown is the first selection-gated
+                // control — it shares the workbook+initialised part of the
+                // truth table and adds the single-row condition inside it.
+                RibbonControlIds.LabelPosition,
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
@@ -1704,6 +1715,18 @@ public class GanttRibbonTests
             // edited text: public void OnChange(IRibbonControl, string).
             if (parameters[0].ParameterType == typeof(IRibbonControl)
                 && parameters[1].ParameterType == typeof(string))
+            {
+                return true;
+            }
+
+            // The RibbonX dynamic dropDown item callbacks (R5.5) pass the
+            // control plus the zero-based item index:
+            // public string GetItemID(IRibbonControl, int) and
+            // public string GetItemLabel(IRibbonControl, int). Excel
+            // dispatches both by reflection, so a missing int parameter
+            // throws at dropdown-population time.
+            if (parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(int))
             {
                 return true;
             }

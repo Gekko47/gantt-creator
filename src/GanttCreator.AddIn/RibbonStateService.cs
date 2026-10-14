@@ -48,11 +48,31 @@ internal class RibbonStateService
     private IExcelApplicationAdapter? _applicationAdapter;
     private Func<bool?>? _logAvailabilitySource;
     private IDisposable? _workbookStateSubscription;
+
+    /// <summary>The standalone selection identifier (R5.5 ruling 6), or null when not wired.</summary>
+    private ISelectionIdentifier? _selectionIdentifier;
+
+    /// <summary>The selection-change subscription, detached exactly once.</summary>
+    private IDisposable? _selectionSubscription;
+
     private IConfigCatalogueWriter? _catalogueWriter;
     private IConfigCatalogueReader? _catalogueReader;
     private IGanttTableReader? _tableReader;
     private IPanelGridMeasurementPort? _panelGridMeasurementPort;
     private RibbonState _state = RibbonState.Initial;
+
+    /// <summary>
+    /// The label dropdown's per-selection context: whether the selection
+    /// resolves to exactly one table body row, that row's stored position, and
+    /// the positions the row's type (or Custom Activity style) permits.
+    /// </summary>
+    /// <param name="Available">True when exactly one body row is selected.</param>
+    /// <param name="Selected">The row's stored position, or null when blank/unknown.</param>
+    /// <param name="Options">The row's allowed positions in display order.</param>
+    private readonly record struct LabelContext(
+        bool Available,
+        GanttLabelPosition? Selected,
+        IReadOnlyList<GanttLabelPosition>? Options);
 
     /// <summary>
     /// The metric token naming the frame's outer right padding, in points.
@@ -74,6 +94,17 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="writer">The catalogue writer, or null when unavailable.</param>
     internal void SetCatalogueWriter(IConfigCatalogueWriter? writer) => _catalogueWriter = writer;
+
+    /// <summary>
+    /// Injects the standalone selection identifier (R5.5 ruling 6) that feeds
+    /// the label-position dropdown's per-row gating and item list. A null
+    /// identifier leaves the label context unavailable, so the dropdown stays
+    /// disabled until one is wired. Subsequent calls replace any previous
+    /// subscription via <see cref="Activate"/>.
+    /// </summary>
+    /// <param name="identifier">The selection identifier, or null when unavailable.</param>
+    internal void SetSelectionIdentifier(ISelectionIdentifier? identifier) =>
+        _selectionIdentifier = identifier;
 
     /// <summary>
     /// Returns the injected catalogue writer, or <see langword="null"/> when
@@ -1098,6 +1129,7 @@ internal class RibbonStateService
     internal void Activate()
     {
         SubscribeToWorkbookStateChanges();
+        SubscribeToSelectionChanges();
         LoadPlotSettingsFromWorkbook();
         Refresh();
     }
@@ -1175,6 +1207,125 @@ internal class RibbonStateService
     internal virtual bool GetEnabled(string? controlId) => _state.IsEnabled(controlId);
 
     /// <summary>
+    /// Returns how many items the label-position dropdown offers: the row's
+    /// projected positions plus the leading <c>Default</c> item that clears the
+    /// cell (R5.5 ruling 5 — blank resolves to the style default / Auto
+    /// cascade, §22). A pure read of the cached snapshot. Never throws.
+    /// </summary>
+    internal int GetLabelPositionCount() =>
+        _state.LabelOptions is { Count: > 0 } options ? options.Count + 1 : 0;
+
+    /// <summary>
+    /// Returns the item ID at <paramref name="index"/>: <c>Default</c> for the
+    /// leading clear item, otherwise the position's enum name. Index 0 is
+    /// always Default because the clear item is always offered. A pure read of
+    /// the cached snapshot; an out-of-range index yields an empty string, which
+    /// Excel treats as an empty item. Never throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetLabelPositionItemID(int index)
+    {
+        return index == 0
+            ? EntityTypeCatalog.DefaultLabelSelectionId
+            : _state.LabelOptions is { Count: > 0 } options
+            && index >= 1
+            && index <= options.Count
+                ? options[index - 1].ToString()
+                : string.Empty;
+    }
+
+    /// <summary>
+    /// Returns the user-facing label at <paramref name="index"/> (R5.5 ruling
+    /// 3: the enum name is never shown verbatim — <c>Inside</c> reads
+    /// <c>Centre</c>, <c>None</c> reads <c>None (hide)</c>, and the splitter
+    /// positions read as their meaning). A pure read of the cached snapshot; an
+    /// out-of-range index yields an empty string. Never throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetLabelPositionItemLabel(int index) =>
+        index == 0
+            ? "Default"
+            : _state.LabelOptions is { Count: > 0 } options
+            && index >= 1
+            && index <= options.Count
+                ? LabelPositionDisplayText(options[index - 1])
+                : string.Empty;
+
+    /// <summary>
+    /// Returns the selected item index: 0 (<c>Default</c>) when the row's cell
+    /// is blank, otherwise one past the position's place in the projected
+    /// options. A position outside the projected set resolves to
+    /// <c>Default</c> rather than an unmatched index, because such a cell could
+    /// only exist before this control existed. A pure read of the cached
+    /// snapshot. Never throws.
+    /// </summary>
+    internal int GetLabelPositionSelectedIndex()
+    {
+        if (_state.LabelOptions is not { Count: > 0 } options)
+        {
+            return 0;
+        }
+
+        if (_state.SelectedLabelPosition is not GanttLabelPosition selected)
+        {
+            return 0;
+        }
+
+        for (var index = 0; index < options.Count; index++)
+        {
+            if (options[index] == selected)
+            {
+                return index + 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Returns the display text for a label position. Isolated so the wording
+    /// table (R5.5 ruling 3) has exactly one authority and the getters above
+    /// stay pure reads.
+    /// </summary>
+    /// <param name="position">The position being displayed.</param>
+    private static string LabelPositionDisplayText(GanttLabelPosition position) =>
+        position switch
+        {
+            GanttLabelPosition.Auto => "Auto",
+            GanttLabelPosition.Left => "Left",
+            GanttLabelPosition.Right => "Right",
+            GanttLabelPosition.Inside => "Centre",
+            GanttLabelPosition.TopLeft => "Top left",
+            GanttLabelPosition.TopRight => "Top right",
+            GanttLabelPosition.BottomLeft => "Bottom left",
+            GanttLabelPosition.BottomRight => "Bottom right",
+            GanttLabelPosition.DataPanelLeft => "Data panel",
+            GanttLabelPosition.PlotCentre => "Plot centre",
+            GanttLabelPosition.Both => "Both",
+            GanttLabelPosition.None => "None (hide)",
+            _ => position.ToString(),
+        };
+
+    /// <summary>
+    /// Applies one label-position selection to the selected row: the item ID is
+    /// parsed through the catalogue (<c>Default</c> clears the cell, an unknown
+    /// ID is refused — never defaulted), the command runs, and the ribbon
+    /// refreshes so the dropdown reflects the written cell (R1.5 D3). Never
+    /// throws.
+    /// </summary>
+    /// <param name="selectionId">The selected item ID, or null in tests.</param>
+    internal void SetLabelPosition(string? selectionId)
+    {
+        if (!EntityTypeCatalog.TryParseLabelSelection(selectionId, out GanttLabelPosition? position))
+        {
+            return;
+        }
+
+        SetLabelPositionCommand.RunForExcel(position);
+        Refresh();
+    }
+
+    /// <summary>
     /// Invalidates the whole Ribbon so Excel re-queries every dynamic getter
     /// against the current snapshot. A no-op without a handle; a failing
     /// <c>Invalidate</c> degrades to no invalidation. Never throws.
@@ -1234,6 +1385,13 @@ internal class RibbonStateService
             var hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
             var logAvailable = _logAvailabilitySource?.Invoke() ?? null;
 
+            // R5.5 ruling 6: the label dropdown is the first selection-gated
+            // control, so its context is captured here rather than left at its
+            // initial value. The capture is sticky like every other fact — a
+            // transient failure keeps the previous context rather than greying
+            // the dropdown mid-selection.
+            var labelContext = CaptureLabelContext(previous);
+
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
                 logAvailable ?? previous.LogAvailable,
@@ -1250,11 +1408,182 @@ internal class RibbonStateService
                 previous.Preset,
                 previous.PlotWidthPt,
                 previous.PlotHeightPt,
-                previous.PeriodLabelFormat));
+                previous.PeriodLabelFormat,
+                labelContext.Available,
+                labelContext.Selected,
+                labelContext.Options));
         }
         catch
         {
             return previous;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Captures the label dropdown's context from the selection identifier, the
+    /// table reader, and the catalogue reader (R5.5 ruling 6 + D1 projection).
+    /// Never throws: an indeterminable selection keeps the previous context
+    /// (snapshot stickiness), so a transient COM failure cannot grey the
+    /// dropdown mid-selection.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private LabelContext CaptureLabelContext(RibbonState previous)
+    {
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        IGanttTableReader? reader = _tableReader;
+        if (identifier is null || reader is null)
+        {
+            return UnavailableLabelContext(previous);
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.IsSingleBodyRow || facts.BodyIndex is not int bodyIndex)
+            {
+                return UnavailableLabelContext(previous);
+            }
+
+            GanttTableReadOutcome read = reader.Read();
+            if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+            {
+                return UnavailableLabelContext(previous);
+            }
+
+            GanttRowDto row = read.Rows[bodyIndex - 1];
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type))
+            {
+                return UnavailableLabelContext(previous);
+            }
+
+            // Custom Activity resolves its set from the row's style (R2.7b/c);
+            // every other type reads its catalogue definition. A failed
+            // catalogue read yields an empty registry, which the projection
+            // turns into an empty option set — the dropdown then offers only
+            // Default, and the command refuses with StyleUnknown at execution.
+            GanttStyleRegistry styles = GanttStyleRegistry.Empty;
+            if (type == GanttEntityType.CustomActivity && _catalogueReader is not null)
+            {
+                ConfigReadOutcome catalogues = _catalogueReader.Read();
+                if (catalogues.Succeeded)
+                {
+                    styles = catalogues.Styles;
+                }
+            }
+
+            IReadOnlyList<GanttLabelPosition> options =
+                EntityTypeCatalog.GetAllowedLabelPositions(type, row.StyleKey, styles);
+            if (options.Count == 0)
+            {
+                return UnavailableLabelContext(previous);
+            }
+
+            // The cell stores the position by name; blank resolves to the
+            // style default / Auto cascade (§22), so it reads as null.
+            GanttLabelPosition? selected = EntityTypeCatalog.TryParseLabelSelection(
+                row.LabelPositionText,
+                out GanttLabelPosition? parsed)
+                ? parsed
+                : null;
+
+            return new LabelContext(true, selected, options);
+        }
+        catch
+        {
+            return UnavailableLabelContext(previous);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The context published when the label dropdown cannot be resolved: not
+    /// available, carrying the previously published selection and options so a
+    /// transient failure cannot blank a resolved dropdown.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The unavailable context.</returns>
+    private static LabelContext UnavailableLabelContext(RibbonState previous) =>
+        new(false, previous.SelectedLabelPosition, previous.LabelOptions);
+
+    /// <summary>
+    /// Attaches the selection-change handler, replacing any previous
+    /// subscription so a re-activation cannot double-subscribe.
+    /// </summary>
+    private void SubscribeToSelectionChanges()
+    {
+        DisposeSelectionSubscription();
+
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        if (identifier is null)
+        {
+            return;
+        }
+
+        // CA1031: activation runs inside the never-throwing AutoOpen; a failure
+        // to subscribe degrades to command-driven invalidation only.
+#pragma warning disable CA1031
+        try
+        {
+            _selectionSubscription = identifier.SubscribeSelectionChanged(OnSelectionChanged);
+        }
+        catch
+        {
+            _selectionSubscription = null;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Handles one selection change: re-captures the snapshot and invalidates
+    /// the label dropdown alone. Only that control is invalidated, so moving
+    /// the selection does not re-query every getter on the ribbon. Never
+    /// throws.
+    /// </summary>
+    private void OnSelectionChanged()
+    {
+        // CA1031: runs inside an Excel event dispatch; a failure must not
+        // escape into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            _state = CaptureSnapshot(_state, _state.SheetInitialised);
+            InvalidateControl(RibbonControlIds.LabelPosition);
+        }
+        catch
+        {
+            // Intentionally empty: the snapshot is unchanged and the next
+            // refresh re-reads the selection.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Detaches the selection-change subscription exactly once. Never throws.
+    /// </summary>
+    private void DisposeSelectionSubscription()
+    {
+        IDisposable? subscription = _selectionSubscription;
+        _selectionSubscription = null;
+        if (subscription is null)
+        {
+            return;
+        }
+
+        // CA1031: teardown must never throw into Excel; a failed detach
+        // degrades to a retained event connection.
+#pragma warning disable CA1031
+        try
+        {
+            subscription.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: see the teardown rationale above.
         }
 #pragma warning restore CA1031
     }
@@ -1352,10 +1681,12 @@ internal class RibbonStateService
     /// </summary>
     private void Teardown()
     {
+        DisposeSelectionSubscription();
         DisposeWorkbookStateSubscription();
         _ribbon = null;
         _applicationAdapter = null;
         _logAvailabilitySource = null;
+        _selectionIdentifier = null;
         _catalogueWriter = null;
         _catalogueReader = null;
         _tableReader = null;

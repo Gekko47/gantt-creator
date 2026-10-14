@@ -284,4 +284,118 @@ public static class EntityTypeCatalog
         type = default;
         return false;
     }
+
+    /// <summary>
+    /// The ribbon item identifier that clears the row's <c>LabelPosition</c>
+    /// cell (blank), resolving to the style default / <c>Auto</c> cascade per
+    /// entity-guide §22. It is the absence of a value, not a catalogue
+    /// position, so it never appears in <see cref="GetAllowedLabelPositions"/>.
+    /// </summary>
+    public const string DefaultLabelSelectionId = "Default";
+
+    /// <summary>
+    /// Display order for ribbon label options: the catalogue set in a stable,
+    /// deterministic order (Ordinal by enum name would scatter the UX, so the
+    /// order is fixed here once). Every element comes from
+    /// <see cref="EntityTypeDefinition.AllowedLabelPositions"/> or the row's
+    /// style registry set — never a second authority.
+    /// </summary>
+    private static readonly GanttLabelPosition[] _displayOrder =
+    [
+        GanttLabelPosition.Auto,
+        GanttLabelPosition.Left,
+        GanttLabelPosition.Right,
+        GanttLabelPosition.Inside,
+        GanttLabelPosition.TopLeft,
+        GanttLabelPosition.TopRight,
+        GanttLabelPosition.BottomLeft,
+        GanttLabelPosition.BottomRight,
+        GanttLabelPosition.DataPanelLeft,
+        GanttLabelPosition.PlotCentre,
+        GanttLabelPosition.Both,
+        GanttLabelPosition.None,
+    ];
+
+    /// <summary>
+    /// Returns the allowed label positions for a type in stable ribbon display
+    /// order (R5.5 D1 projection). <see cref="GanttEntityType.CustomActivity"/>
+    /// resolves from <paramref name="styleRegistry"/> via its
+    /// <c>StyleKey</c>; every other type reads its catalogue definition.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    /// <returns>The allowed positions in display order; empty when unknown.</returns>
+    public static IReadOnlyList<GanttLabelPosition> GetAllowedLabelPositions(
+        GanttEntityType type,
+        string? styleKey = null,
+        GanttStyleRegistry? styleRegistry = null)
+    {
+        IReadOnlySet<GanttLabelPosition> allowed;
+        if (type == GanttEntityType.CustomActivity)
+        {
+            if (styleRegistry is null
+                || !styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
+                || style is null
+                || style.AllowedLabelPositions is null)
+            {
+                return [];
+            }
+
+            allowed = style.AllowedLabelPositions;
+        }
+        else if (GetDefinition(type) is not { } definition)
+        {
+            return [];
+        }
+        else
+        {
+            allowed = definition.AllowedLabelPositions;
+        }
+
+        return [.. _displayOrder.Where(allowed.Contains)];
+    }
+
+    /// <summary>
+    /// Returns whether a label position is allowed for a type (R5.5 D1 guard).
+    /// <see cref="GanttEntityType.CustomActivity"/> delegates to its style.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate position.</param>
+    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    public static bool IsLabelPositionAllowed(
+        GanttEntityType type,
+        GanttLabelPosition position,
+        string? styleKey = null,
+        GanttStyleRegistry? styleRegistry = null) =>
+        GetAllowedLabelPositions(type, styleKey, styleRegistry).Contains(position);
+
+    /// <summary>
+    /// Parses a ribbon label-selection identifier. <c>Default</c> parses to a
+    /// null position (clear the cell to blank); otherwise the identifier must
+    /// name a defined <see cref="GanttLabelPosition"/> Ordinally. Unknown text
+    /// is refused, never defaulted (the TimeScale-selection precedent).
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="position">The parsed position, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined position name.</returns>
+    public static bool TryParseLabelSelection(string? selectionId, out GanttLabelPosition? position)
+    {
+        if (string.Equals(selectionId, DefaultLabelSelectionId, StringComparison.Ordinal))
+        {
+            position = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            position = parsed;
+            return true;
+        }
+
+        position = null;
+        return false;
+    }
 }

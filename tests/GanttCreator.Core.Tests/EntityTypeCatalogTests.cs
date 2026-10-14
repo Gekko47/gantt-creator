@@ -239,4 +239,179 @@ public class EntityTypeCatalogTests
             CultureInfo.CurrentCulture = originalCulture;
         }
     }
+
+    [Fact]
+    public void GetAllowedLabelPositions_projects_span_set_in_display_order()
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(GanttEntityType.AsBuiltActivity);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.Inside,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_projects_milestone_set_without_inside()
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(GanttEntityType.AsBuiltMilestone);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_projects_delineator_corners_in_display_order()
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(GanttEntityType.Delineator);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.TopLeft,
+                GanttLabelPosition.TopRight,
+                GanttLabelPosition.BottomLeft,
+                GanttLabelPosition.BottomRight,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_projects_splitter_set_without_auto()
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(GanttEntityType.Splitter);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.DataPanelLeft,
+                GanttLabelPosition.PlotCentre,
+                GanttLabelPosition.Both,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.Spacer)]
+    [InlineData(GanttEntityType.CriticalInterval)]
+    public void GetAllowedLabelPositions_single_value_types_permit_only_none(GanttEntityType type)
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(type);
+
+        Assert.Equal(new[] { GanttLabelPosition.None }, positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_custom_activity_resolves_from_its_style()
+    {
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyStyle",
+                new HashSet<GanttLabelPosition>(
+                    [GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.None]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomActivity, "MyStyle", registry);
+
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Missing")]
+    public void GetAllowedLabelPositions_custom_activity_without_style_is_empty(string? styleKey)
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomActivity, styleKey, GanttStyleRegistry.Empty);
+
+        Assert.Empty(positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_unknown_type_is_empty()
+    {
+        Assert.Empty(EntityTypeCatalog.GetAllowedLabelPositions((GanttEntityType)999));
+    }
+
+    [Theory]
+    [InlineData(GanttEntityType.AsBuiltActivity, GanttLabelPosition.TopLeft, false)]
+    [InlineData(GanttEntityType.AsBuiltMilestone, GanttLabelPosition.Inside, false)]
+    [InlineData(GanttEntityType.Splitter, GanttLabelPosition.Left, false)]
+    [InlineData(GanttEntityType.Spacer, GanttLabelPosition.Left, false)]
+    [InlineData(GanttEntityType.CriticalInterval, GanttLabelPosition.Right, false)]
+    [InlineData(GanttEntityType.AsBuiltActivity, GanttLabelPosition.Right, true)]
+    [InlineData(GanttEntityType.Delineator, GanttLabelPosition.BottomRight, true)]
+    [InlineData(GanttEntityType.Splitter, GanttLabelPosition.Both, true)]
+    [InlineData(GanttEntityType.Spacer, GanttLabelPosition.None, true)]
+    public void IsLabelPositionAllowed_refuses_cross_kind_positions(
+        GanttEntityType type, GanttLabelPosition position, bool expected)
+    {
+        Assert.Equal(expected, EntityTypeCatalog.IsLabelPositionAllowed(type, position));
+    }
+
+    [Fact]
+    public void TryParseLabelSelection_default_clears_to_null()
+    {
+        Assert.True(EntityTypeCatalog.TryParseLabelSelection("Default", out GanttLabelPosition? position));
+        Assert.Null(position);
+    }
+
+    [Theory]
+    [InlineData("Left", GanttLabelPosition.Left)]
+    [InlineData("Inside", GanttLabelPosition.Inside)]
+    [InlineData("TopRight", GanttLabelPosition.TopRight)]
+    [InlineData("PlotCentre", GanttLabelPosition.PlotCentre)]
+    [InlineData("None", GanttLabelPosition.None)]
+    public void TryParseLabelSelection_parses_defined_positions(
+        string selectionId, GanttLabelPosition expected)
+    {
+        Assert.True(EntityTypeCatalog.TryParseLabelSelection(selectionId, out GanttLabelPosition? position));
+        Assert.Equal(expected, position);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Widget")]
+    [InlineData("left")]
+    [InlineData("Centre")]
+    [InlineData("Above")]
+    public void TryParseLabelSelection_refuses_unknown_text(string? selectionId)
+    {
+        Assert.False(EntityTypeCatalog.TryParseLabelSelection(selectionId, out GanttLabelPosition? position));
+        Assert.Null(position);
+    }
 }

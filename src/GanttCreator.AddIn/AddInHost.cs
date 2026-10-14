@@ -155,6 +155,12 @@ public sealed class AddInHost(
                 new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetTableReader(
                 new ExcelGanttTableReader(ExcelDnaUtil.Application));
+            // R5.5 ruling 6: the standalone selection identifier feeds the
+            // label dropdown's per-row gating and item list. It is separate
+            // from the workbook-state adapter, which keeps its single
+            // responsibility, and R5.10 reuses it for fill/stroke.
+            RibbonStateService.Instance.SetSelectionIdentifier(
+                new ExcelSelectionIdentifier(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetPanelGridMeasurementPort(
                 new ExcelPanelGridMeasurement(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
