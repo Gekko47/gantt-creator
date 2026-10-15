@@ -261,8 +261,8 @@ public class OfficeFixtureTests
         // close-callback proof remains pending.
         //
         // Why one cycle and not five: the wait below is the test's whole cost
-        // (~22 s per cycle, the deferred initialization the log comment above
-        // records), and it proves the same thing every time -- that a load
+        // (a 60 s alive-phase poll plus, on a miss, a 30 s post-quit poll),
+        // and it proves the same thing every time -- that a load
         // initialises and writes one new session token. Repeating it five times
         // bought nothing on the close side, which is unobservable here. Five-cycle
         // open/close no-orphan coverage is already carried by
@@ -272,6 +272,7 @@ public class OfficeFixtureTests
         var logPath = GetAddInLogPath();
         var fixture = new OfficeFixture();
         int pid;
+        string? aliveSession = null;
 
         // Negative control: seed the seen set with every session already in the
         // log, so the wait cannot be satisfied by a foreign record that predates
@@ -291,16 +292,29 @@ public class OfficeFixtureTests
             Assert.True(registered,
                 $"Application.RegisterXLL returned false for '{xllPath}'.");
 
-            // No open record is expected yet: initialization is deferred until
-            // Quit (see the observation note below).
+            // Phase 1 (alive): production writes the open record at load
+            // (AddInHost.AutoOpen -> AddInLifecycle.LogOpen), so poll the log
+            // while Excel is still alive. A miss here is not a failure: the
+            // post-quit phase below is the fallback.
+            aliveSession = await WaitForNewPackedOpenSessionAsync(
+                logPath, seenSessions, 1, timeoutSeconds: 60, required: false)
+                .ConfigureAwait(true);
+            if (aliveSession is not null)
+            {
+                _output.WriteLine(
+                    $"Observed the open record while Excel was still alive (session={aliveSession}).");
+            }
         }
         finally
         {
-            // Quit is what makes the deferred AutoOpen record land.
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
 
-        var newSession = await WaitForNewPackedOpenSessionAsync(logPath, seenSessions, 1)
+        // Phase 2 (post-quit): if the alive phase missed, the record may still
+        // land during shutdown; the required wait carries the log-tail
+        // diagnostic if neither phase sees it.
+        var newSession = aliveSession ?? await WaitForNewPackedOpenSessionAsync(
+                logPath, seenSessions, 1, timeoutSeconds: 30, required: true)
             .ConfigureAwait(true);
         _output.WriteLine(
             $"PID={pid}; RegisterXLL=True; session-bearing packed-XLL 'open' record " +
@@ -844,16 +858,21 @@ public class OfficeFixtureTests
     /// record appears whose session token was not seen before this cycle.
     /// The token attributes the record to one load: a foreign session (for
     /// example an interleaved record from another Excel instance) does not
-    /// satisfy the wait, and a missing record fails with a diagnostic. The
-    /// deadline is 60 s after the Excel instance quit. Returns the new
-    /// session token. The exact per-cycle session is recorded in the test
-    /// output for the human evidence review.
+    /// satisfy the wait. The deadline is <paramref name="timeoutSeconds"/>
+    /// per phase; when <paramref name="required"/> is <see langword="false"/>
+    /// a timeout returns <see langword="null"/> (the alive phase), and when
+    /// <see langword="true"/> a timeout fails with a diagnostic that includes
+    /// the log tail (the post-quit phase). Returns the new session token, or
+    /// <see langword="null"/> when not required and the deadline elapsed.
+    /// The exact per-cycle session is recorded in the test output for the
+    /// human evidence review.
     /// </summary>
-    private static async Task<string> WaitForNewPackedOpenSessionAsync(
-        string logPath, HashSet<string> seenSessions, int cycle)
+    private static async Task<string?> WaitForNewPackedOpenSessionAsync(
+        string logPath, HashSet<string> seenSessions, int cycle,
+        int timeoutSeconds, bool required)
     {
         var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < 90)
+        while (sw.Elapsed.TotalSeconds < timeoutSeconds)
         {
             var sessions = PackedOpenSessions(TryReadLog(logPath));
             sessions.ExceptWith(seenSessions);
@@ -865,12 +884,22 @@ public class OfficeFixtureTests
             await Task.Delay(500).ConfigureAwait(true);
         }
 
+        if (!required)
+        {
+            return null;
+        }
+
+        var logTail = string.Join(
+            Environment.NewLine,
+            TryReadLog(logPath).Split('\n').TakeLast(5));
         Assert.Fail(
             $"Cycle {cycle}: no new session-bearing packed-XLL 'open' record appeared in " +
-            $"'{logPath}' within 90 s after the Excel instance quit (sessions before: {seenSessions.Count}). " +
-            "RegisterXLL returned true, so the XLL loaded; in the 2026-09-17 session-token probe " +
-            "the matching record materialized within ~30 s of RegisterXLL — its absence after 90 s " +
-            "means no attributable open record appeared for this load.");
+            $"'{logPath}' within {timeoutSeconds} s after the Excel instance quit " +
+            $"(sessions before: {seenSessions.Count}). RegisterXLL returned true, so the XLL " +
+            "loaded; in the 2026-09-17 session-token probe the matching record materialized " +
+            "within ~30 s of RegisterXLL — its absence means no attributable open record " +
+            $"appeared for this load. Last 5 lines of the log:" +
+            Environment.NewLine + logTail);
         throw new InvalidOperationException("Unreachable: Assert.Fail throws.");
     }
 
