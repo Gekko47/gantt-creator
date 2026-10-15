@@ -394,6 +394,7 @@ public class GanttRibbonTests
                 RibbonControlIds.DemoteToChild,
                 RibbonControlIds.MoveUp,
                 RibbonControlIds.MoveDown,
+                RibbonControlIds.ThemeSettings,
                 RibbonControlIds.PresetA4Portrait,
                 RibbonControlIds.PresetA4Landscape,
                 RibbonControlIds.PresetPresentation16x9,

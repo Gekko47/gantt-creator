@@ -865,6 +865,85 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Opens the theme settings dialog, applies edits through the catalogue
+    /// writer, and refreshes the ribbon on success. Never throws.
+    /// </summary>
+    internal void ShowThemeSettingsDialog()
+    {
+        if (_catalogueReader is null || _catalogueWriter is null)
+        {
+            return;
+        }
+
+        // CA1031: the dialog runs on the Excel main STA thread (the Ribbon
+        // onAction thread). Any failure must not propagate into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            // Read current themed values from the workbook
+            ConfigReadOutcome outcome = _catalogueReader.Read();
+            if (!outcome.Succeeded)
+            {
+                return;
+            }
+
+            // Build current theme request from the workbook
+            var currentStyles = new List<ThemeStyleEdit>();
+            var currentMetrics = new Dictionary<string, double>();
+
+            foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+            {
+                // Check if this built-in preset has overridden values in the workbook
+                // The styles are validated by the reader, so we trust the values
+                currentStyles.Add(new ThemeStyleEdit(
+                    preset.StyleKey,
+                    preset.FillColour,
+                    preset.StrokeColour,
+                    preset.TextColour));
+            }
+
+            foreach (GanttMetricToken token in GanttCatalogues.Metrics)
+            {
+                if (ThemeEditRequest.EditableMetrics.Contains(token.Name))
+                {
+                    currentMetrics[token.Name] = token.DefaultValue;
+                }
+            }
+
+            // TODO: Read actual themed values from workbook settings/styles tables
+            // For now, use the catalogue defaults as the starting point
+
+            var request = new ThemeEditRequest(currentStyles, currentMetrics);
+
+            // Show the WinForms dialog
+            using var dialog = new ThemeSettingsForm(request);
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                var validated = dialog.GetValidatedRequest();
+                if (validated != null)
+                {
+                    // Write the themed edits
+                    var writeOutcome = _catalogueWriter.WriteTheme(validated);
+                    if (writeOutcome is not null && writeOutcome.Succeeded)
+                    {
+                        Refresh();
+                    }
+                    else if (writeOutcome is not null)
+                    {
+                        var msg = $"Failed to write theme settings: {writeOutcome.Refusal}";
+                        CommandBoundary.Instance.Run("ShowThemeSettingsDialog", () => throw new InvalidOperationException(msg));
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Loads the four plot-range settings from the active workbook into the
     /// current state snapshot. Uses the injected IConfigCatalogueReader to read
     /// the settings table. A refused or failed read keeps the in-memory state

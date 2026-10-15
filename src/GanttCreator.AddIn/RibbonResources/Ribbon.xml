@@ -44,6 +44,9 @@
             <dropDown id="ddnDateLabel" getEnabled="GetEnabled" getItemCount="GetDateLabelCount" getItemID="GetDateLabelItemID" getItemLabel="GetDateLabelItemLabel" getSelectedItemIndex="GetDateLabelSelectedIndex" onAction="OnDateLabelChange"/>
           </box>
         </group>
+        <group id="grpStyleTheme" label="Style &amp; Theme">
+          <button id="btnThemeSettings" label="Theme settings..." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
+        </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">
             <labelControl id="lblPlotStartDate" label="Start Date"/>
