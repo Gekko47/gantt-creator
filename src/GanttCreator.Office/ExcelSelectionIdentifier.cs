@@ -63,7 +63,7 @@ public class ExcelSelectionIdentifier(object? application) : ISelectionIdentifie
                 return SelectionFacts.None;
             }
 
-            Excel.Range? selection = GetSelection(application) as Excel.Range;
+            var selection = GetSelection(application) as Excel.Range;
             Excel.Range? active = GetActiveCell(application);
             Excel.Range? range = selection ?? active;
             return range is null || !TryResolveToBody(table, range, out var bodyIndex, out var rowCount, out var isHeader)

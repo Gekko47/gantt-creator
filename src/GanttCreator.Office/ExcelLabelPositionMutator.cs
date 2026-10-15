@@ -81,7 +81,7 @@ public class ExcelLabelPositionMutator(
         var bodyIndex = ResolveActiveBodyIndex(table, rows);
         return bodyIndex == 0
             ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.SelectionOutsideTable)
-            : !TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
+            : !TryReadBody(table, out List<object?[]>? body, out var columnMap)
                 || body is null || columnMap is null
                 ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.TableMissing)
                 : ApplySetLabelPosition(table, body, columnMap, bodyIndex, position);

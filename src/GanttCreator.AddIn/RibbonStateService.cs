@@ -1438,7 +1438,7 @@ internal class RibbonStateService
         if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
         {
             // Blank (null) resolves to Auto, and Auto is the leading choice.
-            var selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
+            GanttLabelPosition selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
             for (var index = 0; index < placementOptions.Count; index++)
             {
                 if (placementOptions[index] == selectedPlacement)
@@ -1456,7 +1456,7 @@ internal class RibbonStateService
         }
 
         // Blank (null) resolves to Auto, and Auto is the leading choice.
-        var selected = _state.SelectedDateLabelPosition ?? GanttDateLabelPosition.Auto;
+        GanttDateLabelPosition selected = _state.SelectedDateLabelPosition ?? GanttDateLabelPosition.Auto;
         for (var index = 0; index < options.Count; index++)
         {
             if (options[index] == selected)
@@ -1582,9 +1582,9 @@ internal class RibbonStateService
             // initial value. The capture is sticky like every other fact — a
             // transient failure keeps the previous context rather than greying
             // the dropdown mid-selection.
-            var descriptionLabelContext = CaptureDescriptionLabelContext(previous);
-            var dateLabelContext = CaptureDateLabelContext(previous);
-            var dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
+            DescriptionLabelContext descriptionLabelContext = CaptureDescriptionLabelContext(previous);
+            DateLabelContext dateLabelContext = CaptureDateLabelContext(previous);
+            DateLabelPlacementContext dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,

@@ -499,7 +499,7 @@ public static class DelineatorBuilder
         dateLabel = null;
         dateLabelBounds = null;
 
-        string dateText = GanttDateFormatting.Format(start, request.DateFormat);
+        var dateText = GanttDateFormatting.Format(start, request.DateFormat);
         if (!request.LabelMetrics.TryMeasure(dateText, out TextMeasurement? measurement)
             || measurement is null)
         {

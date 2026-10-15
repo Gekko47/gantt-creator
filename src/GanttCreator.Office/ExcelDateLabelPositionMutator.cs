@@ -62,8 +62,8 @@ public class ExcelDateLabelPositionMutator(
         DateLabelMutationOutcome? refusal = RunGuards(
             out ListObject? table,
             out List<object?[]>? body,
-            out int[]? columnMap,
-            out int bodyIndex);
+            out var columnMap,
+            out var bodyIndex);
         return refusal ?? ApplySetDateLabelPosition(table!, body!, columnMap!, bodyIndex, position);
     }
 
@@ -85,8 +85,8 @@ public class ExcelDateLabelPositionMutator(
         DateLabelMutationOutcome? refusal = RunGuards(
             out ListObject? table,
             out List<object?[]>? body,
-            out int[]? columnMap,
-            out int bodyIndex);
+            out var columnMap,
+            out var bodyIndex);
         return refusal ?? ApplySetDateLabelPlacement(table!, body!, columnMap!, bodyIndex, placement);
     }
 

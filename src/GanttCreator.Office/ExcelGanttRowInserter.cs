@@ -610,9 +610,9 @@ public class ExcelGanttRowInserter(
         var activeRow = body[position - 2];
         var belowRow = body[position];
 
-        var activeId = TryParseId(activeRow, columnMap);
-        var activeParentId = TryParseParentId(activeRow, columnMap);
-        var belowParentId = TryParseParentId(belowRow, columnMap);
+        GanttRowId? activeId = TryParseId(activeRow, columnMap);
+        GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
+        GanttRowId? belowParentId = TryParseParentId(belowRow, columnMap);
 
         // The active cell is a child of P and the row below is also a
         // child of P: the new row lands inside P's contiguous child run,
@@ -716,7 +716,7 @@ public class ExcelGanttRowInserter(
         }
 
         List<object?[]> body = ReadBody(table);
-        var events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? _);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out var _);
         if (events is null)
         {
             return;
