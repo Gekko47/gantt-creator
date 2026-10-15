@@ -548,7 +548,7 @@ public static class DelineatorBuilder
             dateLabel = new SceneText(
                 ScenePrimitive.CreateId(owner, DateLabelBuilder.StartRole),
                 owner,
-                ZLayer.Label,
+                ZLayer.DelineatorLabel,
                 dateText,
                 box,
                 // The same predetermined description-label style the

@@ -1213,7 +1213,7 @@ public class ExcelParentChildMutatorTests
 		Assert.Empty(graph.WrittenRows);
 		int item = TableIndexOf("ParentId");
 		int item2 = TableIndexOf("SiblingOrder");
-		GanttRowId item3 = ParsedId(GroupOneId);
+		string item3 = GroupOneId;
 		Assert.Equal<List<(int Row, int Column, object? Value)>>(new List<(int Row, int Column, object? Value)>
 		{
 			(2, item2, 0),

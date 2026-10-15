@@ -339,7 +339,7 @@ public sealed class DelineatorBuilderTests
         Assert.Equal(Plot.Top, r.DateLabel.TextBounds.Top);
         Assert.Equal(40.0, r.DateLabel.TextBounds.Width);
         Assert.Equal(GanttTextAlignment.Right, r.DateLabel.Alignment);
-        Assert.Equal(ZLayer.Label, r.DateLabel.ZLayer);
+        Assert.Equal(ZLayer.DelineatorLabel, r.DateLabel.ZLayer);
         Assert.Equal("DefaultText", r.DateLabel.Style.StyleKey);
     }
 

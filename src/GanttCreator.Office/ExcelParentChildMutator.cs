@@ -919,7 +919,7 @@ public class ExcelParentChildMutator(
                 // deleted row's parent and takes the deleted
                 // row's slot in the run, so its ParentId cell is
                 // rewritten and its order is its dense position.
-                singles.Add((index, "ParentId", plan.InheritedParentId));
+                singles.Add((index, "ParentId", plan.InheritedParentId?.Value));
                 singles.Add((index, "SiblingOrder", order));
                 order++;
             }

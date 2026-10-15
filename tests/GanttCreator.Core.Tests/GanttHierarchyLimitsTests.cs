@@ -299,7 +299,7 @@ public sealed class GanttHierarchyLimitsTests
     /// Interval names a parent that can never own, so the finding is the
     /// incompatible-parent code rather than depth. Depth still guards genuine
     /// three-level chains through owning types
-    /// (<see cref="A_grandchild_is_blocked_as_too_deep"/>).
+    /// (<see cref="A_grandchild_is_refused"/>).
     /// </summary>
     [Fact]
     public void A_nested_critical_interval_names_a_parent_that_cannot_own()
