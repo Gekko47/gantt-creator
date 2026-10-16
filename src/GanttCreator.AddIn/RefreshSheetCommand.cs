@@ -134,6 +134,11 @@ internal static class RefreshSheetCommand
             // validation error and pressed Refresh saw the stale note still sitting on
             // the row. The reporter clears the notes this add-in owns on every call, so
             // passing it here is what makes a corrected row lose its note.
-            new ExcelGanttValidationReporter(application));
+            new ExcelGanttValidationReporter(application),
+
+            // The StyleKey column is engine-owned: every Refresh brings column K
+            // into line with each row's current Type, so the writer is part of the
+            // live composition, not an optional extra.
+            new ExcelStyleKeyWriter(application));
 #pragma warning restore CA2000
 }

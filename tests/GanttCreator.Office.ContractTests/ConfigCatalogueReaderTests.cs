@@ -59,19 +59,19 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
-    public void Read_reports_a_valid_but_different_colour_as_catalogue_drift()
+    public void Read_accepts_a_valid_but_different_colour_as_theme_edit()
     {
-        // Taxonomy pin: a well-formed colour that is not the catalogue value
-        // is drift (CatalogueMismatch), not a format problem. This is why the
-        // format check must run before the exact-match check — with
-        // exact-match first, BadColourFormat is unreachable for style rows.
+        // Theme editing (R5.6) writes user-edited colours at style columns 2
+        // (FillColour) and 3 (StrokeColour). Read() must accept valid hex
+        // colours that differ from the preset; they are theme edits, not
+        // catalogue drift. The format check still rejects malformed colours.
         var fake = new ConfigSheetFake();
         _ = ConfigGraph.BuildWriter(fake).Write();
         fake.Tables[1].Body[0][2] = "#123456";
 
         var outcome = ConfigGraph.BuildReader(fake).Read();
 
-        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+        Assert.True(outcome.Succeeded);
     }
 
     [Fact]
@@ -89,6 +89,35 @@ public class ConfigCatalogueReaderTests
         {
             Assert.Equal(setting.DefaultValue, outcome.Settings[setting.Key]);
         }
+    }
+
+    /// <summary>
+    /// Themed metric DefaultValues written by WriteTheme are projected into
+    /// ConfigReadOutcome.Metrics on the next Read(), so the dialog can show
+    /// the user's actual theme values rather than code-owned defaults.
+    /// </summary>
+    [Fact]
+    public void Read_projects_themed_metric_defaults_into_outcome_metrics()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        // Change GridLinePt's DefaultValue from its catalogue default.
+        var index = GanttCatalogues.Metrics.ToList()
+            .FindIndex(metric => metric.Name == "GridLinePt");
+        Assert.True(index >= 0, "GridLinePt must be present to project its DefaultValue.");
+        fake.Tables[2].Body[index][1] = 3.0;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Metrics.TryGetValue("GridLinePt", out var themedValue));
+        Assert.Equal(3.0, themedValue);
+
+        // Non-edited metrics still report their catalogue defaults.
+        Assert.Equal(
+            GanttCatalogues.MetricDefault("DelineatorLinePt"),
+            outcome.Metrics["DelineatorLinePt"]);
     }
 
     [Fact]

@@ -1298,7 +1298,7 @@ public class GanttRibbonTests
                 ["PlotStartDate"] = string.Empty,
                 ["PlotFinishDate"] = string.Empty,
             },
-            GanttStyleRegistry.Empty));
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));;
         service.SetCatalogueReader(catalogue.Object);
         var table = new Mock<IGanttTableReader>();
         _ = table.Setup(r => r.Read()).Returns(GanttTableReadOutcome.Ok(
@@ -1755,6 +1755,31 @@ public class GanttRibbonTests
         }
 
         return false;
+    }
+
+    [Fact]
+    public void OnThemeSettingsClick_throws_for_null_state_service()
+    {
+        var control = new Mock<IRibbonControl>();
+        Assert.Throws<ArgumentNullException>(
+            () => GanttRibbon.OnThemeSettingsClick(control.Object, null!));
+    }
+
+    [Fact]
+    public void OnThemeSettingsClick_does_not_throw_when_dialog_returns_false()
+    {
+        // When ShowThemeSettingsDialog returns false (write refused or cancelled),
+        // RunRefreshSheet is not called, so no exception should occur.
+        var service = new RibbonStateService();
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ConfigSheetMissing));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        var control = new Mock<IRibbonControl>();
+        Record.Exception(() => GanttRibbon.OnThemeSettingsClick(control.Object, service));
     }
 }
 

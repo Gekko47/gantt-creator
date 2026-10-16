@@ -111,10 +111,15 @@ public interface ISceneBuildRequestFactory
     /// <param name="settings">The effective settings key/value map.</param>
     /// <param name="registry">The named-style registry to resolve each event against.</param>
     /// <param name="grid">The measured live panel cell grid.</param>
+    /// <param name="themedMetrics">
+    /// The themed metric DefaultValues from the workbook, keyed by token name.
+    /// Values absent from this map fall back to the code-owned catalogue default.
+    /// </param>
     /// <returns>The request, or a typed refusal carrying a user-facing message.</returns>
     SceneBuildRequestOutcome Create(
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         GanttStyleRegistry registry,
-        PanelCellGrid grid);
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics);
 }

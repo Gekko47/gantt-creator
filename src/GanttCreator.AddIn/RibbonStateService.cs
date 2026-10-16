@@ -866,13 +866,13 @@ internal class RibbonStateService
 
     /// <summary>
     /// Opens the theme settings dialog, applies edits through the catalogue
-    /// writer, and refreshes the ribbon on success. Never throws.
+    /// writer, and returns whether themed edits were written. Never throws.
     /// </summary>
-    internal void ShowThemeSettingsDialog()
+    internal bool ShowThemeSettingsDialog()
     {
         if (_catalogueReader is null || _catalogueWriter is null)
         {
-            return;
+            return false;
         }
 
         // CA1031: the dialog runs on the Excel main STA thread (the Ribbon
@@ -884,34 +884,47 @@ internal class RibbonStateService
             ConfigReadOutcome outcome = _catalogueReader.Read();
             if (!outcome.Succeeded)
             {
-                return;
+                return false;
             }
 
-            // Build current theme request from the workbook
+            // Build current theme request from the workbook's themed styles.
+            // Read the edited colours from outcome.Styles (the validated
+            // GanttStyleRegistry) so the dialog shows the user's current theme,
+            // not the code-owned defaults. Fall back to the preset values when
+            // a preset is not present in the registry.
             var currentStyles = new List<ThemeStyleEdit>();
             var currentMetrics = new Dictionary<string, double>();
 
             foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
             {
-                // Check if this built-in preset has overridden values in the workbook
-                // The styles are validated by the reader, so we trust the values
-                currentStyles.Add(new ThemeStyleEdit(
-                    preset.StyleKey,
-                    preset.FillColour,
-                    preset.StrokeColour,
-                    preset.TextColour));
+                string fill = preset.FillColour;
+                string stroke = preset.StrokeColour;
+                string text = preset.TextColour;
+
+                if (outcome.Styles.TryGet(preset.StyleKey, out GanttStyleDefinition? definition)
+                    && definition is { HasFormatting: true })
+                {
+                    fill = definition.FillColour ?? preset.FillColour;
+                    stroke = definition.StrokeColour ?? preset.StrokeColour;
+                    text = definition.TextColour ?? preset.TextColour;
+                }
+
+                currentStyles.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text));
             }
 
             foreach (GanttMetricToken token in GanttCatalogues.Metrics)
             {
-                if (ThemeEditRequest.EditableMetrics.Contains(token.Name))
+                if (ThemeEditRequest.EditableMetrics.Contains(token.Name)
+                    && outcome.Metrics.TryGetValue(token.Name, out var parsed)
+                    && double.IsFinite(parsed))
+                {
+                    currentMetrics[token.Name] = parsed;
+                }
+                else if (ThemeEditRequest.EditableMetrics.Contains(token.Name))
                 {
                     currentMetrics[token.Name] = token.DefaultValue;
                 }
             }
-
-            // TODO: Read actual themed values from workbook settings/styles tables
-            // For now, use the catalogue defaults as the starting point
 
             var request = new ThemeEditRequest(currentStyles, currentMetrics);
 
@@ -926,12 +939,12 @@ internal class RibbonStateService
                     var writeOutcome = _catalogueWriter.WriteTheme(validated);
                     if (writeOutcome is not null && writeOutcome.Succeeded)
                     {
-                        Refresh();
+                        return true;
                     }
                     else if (writeOutcome is not null)
                     {
-                        var msg = $"Failed to write theme settings: {writeOutcome.Refusal}";
-                        CommandBoundary.Instance.Run("ShowThemeSettingsDialog", () => throw new InvalidOperationException(msg));
+                        CommandErrorDialog.Show(
+                            $"Failed to write theme settings: {writeOutcome.Refusal}");
                     }
                 }
             }
@@ -941,6 +954,8 @@ internal class RibbonStateService
             // Intentionally empty: a dialog failure must not escape into Excel.
         }
 #pragma warning restore CA1031
+
+        return false;
     }
 
     /// <summary>

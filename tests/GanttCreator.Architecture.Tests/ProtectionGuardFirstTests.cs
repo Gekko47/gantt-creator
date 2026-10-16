@@ -83,6 +83,11 @@ public sealed class ProtectionGuardFirstTests
         // content -- so it is a data mutation under ADR-0008 D4 and consults the
         // guard before its single ranged write.
         new("src/GanttCreator.Office/ExcelDurationWriter.cs", "Write"),
+        // R4.7F/R4.8A: the StyleKey writer mutates the user's VISIBLE worksheet --
+        // the engine-owned StyleKey column is user-facing table data, not generated
+        // content -- so it is a data mutation under ADR-0008 D4 and consults the
+        // guard before its single ranged write. Listed at "Write".
+        new("src/GanttCreator.Office/ExcelStyleKeyWriter.cs", "Write"),
         // R4.8A D2: the column-classification restorer hides and locks columns on the
         // user's VISIBLE worksheet, so it mutates user-facing presentation state and
         // consults the guard before its first write. Listed at "EnsureClassification",
@@ -257,6 +262,10 @@ public sealed class ProtectionGuardFirstTests
         // cannot leave a setting altered, which is the opposite of a data mutation
         // and therefore not a guard candidate.
         "src/GanttCreator.Office/IApplicationStateScope.cs",
+        // R4.7F/R4.8A: a pure interface declaration with no statement and nothing
+        // to guard; its implementation consults the shared guard and is registered
+        // above as a mutating adapter.
+        "src/GanttCreator.Office/IStyleKeyWritePort.cs",
     ];
 
     /// <summary>

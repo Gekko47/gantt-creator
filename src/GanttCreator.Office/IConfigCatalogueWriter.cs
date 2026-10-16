@@ -1,3 +1,5 @@
+using GanttCreator.Core;
+
 namespace GanttCreator.Office;
 
 /// <summary>
@@ -26,6 +28,8 @@ public enum ConfigWriteRefusalReason
     /// <summary>Existing configuration content could not be preserved safely.</summary>
     CataloguePreservationInvalid = 3,
 
+    /// <summary>The theme request failed <see cref="ThemeEditRequest.TryValidate"/>; nothing was written.</summary>
+    ThemeValidationFailed = 5,
     /// <summary>
     /// The host refused a table write partway through the five-table sequence.
     /// Every table this call had already written was restored to its prior
@@ -103,4 +107,15 @@ public interface IConfigCatalogueWriter
     /// <param name="settings">The key/value pairs to write.</param>
     /// <returns>The typed outcome. On a refusal nothing was mutated.</returns>
     ConfigWriteOutcome WriteSettings(IReadOnlyDictionary<string, string> settings);
+
+    /// <summary>
+    /// Applies a validated R5.6 theme edit: built-in style rows plus the
+    /// editable metric tokens. User-authored style rows are preserved; other
+    /// tables are untouched. The request must already pass
+    /// <see cref="ThemeEditRequest.TryValidate"/>; an invalid request is
+    /// reported as <see cref="ConfigWriteRefusalReason.ThemeValidationFailed"/>.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <returns>The typed outcome. On a refusal nothing was mutated.</returns>
+    ConfigWriteOutcome WriteTheme(ThemeEditRequest request);
 }

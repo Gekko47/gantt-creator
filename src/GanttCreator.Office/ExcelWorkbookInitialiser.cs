@@ -265,17 +265,12 @@ public class ExcelWorkbookInitialiser(
                 // unpreservable catalogue, or a host write failure.
                 InitialiseRefusalReason reason = catalogueOutcome.Refusal switch
                 {
-                    ConfigWriteRefusalReason.NoActiveWorkbook
-                        => InitialiseRefusalReason.NoActiveWorkbook,
-                    ConfigWriteRefusalReason.TargetProtected
-                        => InitialiseRefusalReason.TargetProtected,
-                    ConfigWriteRefusalReason.ConfigSheetMissing
-                        => InitialiseRefusalReason.ConfigSheetExists,
-                    ConfigWriteRefusalReason.CataloguePreservationInvalid
-                        => InitialiseRefusalReason.CatalogueDrift,
-                    ConfigWriteRefusalReason.HostRejected
-                        => InitialiseRefusalReason.CatalogueWriteFailed,
-                    null => InitialiseRefusalReason.CatalogueWriteFailed,
+                    ConfigWriteRefusalReason.NoActiveWorkbook => InitialiseRefusalReason.NoActiveWorkbook,
+                    ConfigWriteRefusalReason.TargetProtected => InitialiseRefusalReason.TargetProtected,
+                    ConfigWriteRefusalReason.ConfigSheetMissing => InitialiseRefusalReason.ConfigSheetExists,
+                    ConfigWriteRefusalReason.CataloguePreservationInvalid => InitialiseRefusalReason.CatalogueDrift,
+                    ConfigWriteRefusalReason.HostRejected or null => InitialiseRefusalReason.CatalogueWriteFailed,
+                    ConfigWriteRefusalReason.ThemeValidationFailed => InitialiseRefusalReason.CatalogueWriteFailed,
                     _ => InitialiseRefusalReason.CatalogueWriteFailed,
                 };
                 return WorkbookInitialiseOutcome.Refused(reason);

@@ -518,7 +518,7 @@ public class ConfigCatalogueWriterTests
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal("Bottom", CellText(fake.Tables[3].Body[index][1]));
         ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
-        Assert.True(read.Succeeded);
+        Assert.True(read.Succeeded, $"Read() refused: {read.Refusal}");
         Assert.Equal("Bottom", read.Settings["LegendPosition"]);
     }
 
@@ -582,7 +582,7 @@ public class ConfigCatalogueWriterTests
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
-        Assert.True(read.Succeeded);
+        Assert.True(read.Succeeded, $"Read() refused: {read.Refusal}");
         Assert.Equal("Explicit", read.Settings["PlotStartMode"]);
         Assert.Equal("Explicit", read.Settings["PlotFinishMode"]);
         Assert.Equal("01/01/2026", read.Settings["PlotStartDate"]);
@@ -678,4 +678,13 @@ public class ConfigCatalogueWriterTests
             bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(cell, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
         };
+
+    private static double CellDouble(object? cell) =>
+        cell switch
+        {
+            null => 0,
+            double d => d,
+            _ => Convert.ToDouble(cell, System.Globalization.CultureInfo.InvariantCulture),
+        };
+
 }

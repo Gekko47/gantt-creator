@@ -22,6 +22,9 @@
       subscribe/detach bookkeeping are proven without a live Excel host.
     -->
     <PackageReference Include="Moq" />
+    <!-- Microsoft.Office.Interop.Excel types (via ExcelDna.Interop), needed to
+         mock the writer's COM touch points. -->
+    <PackageReference Include="ExcelDna.Interop" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\GanttCreator.Core\GanttCreator.Core.csproj" />

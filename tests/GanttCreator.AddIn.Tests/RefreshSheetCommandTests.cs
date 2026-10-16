@@ -17,7 +17,7 @@ namespace GanttCreator.AddIn.Tests;
 public class RefreshSheetCommandTests
 {
     private static GanttRefreshOutcome Success() =>
-        GanttRefreshOutcome.Ok([], shapesWritten: 3, durationCellsWritten: 2);
+        GanttRefreshOutcome.Ok([], shapesWritten: 3, durationCellsWritten: 2, styleKeyCellsWritten: 0);
 
     private static GanttRefreshOutcome Refused(GanttRefreshRefusal refusal) =>
         GanttRefreshOutcome.Refused(refusal, "the chart could not be refreshed");

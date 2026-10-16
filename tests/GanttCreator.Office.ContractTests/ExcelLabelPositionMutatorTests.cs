@@ -59,7 +59,7 @@ public class ExcelLabelPositionMutatorTests
         public List<(int Row, int Column, object? Value)> WrittenCells { get; } = [];
 
         public ConfigReadOutcome Catalogue { get; set; } =
-            ConfigReadOutcome.Ok("wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty);
+            ConfigReadOutcome.Ok("wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty, new Dictionary<string, double>());
 
         public Graph()
         {
@@ -464,7 +464,7 @@ public class ExcelLabelPositionMutatorTests
             LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "MyStyle"));
         Graph graph = SeededGraph(matrix, activeRow: 2);
         graph.Catalogue = ConfigReadOutcome.Ok(
-            "wb", new Dictionary<string, string>(), registry);
+            "wb", new Dictionary<string, string>(), registry, new Dictionary<string, double>());
 
         LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
             .SetLabelPosition(GanttLabelPosition.Left);
@@ -481,7 +481,7 @@ public class ExcelLabelPositionMutatorTests
             LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "Missing"));
         Graph graph = SeededGraph(matrix, activeRow: 2);
         graph.Catalogue = ConfigReadOutcome.Ok(
-            "wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty);
+            "wb", new Dictionary<string, string>(), GanttStyleRegistry.Empty, new Dictionary<string, double>());
 
         LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
             .SetLabelPosition(GanttLabelPosition.Left);

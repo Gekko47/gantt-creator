@@ -98,9 +98,25 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             ?? ValidateMetrics(metricRows)
             ?? ValidateSettings(settingRows, out settings)
             ?? ValidateConfig(configRows, out workbookId);
-        return refusal is not null
-            ? ConfigReadOutcome.Refused(refusal.Value)
-            : ConfigReadOutcome.Ok(workbookId!, settings!, styles!);
+        if (refusal is not null)
+        {
+            return ConfigReadOutcome.Refused(refusal.Value);
+        }
+
+        // Project themed metric DefaultValues from the validated sheet rows.
+        // ValidateMetrics already confirmed each DefaultValue is a finite double
+        // inside [Minimum, Maximum], so projection here cannot fail.
+        var metrics = new Dictionary<string, double>(StringComparer.Ordinal);
+        for (var index = 0; index < metricRows.Count; index++)
+        {
+            var row = metricRows[index];
+            if (TryCellDouble(row[1], out var value) && double.IsFinite(value))
+            {
+                metrics[ToText(row[0])] = value;
+            }
+        }
+
+        return ConfigReadOutcome.Ok(workbookId!, settings!, styles!, metrics);
     }
 
     /// <summary>
@@ -284,17 +300,22 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 }
             }
 
-            string[] textCells =
+            // Columns 2 (FillColour) and 3 (StrokeColour) are editable colour
+            // cells: `WriteTheme` writes user-edited colours there, so they
+            // must not be compared against the preset's original values.
+            // They are already validated for colour format above (columns 2,
+            // 3, 7 are checked for valid hex). Only text cells that cannot
+            // be edited — StyleKey (col 0), DisplayName (col 1), HatchPattern
+            // (col 4) — are compared exactly against the preset.
+            (int column, string expected)[] textCells =
             [
-                preset.StyleKey,
-                preset.DisplayName,
-                preset.FillColour,
-                preset.StrokeColour,
-                preset.HatchPattern.ToString(),
+                (0, preset.StyleKey),
+                (1, preset.DisplayName),
+                (4, preset.HatchPattern.ToString()),
             ];
-            for (var column = 0; column < textCells.Length; column++)
+            foreach ((int column, string expected) in textCells)
             {
-                if (!CellMatches(rows[index][column], textCells[column]))
+                if (!CellMatches(rows[index][column], expected))
                 {
                     return ConfigReadRefusalReason.CatalogueMismatch;
                 }
@@ -358,16 +379,23 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         }
 
         var definitions = new List<GanttStyleDefinition>();
-        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        for (var index = 0; index < GanttCatalogues.StylePresets.Count; index++)
         {
+            GanttStylePreset preset = GanttCatalogues.StylePresets[index];
+            // Columns 2 (FillColour), 3 (StrokeColour), and 7 (TextColour) are
+            // editable colour cells: WriteTheme writes user-edited colours
+            // there, so Read() must project them from the row rather than from
+            // the code-owned preset defaults. Columns 0, 1, 4, 11, 12, 13 are
+            // exact-matched against the preset above, so using preset.* for
+            // those is safe.
             definitions.Add(new GanttStyleDefinition(
                 preset.StyleKey,
                 preset.AllowedLabelPositions,
                 preset.ColourCapability,
                 preset.DefaultLabelPosition,
-                preset.FillColour,
-                preset.StrokeColour,
-                preset.TextColour,
+                ToText(rows[index][2]),
+                ToText(rows[index][3]),
+                ToText(rows[index][7]),
                 preset.HatchPattern,
                 preset.HatchPitchPt,
                 preset.HatchLinePt,
@@ -537,14 +565,15 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             }
 
             // Internal consistency first (a tampered range is a range
-            // refusal, not a drift finding), then exact catalogue equality.
+            // refusal, not a drift finding). The DefaultValue column is
+            // editable by theme edits (R5.6) — only Minimum and Maximum must
+            // match the code-owned token exactly.
             if (minimum > maximum || @default < minimum || @default > maximum)
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
-            if (@default != metric.DefaultValue
-                || minimum != metric.Minimum
+            if (minimum != metric.Minimum
                 || maximum != metric.Maximum)
             {
                 return ConfigReadRefusalReason.CatalogueMismatch;

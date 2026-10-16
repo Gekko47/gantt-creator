@@ -9,12 +9,6 @@ namespace GanttCreator.Office;
 /// Live <see cref="IExcelApplicationAdapter"/> over the Excel application object
 /// supplied by the host at add-in load.
 /// </summary>
-/// <param name="application">
-/// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
-/// <see langword="null"/> when the host supplied none (unit tests, non-Excel
-/// host). A foreign object fails the interface casts and degrades to "not
-/// determinable" with no event connection.
-/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the Excel <c>Application</c> object and the <c>Workbook</c>
@@ -29,14 +23,34 @@ namespace GanttCreator.Office;
 /// propagating exception surfaces as a host error dialog.
 /// </para>
 /// </remarks>
-public sealed class ExcelApplicationAdapter(object? application) : IExcelApplicationAdapter
+public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Excel.Application? _application;
+    private readonly Excel.AppEvents_Event? _events;
 
-    // Events are bound through the AppEvents_Event interface: `NewWorkbook`
-    // would otherwise be ambiguous with _Application.NewWorkbook (the method
-    // that creates a workbook).
-    private readonly Excel.AppEvents_Event? _events = application as Excel.AppEvents_Event;
+    /// <summary>
+    /// Creates an application adapter over the Excel application object.
+    /// </summary>
+    /// <param name="application">
+    /// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
+    /// <see langword="null"/> when the host supplied none (unit tests, non-Excel
+    /// host). A foreign object fails the interface casts and degrades to "not
+    /// determinable" with no event connection.
+    /// </param>
+    public ExcelApplicationAdapter(object? application)
+    {
+        _application = application as Excel.Application;
+
+        // Events are bound through the AppEvents_Event interface: `NewWorkbook`
+        // would otherwise be ambiguous with _Application.NewWorkbook (the method
+        // that creates a workbook).
+        // Cast through _application rather than from `application` directly:
+        // `Excel.Application` inherits from `Excel.AppEvents_Event`, so if the
+        // application object was successfully cast, the event interface will also
+        // be available. Casting directly from object? to AppEvents_Event can fail
+        // on the Excel-DNA RCW even when the Application cast succeeds.
+        _events = _application;
+    }
 
     /// <inheritdoc />
     public bool? HasActiveWorkbook()

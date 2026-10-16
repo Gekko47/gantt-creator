@@ -198,6 +198,125 @@ public class ExcelConfigCatalogueWriter(
         return ConfigWriteOutcome.Ok();
     }
 
+    /// <inheritdoc />
+    public ConfigWriteOutcome WriteTheme(ThemeEditRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!ThemeEditRequest.TryValidate(request, out _, out _))
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ThemeValidationFailed);
+        }
+
+        Application? application = _application;
+        if (application is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.NoActiveWorkbook);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        Worksheet? config = FindConfigSheet(sheets);
+        if (config is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.ConfigSheetMissing);
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(config);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ConfigWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ConfigWriteRefusalReason.NoActiveWorkbook
+                    : ConfigWriteRefusalReason.TargetProtected);
+        }
+
+        // Read-only phase first: capture the two themed tables' prior state,
+        // plus the Config table's prior state so the hash update can be
+        // rolled back on host failure. The call mutates nothing until the
+        // mutation phase below.
+        ListObject? stylesTable = FindTable(config, GanttCatalogues.StylesTableName);
+        ListObject? metricsTable = FindTable(config, GanttCatalogues.MetricsTableName);
+        if (stylesTable is null || metricsTable is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        List<TableSnapshot> snapshots = CaptureThemedPriorState(config);
+
+        // Capture Config table's prior state for rollback of the hash update.
+        ListObject? configTable = FindTable(config, GanttCatalogues.ConfigTableName);
+        snapshots.Add(
+            configTable is null
+                ? new TableSnapshot(
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigTableName,
+                    false,
+                    [],
+                    [])
+                : new TableSnapshot(
+                    GanttCatalogues.ConfigAnchor,
+                    GanttCatalogues.ConfigTableName,
+                    true,
+                    [.. ReadHeaders(configTable)],
+                    ReadBodyRows(configTable)));
+
+        CataloguePreservation? preservation = ReadPreservation(config);
+        if (preservation is null)
+        {
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.CataloguePreservationInvalid);
+        }
+
+        Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
+        var original = _application!.DisplayAlerts;
+        try
+        {
+            _application.DisplayAlerts = false;
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.StylesAnchor,
+                GanttCatalogues.StylesTableName,
+                GanttCatalogues.StylesHeaders,
+                BuildThemedStyleRows(request, preservation),
+                written);
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.MetricsAnchor,
+                GanttCatalogues.MetricsTableName,
+                GanttCatalogues.MetricsHeaders,
+                BuildThemedMetricRows(request),
+                written);
+
+            // Recompute and persist the catalogue hash so the next Read()
+            // validates against the updated Styles and Metrics content.
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.ConfigAnchor,
+                GanttCatalogues.ConfigTableName,
+                GanttCatalogues.ConfigHeaders,
+                BuildConfigRows(preservation.WorkbookId),
+                written);
+        }
+#pragma warning disable CA1031 // Deliberately broad: see the Write catch body.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            WriteHostRejectedEvidence(exception, written);
+            RollBack(config, snapshots, written);
+            return ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected);
+        }
+        finally
+        {
+            _application.DisplayAlerts = original;
+        }
+
+        return ConfigWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Writes one redacted evidence record for a host-rejected write: the
     /// exception type, HRESULT, the contract tables whose extents were
@@ -395,6 +514,127 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return snapshots;
+    }
+
+    /// <summary>
+    /// Captures the two themed tables' prior state, read-only, before the
+    /// first mutation. Shares <see cref="RollBack"/> with the five-table path.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <returns>One snapshot per themed table, in write order.</returns>
+    private List<TableSnapshot> CaptureThemedPriorState(Worksheet config)
+    {
+        string[] themed = [GanttCatalogues.StylesTableName, GanttCatalogues.MetricsTableName];
+        var snapshots = new List<TableSnapshot>(themed.Length);
+        foreach (var tableName in themed)
+        {
+            ListObject? table = FindTable(config, tableName);
+            snapshots.Add(
+                table is null
+                    ? new TableSnapshot(AnchorFor(tableName), tableName, false, [], [])
+                    : new TableSnapshot(
+                        AnchorFor(tableName),
+                        tableName,
+                        true,
+                        [.. ReadHeaders(table)],
+                        ReadBodyRows(table)));
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>
+    /// Builds themed style rows: catalogue order, edited colours applied to
+    /// matching built-ins, preserved user rows appended verbatim.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <param name="preservation">The captured user content to preserve.</param>
+    /// <returns>The style payload rows.</returns>
+    private static List<object?[]> BuildThemedStyleRows(
+        ThemeEditRequest request,
+        CataloguePreservation preservation)
+    {
+        Dictionary<string, ThemeStyleEdit> edits = new(StringComparer.Ordinal);
+        foreach (ThemeStyleEdit edit in request.StyleEdits)
+        {
+            edits[edit.StyleKey] = edit;
+        }
+
+        List<object?[]> rows = [];
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            if (edits.TryGetValue(preset.StyleKey, out ThemeStyleEdit? edit))
+            {
+                rows.Add(
+                [
+                    preset.StyleKey,
+                    preset.DisplayName,
+                    edit.FillColour,
+                    edit.StrokeColour,
+                    preset.HatchPattern.ToString(),
+                    preset.HatchPitchPt,
+                    preset.HatchLinePt,
+                    edit.TextColour,
+                    preset.StandardOutlinePt,
+                    preset.ActivityHeightPt,
+                    preset.MilestoneSizePt,
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString(),
+                ]);
+            }
+            else
+            {
+                rows.Add(
+                [
+                    preset.StyleKey,
+                    preset.DisplayName,
+                    preset.FillColour,
+                    preset.StrokeColour,
+                    preset.HatchPattern.ToString(),
+                    preset.HatchPitchPt,
+                    preset.HatchLinePt,
+                    preset.TextColour,
+                    preset.StandardOutlinePt,
+                    preset.ActivityHeightPt,
+                    preset.MilestoneSizePt,
+                    preset.DefaultLabelPosition.ToString(),
+                    string.Join(
+                        " ",
+                        preset.AllowedLabelPositions
+                            .Select(position => position.ToString())
+                            .OrderBy(name => name, StringComparer.Ordinal)),
+                    preset.ColourCapability.ToString(),
+                ]);
+            }
+        }
+
+        rows.AddRange(preservation.UserStyleRows);
+        return rows;
+    }
+
+    /// <summary>
+    /// Builds themed metric rows: catalogue order, edited defaults applied.
+    /// Names, minima and maxima are never edited; only the default moves.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <returns>The metric payload rows.</returns>
+    private static List<object?[]> BuildThemedMetricRows(ThemeEditRequest request)
+    {
+        List<object?[]> rows = [];
+        foreach (GanttMetricToken token in GanttCatalogues.Metrics)
+        {
+            var value = request.MetricEdits.TryGetValue(token.Name, out var edited)
+                ? edited
+                : token.DefaultValue;
+            rows.Add([token.Name, value, token.Minimum, token.Maximum]);
+        }
+
+        return rows;
     }
 
     /// <summary>

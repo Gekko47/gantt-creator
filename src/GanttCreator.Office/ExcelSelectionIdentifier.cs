@@ -13,12 +13,6 @@ namespace GanttCreator.Office;
 /// seam shape) and pushes Excel's native
 /// <c>Application.SheetSelectionChange</c> event.
 /// </summary>
-/// <param name="application">
-/// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
-/// <see langword="null"/> when the host supplied none (unit tests, non-Excel
-/// host). A foreign object fails the interface casts and degrades to
-/// <see cref="SelectionFacts.None"/> with an inert subscription.
-/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c> object and every object reachable
@@ -32,10 +26,32 @@ namespace GanttCreator.Office;
 /// propagating exception surfaces as a host error dialog.
 /// </para>
 /// </remarks>
-public class ExcelSelectionIdentifier(object? application) : ISelectionIdentifier
+public class ExcelSelectionIdentifier : ISelectionIdentifier
 {
-    private readonly Excel.Application? _application = application as Excel.Application;
-    private readonly Excel.AppEvents_Event? _events = application as Excel.AppEvents_Event;
+    private readonly Excel.Application? _application;
+    private readonly Excel.AppEvents_Event? _events;
+
+    /// <summary>
+    /// Creates a selection identifier over the Excel application object.
+    /// </summary>
+    /// <param name="application">
+    /// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
+    /// <see langword="null"/> when the host supplied none (unit tests, non-Excel
+    /// host). A foreign object fails the interface casts and degrades to
+    /// <see cref="SelectionFacts.None"/> with an inert subscription.
+    /// </param>
+    public ExcelSelectionIdentifier(object? application)
+    {
+        _application = application as Excel.Application;
+
+        // Cast through _application rather than from `application` directly:
+        // `Excel.Application` inherits from `Excel.AppEvents_Event`, so if the
+        // application object was successfully cast, the event interface will also
+        // be available. Casting directly from object? to AppEvents_Event can fail
+        // on the Excel-DNA RCW even when the Application cast succeeds, which
+        // would leave SheetSelectionChange unsubscribed and ribbon dropdowns stale.
+        _events = _application;
+    }
 
     /// <inheritdoc />
     public SelectionFacts Identify()

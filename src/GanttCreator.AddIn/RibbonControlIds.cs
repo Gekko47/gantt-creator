@@ -152,4 +152,7 @@ internal static class RibbonControlIds
 
     /// <summary>The Presentation 4:3 preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PresetPresentation4x3 = "btnPresetPresentation4x3";
+
+    /// <summary>The Theme settings button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string ThemeSettings = "btnThemeSettings";
 }

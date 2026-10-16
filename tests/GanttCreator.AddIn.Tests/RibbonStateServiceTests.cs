@@ -1,4 +1,4 @@
-﻿using ExcelDna.Integration.CustomUI;
+using ExcelDna.Integration.CustomUI;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
@@ -536,7 +536,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["TimeScale"] = nameof(GanttTimeScale.Month),
                     ["PeriodLabelFormat"] = nameof(GanttPeriodLabelFormat.MM),
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -566,7 +566,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "15-Mar-26",
                     ["PlotFinishDate"] = string.Empty,
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = tableReader
             .Setup(r => r.Read())
@@ -696,7 +696,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = string.Empty,
                     ["PlotFinishDate"] = "15-Jun-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         var tableReader = new Mock<IGanttTableReader>(MockBehavior.Strict);
         _ = tableReader
             .Setup(r => r.Read())
@@ -791,7 +791,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "06-Apr-26",
                     ["PlotFinishDate"] = "13-Jul-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -823,7 +823,7 @@ public sealed class RibbonStateServiceTests : IDisposable
                     ["PlotStartDate"] = "01-Jun-26",
                     ["PlotFinishDate"] = "30-Sep-26",
                 },
-                GanttStyleRegistry.Empty));
+                GanttStyleRegistry.Empty, new Dictionary<string, double>()));
         service.SetCatalogueReader(catalogueReader.Object);
 
         service.Refresh();
@@ -1081,6 +1081,66 @@ public sealed class RibbonStateServiceTests : IDisposable
         // The fresh singleton holds no port and no preset, so the width
         // display is empty rather than measured from a retained grid.
         Assert.Equal(string.Empty, RibbonStateService.Instance.GetPlotWidth());
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_true_when_theme_written_successfully()
+    {
+        var service = new RibbonStateService();
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()))
+            .Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.True(service.ShowThemeSettingsDialog());
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_writer_refuses()
+    {
+        var service = new RibbonStateService();
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()))
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_reader_fails()
+    {
+        var service = new RibbonStateService();
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Refused(ConfigReadRefusalReason.ConfigSheetMissing));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_reader_and_writer_are_null()
+    {
+        var service = new RibbonStateService();
+
+        Assert.False(service.ShowThemeSettingsDialog());
     }
 }
 

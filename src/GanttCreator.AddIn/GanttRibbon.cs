@@ -1610,6 +1610,31 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Called when the user clicks the Theme settings button. Opens the
+    /// theme settings dialog and applies edits if confirmed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnThemeSettingsClick(IRibbonControl control)
+        => OnThemeSettingsClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnThemeSettingsClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnThemeSettingsClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (stateService.ShowThemeSettingsDialog())
+        {
+            RunRefreshSheet();
+        }
+    }
+
+    /// <summary>
     /// Returns whether a plot-size preset button is pressed. Excel's
     /// button getPressed contract asks for this when a button carries
     /// getPressed; the answer compares the control id against the

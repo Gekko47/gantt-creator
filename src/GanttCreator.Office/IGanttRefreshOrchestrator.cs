@@ -91,6 +91,11 @@ public enum GanttRefreshRefusal
     ColumnPresentationRefused = 15,
 
     /// <summary>
+    /// The <c>StyleKey</c> column could not be written.
+    /// </summary>
+    StyleKeyWriteRefused = 17,
+
+    /// <summary>
     /// The add-in's own cell notes could not be brought into line with the current
     /// validation findings.
     /// </summary>
@@ -120,12 +125,14 @@ public enum GanttRefreshRefusal
 /// </param>
 /// <param name="ShapesWritten">How many shape operations the reconciliation performed.</param>
 /// <param name="DurationCellsWritten">How many <c>Duration</c> cells were written.</param>
+/// <param name="StyleKeyCellsWritten">How many <c>StyleKey</c> cells were written.</param>
 public sealed record GanttRefreshOutcome(
     GanttRefreshRefusal? Refusal,
     string? Message,
     IReadOnlyList<GanttValidationIssue> ValidationIssues,
     int ShapesWritten,
-    int DurationCellsWritten)
+    int DurationCellsWritten,
+    int StyleKeyCellsWritten)
 {
     /// <summary>Gets whether the refresh completed.</summary>
     public bool Succeeded => Refusal is null;
@@ -156,11 +163,14 @@ public sealed record GanttRefreshOutcome(
     /// <param name="issues">The validation issues found, warnings included.</param>
     /// <param name="shapesWritten">How many shape operations ran.</param>
     /// <param name="durationCellsWritten">How many duration cells were written.</param>
+    /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written.</param>
     /// <returns>The successful outcome.</returns>
     public static GanttRefreshOutcome Ok(
         IReadOnlyList<GanttValidationIssue> issues,
         int shapesWritten,
-        int durationCellsWritten) => new(null, null, issues, shapesWritten, durationCellsWritten);
+        int durationCellsWritten,
+        int styleKeyCellsWritten) =>
+        new(null, null, issues, shapesWritten, durationCellsWritten, styleKeyCellsWritten);
 
     /// <summary>Creates a refusal.</summary>
     /// <param name="refusal">Why the refresh did not complete.</param>
@@ -171,6 +181,7 @@ public sealed record GanttRefreshOutcome(
     /// only for a refusal reached before any worksheet write.
     /// </param>
     /// <param name="shapesWritten">How many shape operations ran before the refusal.</param>
+    /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written before the refusal.</param>
     /// <returns>The refusal outcome.</returns>
     /// <remarks>
     /// The counts used to be hardcoded to zero, which made the class's own promise —
@@ -183,12 +194,20 @@ public sealed record GanttRefreshOutcome(
         string message,
         IReadOnlyList<GanttValidationIssue>? issues = null,
         int durationCellsWritten = 0,
-        int shapesWritten = 0) =>
-        // NOTE: the record's positional order is (ShapesWritten, DurationCellsWritten),
-        // which is the REVERSE of this method's parameter order. Named arguments are
-        // used deliberately: passing them positionally swapped the two counts, which
-        // is exactly the class of defect this method was widened to fix.
-        new(refusal, message, issues ?? [], ShapesWritten: shapesWritten, DurationCellsWritten: durationCellsWritten);
+        int shapesWritten = 0,
+        int styleKeyCellsWritten = 0) =>
+        // NOTE: the record's positional order is (ShapesWritten, DurationCellsWritten,
+        // StyleKeyCellsWritten), which is the REVERSE of this method's parameter
+        // order. Named arguments are used deliberately: passing them positionally
+        // swapped the counts, which is exactly the class of defect this method was
+        // widened to fix.
+        new(
+            refusal,
+            message,
+            issues ?? [],
+            ShapesWritten: shapesWritten,
+            DurationCellsWritten: durationCellsWritten,
+            StyleKeyCellsWritten: styleKeyCellsWritten);
 }
 
 /// <summary>

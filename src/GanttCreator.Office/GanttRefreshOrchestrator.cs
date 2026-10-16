@@ -27,9 +27,9 @@ namespace GanttCreator.Office;
 /// port.
 /// </para>
 /// <para>
-/// <b>The two writes that are not shape mutations.</b> <c>Duration</c> and the outline
-/// are worksheet writes that happen before the reconciliation, because both are
-/// derived from validated rows and both must be current before the geometry is
+/// <b>The three writes that are not shape mutations.</b> <c>Duration</c>, the <c>StyleKey</c> column, and the outline
+/// are worksheet writes that happen before the reconciliation, because all three are
+/// derived from validated rows and all three must be current before the geometry is
 /// measured. They are reported separately from the shape count so a caller can tell
 /// "the chart was not touched" from "the sheet was not touched at all".
 /// </para>
@@ -54,7 +54,8 @@ public sealed class GanttRefreshOrchestrator(
     IColumnPresentationPort? columnPresentation = null,
     IGanttRowIdentityRepairer? identityRepairer = null,
     IApplicationStateScope? stateScope = null,
-    IGanttValidationReporter? validationReporter = null)
+    IGanttValidationReporter? validationReporter = null,
+    IStyleKeyWritePort? styleKeyWriter = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -66,6 +67,17 @@ public sealed class GanttRefreshOrchestrator(
     private readonly IOutlineGroupPort _outlineWriter = outlineWriter ?? throw new ArgumentNullException(nameof(outlineWriter));
     private readonly ISceneBuildRequestFactory _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
     private readonly IShapeWritePort _shapeWriter = shapeWriter ?? throw new ArgumentNullException(nameof(shapeWriter));
+
+    /// <summary>
+    /// Writes the <c>StyleKey</c> column so column K matches each row's current
+    /// <c>Type</c>, or <see langword="null"/> to skip the step.
+    /// </summary>
+    /// <remarks>
+    /// Optional rather than required so a caller with no Excel application, and a
+    /// test that is not about style-key state, need not construct one. When it is
+    /// absent the pipeline behaves exactly as it did before this row.
+    /// </remarks>
+    private readonly IStyleKeyWritePort? _styleKeyWriter = styleKeyWriter;
 
     /// <summary>
     /// Restores the managed columns' hidden/locked classification, or
@@ -294,9 +306,17 @@ public sealed class GanttRefreshOrchestrator(
                 validation.Issues);
         }
 
+        // The events carry each row's StyleKey straight from column K as read at
+        // step 1. If the user changed a row's Type since the last Refresh, that cell
+        // still holds the previous row's style key until we rewrite it here. The
+        // write must land before the scene is built, and the events the scene is
+        // built from must reflect what we wrote — otherwise a type change takes two
+        // Refreshes to show the right style.
+        IReadOnlyList<GanttEvent> events = validation.Events;
+
         // Step 6. Worksheet presentation. The outline is rebuilt from the validated
         // hierarchy, never read back, so collapsing a group stays presentation.
-        OutlineGroupOutcome outline = _outlineWriter.Apply(validation.Events);
+        OutlineGroupOutcome outline = _outlineWriter.Apply(events);
         if (!outline.Succeeded)
         {
             return Refuse(GanttRefreshRefusal.OutlineRefused, "The row outline groups could not be updated.");
@@ -305,12 +325,38 @@ public sealed class GanttRefreshOrchestrator(
         // Step 7. Duration. Calculated in Core and written in one bulk pass; an
         // already-correct column produces no write at all.
         DurationWritePlan plan = DurationCalculator.Plan(
-            validation.Events,
+            events,
             ReadCurrentDurations(rows.Rows));
         DurationWriteOutcome duration = _durationWriter.Write(plan);
         if (!duration.Succeeded)
         {
             return Refuse(GanttRefreshRefusal.DurationWriteRefused, "The Duration column could not be written.");
+        }
+
+        // Step 7b. StyleKey: column K matches each row's current Type. A row whose
+        // cell already carries its type's default is absent from the plan, so a
+        // correctly written sheet is not touched; a stale cell (for example K4
+        // stamped As-Planned while the row is now As-Built) is overwritten.
+        StyleKeyWritePlan stylePlan = StyleKeyWritePlanner.Plan(events);
+        int styleCellsWritten = 0;
+        if (_styleKeyWriter is { } styleWriter)
+        {
+            StyleKeyWriteOutcome style = styleWriter.Write(stylePlan);
+            if (!style.Succeeded)
+            {
+                return RefuseAfterWrites(
+                    GanttRefreshRefusal.StyleKeyWriteRefused,
+                    "The StyleKey column could not be updated.",
+                    validation.Issues,
+                    duration.CellsWritten,
+                    styleKeyCellsWritten: style.CellsWritten);
+            }
+
+            // The sheet now holds the new keys. Mirror them into the events so the
+            // scene renders the corrected style instead of the stale key read at
+            // step 1. Without this a type change needs a second Refresh.
+            events = ApplyStyleKeyToEvents(events, stylePlan.Writes);
+            styleCellsWritten = style.CellsWritten;
         }
 
         // Step 8. Row heights, so the measured lane geometry is meaningful.
@@ -377,10 +423,11 @@ public sealed class GanttRefreshOrchestrator(
         // registry from the built-in catalogue here would silently drop them, so a
         // custom style would validate and then fail to resolve at render time.
         SceneBuildRequestOutcome request = _requestFactory.Create(
-            validation.Events,
+            events,
             config.Settings,
             config.Styles,
-            grid.Grid!);
+            grid.Grid!,
+            config.Metrics);
         if (!request.Succeeded)
         {
             return RefuseAfterWrites(
@@ -421,7 +468,7 @@ public sealed class GanttRefreshOrchestrator(
 
         if (reconcile.Succeeded)
         {
-            return GanttRefreshOutcome.Ok(validation.Issues, reconcile.CompletedCount, duration.CellsWritten);
+            return GanttRefreshOutcome.Ok(validation.Issues, reconcile.CompletedCount, duration.CellsWritten, styleCellsWritten);
         }
 
         // A reconciliation that stopped after at least one write leaves the sheet in
@@ -437,12 +484,57 @@ public sealed class GanttRefreshOrchestrator(
                     + " element(s) written), so it may show a mixture of the old and new layout. Refresh again to finish.",
                 validation.Issues,
                 duration.CellsWritten,
-                reconcile.CompletedCount)
+                reconcile.CompletedCount,
+                styleCellsWritten)
             : GanttRefreshOutcome.Refused(
                 GanttRefreshRefusal.ReconciliationRefused,
                 "Excel refused the first chart change, so the existing chart is unchanged.",
                 validation.Issues,
                 duration.CellsWritten);
+    }
+
+    /// <summary>
+    /// Mirrors the written <c>StyleKey</c> cells into the validated events so the
+    /// outline, duration, and scene steps render from the corrected keys rather than
+    /// the stale keys read from the worksheet at step 1. Without this a type change
+    /// takes two Refreshes to take effect.
+    /// </summary>
+    /// <param name="events">The validated events, each carrying the StyleKey read
+    /// from column K at step 1.</param>
+    /// <param name="writes">The StyleKey writes just applied to the worksheet.</param>
+    /// <returns>
+    /// The events with each written row's StyleKey replaced by the value now on the
+    /// sheet, or <paramref name="events"/> unchanged when nothing was written.
+    /// </returns>
+    private static IReadOnlyList<GanttEvent> ApplyStyleKeyToEvents(
+        IReadOnlyList<GanttEvent> events,
+        IReadOnlyList<StyleKeyWrite> writes)
+    {
+        if (writes.Count == 0)
+        {
+            return events;
+        }
+
+        var byRow = new Dictionary<int, string?>(writes.Count);
+        foreach (StyleKeyWrite write in writes)
+        {
+            byRow[write.RowNumber] = write.NewStyleKey;
+        }
+
+        var result = new List<GanttEvent>(events.Count);
+        foreach (GanttEvent @event in events)
+        {
+            if (byRow.TryGetValue(@event.RowNumber, out string? key))
+            {
+                result.Add(@event with { StyleKey = key });
+            }
+            else
+            {
+                result.Add(@event);
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -499,6 +591,7 @@ public sealed class GanttRefreshOrchestrator(
     /// How many <c>Duration</c> cells were written before the refusal.
     /// </param>
     /// <param name="shapesWritten">How many shape operations ran before the refusal.</param>
+    /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written before the refusal.</param>
     /// <returns>The refusal outcome, carrying the real counts.</returns>
     /// <remarks>
     /// <b>Why the counts cannot stay zero.</b> The class remark promises the caller can
@@ -515,8 +608,9 @@ public sealed class GanttRefreshOrchestrator(
         string message,
         IReadOnlyList<GanttValidationIssue> issues,
         int durationCellsWritten,
-        int shapesWritten = 0) =>
-        GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten);
+        int shapesWritten = 0,
+        int styleKeyCellsWritten = 0) =>
+        GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten, styleKeyCellsWritten);
 
     private static string Describe(GanttTableReadRefusalReason refusal) =>
         refusal switch

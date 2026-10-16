@@ -71,7 +71,12 @@ public sealed record GanttResolvedStyle
 /// <summary>Pure named-style and per-row override resolution.</summary>
 public static class GanttStyleResolver
 {
-    /// <summary>Resolves a style base and applies explicit per-row overrides.</summary>
+    /// <summary>
+    /// Compatibility overload: resolves against an empty
+    /// <see cref="GanttStyleRegistry"/>, which — since the code-owned preset
+    /// fallback was removed — always refuses. No production caller remains; the
+    /// registry overload below is the render path.
+    /// </summary>
     /// <param name="type">The validated entity Type.</param>
     /// <param name="styleKey">The selected named style, or null.</param>
     /// <param name="fillColour">The explicit fill override, or null.</param>
@@ -103,10 +108,13 @@ public static class GanttStyleResolver
     /// overrides.
     /// </summary>
     /// <remarks>
-    /// R2.7c: a style present in <paramref name="registry"/> resolves from the
-    /// registry, which is the only path that can see a user-authored style. A key
-    /// absent from the registry falls back to the code-owned built-in preset, which
-    /// preserves the behaviour of the compatibility overload.
+    /// The registry is the single source of truth for named styles. Resolution is
+    /// two-path: an exact hit on <paramref name="styleKey"/>; otherwise a hit on
+    /// the Type's <c>DefaultStyleKey</c> (a blank key resolves there with
+    /// <see cref="GanttResolvedStyle.UsedFallback"/> false; an unknown key
+    /// resolves there with it true). A key and Type default both absent from the
+    /// registry are refused rather than satisfied from the code-owned built-in
+    /// presets, so a themed workbook colour cannot be silently bypassed.
     /// </remarks>
     /// <param name="type">The validated entity Type.</param>
     /// <param name="registry">The catalogue style registry.</param>
@@ -194,60 +202,36 @@ public static class GanttStyleResolver
     {
         if (styleKey is not null
             && registry.TryGet(styleKey, out GanttStyleDefinition? registered)
-            && registered is { HasFormatting: true })
+            && registered is not null)
         {
             selected = new StyleBase(
                 registered.StyleKey,
                 registered.FillColour ?? string.Empty,
                 registered.StrokeColour ?? string.Empty,
                 registered.TextColour ?? string.Empty,
-                registered.DefaultLabelPosition!.Value);
+                registered.DefaultLabelPosition.GetValueOrDefault(GanttLabelPosition.Auto));
             return true;
         }
 
-        if (styleKey is null
-            && registry.TryGet(definition.DefaultStyleKey, out GanttStyleDefinition? typeDefault)
-            && typeDefault is { HasFormatting: true })
+        if (registry.TryGet(definition.DefaultStyleKey, out GanttStyleDefinition? typeDefault)
+            && typeDefault is not null)
         {
             selected = new StyleBase(
                 typeDefault.StyleKey,
                 typeDefault.FillColour ?? string.Empty,
                 typeDefault.StrokeColour ?? string.Empty,
                 typeDefault.TextColour ?? string.Empty,
-                typeDefault.DefaultLabelPosition!.Value);
+                typeDefault.DefaultLabelPosition.GetValueOrDefault(GanttLabelPosition.Auto));
             return true;
         }
 
-        // Built-in preset fallback: keeps the compatibility overload and any
-        // registry that predates R2.7c resolving exactly as before. A supplied but
-        // unknown key falls back to the Type default preset, which is the
-        // pre-R2.7c behaviour; it refuses only when the Type has no preset either.
-        GanttStylePreset? preset = FindStyle(styleKey);
-        if (preset is null && styleKey is not null)
-        {
-            preset = FindStyle(definition.DefaultStyleKey);
-        }
-
-        if (preset is null)
-        {
-            selected = default;
-            return false;
-        }
-
-        selected = new StyleBase(
-            preset.StyleKey,
-            preset.FillColour,
-            preset.StrokeColour,
-            preset.TextColour,
-            preset.DefaultLabelPosition);
-        return true;
+        // No code-owned preset fallback: the registry is the single source of
+        // truth for named styles. A key absent from the registry (and a Type
+        // default absent from it) is refused, not silently satisfied from the
+        // built-in catalogue.
+        selected = default;
+        return false;
     }
-
-    private static GanttStylePreset? FindStyle(string? styleKey) =>
-        styleKey is null
-            ? null
-            : GanttCatalogues.StylePresets.FirstOrDefault(preset =>
-                string.Equals(preset.StyleKey, styleKey, StringComparison.Ordinal));
 
     private static bool TryParseOptionalColour(string? text, out ColourHex? colour)
     {

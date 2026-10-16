@@ -145,7 +145,7 @@ public sealed class DateLabelRibbonTests : IDisposable
             ConfigReadOutcome.Ok(
                 "W-1",
                 new Dictionary<string, string>(),
-                styles ?? GanttStyleRegistry.Empty));
+                styles ?? GanttStyleRegistry.Empty, new Dictionary<string, double>()));;
         service.SetCatalogueReader(catalogues.Object);
 
         service.Activate();

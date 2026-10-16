@@ -338,7 +338,7 @@ public class TypeOptionsMaterialiserTests
                 ConfigReadOutcome.Ok(
                     "workbook",
                     new Dictionary<string, string>(),
-                    GanttStyleRegistry.Empty));
+                    GanttStyleRegistry.Empty, new Dictionary<string, double>()));
             return new TestableTypeOptionsMaterialiser(application.Object, catalogue.Object, guard.Object);
         }
 

@@ -33,6 +33,13 @@ internal sealed partial class ThemeSettingsForm : Form
         Margin = new Padding(4, 0, 0, 0),
     };
 
+    private readonly Button _resetButton = new()
+    {
+        Text = "Reset to default",
+        AutoSize = true,
+        Margin = new Padding(4, 0, 0, 0),
+    };
+
     private readonly Label _warningLabel = new()
     {
         Dock = DockStyle.Top,
@@ -71,6 +78,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _colorDialog.Dispose();
             _warningLabel.Dispose();
             _cancelButton.Dispose();
+            _resetButton.Dispose();
             _okButton.Dispose();
             _tabControl.Dispose();
         }
@@ -122,6 +130,8 @@ internal sealed partial class ThemeSettingsForm : Form
         bottomPanel.Controls.Add(buttonPanel);
 
         buttonPanel.Controls.Add(_cancelButton);
+        _resetButton.Click += ResetButton_Click;
+        buttonPanel.Controls.Add(_resetButton);
         _okButton.Click += OkButton_Click;
         buttonPanel.Controls.Add(_okButton);
 
@@ -511,5 +521,65 @@ internal sealed partial class ThemeSettingsForm : Form
 
         _validatedRequest = request;
         DialogResult = DialogResult.OK;
+    }
+
+    /// <summary>
+    /// Resets every editable theme field to the built-in default so that
+    /// clicking OK overwrites all custom theme entries with the code-owned
+    /// presets and metric defaults. Runs on the STA thread; never throws.
+    /// </summary>
+    private void ResetButton_Click(object? sender, EventArgs e)
+    {
+        // Resetting overwrites every custom theme entry, so confirm first.
+        var confirm = MessageBox.Show(
+            "Reset all theme colours and metric defaults to the built-in values? This overwrites all custom entries.",
+            "Reset theme to default",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes)
+        {
+            return;
+        }
+
+        // Empty colour boxes mean "use the preset default".
+        foreach (var txt in _colorTextBoxes.Values)
+        {
+            txt.Text = string.Empty;
+        }
+
+        // Reset every editable metric to its catalogue default.
+        foreach (var kvp in _metricNumericUpDowns)
+        {
+            GanttMetricToken? token = GanttCatalogues.Metrics
+                .FirstOrDefault(t => string.Equals(t.Name, kvp.Key, StringComparison.Ordinal));
+            if (token is not null)
+            {
+                kvp.Value.Value = (decimal)token.DefaultValue;
+            }
+        }
+
+        // Refresh swatches to the unset/default look.
+        Color defaultSwatch = SystemColors.Control;
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            if (preset.ColourCapability.HasFlag(EntityColourCapability.Fill) ||
+                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
+            {
+                UpdateSwatch($"fill_{preset.StyleKey}", defaultSwatch);
+            }
+            if (preset.ColourCapability.HasFlag(EntityColourCapability.Stroke) ||
+                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
+            {
+                UpdateSwatch($"stroke_{preset.StyleKey}", defaultSwatch);
+            }
+            if (preset.TextColour.Length > 0 ||
+                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
+            {
+                UpdateSwatch($"text_{preset.StyleKey}", defaultSwatch);
+            }
+        }
+
+        _warningLabel.Visible = false;
     }
 }

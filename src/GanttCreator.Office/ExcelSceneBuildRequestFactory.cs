@@ -151,12 +151,14 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         IReadOnlyList<GanttEvent> events,
         IReadOnlyDictionary<string, string> settings,
         GanttStyleRegistry registry,
-        PanelCellGrid grid)
+        PanelCellGrid grid,
+        IReadOnlyDictionary<string, double> themedMetrics)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(grid);
+        ArgumentNullException.ThrowIfNull(themedMetrics);
 
         // The range is derived from the events themselves, not from a stored date
         // range, so a refreshed chart always covers what it actually draws. A stored
@@ -185,7 +187,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // would be a second computation of a figure the grid already publishes, and
         // the two could disagree on what "the panel width" means.
         var textPanelWidthPt = measuredGrid.TotalWidthPt;
-        var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
+        var chrome = themedMetrics.GetValueOrDefault(
+            _outerPaddingToken, GanttCatalogues.MetricDefault(_outerPaddingToken));
 
         // ADR-0031 D1/D2: the chart's frame margin is per side. Top and bottom are
         // the measured padding rows, so the chart's outer edge lands on a row
@@ -265,11 +268,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // exists to prevent.
         LaneMetricsResolution lanes = LaneMetricsResolver.Resolve(
             measuredGrid,
-            lanePaddingTopPt: GanttCatalogues.MetricDefault(_lanePaddingTopToken),
-            lanePaddingBottomPt: GanttCatalogues.MetricDefault(_lanePaddingBottomToken),
-            stackGapPt: GanttCatalogues.MetricDefault(_stackGapToken),
-            splitterHeightPt: GanttCatalogues.MetricDefault(_splitterHeightToken),
-            spacerHeightPt: GanttCatalogues.MetricDefault(_spacerHeightToken));
+            lanePaddingTopPt: themedMetrics.GetValueOrDefault(
+                _lanePaddingTopToken, GanttCatalogues.MetricDefault(_lanePaddingTopToken)),
+            lanePaddingBottomPt: themedMetrics.GetValueOrDefault(
+                _lanePaddingBottomToken, GanttCatalogues.MetricDefault(_lanePaddingBottomToken)),
+            stackGapPt: themedMetrics.GetValueOrDefault(
+                _stackGapToken, GanttCatalogues.MetricDefault(_stackGapToken)),
+            splitterHeightPt: themedMetrics.GetValueOrDefault(
+                _splitterHeightToken, GanttCatalogues.MetricDefault(_splitterHeightToken)),
+            spacerHeightPt: themedMetrics.GetValueOrDefault(
+                _spacerHeightToken, GanttCatalogues.MetricDefault(_spacerHeightToken)));
         if (lanes.Metrics is not { } laneMetrics)
         {
             return SceneBuildRequestOutcome.Refused(
@@ -300,7 +308,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
                 settings,
                 padding,
                 metrics,
-                laneMetrics);
+                laneMetrics,
+                themedMetrics);
 
             return SceneBuildRequestOutcome.Ok(request);
         }
@@ -327,7 +336,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         IReadOnlyDictionary<string, string> settings,
         ChartPaddingPt padding,
         ITextMetrics metrics,
-        LaneLayoutMetrics laneMetrics) =>
+        LaneLayoutMetrics laneMetrics,
+        IReadOnlyDictionary<string, double> themedMetrics) =>
         new()
         {
             Events = events,
@@ -362,9 +372,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             AlternateBanding = ReadBool(settings, "AlternateBanding", fallback: true),
             ShowMinorGrid = ReadBool(settings, "ShowMinorGrid", fallback: true),
             ShowMajorGrid = ReadBool(settings, "ShowMajorGrid", fallback: true),
-            YearBandHeightPt = GanttCatalogues.MetricDefault(_yearBandToken),
-            PeriodBandHeightPt = GanttCatalogues.MetricDefault(_periodBandToken),
-            TitleBandHeightPt = GanttCatalogues.MetricDefault(_titleBandToken),
+            YearBandHeightPt = themedMetrics.GetValueOrDefault(
+                _yearBandToken, GanttCatalogues.MetricDefault(_yearBandToken)),
+            PeriodBandHeightPt = themedMetrics.GetValueOrDefault(
+                _periodBandToken, GanttCatalogues.MetricDefault(_periodBandToken)),
+            TitleBandHeightPt = themedMetrics.GetValueOrDefault(
+                _titleBandToken, GanttCatalogues.MetricDefault(_titleBandToken)),
             ChartPadding = padding,
 
             // ADR-0032 D2: the date-label text style. `SceneBuilder` skips the WHOLE
@@ -410,14 +423,22 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // padding rows are read here.
             ChartAnchorRowHeightPt = measuredGrid.AnchorRowHeightPt,
 
-            MinimumHeaderLabelWidthPt = GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken),
-            GridLinePt = GanttCatalogues.MetricDefault(_gridLineToken),
-            MajorBoundaryPt = GanttCatalogues.MetricDefault(_majorBoundaryToken),
-            MilestoneSizePt = GanttCatalogues.MetricDefault(_milestoneSizeToken),
-            DelineatorLinePt = GanttCatalogues.MetricDefault(_delineatorLineToken),
-            DelineatorStackGapPt = GanttCatalogues.MetricDefault(_stackGapToken),
-            LabelGapPt = GanttCatalogues.MetricDefault(_labelGapToken),
-            RowHeightPt = GanttCatalogues.MetricDefault(_rowHeightToken),
+            MinimumHeaderLabelWidthPt = themedMetrics.GetValueOrDefault(
+                _minHeaderLabelWidthToken, GanttCatalogues.MetricDefault(_minHeaderLabelWidthToken)),
+            GridLinePt = themedMetrics.GetValueOrDefault(
+                _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken)),
+            MajorBoundaryPt = themedMetrics.GetValueOrDefault(
+                _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken)),
+            MilestoneSizePt = themedMetrics.GetValueOrDefault(
+                _milestoneSizeToken, GanttCatalogues.MetricDefault(_milestoneSizeToken)),
+            DelineatorLinePt = themedMetrics.GetValueOrDefault(
+                _delineatorLineToken, GanttCatalogues.MetricDefault(_delineatorLineToken)),
+            DelineatorStackGapPt = themedMetrics.GetValueOrDefault(
+                _stackGapToken, GanttCatalogues.MetricDefault(_stackGapToken)),
+            LabelGapPt = themedMetrics.GetValueOrDefault(
+                _labelGapToken, GanttCatalogues.MetricDefault(_labelGapToken)),
+            RowHeightPt = themedMetrics.GetValueOrDefault(
+                _rowHeightToken, GanttCatalogues.MetricDefault(_rowHeightToken)),
         };
 
     /// <summary>
