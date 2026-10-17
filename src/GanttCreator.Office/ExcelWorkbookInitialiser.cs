@@ -206,7 +206,6 @@ public class ExcelWorkbookInitialiser(
             }
         }
 
-        var wroteTitle = false;
         var wroteHeader = false;
         var createdTable = false;
         ListObject? createdDataTable = null;
@@ -215,15 +214,6 @@ public class ExcelWorkbookInitialiser(
 
         try
         {
-            // The reserved row is written FIRST (ADR-0030 D4), so the title cell
-            // exists before the header range is resolved from row 2 and before the
-            // table is created from it. Writing rather than inserting is deliberate:
-            // the adopt path only runs on a pristine sheet, so row 1 is already empty
-            // and there is no structural mutation for a refusal to leave behind.
-            WriteTitleRow(
-                target,
-                GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle);
-            wroteTitle = true;
             WriteHeaderRow(target);
             wroteHeader = true;
 
@@ -254,7 +244,6 @@ public class ExcelWorkbookInitialiser(
                     sheets,
                     catalogueOutcome,
                     wroteHeader,
-                    wroteTitle,
                     createdTable,
                     createdConfigSheet,
                     createdDataTable);
@@ -285,7 +274,6 @@ public class ExcelWorkbookInitialiser(
                 RollBackConfigurationSheet(sheets);
                 RollBackDataTable(target, createdDataTable);
                 RollBackHeaderRow(target);
-                RollBackTitleRow(target);
                 return typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.NoActiveWorkbook
                     ? WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.NoActiveWorkbook)
                     : typeOptionsOutcome.Refusal == TypeOptionsRefusalReason.TargetProtected
@@ -315,11 +303,6 @@ public class ExcelWorkbookInitialiser(
                 RollBackHeaderRow(target);
             }
 
-            if (wroteTitle)
-            {
-                RollBackTitleRow(target);
-            }
-
             throw;
         }
 
@@ -338,7 +321,6 @@ public class ExcelWorkbookInitialiser(
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="catalogueOutcome">The refusing catalogue outcome (for parity, not surfaced).</param>
     /// <param name="wroteHeader">Whether the header row was written.</param>
-    /// <param name="wroteTitle">Whether the reserved title row was written.</param>
     /// <param name="createdTable">Whether the data table was created.</param>
     /// <param name="createdConfigSheet">Whether the configuration sheet was created.</param>
     /// <param name="createdDataTable">
@@ -350,7 +332,6 @@ public class ExcelWorkbookInitialiser(
         Sheets sheets,
         ConfigWriteOutcome catalogueOutcome,
         bool wroteHeader,
-        bool wroteTitle,
         bool createdTable,
         bool createdConfigSheet,
         ListObject? createdDataTable)
@@ -371,11 +352,6 @@ public class ExcelWorkbookInitialiser(
         if (wroteHeader)
         {
             RollBackHeaderRow(target);
-        }
-
-        if (wroteTitle)
-        {
-            RollBackTitleRow(target);
         }
     }
 
@@ -719,38 +695,6 @@ public class ExcelWorkbookInitialiser(
     }
 
     /// <summary>
-    /// Clears the title cell written by <see cref="WriteTitleRow"/> in the reserved
-    /// row, so a refused Initialise leaves no add-in-authored content behind.
-    /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
-    /// <remarks>
-    /// <b>Clearing a cell, not deleting a row.</b> The reserved row was written into,
-    /// never structurally inserted, so there is no row to remove and no shifted table
-    /// to restore. That is the whole reason the layout is produced by writing rather
-    /// than by <c>Rows(1).Insert</c>: an inserted row would need a matching delete on
-    /// every refusal path, and a missed one would leave the sheet altered after a
-    /// command that reported no change.
-    /// </remarks>
-    private void RollBackTitleRow(Worksheet target)
-    {
-        // The whole SPAN is cleared, not just its top-left cell. Clearing one cell
-        // would leave a title behind if a write had partially succeeded across the
-        // range, and the rollback exists precisely for the case where the sheet was
-        // already touched (ADR-0032 D1).
-        try
-        {
-            Excel.Range titleRange = GetTitleRange(target);
-            titleRange.ClearContents();
-        }
-        catch (System.Runtime.InteropServices.COMException)
-        {
-            // Best-effort: a host that refuses the clear must not
-            // mask the original exception nor abort the remaining
-            // rollbacks.
-        }
-    }
-
-    /// <summary>
     /// Clears the header row content written by <see cref="WriteHeaderRow"/> on
     /// <paramref name="target"/> and unhides the columns it hid. Used to roll back
     /// the header row when a later mutation fails.
@@ -1075,27 +1019,6 @@ public class ExcelWorkbookInitialiser(
     /// literal, so the cell and the export composition cannot name different charts.
     /// </para>
     /// </remarks>
-    private void WriteTitleRow(Worksheet target, string chartTitle)
-    {
-        // ONE cell, above Description.
-        //
-        // This previously wrote to a 1-by-5 `Resize` range on the stated belief that
-        // "Excel resolves a range assignment to that range's top-left cell, so D2:H2
-        // receives the title in D2". That premise is FALSE: assigning `Value2` to a
-        // multi-cell range writes the value into EVERY cell, which is why the live
-        // sheet showed "Gantt Chart" once per visible column. The fix is not to reach
-        // into the range's one-based cell indexer - which ADR-0032 D1 forbids as
-        // hardcoded addressing - but to make the RANGE itself one cell wide, derived
-        // from `GanttSheetLayout` like every other piece of sheet geometry.
-        Excel.Range titleRange = GetTitleRange(target);
-        titleRange.Value2 = chartTitle;
-    }
-
-    /// <summary>
-    /// Writes the sheet-scoped plot-anchor defined name: the cell one column
-    /// right of the table's last column, on the header row.
-    /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
     private static void WritePlotAnchorName(Worksheet target)
     {
         Names names = target.Names;
@@ -1152,35 +1075,6 @@ public class ExcelWorkbookInitialiser(
     /// <returns>The one-row range spanning the header columns.</returns>
     internal virtual Excel.Range GetHeaderRange(Worksheet target, int columnCount)
         => target.Cells[GanttSheetLayout.HeaderRowIndex, 1].Resize[1, columnCount];
-
-    /// <summary>
-    /// Returns the SINGLE cell holding the table title, in the reserved row directly
-    /// above the header and above the <c>Description</c> column. Test seam over the
-    /// COM parameterised <c>Range.Resize</c> property, mirroring
-    /// <see cref="GetHeaderRange"/>.
-    /// </summary>
-    /// <param name="target">The Gantt worksheet.</param>
-    /// <returns>The one-cell range for the title.</returns>
-    /// <remarks>
-    /// <para>
-    /// The span is <b>one cell</b>, and that is the fix rather than a detail. It was
-    /// five, so the title was assigned to D2:H2 and Excel wrote the value into every
-    /// one of those cells - the live sheet showed the title duplicated across the
-    /// table. A range assignment resolves to each cell in the range, not to the
-    /// range's top-left cell, which is what the previous comment here asserted.
-    /// </para>
-    /// <para>
-    /// The owner asked for the title directly above <c>Description</c>, the column the
-    /// table is read by. The row and the column both come from
-    /// <see cref="GanttSheetLayout"/>, so this seam cannot disagree with the layout
-    /// authority about where the title lives. A title wider than its column is a
-    /// merge or a left-aligned overflow, not a value written into each cell.
-    /// </para>
-    /// </remarks>
-    internal virtual Excel.Range GetTitleRange(Worksheet target) =>
-        target
-            .Cells[GanttSheetLayout.TitleRowIndex, GanttSheetLayout.TitleColumnIndex]
-            .Resize[1, GanttSheetLayout.TitleColumnSpan];
 
     /// <summary>
     /// Returns the table's list-column collection. Test seam over the COM

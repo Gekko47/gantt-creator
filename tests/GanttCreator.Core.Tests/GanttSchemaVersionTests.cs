@@ -56,11 +56,14 @@ public class GanttSchemaVersionTests
         // DateLabelPosition column (the per-row date-label selector). The capability is
         // derived from the existing EntityDateMode metadata, so no catalogue row or hash
         // changes -- only the column.
-        // Schema v16 is R5.6a: the type catalogue gains CustomMilestone (named custom
-        // milestone; the row must supply a StyleKey), so tblGanttTypes gains a row the
-        // running add-in reads and the stored catalogue hash no longer matches. No
+        // Schema v17 is ADR-0043: the live chart title moves from a cell
+        // placeholder in the reserved row (written by Initialise) to an owned
+        // textbox shape created by Refresh. WriteTitleRow, RollBackTitleRow,
+        // and GetTitleRange are removed; the reserved row no longer carries
+        // title text. A version-16 workbook's stored catalogue hash no longer
+        // matches because the initialiser no longer writes title text. No
         // migration (ADR-0029 D6); Initialise is the remedy.
-        Assert.Equal(16, GanttSchemaVersion.CurrentSchemaVersion);
+        Assert.Equal(17, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

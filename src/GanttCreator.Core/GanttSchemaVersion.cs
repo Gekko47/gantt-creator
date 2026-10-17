@@ -22,9 +22,19 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 16 for the R5.6a custom-milestone type.
+    /// monotonically, and is currently 17 for ADR-0043's live title as an owned
+    /// textbox shape.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 17 is ADR-0043.</b> The live chart title moves from a cell
+    /// placeholder in the reserved row to an owned textbox shape created by
+    /// Refresh. The cell-placeholder write is removed; the reserved row no
+    /// longer carries title text. A version-16 workbook's stored catalogue
+    /// hash no longer matches because the initialiser no longer writes title
+    /// text — there is no migration (ADR-0029 D6): a version-16 workbook
+    /// reports a mismatch and the remedy is Initialise.
+    /// </para>
     /// <para>
     /// <b>Version 16 is R5.6a.</b> The type catalogue gains
     /// <c>CustomMilestone</c> (named custom milestone; the row must supply a
@@ -148,5 +158,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 16;
+    public const int CurrentSchemaVersion = 17;
 }

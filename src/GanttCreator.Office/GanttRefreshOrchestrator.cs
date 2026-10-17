@@ -459,12 +459,53 @@ public sealed class GanttRefreshOrchestrator(
                 duration.CellsWritten);
         }
 
+        // ADR-0043 D1: the live title is an owned textbox in the reserved row.
+        // Read the title settings, compute the reserved-row bounds, and add the
+        // title request to the desired set so the reconciler creates, updates,
+        // or deletes it alongside the scene primitives. ShowTitle=false or a
+        // blank title omits the request, so an owned ChartTitle shape is deleted
+        // by the reconciler's Owned-minus-Desired difference.
+        OfficeShapeRequest? titleRequest = null;
+        string? chartTitle = config.Settings.TryGetValue("ChartTitle", out var title) ? title : null;
+        bool showTitle = !config.Settings.TryGetValue("ShowTitle", out var showText)
+            || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
+        if (showTitle && !string.IsNullOrWhiteSpace(chartTitle))
+        {
+            double titleBandHeightPt = GanttCatalogues.MetricDefault("TitleBandHeightPt");
+            PanelCellGrid panelGrid = grid.Grid!;
+            RectD titleBounds = new(
+                panelGrid.OriginLeftPt,
+                panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - titleBandHeightPt,
+                panelGrid.Columns.Sum(column => column.WidthPt),
+                titleBandHeightPt);
+            titleRequest = new OfficeShapeRequest(
+                PrimitiveId: "ChartTitle",
+                Kind: OfficeShapeKind.TextBox,
+                Geometry: new OfficeShapeGeometry(Bounds: titleBounds),
+                ZLayer: ZLayer.Frame,
+                FontFamily: GanttCatalogues.LabelFontFamily,
+                FontSizePt: 12.0,
+                Bold: true,
+                Text: chartTitle.Trim(),
+                Alignment: GanttTextAlignment.Centre,
+                TextColour: ColourHex.Parse("#404040"));
+        }
+
+        // Build the complete desired list: scene primitives plus the optional
+        // title shape. The reconciler compares Desired against Owned, so an
+        // omitted title request deletes an existing owned ChartTitle shape.
+        var desired = new List<OfficeShapeRequest>(translated.Requests);
+        if (titleRequest is { } req)
+        {
+            desired.Add(req);
+        }
+
         // Step 13. The first and only shape mutation of the whole pipeline. Every
         // validation, measurement, and scene construction above has completed; from
         // here the reconciliation stops at the first refusal (D3).
         ShapeReconcileOutcome reconcile = ShapeReconciler.Reconcile(
             _shapeWriter,
-            new ShapeReconcileRequest(translated.Requests, HasBlockingErrors: false));
+            new ShapeReconcileRequest(desired, HasBlockingErrors: false));
 
         if (reconcile.Succeeded)
         {
