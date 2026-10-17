@@ -86,7 +86,9 @@ public sealed class ConfigIntegrityCheckerTests
         _ = configObjects.SetupGet(o => o.Count).Returns(0);
         _ = reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueHashMismatch));
 
-        ConfigIntegrityCheckOutcome outcome = new ExcelConfigIntegrityChecker(application.Object, reader.Object).Check();
+        var tableReader = new Mock<IGanttTableReader>();
+        _ = tableReader.Setup(r => r.Read()).Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
+        ConfigIntegrityCheckOutcome outcome = new ExcelConfigIntegrityChecker(application.Object, reader.Object, tableReader.Object).Check();
 
         Assert.Equal(
             [

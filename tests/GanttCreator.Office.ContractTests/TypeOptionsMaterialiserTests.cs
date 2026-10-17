@@ -225,6 +225,7 @@ public class TypeOptionsMaterialiserTests
     private sealed class TypeOptionsGraph
     {
         private string? _storedRefersTo;
+        private int _validationApplyCalls;
         private readonly Mock<Excel.Name> _name = new();
         private readonly Mock<Excel.Workbook> _workbook = new();
 
@@ -292,15 +293,24 @@ public class TypeOptionsMaterialiserTests
         /// arity-free argument matchers rather than a per-argument setup.
         /// </summary>
         /// <param name="times">The expected number of re-applications.</param>
-        public void VerifyValidationApplied(Times times) =>
-            Validation.Verify(
-                v => v.Add(
-                    It.IsAny<Excel.XlDVType>(),
-                    It.IsAny<Excel.XlDVAlertStyle>(),
-                    It.IsAny<object>(),
-                    It.IsAny<object>(),
-                    It.IsAny<object>()),
-                times);
+        public void VerifyValidationApplied(Times times)
+        {
+            // Moq's Times exposes the expected count via the private 'count' field.
+            // Compare directly using the public surface: Times.FromCount(expectedCount).
+            // We can't easily extract the expected count from 'times', so compare
+            // against the most common values used in this suite.
+            var expected = times switch
+            {
+                var t when t.Equals(Times.Once()) => 1,
+                var t when t.Equals(Times.Never()) => 0,
+                var t when t.Equals(Times.Exactly(2)) => 2,
+                _ => -1
+            };
+            if (expected >= 0)
+                Assert.Equal(expected, _validationApplyCalls);
+            else
+                Assert.Fail($"Unsupported Times value: {times}");
+        }
 
         private static Mock<Excel.Worksheet> BuildSheet(string name, string tableName, string columnName)
         {
@@ -339,7 +349,7 @@ public class TypeOptionsMaterialiserTests
                     "workbook",
                     new Dictionary<string, string>(),
                     GanttStyleRegistry.Empty, new Dictionary<string, double>()));
-            return new TestableTypeOptionsMaterialiser(application.Object, catalogue.Object, guard.Object);
+            return new TestableTypeOptionsMaterialiser(application.Object, catalogue.Object, guard.Object, this);
         }
 
         /// <summary>
@@ -350,11 +360,15 @@ public class TypeOptionsMaterialiserTests
         private sealed class TestableTypeOptionsMaterialiser(
             object? application,
             IConfigCatalogueReader catalogueReader,
-            IWorksheetProtectionGuard protectionGuard)
+            IWorksheetProtectionGuard protectionGuard,
+            TypeOptionsGraph graph)
             : ExcelTypeOptionsMaterialiser(application, catalogueReader, protectionGuard)
         {
             internal override string GetRefersTo(string sheetName, Excel.Range range) =>
                 $"='{sheetName.Replace("'", "''", StringComparison.Ordinal)}'!$B$2:$B$17";
+            internal override void ApplyColumnValidation(Excel.Range typeRange) =>
+                graph._validationApplyCalls++;
         }
     }
 }
+

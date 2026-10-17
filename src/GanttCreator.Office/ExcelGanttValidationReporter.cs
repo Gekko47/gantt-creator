@@ -224,15 +224,31 @@ public class ExcelGanttValidationReporter(
 
         foreach (Comment comment in toDelete)
         {
-            comment.Delete();
+            DeleteComment(comment);
         }
 
         foreach ((Comment comment, var userText) in toRewrite)
         {
             // Start omitted replaces the whole note text (MS Learn, Comment.Text).
-            _ = comment.Text(userText);
+            SetCommentText(comment, userText);
         }
     }
+
+    /// <summary>
+    /// Deletes a comment from a cell. Virtual so contract tests can substitute
+    /// it without touching the COM <c>Comment</c> object (Castle DynamicProxy
+    /// cannot proxy <c>Comment.Delete</c>, which the host exposes late-bound).
+    /// </summary>
+    /// <param name="comment">The comment to delete.</param>
+    internal virtual void DeleteComment(Comment comment) => comment.Delete();
+
+    /// <summary>
+    /// Replaces a comment's text. Virtual so contract tests can substitute it
+    /// without touching the COM <c>Comment</c> object.
+    /// </summary>
+    /// <param name="comment">The comment whose text is replaced.</param>
+    /// <param name="text">The replacement text.</param>
+    internal virtual void SetCommentText(Comment comment, string text) => comment.Text(text);
 
     /// <summary>
     /// Writes the add-in report section into a cell's note, creating the note

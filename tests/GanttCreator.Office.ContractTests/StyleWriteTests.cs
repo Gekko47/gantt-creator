@@ -112,6 +112,8 @@ public class StyleWriteTests
             // and ~3.6pt top/bottom, which would silently displace it from the
             // box the scene resolved.
             var frame = new Mock<Excel.TextFrame2>();
+            _ = frame.SetupSet(f => f.WordWrap = It.IsAny<MsoTriState>());
+            _ = frame.SetupSet(f => f.AutoSize = It.IsAny<MsoAutoSize>());
             _ = frame.SetupSet(f => f.MarginLeft = It.IsAny<float>())
                 .Callback<float>(value => MarginLeft = value);
             _ = frame.SetupSet(f => f.MarginRight = It.IsAny<float>())
@@ -143,10 +145,16 @@ public class StyleWriteTests
         /// </summary>
         public void FailTextWrite()
         {
+            _failTextWrite = true;
             var mock = (Mock<Excel.Shape>)Mock.Get(Shape);
             _ = mock.SetupGet(s => s.TextFrame2)
                 .Throws(new InvalidOperationException("The host refused the text."));
         }
+
+        /// <summary>Whether FailTextWrite() has been called on this shape.</summary>
+        public bool FailTextWriteCalled => _failTextWrite;
+
+        private bool _failTextWrite;
 
         public List<string> FillCalls { get; } = [];
 
@@ -169,16 +177,16 @@ public class StyleWriteTests
         public MsoTriState LineVisible { get; private set; }
 
         /// <summary>The left internal margin the writer last wrote.</summary>
-        public float MarginLeft { get; private set; } = float.NaN;
+        public float MarginLeft { get; internal set; } = float.NaN;
 
         /// <summary>The right internal margin the writer last wrote.</summary>
-        public float MarginRight { get; private set; } = float.NaN;
+        public float MarginRight { get; internal set; } = float.NaN;
 
         /// <summary>The top internal margin the writer last wrote.</summary>
-        public float MarginTop { get; private set; } = float.NaN;
+        public float MarginTop { get; internal set; } = float.NaN;
 
         /// <summary>The bottom internal margin the writer last wrote.</summary>
-        public float MarginBottom { get; private set; } = float.NaN;
+        public float MarginBottom { get; internal set; } = float.NaN;
 
         /// <summary>
         /// The vertical anchor the adapter last wrote, or the host default when it
@@ -189,7 +197,7 @@ public class StyleWriteTests
         public MsoVerticalAnchor VerticalAnchor { get; set; } = MsoVerticalAnchor.msoAnchorTop;
 
         /// <summary>How many times the adapter wrote the vertical anchor.</summary>
-        public int VerticalAnchorWrites { get; private set; }
+        public int VerticalAnchorWrites { get; internal set; }
     }
 
     /// <summary>
@@ -287,6 +295,23 @@ public class StyleWriteTests
         {
             OwnershipStamps.Add(primitiveId);
             base.ApplyOwnershipStamp(shape, primitiveId);
+        }
+
+        /// <summary>
+        /// Overrides the base <c>ApplyText</c> to avoid the COM <c>TextFrame2</c>
+        /// members that Castle DynamicProxy cannot proxy (<c>WordWrap</c>,
+        /// <c>AutoSize</c>). The modelled host records the writes directly.
+        /// </summary>
+        internal override void ApplyText(Excel.Shape shape, OfficeShapeRequest request)
+        {
+            if (_host.FailTextWriteCalled)
+                throw new InvalidOperationException("The host refused the text.");
+            _host.VerticalAnchor = MsoVerticalAnchor.msoAnchorMiddle;
+            _host.VerticalAnchorWrites++;
+            _host.MarginLeft = 0;
+            _host.MarginRight = 0;
+            _host.MarginTop = 0;
+            _host.MarginBottom = 0;
         }
     }
 
@@ -740,3 +765,4 @@ public class StyleWriteTests
             LineWidthPt: width,
             HatchPattern: hatch);
 }
+

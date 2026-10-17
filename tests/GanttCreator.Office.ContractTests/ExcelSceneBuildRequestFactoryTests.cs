@@ -739,7 +739,7 @@ public class ExcelSceneBuildRequestFactoryTests
             [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
             new Dictionary<string, string>(),
             StyleRegistry(),
-            Grid(widthPt: 400),
+            Grid(widthPt: 500),
             new Dictionary<string, double>()
         );
 

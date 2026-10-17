@@ -1059,6 +1059,8 @@ public class ExcelShapeWriterTests
         string currentAlternativeText = alternativeText ?? string.Empty;
         float currentLeft = 0f;
         float currentTop = 0f;
+        float currentWidth = 0f;
+        float currentHeight = 0f;
         var shape = new Mock<Excel.Shape>();
         _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
         _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
@@ -1067,13 +1069,19 @@ public class ExcelShapeWriterTests
             .Callback<string>(value => currentAlternativeText = value);
         // Geometry is recorded through backing fields so a test can assert that an
         // update actually MOVED the shape, rather than inferring it from a success
-        // flag. A mock with no setup silently returns 0 for every property. The PIA
-        // types Left/Top as Single, which is the host side of the port's own
-        // double -> float rounding boundary.
+        // flag. The PIA types Left/Top/Width/Height as Single, which is the host
+        // side of the port's own double -> float rounding boundary. Width and
+        // Height must be mocked too: ApplyGeometry writes all four, and a mock
+        // with no Width/Height setup throws MissingMethodException instead of
+        // recording the write.
         _ = shape.SetupGet(s => s.Left).Returns(() => currentLeft);
         _ = shape.SetupSet(s => s.Left = It.IsAny<float>()).Callback<float>(value => currentLeft = value);
         _ = shape.SetupGet(s => s.Top).Returns(() => currentTop);
         _ = shape.SetupSet(s => s.Top = It.IsAny<float>()).Callback<float>(value => currentTop = value);
+        _ = shape.SetupGet(s => s.Width).Returns(() => currentWidth);
+        _ = shape.SetupSet(s => s.Width = It.IsAny<float>()).Callback<float>(value => currentWidth = value);
+        _ = shape.SetupGet(s => s.Height).Returns(() => currentHeight);
+        _ = shape.SetupSet(s => s.Height = It.IsAny<float>()).Callback<float>(value => currentHeight = value);
         _ = shape.Setup(s => s.Delete()).Callback(() => onDelete?.Invoke());
         // A seeded shape needs its own z-order recorder: the writer's built-in
         // `ZOrderShapes` is wired only into the shapes `AddShape` creates, so a

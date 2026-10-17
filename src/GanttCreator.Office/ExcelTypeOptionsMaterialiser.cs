@@ -143,20 +143,25 @@ public class ExcelTypeOptionsMaterialiser(
         SetName(names, GanttWorkbookContract.TypeOptionsDefinedName, expectedRefersTo);
         if (typeRange is not null)
         {
-            Excel.Validation validation = typeRange.Validation;
-            validation.Delete();
-            validation.Add(
-                Excel.XlDVType.xlValidateList,
-                Excel.XlDVAlertStyle.xlValidAlertStop,
-                Type.Missing,
-                $"={GanttWorkbookContract.TypeOptionsDefinedName}",
-                Type.Missing);
-            validation.InCellDropdown = true;
-            validation.IgnoreBlank = false;
-            validation.ShowError = true;
+            ApplyColumnValidation(typeRange);
         }
 
         return TypeOptionsMaterialiseOutcome.Ok();
+    }
+
+    internal virtual void ApplyColumnValidation(Excel.Range typeRange)
+    {
+        Excel.Validation validation = typeRange.Validation;
+        validation.Delete();
+        validation.Add(
+            Excel.XlDVType.xlValidateList,
+            Excel.XlDVAlertStyle.xlValidAlertStop,
+            Type.Missing,
+            $"={GanttWorkbookContract.TypeOptionsDefinedName}",
+            Type.Missing);
+        validation.InCellDropdown = true;
+        validation.IgnoreBlank = false;
+        validation.ShowError = true;
     }
 
     /// <summary>

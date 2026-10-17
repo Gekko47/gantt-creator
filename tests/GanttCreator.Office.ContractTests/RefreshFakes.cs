@@ -326,7 +326,8 @@ internal sealed class RefreshFakes
                                 HatchPattern: GanttHatchPattern.None,
                                 StandardOutlinePt: 1,
                                 ActivityHeightPt: 12),
-                        ]));
+                        ]),
+                    new Dictionary<string, double>());
         }
     }
 
@@ -519,7 +520,8 @@ internal sealed class RefreshFakes
             IReadOnlyList<GanttEvent> events,
             IReadOnlyDictionary<string, string> settings,
             GanttStyleRegistry registry,
-            PanelCellGrid grid)
+            PanelCellGrid grid,
+            IReadOnlyDictionary<string, double> themedMetrics)
         {
             owner.Steps.Add("Factory");
             if (owner.FactoryRefused)
@@ -534,7 +536,7 @@ internal sealed class RefreshFakes
             // text-metrics implementation for hosts with no real font yet, so the
             // composition is identical on every run without a second fake here.
             return new ExcelSceneBuildRequestFactory(new FakeTextMetrics())
-                .Create(events, settings, registry, grid);
+                .Create(events, settings, registry, grid, themedMetrics);
         }
     }
 }
