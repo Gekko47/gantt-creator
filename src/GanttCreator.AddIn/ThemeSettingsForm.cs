@@ -90,6 +90,13 @@ internal sealed partial class ThemeSettingsForm : Form
     /// </summary>
     internal ThemeEditRequest? GetValidatedRequest() => _validatedRequest;
 
+    /// <summary>
+    /// Test hook: sets the validated request without running the dialog's OK
+    /// handler. Used by RibbonStateServiceTests so ShowDialog() can be
+    /// substituted with a non-blocking result.
+    /// </summary>
+    internal void SetValidatedRequestForTesting(ThemeEditRequest? request) => _validatedRequest = request;
+
     [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
         Justification = "Dialog UI strings are not localized in this release.")]
     private void InitializeComponent()

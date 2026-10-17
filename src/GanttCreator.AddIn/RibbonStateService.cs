@@ -939,9 +939,10 @@ internal class RibbonStateService
 
             var request = new ThemeEditRequest(currentStyles, currentMetrics);
 
-            // Show the WinForms dialog
+            // Show the WinForms dialog. Virtual so tests can substitute a
+            // non-blocking dialog result instead of running a message loop.
             using var dialog = new ThemeSettingsForm(request);
-            if (dialog.ShowDialog() == DialogResult.OK)
+            if (ShowThemeSettingsDialog(dialog) == DialogResult.OK)
             {
                 ThemeEditRequest? validated = dialog.GetValidatedRequest();
                 if (validated != null)
@@ -968,6 +969,14 @@ internal class RibbonStateService
 
         return false;
     }
+
+    /// <summary>
+    /// Shows the theme settings dialog modally and returns the user's result.
+    /// Virtual so tests can substitute a non-blocking dialog result instead of
+    /// running a WinForms message loop, which would block forever without a
+    /// user to click OK or Cancel.
+    /// </summary>
+    protected virtual DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog) => dialog.ShowDialog();
 
     /// <summary>
     /// Opens the chart-title dialog, applies edits through the catalogue

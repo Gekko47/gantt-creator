@@ -3,6 +3,7 @@ using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 using Moq;
+using System.Windows.Forms;
 
 namespace GanttCreator.AddIn.Tests;
 /// <summary>
@@ -1086,7 +1087,7 @@ public sealed class RibbonStateServiceTests : IDisposable
     [Fact]
     public void ShowThemeSettingsDialog_returns_true_when_theme_written_successfully()
     {
-        var service = new RibbonStateService();
+        var service = new StubThemeDialogRibbonStateService(DialogResult.OK);
         var reader = new Mock<IConfigCatalogueReader>();
         reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
             "wb-id",
@@ -1100,12 +1101,31 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetCatalogueWriter(writer.Object);
 
         Assert.True(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Once);
+    }
+
+    [Fact]
+    public void ShowThemeSettingsDialog_returns_false_when_user_cancels()
+    {
+        var service = new StubThemeDialogRibbonStateService(DialogResult.Cancel);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty, new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        Assert.False(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Never);
     }
 
     [Fact]
     public void ShowThemeSettingsDialog_returns_false_when_writer_refuses()
     {
-        var service = new RibbonStateService();
+        var service = new StubThemeDialogRibbonStateService(DialogResult.OK);
         var reader = new Mock<IConfigCatalogueReader>();
         reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
             "wb-id",
@@ -1119,6 +1139,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         service.SetCatalogueWriter(writer.Object);
 
         Assert.False(service.ShowThemeSettingsDialog());
+        writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Once);
     }
 
     [Fact]
@@ -1142,6 +1163,22 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         Assert.False(service.ShowThemeSettingsDialog());
     }
-}
 
-
+    /// <summary>
+    /// Test double for <see cref="RibbonStateService"/> that substitutes a
+    /// fixed dialog result instead of running a blocking WinForms message
+    /// loop, which would hang forever without a user to click OK or Cancel.
+    /// </summary>
+    private sealed class StubThemeDialogRibbonStateService : RibbonStateService
+    {
+        private readonly DialogResult _dialogResult;
+
+        public StubThemeDialogRibbonStateService(DialogResult dialogResult) => _dialogResult = dialogResult;
+
+        protected override DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog)
+        {
+            dialog.SetValidatedRequestForTesting(new ThemeEditRequest([], new Dictionary<string, double>()));
+            return _dialogResult;
+        }
+    }
+}
