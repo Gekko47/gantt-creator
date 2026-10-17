@@ -19,6 +19,7 @@ public class GanttEntityTypeTests
     [InlineData(GanttEntityType.BaselineMilestone, 13)]
     [InlineData(GanttEntityType.CriticalMilestone, 14)]
     [InlineData(GanttEntityType.Delineator, 15)]
+    [InlineData(GanttEntityType.CustomMilestone, 16)]
     public void Machine_identity_name_and_value_are_stable(GanttEntityType type, int expectedValue)
     {
         Assert.Equal(expectedValue, (int)type);

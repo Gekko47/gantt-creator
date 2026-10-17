@@ -538,17 +538,18 @@ public static class GanttRowValidator
             }
         }
 
-        // StyleKey: Custom Activity requires one; a supplied key must resolve
-        // when the caller supplies the validated style registry.
+        // StyleKey: a type whose catalogue row requires one (Custom Activity,
+        // Custom Milestone) demands it; a supplied key must resolve when the
+        // caller supplies the validated style registry.
         var styleKey = row.StyleKey;
         GanttStyleDefinition? styleDefinition = null;
-        if (!styleBlocked && type == GanttEntityType.CustomActivity && styleKey is null)
+        if (!styleBlocked && definition is { RequiresStyleKey: true } && styleKey is null)
         {
             Add(
                 "StyleKey",
                 GanttValidationCodes.StyleKeyRequired,
                 GanttValidationSeverity.Error,
-                "Custom Activity requires a StyleKey."
+                $"{definition.DisplayName} requires a StyleKey."
             );
         }
         else if (!styleBlocked && styleKey is not null && styleRegistry is not null)
@@ -565,13 +566,13 @@ public static class GanttRowValidator
         }
 
         // LabelPosition: blank resolves later; otherwise exact-enum plus the
-        // selected type's or Custom Activity style's capability set.
+        // selected type's or its named style's capability set.
         GanttLabelPosition? labelPosition = null;
         if (
             !labelBlocked
             && row.LabelPositionText is not null
             && type is not null
-            && (type != GanttEntityType.CustomActivity || styleDefinition is not null)
+            && (definition is not { RequiresStyleKey: true } || styleDefinition is not null)
         )
         {
             if (
@@ -587,7 +588,7 @@ public static class GanttRowValidator
             }
             else
             {
-                IReadOnlySet<GanttLabelPosition> allowedLabels = type == GanttEntityType.CustomActivity
+                IReadOnlySet<GanttLabelPosition> allowedLabels = definition!.RequiresStyleKey
                     ? styleDefinition!.AllowedLabelPositions
                     : definition!.AllowedLabelPositions;
                 if (!allowedLabels.Contains(parsedLabel))
@@ -747,20 +748,20 @@ public static class GanttRowValidator
             return null;
         }
 
-        if (type == GanttEntityType.CustomActivity && styleDefinition is null)
+        if (definition.RequiresStyleKey && styleDefinition is null)
         {
             return null;
         }
 
         // Preserve the pre-R2.9 compatibility path when no registry was
-        // supplied. With a registry, Custom Activity resolves strictly from
+        // supplied. With a registry, a style-key type resolves strictly from
         // its selected named style.
-        if (type == GanttEntityType.CustomActivity && !styleRegistryProvided)
+        if (definition.RequiresStyleKey && !styleRegistryProvided)
         {
             return text.ToUpperInvariant();
         }
 
-        EntityColourCapability capability = type == GanttEntityType.CustomActivity
+        EntityColourCapability capability = definition.RequiresStyleKey
             ? styleDefinition?.ColourCapability ?? EntityColourCapability.None
             : definition.ColourCapability;
         var allowed = isFill

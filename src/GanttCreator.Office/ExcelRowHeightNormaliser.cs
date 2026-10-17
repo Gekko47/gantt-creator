@@ -588,6 +588,7 @@ public class ExcelRowHeightNormaliser(
                 or GanttEntityType.AsPlannedMilestone
                 or GanttEntityType.BaselineMilestone
                 or GanttEntityType.CriticalMilestone
+                or GanttEntityType.CustomMilestone
                 or GanttEntityType.CriticalInterval
                 or GanttEntityType.Delineator => MeasuredRowKind.Managed,
                 _ => MeasuredRowKind.Managed,

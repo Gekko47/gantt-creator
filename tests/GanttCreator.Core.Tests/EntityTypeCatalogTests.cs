@@ -21,6 +21,7 @@ public class EntityTypeCatalogTests
         "As-Planned Milestone",
         "Baseline Milestone",
         "Critical Milestone",
+        "Custom Milestone",
         "Delineator",
     ];
 
@@ -34,9 +35,9 @@ public class EntityTypeCatalogTests
         [GanttLabelPosition.Auto, GanttLabelPosition.TopLeft, GanttLabelPosition.TopRight, GanttLabelPosition.BottomLeft, GanttLabelPosition.BottomRight, GanttLabelPosition.None];
 
     [Fact]
-    public void Default_catalogue_contains_exactly_the_16_guide_entries()
+    public void Default_catalogue_contains_exactly_the_17_guide_entries()
     {
-        Assert.Equal(16, EntityTypeCatalog.Entries.Count);
+        Assert.Equal(17, EntityTypeCatalog.Entries.Count);
         Assert.Equal(EntityTypeCatalog.TypeCount, EntityTypeCatalog.Entries.Count);
     }
 
@@ -57,7 +58,7 @@ public class EntityTypeCatalogTests
     [Fact]
     public void Default_catalogue_matches_the_entity_guide_display_names_in_order()
     {
-        Assert.Equal(16, s_guideDisplayNames.Length);
+        Assert.Equal(17, s_guideDisplayNames.Length);
         for (var i = 0; i < s_guideDisplayNames.Length; i++)
         {
             Assert.Equal(s_guideDisplayNames[i], EntityTypeCatalog.Entries[i].DisplayName);
@@ -95,10 +96,11 @@ public class EntityTypeCatalogTests
             (GanttEntityType.AsPlannedMilestone, "As-Planned Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "AsPlannedMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.BaselineMilestone, "Baseline Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "BaselineMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.CriticalMilestone, "Critical Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CriticalMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
+            (GanttEntityType.CustomMilestone, "Custom Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, string.Empty, EntityColourCapability.StyleDefined, true, Array.Empty<GanttLabelPosition>()),
             (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, false, s_delineatorLabels),
         };
 
-        Assert.Equal(16, expected.Length);
+        Assert.Equal(17, expected.Length);
 
         // Indexed comparison also pins the catalogue to the exact guide order.
         for (var i = 0; i < expected.Length; i++)
@@ -175,20 +177,26 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
-    public void Only_CustomActivity_requires_a_style_key()
+    public void Only_custom_types_require_a_style_key()
     {
         Assert.All(EntityTypeCatalog.Entries, entry =>
-            Assert.Equal(entry.Type == GanttEntityType.CustomActivity, entry.RequiresStyleKey));
+            Assert.Equal(
+                entry.Type == GanttEntityType.CustomActivity
+                    || entry.Type == GanttEntityType.CustomMilestone,
+                entry.RequiresStyleKey));
     }
 
     [Fact]
-    public void CustomActivity_has_no_catalogue_default_style_and_no_label_set()
+    public void Custom_types_have_no_catalogue_default_style_and_no_label_set()
     {
-        var custom = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == GanttEntityType.CustomActivity);
+        foreach (var type in new[] { GanttEntityType.CustomActivity, GanttEntityType.CustomMilestone })
+        {
+            var custom = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == type);
 
-        Assert.Equal(string.Empty, custom.DefaultStyleKey);
-        Assert.True(custom.RequiresStyleKey);
-        Assert.Empty(custom.AllowedLabelPositions);
+            Assert.Equal(string.Empty, custom.DefaultStyleKey);
+            Assert.True(custom.RequiresStyleKey);
+            Assert.Empty(custom.AllowedLabelPositions);
+        }
     }
 
     [Fact]
@@ -202,6 +210,7 @@ public class EntityTypeCatalogTests
                     or GanttEntityType.AsPlannedMilestone
                     or GanttEntityType.BaselineMilestone
                     or GanttEntityType.CriticalMilestone
+                    or GanttEntityType.CustomMilestone
                     or GanttEntityType.Delineator => EntityDateMode.StartOnly,
                 GanttEntityType.Splitter or GanttEntityType.Spacer => EntityDateMode.None,
                 _ => EntityDateMode.StartFinish,

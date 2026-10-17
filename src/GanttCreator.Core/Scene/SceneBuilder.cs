@@ -527,7 +527,8 @@ public static class SceneBuilder
                     or GanttEntityType.AsBuiltMilestone
                     or GanttEntityType.AsPlannedMilestone
                     or GanttEntityType.BaselineMilestone
-                    or GanttEntityType.CriticalMilestone => heightSource?.HeightPt ?? 0,
+                    or GanttEntityType.CriticalMilestone
+                    or GanttEntityType.CustomMilestone => heightSource?.HeightPt ?? 0,
 
                 // A Delineator never reaches this loop — §24 makes it a plot-global
                 // entity — so it is listed rather than defaulted, per the repo's

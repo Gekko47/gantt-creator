@@ -22,9 +22,17 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 15 for the R5.14 date-label column.
+    /// monotonically, and is currently 16 for the R5.6a custom-milestone type.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 16 is R5.6a.</b> The type catalogue gains
+    /// <c>CustomMilestone</c> (named custom milestone; the row must supply a
+    /// <c>StyleKey</c>), so a version-15 workbook's <c>tblGanttTypes</c> lacks
+    /// a row the running add-in reads and its stored catalogue hash no longer
+    /// matches. There is no migration (ADR-0029 D6): a version-15 workbook
+    /// reports a mismatch and the remedy is Initialise.
+    /// </para>
     /// <para>
     /// <b>Version 15 is R5.14.</b> The <c>tblGanttData</c> column schema gains
     /// the engine-hidden <c>DateLabelPosition</c> column (the per-row date-label
@@ -140,5 +148,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 15;
+    public const int CurrentSchemaVersion = 16;
 }

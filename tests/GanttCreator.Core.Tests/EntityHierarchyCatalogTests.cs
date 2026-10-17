@@ -118,6 +118,7 @@ public sealed class EntityHierarchyCatalogTests
     [InlineData(GanttEntityType.AsPlannedMilestone)]
     [InlineData(GanttEntityType.BaselineMilestone)]
     [InlineData(GanttEntityType.CriticalMilestone)]
+    [InlineData(GanttEntityType.CustomMilestone)]
     public void Milestones_may_be_children_but_never_own_them(GanttEntityType type)
     {
         Assert.True(EntityHierarchyCatalog.MayBeChild(type));

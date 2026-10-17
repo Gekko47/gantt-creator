@@ -45,6 +45,9 @@ public enum GanttEntityType
     /// <summary>Named custom span; the row must supply a <c>StyleKey</c>.</summary>
     CustomActivity = 10,
 
+    /// <summary>Named custom milestone; the row must supply a <c>StyleKey</c>.</summary>
+    CustomMilestone = 16,
+
     /// <summary>As-built milestone point event.</summary>
     AsBuiltMilestone = 11,
 

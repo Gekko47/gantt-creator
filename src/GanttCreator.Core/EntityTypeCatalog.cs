@@ -25,7 +25,7 @@ namespace GanttCreator.Core;
 public static class EntityTypeCatalog
 {
     /// <summary>The number of types in the catalogue.</summary>
-    public const int TypeCount = 16;
+    public const int TypeCount = 17;
 
     private static readonly IReadOnlySet<GanttLabelPosition> _spanLabelPositions =
         new HashSet<GanttLabelPosition>(
@@ -214,6 +214,15 @@ public static class EntityTypeCatalog
             EntityColourCapability.Fill | EntityColourCapability.Stroke,
             requiresStyleKey: false,
             _milestoneLabelPositions),
+        new(
+            GanttEntityType.CustomMilestone,
+            "Custom Milestone",
+            EntityKind.Milestone,
+            EntityDateMode.StartOnly,
+            string.Empty,
+            EntityColourCapability.StyleDefined,
+            requiresStyleKey: true,
+            _noLabelPositions),
         new(
             GanttEntityType.Delineator,
             "Delineator",

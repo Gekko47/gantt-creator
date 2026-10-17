@@ -292,8 +292,8 @@ public class GanttConfigCatalogueTests
         Assert.Equal(6, GanttCatalogues.Typography.Count);
 
     [Fact]
-    public void TypeRows_contains_exactly_the_16_catalogue_entries() =>
-        Assert.Equal(16, GanttCatalogues.TypeRows.Count);
+    public void TypeRows_contains_exactly_the_17_catalogue_entries() =>
+        Assert.Equal(17, GanttCatalogues.TypeRows.Count);
 
     [Fact]
     public void StylePresets_contains_one_row_per_non_empty_DefaultStyleKey()
@@ -850,10 +850,16 @@ public class GanttConfigCatalogueTests
     /// <c>schema|{CurrentSchemaVersion}</c> seed. A version-14 workbook
     /// carries the older hash and is reported as a mismatch; the remedy is
     /// Initialise (ADR-0029 D6, no migration).
+    /// <b>Advanced to 16 by R5.6a</b>: the type catalogue gains
+    /// <c>CustomMilestone</c> (named custom milestone; the row must supply a
+    /// <c>StyleKey</c>). The catalogue contents move through the type rows;
+    /// the hash moves with them. A version-15 workbook carries the older hash
+    /// and is reported as a mismatch; the remedy is Initialise (ADR-0029 D6,
+    /// no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "256ff7da4852d4f1933c0e3e08aba48ad8cdb7578f780987096d396762c4b0c7";
+        "fa8599e554bdd69c8694d69e22d4a37e563f1afeef1477d23b1b833801f8130b";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

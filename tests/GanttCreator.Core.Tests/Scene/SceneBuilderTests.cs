@@ -1728,6 +1728,7 @@ public sealed class SceneBuilderTests
             (GanttEntityType.AsPlannedMilestone, 1),
             (GanttEntityType.AsBuiltMilestone, 1),
             (GanttEntityType.BaselineMilestone, 1),
+            (GanttEntityType.CustomMilestone, 1),
             (GanttEntityType.DelayEvent, 2),
             (GanttEntityType.AsBuiltActivity, 3),
             (GanttEntityType.AsPlannedActivity, 4),

@@ -1111,6 +1111,39 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void Custom_milestone_without_style_key_is_a_blocking_error()
+    {
+        // R5.6a: Custom Milestone shares the catalogue-driven RequiresStyleKey
+        // semantics, so its blank StyleKey is the same blocking error.
+        GanttRowDto row = ValidSpan(typeText: "Custom Milestone", styleKey: null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.StyleKeyRequired);
+    }
+
+    [Fact]
+    public void Custom_milestone_with_any_style_key_passes_without_capability_checks()
+    {
+        // A milestone row reads Start only, so it is constructed directly with
+        // no finish and cleared lane/stack cells (the milestone-row shape).
+        var row = new GanttRowDto(
+            2, NewId(), NewLaneId(), null, "Custom Milestone", "Cap",
+            new DateOnly(2026, 9, 1), null, null, "MyStyle",
+            null, "#ff0000", "#00ff00", true, null)
+        {
+            LaneIdCell = GanttCells.Empty<string>(),
+            StackIndexCell = GanttCells.Empty<int?>(),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+    }
+
+    [Fact]
     public void Custom_activity_with_any_style_key_passes_without_capability_checks()
     {
         GanttRowDto row = ValidSpan(

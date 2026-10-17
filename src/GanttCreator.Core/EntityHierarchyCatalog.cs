@@ -93,6 +93,7 @@ public static class EntityHierarchyCatalog
         GanttEntityType.AsPlannedMilestone,
         GanttEntityType.BaselineMilestone,
         GanttEntityType.CriticalMilestone,
+        GanttEntityType.CustomMilestone,
 
         // R5.3: Critical Interval is always a child; Delineator gains a
         // collapse-only ParentId (owner ruling 2026-10-10). Splitter and

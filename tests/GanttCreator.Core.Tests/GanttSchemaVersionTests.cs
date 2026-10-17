@@ -56,7 +56,11 @@ public class GanttSchemaVersionTests
         // DateLabelPosition column (the per-row date-label selector). The capability is
         // derived from the existing EntityDateMode metadata, so no catalogue row or hash
         // changes -- only the column.
-        Assert.Equal(15, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v16 is R5.6a: the type catalogue gains CustomMilestone (named custom
+        // milestone; the row must supply a StyleKey), so tblGanttTypes gains a row the
+        // running add-in reads and the stored catalogue hash no longer matches. No
+        // migration (ADR-0029 D6); Initialise is the remedy.
+        Assert.Equal(16, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

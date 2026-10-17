@@ -823,6 +823,7 @@ public static class HierarchyMutations
         GanttEntityType.AsPlannedMilestone => false,
         GanttEntityType.BaselineMilestone => false,
         GanttEntityType.CriticalMilestone => false,
+        GanttEntityType.CustomMilestone => false,
         GanttEntityType.Delineator => false,
         _ => false,
     };
