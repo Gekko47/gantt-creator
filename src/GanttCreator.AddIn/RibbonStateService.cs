@@ -908,9 +908,9 @@ internal class RibbonStateService
 
             foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
             {
-                string fill = preset.FillColour;
-                string stroke = preset.StrokeColour;
-                string text = preset.TextColour;
+                var fill = preset.FillColour;
+                var stroke = preset.StrokeColour;
+                var text = preset.TextColour;
 
                 if (outcome.Styles.TryGet(preset.StyleKey, out GanttStyleDefinition? definition)
                     && definition is { HasFormatting: true })
@@ -943,11 +943,11 @@ internal class RibbonStateService
             using var dialog = new ThemeSettingsForm(request);
             if (dialog.ShowDialog() == DialogResult.OK)
             {
-                var validated = dialog.GetValidatedRequest();
+                ThemeEditRequest? validated = dialog.GetValidatedRequest();
                 if (validated != null)
                 {
                     // Write the themed edits
-                    var writeOutcome = _catalogueWriter.WriteTheme(validated);
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
                     if (writeOutcome is not null && writeOutcome.Succeeded)
                     {
                         return true;
@@ -956,6 +956,67 @@ internal class RibbonStateService
                     {
                         CommandErrorDialog.Show(
                             $"Failed to write theme settings: {writeOutcome.Refusal}");
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Intentionally empty: a dialog failure must not escape into Excel.
+        }
+#pragma warning restore CA1031
+
+        return false;
+    }
+
+    /// <summary>
+    /// Opens the chart-title dialog, applies edits through the catalogue
+    /// writer, and returns whether title edits were written. Never throws.
+    /// </summary>
+    internal bool ShowChartTitleDialog()
+    {
+        if (_catalogueReader is null || _catalogueWriter is null)
+        {
+            return false;
+        }
+
+        // CA1031: the dialog runs on the Excel main STA thread (the Ribbon
+        // onAction thread). Any failure must not propagate into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            // Read current values from the workbook so the dialog shows the
+            // user's actual title, not the code-owned default.
+            ConfigReadOutcome outcome = _catalogueReader.Read();
+            if (!outcome.Succeeded)
+            {
+                return false;
+            }
+
+            var currentTitle = outcome.Settings.TryGetValue("ChartTitle", out var title)
+                ? title
+                : GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle;
+            var currentShow = !outcome.Settings.TryGetValue("ShowTitle", out var showText)
+                || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
+
+            // Show the WinForms dialog
+            using var dialog = new ChartTitleForm(currentTitle, currentShow);
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                ChartTitleEditRequest? validated = dialog.GetValidatedRequest();
+                if (validated != null)
+                {
+                    // Write exactly the two intended settings rows
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteSettings(
+                        ChartTitleEditRequest.ToSettings(validated));
+                    if (writeOutcome is not null && writeOutcome.Succeeded)
+                    {
+                        return true;
+                    }
+                    else if (writeOutcome is not null)
+                    {
+                        CommandErrorDialog.Show(
+                            $"Failed to write chart title: {writeOutcome.Refusal}");
                     }
                 }
             }

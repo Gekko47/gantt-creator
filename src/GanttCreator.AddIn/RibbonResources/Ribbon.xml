@@ -46,6 +46,7 @@
         </group>
         <group id="grpStyleTheme" label="Style &amp; Theme">
           <button id="btnThemeSettings" label="Theme settings..." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
+          <button id="btnChartTitle" label="Chart title..." getEnabled="GetEnabled" onAction="OnChartTitleClick"/>
         </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">

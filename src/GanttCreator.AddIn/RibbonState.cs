@@ -196,6 +196,7 @@ internal sealed record RibbonState(
         RibbonControlIds.PresetPresentation16x9 => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PresetPresentation4x3 => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.ThemeSettings => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.ChartTitle => HasActiveWorkbook && SheetInitialised,
         _ => true,
     };
 }

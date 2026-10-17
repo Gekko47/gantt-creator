@@ -1635,6 +1635,31 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Called when the user clicks the Chart title button. Opens the
+    /// chart-title dialog and applies edits if confirmed. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnChartTitleClick(IRibbonControl control)
+        => OnChartTitleClick(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="OnChartTitleClick(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service running the command.</param>
+    internal static void OnChartTitleClick(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+        if (stateService.ShowChartTitleDialog())
+        {
+            RunRefreshSheet();
+        }
+    }
+
+    /// <summary>
     /// Returns whether a plot-size preset button is pressed. Excel's
     /// button getPressed contract asks for this when a button carries
     /// getPressed; the answer compares the control id against the

@@ -155,4 +155,7 @@ internal static class RibbonControlIds
 
     /// <summary>The Theme settings button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string ThemeSettings = "btnThemeSettings";
+
+    /// <summary>The Chart title button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string ChartTitle = "btnChartTitle";
 }
