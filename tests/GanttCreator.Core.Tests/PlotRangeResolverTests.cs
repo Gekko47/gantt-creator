@@ -315,10 +315,100 @@ public sealed class PlotRangeResolverTests
         PlotRangeResolver.ValidateSettings(
             new PlotRangeSettings
             {
-                Mode = nameof(PlotRangeMode.Explicit),
+                StartMode = nameof(PlotRangeMode.Explicit),
+                FinishMode = nameof(PlotRangeMode.Explicit),
                 StartDate = "15/03/2026",
                 FinishDate = "30/06/2026",
             });
+    }
+
+    [Fact]
+    public void ValidateSettings_accepts_data_range_with_no_dates()
+    {
+        // DataRange ends derive their dates from events, so no date text is needed.
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.DataRange),
+                FinishMode = nameof(PlotRangeMode.DataRange),
+            });
+    }
+
+    [Fact]
+    public void ValidateSettings_accepts_mixed_modes()
+    {
+        // Start can be DataRange while finish is Explicit, and vice versa.
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.DataRange),
+                FinishMode = nameof(PlotRangeMode.Explicit),
+                FinishDate = "30/06/2026",
+            });
+
+        PlotRangeResolver.ValidateSettings(
+            new PlotRangeSettings
+            {
+                StartMode = nameof(PlotRangeMode.Explicit),
+                FinishMode = nameof(PlotRangeMode.DataRange),
+                StartDate = "15/03/2026",
+            });
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_an_unknown_start_mode()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = "NotAMode",
+                    FinishMode = nameof(PlotRangeMode.DataRange),
+                }));
+
+        Assert.Contains("Invalid plot-range start mode", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_an_unknown_finish_mode()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.DataRange),
+                    FinishMode = "NotAMode",
+                }));
+
+        Assert.Contains("Invalid plot-range finish mode", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_explicit_start_without_date()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.DataRange),
+                }));
+
+        Assert.Contains("Explicit mode requires a start date", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_explicit_finish_without_date()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.DataRange),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
+                }));
+
+        Assert.Contains("Explicit mode requires a finish date", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -329,11 +419,29 @@ public sealed class PlotRangeResolverTests
             () => PlotRangeResolver.ValidateSettings(
                 new PlotRangeSettings
                 {
-                    Mode = nameof(PlotRangeMode.Explicit),
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
                     StartDate = "not-a-date",
                     FinishDate = "30/06/2026",
                 }));
 
         Assert.Contains("Unparsable start date", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateSettings_rejects_start_after_finish_when_both_explicit()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => PlotRangeResolver.ValidateSettings(
+                new PlotRangeSettings
+                {
+                    StartMode = nameof(PlotRangeMode.Explicit),
+                    FinishMode = nameof(PlotRangeMode.Explicit),
+                    StartDate = "30/06/2026",
+                    FinishDate = "15/03/2026",
+                }));
+
+        Assert.Contains("Start date", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("is after finish date", exception.Message, StringComparison.Ordinal);
     }
 }

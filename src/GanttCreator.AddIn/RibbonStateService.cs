@@ -836,7 +836,18 @@ internal class RibbonStateService
         var startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
         var finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
 
-        var settings = new Dictionary<string, string>
+        // Validate before persisting so invalid settings never reach the workbook.
+        // R5.1: ValidateSettings is wired here to reject bad modes, missing dates,
+        // unparsable dates, and start-after-finish before any workbook write.
+        PlotRangeResolver.ValidateSettings(new PlotRangeSettings
+        {
+            StartMode = startMode,
+            FinishMode = finishMode,
+            StartDate = _state.PlotStartDate,
+            FinishDate = _state.PlotFinishDate,
+        });
+
+        var values = new Dictionary<string, string>
         {
             ["PlotStartMode"] = startMode,
             ["PlotFinishMode"] = finishMode,
@@ -856,7 +867,7 @@ internal class RibbonStateService
             ["SizePreset"] = _state.Preset?.Key ?? SizePresets.Default.Key,
         };
 
-        ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(settings);
+        ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(values);
         if (outcome is not null && !outcome.Succeeded)
         {
             var message = $"Failed to persist plot settings: {outcome.Refusal}";

@@ -249,41 +249,59 @@ public static class PlotRangeResolver
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        if (!PlotRangeModes.TryParse(settings.Mode, out _))
+        if (!PlotRangeModes.TryParse(settings.StartMode, out _))
         {
             throw new ArgumentException(
-                $"Invalid plot-range mode: {settings.Mode}",
+                $"Invalid plot-range start mode: {settings.StartMode}",
                 nameof(settings));
         }
 
-        if (settings.Mode == nameof(PlotRangeMode.Explicit))
+        if (!PlotRangeModes.TryParse(settings.FinishMode, out _))
+        {
+            throw new ArgumentException(
+                $"Invalid plot-range finish mode: {settings.FinishMode}",
+                nameof(settings));
+        }
+
+        // Validate dates only for ends in Explicit mode. A DataRange end
+        // derives its date from the events, so no date text is needed there.
+        DateOnly? startParsed = null;
+        DateOnly? finishParsed = null;
+
+        if (settings.StartMode == nameof(PlotRangeMode.Explicit))
         {
             if (string.IsNullOrWhiteSpace(settings.StartDate))
             {
                 throw new ArgumentException("Explicit mode requires a start date.", nameof(settings));
             }
 
+            if (!TryParsePlotDate(settings.StartDate, out var parsed))
+            {
+                throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
+            }
+            startParsed = parsed;
+        }
+
+        if (settings.FinishMode == nameof(PlotRangeMode.Explicit))
+        {
             if (string.IsNullOrWhiteSpace(settings.FinishDate))
             {
                 throw new ArgumentException("Explicit mode requires a finish date.", nameof(settings));
             }
 
-            if (!TryParsePlotDate(settings.StartDate, out DateOnly startParsed))
-            {
-                throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
-            }
-
-            if (!TryParsePlotDate(settings.FinishDate, out DateOnly finishParsed))
+            if (!TryParsePlotDate(settings.FinishDate, out var parsed))
             {
                 throw new ArgumentException($"Unparsable finish date: {settings.FinishDate}", nameof(settings));
             }
+            finishParsed = parsed;
+        }
 
-            if (startParsed > finishParsed)
-            {
-                throw new ArgumentException(
-                    $"Start date {settings.StartDate} is after finish date {settings.FinishDate}.",
-                    nameof(settings));
-            }
+        // When both ends are explicit, start must not be after finish.
+        if (startParsed is { } s && finishParsed is { } f && s > f)
+        {
+            throw new ArgumentException(
+                $"Start date {settings.StartDate} is after finish date {settings.FinishDate}.",
+                nameof(settings));
         }
     }
 }
