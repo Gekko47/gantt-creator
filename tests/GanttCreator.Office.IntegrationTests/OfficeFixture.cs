@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Threading;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -379,17 +380,84 @@ internal class OfficeFixture : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// How long the fixture waits for <c>new Application()</c> to return before
+    /// treating the launch as hung. Excel opens in a couple of seconds on a
+    /// healthy host; anything longer means a modal dialog, add-in load, or
+    /// orphaned COM state is blocking the call. Virtual so tests can override.
+    /// </summary>
+    internal virtual TimeSpan ExcelLaunchTimeout => TimeSpan.FromSeconds(30);
+
     /// <inheritdoc />
     public Task InitializeAsync()
     {
         // Snapshot existing Excel processes so we can identify the one
-        // this fixture creates.
+        // this fixture creates, and so the launch watchdog can reap any
+        // new Excel processes if new Application() hangs.
         var before = Process.GetProcessesByName("EXCEL")
             .Select(p => p.Id)
             .ToHashSet();
 
-        var app = new Application();
-        _excel = app;
+        bool launchCompleted = false;
+        Application? app = null;
+
+        var cts = new CancellationTokenSource();
+        var watchdog = Task.Delay(ExcelLaunchTimeout, cts.Token);
+        var watchdogTask = watchdog.ContinueWith(_ =>
+        {
+            // If new Application() has not returned by the deadline, reap any
+            // Excel processes that appeared after the snapshot. Removing the
+            // COM server causes the blocking COM call to fail fast instead of
+            // hanging indefinitely.
+            if (!cts.IsCancellationRequested && !launchCompleted)
+            {
+                var after = Process.GetProcessesByName("EXCEL")
+                    .Select(p => p.Id)
+                    .Where(id => !before.Contains(id))
+                    .ToList();
+                foreach (var id in after)
+                {
+                    try
+                    {
+                        Process.GetProcessById(id).Kill();
+                    }
+#pragma warning disable CA1031
+                    catch
+#pragma warning restore CA1031
+                    {
+                        // Best-effort: the process may have exited already.
+                    }
+                }
+            }
+        }, TaskScheduler.Default);
+
+        try
+        {
+            // new Application() is a synchronous COM call with no cancellation.
+            // It blocks the calling thread until Excel's COM server finishes
+            // startup. On a healthy host this takes a couple of seconds; if
+            // Excel shows an invisible startup dialog, hangs on an add-in, or
+            // is wedged from a previous crash, it can block indefinitely. The
+            // watchdog above reaps new Excel processes after the timeout,
+            // which causes the COM call to fail fast instead of hanging.
+            app = new Application();
+            launchCompleted = true;
+#pragma warning disable CA1849
+            cts.Cancel();
+#pragma warning restore CA1849
+            _excel = app;
+        }
+        catch
+        {
+#pragma warning disable CA1849
+            cts.Cancel();
+#pragma warning restore CA1849
+            throw;
+        }
+        finally
+        {
+            cts.Dispose();
+        }
 
         // Configure Excel properties in a guarded path that can clean up
         // if any setter throws.
