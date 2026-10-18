@@ -905,9 +905,13 @@ internal class RibbonStateService
             // a preset is not present in the registry.
             var currentStyles = new List<ThemeStyleEdit>();
             var currentMetrics = new Dictionary<string, double>();
+            var currentCustomDefs = new List<CustomStyleDef>();
 
+            var builtInKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
             {
+                _ = builtInKeys.Add(preset.StyleKey);
+
                 var fill = preset.FillColour;
                 var stroke = preset.StrokeColour;
                 var text = preset.TextColour;
@@ -921,6 +925,26 @@ internal class RibbonStateService
                 }
 
                 currentStyles.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text));
+            }
+
+            // Custom styles are registry entries that are not built-in presets.
+            foreach (string key in outcome.Styles.StyleKeys)
+            {
+                if (builtInKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                if (outcome.Styles.TryGet(key, out GanttStyleDefinition? definition)
+                    && definition is { HasFormatting: true })
+                {
+                    currentCustomDefs.Add(new CustomStyleDef(
+                        key,
+                        key, // DisplayName: registry doesn't carry it; fall back to key
+                        definition.FillColour ?? "",
+                        definition.StrokeColour ?? "",
+                        definition.TextColour ?? ""));
+                }
             }
 
             foreach (GanttMetricToken token in GanttCatalogues.Metrics)
@@ -937,7 +961,7 @@ internal class RibbonStateService
                 }
             }
 
-            var request = new ThemeEditRequest(currentStyles, currentMetrics);
+            var request = new ThemeEditRequest(currentStyles, currentMetrics, null, currentCustomDefs);
 
             // Show the WinForms dialog. Virtual so tests can substitute a
             // non-blocking dialog result instead of running a message loop.

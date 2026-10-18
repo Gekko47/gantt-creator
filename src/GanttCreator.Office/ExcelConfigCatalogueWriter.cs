@@ -560,6 +560,45 @@ public class ExcelConfigCatalogueWriter(
             edits[edit.StyleKey] = edit;
         }
 
+        // Parse existing user custom style rows into mutable dictionaries.
+        var customStyles = new Dictionary<string, List<object?>>(StringComparer.Ordinal);
+        foreach (var row in preservation.UserStyleRows)
+        {
+            var key = ToText(row[0]);
+            customStyles[key] = [.. row.Cast<object?>()];
+        }
+
+        // Apply custom style edits: create, rename, delete.
+        foreach (CustomStyleEdit custom in request.CustomStyleEdits ?? [])
+        {
+            switch (custom.Operation)
+            {
+                case CustomStyleOperation.Create:
+                    if (customStyles.ContainsKey(custom.StyleKey))
+                    {
+                        continue;
+                    }
+                    customStyles[custom.StyleKey] = BuildCustomStyleRow(custom);
+                    break;
+
+                case CustomStyleOperation.Rename:
+                    if (!customStyles.TryGetValue(custom.StyleKey, out var existing))
+                    {
+                        continue;
+                    }
+                    _ = customStyles.Remove(custom.StyleKey);
+                    var renamed = BuildCustomStyleRow(custom, existing);
+                    customStyles[custom.NewStyleKey ?? custom.StyleKey] = renamed;
+                    break;
+
+                case CustomStyleOperation.Delete:
+                    _ = customStyles.Remove(custom.StyleKey);
+                    break;
+                default:
+                    break;
+            }
+        }
+
         List<object?[]> rows = [];
         foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
@@ -613,8 +652,49 @@ public class ExcelConfigCatalogueWriter(
             }
         }
 
-        rows.AddRange(preservation.UserStyleRows);
+        // Append custom styles in their dictionary order (insertion order).
+        foreach (var customRow in customStyles.Values)
+        {
+            rows.Add([.. customRow]);
+        }
+
         return rows;
+    }
+
+    /// <summary>
+    /// Builds a style row array for a custom style create or rename.
+    /// </summary>
+    private static List<object?> BuildCustomStyleRow(
+        CustomStyleEdit custom,
+        List<object?>? existingRow = null)
+    {
+        var row = new List<object?>(GanttCatalogues.StylesHeaders.Length)
+        {
+            custom.NewStyleKey ?? custom.StyleKey,
+            custom.DisplayName ?? ToText(existingRow?[1]),
+            custom.FillColour,
+            custom.StrokeColour,
+            GanttHatchPattern.None.ToString(),
+            GanttCatalogues.MetricDefault("HatchPitchPt"),
+            GanttCatalogues.MetricDefault("HatchLinePt"),
+            custom.TextColour,
+            GanttCatalogues.MetricDefault("StandardOutlinePt"),
+            GanttCatalogues.MetricDefault("ActivityHeightPt"),
+            GanttCatalogues.MetricDefault("MilestoneSizePt"),
+            GanttLabelPosition.Auto.ToString(),
+            GanttLabelPosition.Auto.ToString(),
+            EntityColourCapability.StyleDefined.ToString(),
+        };
+
+        if (existingRow is not null)
+        {
+            for (var i = 0; i < row.Count && i < existingRow.Count; i++)
+            {
+                row[i] ??= existingRow[i];
+            }
+        }
+
+        return row;
     }
 
     /// <summary>

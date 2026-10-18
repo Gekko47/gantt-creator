@@ -164,6 +164,9 @@ public sealed class GanttStyleRegistry
     /// <summary>Gets the number of registered styles.</summary>
     public int Count => _styles.Count;
 
+    /// <summary>Gets all registered style keys in catalogue order.</summary>
+    public IReadOnlyList<string> StyleKeys => [.. _styles.Keys];
+
     /// <summary>Finds a style by exact key.</summary>
     /// <param name="styleKey">The exact style key.</param>
     /// <param name="style">The matching definition, or null.</param>
