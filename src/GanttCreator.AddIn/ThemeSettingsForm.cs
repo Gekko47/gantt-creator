@@ -71,7 +71,8 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private readonly ListBox _customStyleList = new()
     {
-        Dock = DockStyle.Fill,
+        Location = new Point(0, 0),
+        Size = new Size(200, 260),
         IntegralHeight = false,
     };
     private readonly TextBox _customStyleKeyText = new()
@@ -117,8 +118,8 @@ internal sealed partial class ThemeSettingsForm : Form
     };
     private readonly Panel _customStyleEditPanel = new()
     {
-        Dock = DockStyle.Top,
-        Height = 120,
+        Location = new Point(210, 8),
+        Size = new Size(340, 120),
         Padding = new Padding(8),
     };
 
@@ -538,7 +539,7 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // Right: edit panel for the selected custom style
         _customStyleEditPanel.Location = new Point(210, 8);
-        _customStyleEditPanel.Size = new Size(320, 100);
+        _customStyleEditPanel.Size = new Size(340, 130);
 
         var keyLbl = new Label
         {
