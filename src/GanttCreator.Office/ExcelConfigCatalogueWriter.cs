@@ -653,12 +653,32 @@ public class ExcelConfigCatalogueWriter(
         }
 
         // Append custom styles in their dictionary order (insertion order).
+        // Normalize every row to the contract column count so a user row read
+        // back from the worksheet (which may carry fewer columns than the
+        // current header set) cannot overrun the write matrix.
         foreach (var customRow in customStyles.Values)
         {
-            rows.Add([.. customRow]);
+            rows.Add(NormalizeRow(customRow, GanttCatalogues.StylesHeaders.Length));
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// Copies <paramref name="source"/> into an array of exactly
+    /// <paramref name="columnCount"/> columns, padding short rows with
+    /// <see cref="string.Empty"/> and truncating long rows. Used to normalize
+    /// user content read back from the worksheet before it is written into the
+    /// rectangular <see cref="WriteOrReplaceTable"/> matrix.
+    /// </summary>
+    private static object?[] NormalizeRow(IReadOnlyList<object?> source, int columnCount)
+    {
+        var result = new object?[columnCount];
+        for (var column = 0; column < columnCount; column++)
+        {
+            result[column] = column < source.Count ? source[column] ?? string.Empty : string.Empty;
+        }
+        return result;
     }
 
     /// <summary>
@@ -1107,7 +1127,10 @@ public class ExcelConfigCatalogueWriter(
                     preset.ColourCapability.ToString(),
                 }),
         ];
-        rows.AddRange(userRows);
+        foreach (var userRow in userRows)
+        {
+            rows.Add(NormalizeRow(userRow, GanttCatalogues.StylesHeaders.Length));
+        }
         return rows;
     }
 
