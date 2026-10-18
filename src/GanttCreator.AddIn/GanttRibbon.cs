@@ -1525,7 +1525,8 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>The zero-based selected index; -1 when no custom style is assigned.</returns>
+    /// <returns>The zero-based selected index; 0 when no custom style is assigned
+    /// or the service cannot answer.</returns>
     internal static int GetCustomStyleSelectedIndex(
         IRibbonControl? control,
         RibbonStateService stateService)
@@ -1539,7 +1540,7 @@ public class GanttRibbon : ExcelRibbon
         }
         catch
         {
-            return -1;
+            return 0;
         }
 #pragma warning restore CA1031
     }

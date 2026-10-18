@@ -1605,18 +1605,20 @@ internal class RibbonStateService
 
     /// <summary>
     /// Returns the selected item index: the row's stored custom key's place
-    /// in the projected options, or -1 when the cell is blank, names a
+    /// in the projected options, or 0 when the cell is blank, names a
     /// built-in preset (the dropdown offers custom styles only, so a
     /// built-in assignment displays as no match), or the selection is not a
-    /// single style-key row. A pure read of the cached snapshot. Never
-    /// throws.
+    /// single style-key row. Excel's dropDown requires a valid zero-based
+    /// index, so 0 is returned instead of -1 (matching the date-label and
+    /// description-label dropdowns). A pure read of the cached snapshot.
+    /// Never throws.
     /// </summary>
     internal int GetCustomStyleSelectedIndex()
     {
         if (_state.CustomStyleOptions is not { Count: > 0 } options
             || _state.SelectedCustomStyleKey is not string selected)
         {
-            return -1;
+            return 0;
         }
 
         for (var index = 0; index < options.Count; index++)
@@ -1627,7 +1629,7 @@ internal class RibbonStateService
             }
         }
 
-        return -1;
+        return 0;
     }
 
     /// <summary>

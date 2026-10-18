@@ -267,14 +267,14 @@ public sealed class CustomStyleRibbonTests : IDisposable
     }
 
     [Fact]
-    public void The_selected_index_is_minus_one_for_a_blank_or_builtin_style_key()
+    public void The_selected_index_is_zero_for_a_blank_or_builtin_style_key()
     {
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         var blank = ArmWithRow(
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
             "MyStyle");
-        Assert.Equal(-1, blank.GetCustomStyleSelectedIndex());
+        Assert.Equal(0, blank.GetCustomStyleSelectedIndex());
 
         RibbonStateService.Reset();
 
@@ -282,7 +282,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), BuiltInKey),
             "MyStyle");
-        Assert.Equal(-1, builtIn.GetCustomStyleSelectedIndex());
+        Assert.Equal(0, builtIn.GetCustomStyleSelectedIndex());
     }
 
     [Fact]
@@ -325,7 +325,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
         var service = new RibbonStateService();
 
         Assert.Equal(0, GanttRibbon.GetCustomStyleCount(control, service));
-        Assert.Equal(-1, GanttRibbon.GetCustomStyleSelectedIndex(control, service));
+        Assert.Equal(0, GanttRibbon.GetCustomStyleSelectedIndex(control, service));
         Assert.Equal(string.Empty, GanttRibbon.GetCustomStyleItemLabel(control, 0, service));
         Assert.Equal(string.Empty, GanttRibbon.GetCustomStyleItemID(control, 0, service));
     }
