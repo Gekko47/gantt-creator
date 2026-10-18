@@ -475,6 +475,35 @@ public class ExcelLabelPositionMutatorTests
     }
 
     [Fact]
+    public void SetLabelPosition_writes_an_allowed_position_for_custom_milestone_from_its_style()
+    {
+        // R5.6a regression: Custom Milestone resolves its allowed set from
+        // the row style exactly as a Custom Activity does (the catalogue's
+        // RequiresStyleKey authority), so an allowed position writes and the
+        // old StyleUnknown refusal path is gone.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyStyle",
+                new HashSet<GanttLabelPosition>(
+                    [GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.None]),
+                EntityColourCapability.StyleDefined),
+        ]);
+        var matrix = Matrix(
+            LabelRow(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomMilestone), "MyStyle"));
+        Graph graph = SeededGraph(matrix, activeRow: 2);
+        graph.Catalogue = ConfigReadOutcome.Ok(
+            "wb", new Dictionary<string, string>(), registry, new Dictionary<string, double>());
+
+        LabelPositionMutationOutcome outcome = graph.Build(NotProtected())
+            .SetLabelPosition(GanttLabelPosition.Left);
+
+        Assert.True(outcome.Succeeded);
+        (int Row, int Column, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(nameof(GanttLabelPosition.Left), write.Value);
+    }
+
+    [Fact]
     public void SetLabelPosition_refuses_an_unknown_style_key_for_custom_activity()
     {
         var matrix = Matrix(

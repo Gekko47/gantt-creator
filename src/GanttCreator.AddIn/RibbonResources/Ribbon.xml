@@ -43,6 +43,17 @@
             <labelControl id="lblDateLabel" label="Date label"/>
             <dropDown id="ddnDateLabel" getEnabled="GetEnabled" getItemCount="GetDateLabelCount" getItemID="GetDateLabelItemID" getItemLabel="GetDateLabelItemLabel" getSelectedItemIndex="GetDateLabelSelectedIndex" onAction="OnDateLabelChange"/>
           </box>
+          <!-- R5.6a: the custom-style dropdown. Its items are the
+               user-created (non-built-in) style keys of the configuration
+               registry, projected at query time, so no option list is
+               authored anywhere. It enables only for a single Custom
+               Activity / Custom Milestone row with at least one custom
+               style defined; picking an item writes that row's hidden
+               StyleKey cell (Refresh applies the visual change). -->
+          <box id="boxCustomStyle" boxStyle="horizontal">
+            <labelControl id="lblCustomStyle" label="Custom style"/>
+            <dropDown id="ddnCustomStyle" getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
+          </box>
         </group>
         <group id="grpStyleTheme" label="Style &amp; Theme">
           <button id="btnThemeSettings" label="Theme settings..." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>

@@ -85,6 +85,24 @@ namespace GanttCreator.AddIn;
 /// order (the description label's corner set), or null when the
 /// selection is not a single positionable row.
 /// </param>
+/// <param name="CustomStyleSelectionAvailable">
+/// True when the selection resolves to exactly one table body row whose
+/// Type carries a style key (R5.6a — Custom Activity, Custom Milestone).
+/// False disables the custom-style dropdown; a collapsed parent row
+/// still qualifies and edits its own cell only.
+/// </param>
+/// <param name="SelectedCustomStyleKey">
+/// The selected row's stored <c>StyleKey</c>, or null when the cell is
+/// blank, names a built-in preset, or the selection is not a single
+/// style-key row. Only user-created (non-built-in) keys are offered, so
+/// a built-in assignment reads as no match rather than a phantom item.
+/// </param>
+/// <param name="CustomStyleOptions">
+/// The user-created (non-built-in) style keys in catalogue order, or
+/// null when the selection is not a single style-key row. Built-in
+/// preset keys are never listed: the dropdown assigns custom styles,
+/// and the catalogue remains the authority for what counts as built-in.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -110,7 +128,10 @@ internal sealed record RibbonState(
     IReadOnlyList<GanttDateLabelPosition>? DateLabelOptions = null,
     bool DateLabelPlacementSelectionAvailable = false,
     GanttLabelPosition? SelectedDateLabelPlacement = null,
-    IReadOnlyList<GanttLabelPosition>? DateLabelPlacementOptions = null)
+    IReadOnlyList<GanttLabelPosition>? DateLabelPlacementOptions = null,
+    bool CustomStyleSelectionAvailable = false,
+    string? SelectedCustomStyleKey = null,
+    IReadOnlyList<string>? CustomStyleOptions = null)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -181,6 +202,16 @@ internal sealed record RibbonState(
         RibbonControlIds.DateLabel =>
             HasActiveWorkbook && SheetInitialised
             && (DateLabelSelectionAvailable || DateLabelPlacementSelectionAvailable),
+        // R5.6a: the custom-style dropdown is gated on the same single-body-row
+        // selection facts as the description-label dropdown, narrowed to
+        // style-key types (Custom Activity / Custom Milestone) AND at least
+        // one user-created style key existing: an enabled dropdown with zero
+        // items reads as broken, so a workbook with no custom styles leaves
+        // it greyed until Theme settings creates one.
+        RibbonControlIds.CustomStyle =>
+            HasActiveWorkbook && SheetInitialised
+            && CustomStyleSelectionAvailable
+            && CustomStyleOptions is { Count: > 0 },
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,

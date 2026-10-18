@@ -345,7 +345,9 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
             .Select(item => item.Arguments[0])
             .ToList();
 
-        Assert.Equal([RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel], invalidated);
+        Assert.Equal(
+            [RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel, RibbonControlIds.CustomStyle],
+            invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
 

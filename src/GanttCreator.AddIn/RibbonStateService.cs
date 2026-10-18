@@ -105,6 +105,21 @@ internal class RibbonStateService
         IReadOnlyList<GanttLabelPosition>? Options);
 
     /// <summary>
+    /// The custom-style dropdown's per-selection context (R5.6a): whether the
+    /// selection resolves to exactly one style-key-type body row, that row's
+    /// stored style key (only when it names a user-created style), and the
+    /// user-created (non-built-in) style keys the configuration registry
+    /// offers, in catalogue order.
+    /// </summary>
+    /// <param name="Available">True when exactly one style-key-type body row is selected.</param>
+    /// <param name="SelectedKey">The row's stored custom style key, or null when blank/built-in.</param>
+    /// <param name="Options">The user-created style keys in catalogue order.</param>
+    private readonly record struct CustomStyleContext(
+        bool Available,
+        string? SelectedKey,
+        IReadOnlyList<string>? Options);
+
+    /// <summary>
     /// The metric token naming the frame's outer right padding, in points.
     /// Named once here rather than inlined so the display's chrome split and
     /// the Refresh pipeline's cannot drift (R4.8A D5: a literal here is a
@@ -1555,6 +1570,85 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Returns how many items the custom-style dropdown offers: the
+    /// user-created (non-built-in) style keys of the configuration registry
+    /// (R5.6a). There is no leading clear item — a style-key row always
+    /// names a style, so assigning never means clearing. A pure read of the
+    /// cached snapshot. Never throws.
+    /// </summary>
+    internal int GetCustomStyleCount() =>
+        _state.CustomStyleOptions is { Count: > 0 } options ? options.Count : 0;
+
+    /// <summary>
+    /// Returns the item ID at <paramref name="index"/>: the style key
+    /// itself (keys are user-authored names, so the key IS both the ID the
+    /// commit path parses and the label shown). An out-of-range index
+    /// yields an empty string. A pure read of the cached snapshot. Never
+    /// throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetCustomStyleItemID(int index) =>
+        _state.CustomStyleOptions is { Count: > 0 } options
+        && index >= 0
+        && index < options.Count
+            ? options[index]
+            : string.Empty;
+
+    /// <summary>
+    /// Returns the user-facing label at <paramref name="index"/>: the
+    /// style key itself, shown verbatim (user-authored names need no
+    /// wording table). An out-of-range index yields an empty string. A
+    /// pure read of the cached snapshot. Never throws.
+    /// </summary>
+    /// <param name="index">The zero-based item index.</param>
+    internal string GetCustomStyleItemLabel(int index) => GetCustomStyleItemID(index);
+
+    /// <summary>
+    /// Returns the selected item index: the row's stored custom key's place
+    /// in the projected options, or -1 when the cell is blank, names a
+    /// built-in preset (the dropdown offers custom styles only, so a
+    /// built-in assignment displays as no match), or the selection is not a
+    /// single style-key row. A pure read of the cached snapshot. Never
+    /// throws.
+    /// </summary>
+    internal int GetCustomStyleSelectedIndex()
+    {
+        if (_state.CustomStyleOptions is not { Count: > 0 } options
+            || _state.SelectedCustomStyleKey is not string selected)
+        {
+            return -1;
+        }
+
+        for (var index = 0; index < options.Count; index++)
+        {
+            if (string.Equals(options[index], selected, StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Applies one custom-style selection to the selected row: the item ID
+    /// IS the style key (blank is ignored, the command refuses unknown keys
+    /// at execution), the command runs, and the ribbon refreshes so the
+    /// dropdown reflects the written cell (R1.5 D3). Never throws.
+    /// </summary>
+    /// <param name="styleKey">The selected item ID (the style key), or null in tests.</param>
+    internal void SetCustomStyleKey(string? styleKey)
+    {
+        if (string.IsNullOrWhiteSpace(styleKey))
+        {
+            return;
+        }
+
+        SetStyleKeyCommand.RunForExcel(styleKey.Trim());
+        Refresh();
+    }
+
+    /// <summary>
     /// Returns how many items the date-label dropdown offers: the
     /// selected row's allowed date-label choices, projected from its
     /// <c>Type</c> (R5.14 D1/D4 — the projected set already includes
@@ -1784,6 +1878,7 @@ internal class RibbonStateService
             DescriptionLabelContext descriptionLabelContext = CaptureDescriptionLabelContext(previous);
             DateLabelContext dateLabelContext = CaptureDateLabelContext(previous);
             DateLabelPlacementContext dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
+            CustomStyleContext customStyleContext = CaptureCustomStyleContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
@@ -1810,7 +1905,10 @@ internal class RibbonStateService
                 dateLabelContext.Options,
                 dateLabelPlacementContext.Available,
                 dateLabelPlacementContext.Selected,
-                dateLabelPlacementContext.Options));
+                dateLabelPlacementContext.Options,
+                customStyleContext.Available,
+                customStyleContext.SelectedKey,
+                customStyleContext.Options));
         }
         catch
         {
@@ -1860,13 +1958,16 @@ internal class RibbonStateService
                 return UnavailableDescriptionLabelContext(previous);
             }
 
-            // Custom Activity resolves its set from the row's style (R2.7b/c);
-            // every other type reads its catalogue definition. A failed
-            // catalogue read yields an empty registry, which the projection
-            // turns into an empty option set — the dropdown then offers only
-            // Default, and the command refuses with StyleUnknown at execution.
+            // Custom Activity / Custom Milestone resolve their set from the
+            // row's style (R2.7b/c; R5.6a: the catalogue's RequiresStyleKey
+            // flag is the single authority); every other type reads its
+            // catalogue definition. A failed catalogue read yields an empty
+            // registry, which the projection turns into an empty option set —
+            // the dropdown then offers only Default, and the command refuses
+            // with StyleUnknown at execution.
             GanttStyleRegistry styles = GanttStyleRegistry.Empty;
-            if (type == GanttEntityType.CustomActivity && _catalogueReader is not null)
+            if (EntityTypeCatalog.GetDefinition(type) is { RequiresStyleKey: true }
+                && _catalogueReader is not null)
             {
                 ConfigReadOutcome catalogues = _catalogueReader.Read();
                 if (catalogues.Succeeded)
@@ -1908,6 +2009,100 @@ internal class RibbonStateService
     /// <returns>The unavailable context.</returns>
     private static DescriptionLabelContext UnavailableDescriptionLabelContext(RibbonState previous) =>
         new(false, previous.SelectedDescriptionLabelPosition, previous.DescriptionLabelOptions);
+
+    /// <summary>
+    /// Captures the custom-style dropdown's context from the selection
+    /// identifier, the table reader, and the catalogue reader (R5.6a ruling 6
+    /// + the non-built-in projection). Never throws: an indeterminable
+    /// selection keeps the previous context (snapshot stickiness), so a
+    /// transient COM failure cannot grey the dropdown mid-selection.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private CustomStyleContext CaptureCustomStyleContext(RibbonState previous)
+    {
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        IGanttTableReader? reader = _tableReader;
+        if (identifier is null || reader is null || _catalogueReader is null)
+        {
+            return UnavailableCustomStyleContext(previous);
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.IsSingleBodyRow || facts.BodyIndex is not int bodyIndex)
+            {
+                return UnavailableCustomStyleContext(previous);
+            }
+
+            GanttTableReadOutcome read = reader.Read();
+            if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+            {
+                return UnavailableCustomStyleContext(previous);
+            }
+
+            GanttRowDto row = read.Rows[bodyIndex - 1];
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type)
+                || EntityTypeCatalog.GetDefinition(type) is not { RequiresStyleKey: true })
+            {
+                return UnavailableCustomStyleContext(previous);
+            }
+
+            // The dropdown offers user-created styles only: the registry's
+            // keys minus the code-owned built-in presets (the same
+            // StylePresets authority the Theme settings dialog subtracts).
+            // A failed catalogue read yields no options — the dropdown
+            // disables, and the command still refuses unknown keys at
+            // execution.
+            ConfigReadOutcome catalogues = _catalogueReader.Read();
+            if (!catalogues.Succeeded || catalogues.Styles is null)
+            {
+                return UnavailableCustomStyleContext(previous);
+            }
+
+            var builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+            {
+                _ = builtInKeys.Add(preset.StyleKey);
+            }
+
+            var options = new List<string>();
+            foreach (string key in catalogues.Styles.StyleKeys)
+            {
+                if (!builtInKeys.Contains(key))
+                {
+                    options.Add(key);
+                }
+            }
+
+            // A built-in assignment reads as no match (null): the dropdown
+            // never lists built-ins, so it must not select one.
+            string? selectedKey = options.Contains(row.StyleKey ?? string.Empty, StringComparer.Ordinal)
+                ? row.StyleKey
+                : null;
+
+            return new CustomStyleContext(true, selectedKey, options);
+        }
+        catch
+        {
+            return UnavailableCustomStyleContext(previous);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The context published when the custom-style dropdown cannot be
+    /// resolved: not available, carrying the previously published selection
+    /// and options so a transient failure cannot blank a resolved dropdown.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The unavailable context.</returns>
+    private static CustomStyleContext UnavailableCustomStyleContext(RibbonState previous) =>
+        new(false, previous.SelectedCustomStyleKey, previous.CustomStyleOptions);
 
     /// <summary>
     /// Captures the date-label dropdown's context from the selection
@@ -2103,9 +2298,9 @@ internal class RibbonStateService
 
     /// <summary>
     /// Handles one selection change: re-captures the snapshot and invalidates
-    /// the description-label and date-label dropdowns. Only those two controls
-    /// are invalidated, so moving the selection does not re-query every getter
-    /// on the ribbon. Never throws.
+    /// the description-label, date-label, and custom-style dropdowns. Only
+    /// those three controls are invalidated, so moving the selection does not
+    /// re-query every getter on the ribbon. Never throws.
     /// </summary>
     private void OnSelectionChanged()
     {
@@ -2117,6 +2312,7 @@ internal class RibbonStateService
             _state = CaptureSnapshot(_state, _state.SheetInitialised);
             InvalidateControl(RibbonControlIds.DescriptionLabel);
             InvalidateControl(RibbonControlIds.DateLabel);
+            InvalidateControl(RibbonControlIds.CustomStyle);
         }
         catch
         {

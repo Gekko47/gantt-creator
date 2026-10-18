@@ -408,8 +408,12 @@ public class GanttRibbonTests
                 // part of the truth table and adds the single-row condition
                 // inside it. R5.14 adds the parallel date-label dropdown
                 // beside it in the Labels group, gated on the same facts.
+                // R5.6a adds the custom-style dropdown after it (document
+                // order), gated on a single style-key row AND at least one
+                // user-created style key existing.
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
+                RibbonControlIds.CustomStyle,
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,

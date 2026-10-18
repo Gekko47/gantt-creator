@@ -122,6 +122,12 @@ public sealed class ProtectionGuardFirstTests
         // entry point, and an unregistered entry point could silently
         // drop the guard.
         new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPlacement"),
+        // R5.6a: the style-key mutator writes the user's VISIBLE table -- exactly
+        // one StyleKey cell on one body row (bespoke per entity, never
+        // group-applied) -- so it is a data mutation under ADR-0008 D4. Listed
+        // at "SetStyleKey", the entry point that consults the shared guard
+        // before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelStyleKeyMutator.cs", "SetStyleKey"),
     ];
 
     /// <summary>
@@ -197,6 +203,10 @@ public sealed class ProtectionGuardFirstTests
         // mutates no workbook content, so a guard consultation would be unreachable
         // code rather than a missing guard.
         "src/GanttCreator.Office/ILabelPositionMutator.cs",
+        // R5.6a: the style-key port. The port declares the single
+        // write and its typed outcome -- the mutating implementation is
+        // registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IStyleKeyMutator.cs",
         // R5.14: the date-label port. The port declares the single
         // write and its typed outcome -- the mutating implementation is
         // registered in MutatingAdapters above.

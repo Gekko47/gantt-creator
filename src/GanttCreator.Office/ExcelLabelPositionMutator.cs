@@ -129,7 +129,12 @@ public class ExcelLabelPositionMutator(
 
         GanttStyleRegistry? registry = null;
         string? styleKey = null;
-        if (type == GanttEntityType.CustomActivity)
+
+        // R5.6a: the catalogue's RequiresStyleKey flag is the single authority
+        // for which types resolve from the style registry (Custom Activity and
+        // Custom Milestone), so a Custom Milestone row validates against its
+        // row style exactly like a Custom Activity does.
+        if (EntityTypeCatalog.GetDefinition(type) is { RequiresStyleKey: true })
         {
             styleKey = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "StyleKey");
             ConfigReadOutcome catalogue = ReadCatalogue();
@@ -143,7 +148,8 @@ public class ExcelLabelPositionMutator(
             if (registry is null || !registry.TryGet(styleKey, out _))
             {
                 return LabelPositionMutationOutcome.Refused(
-                    LabelPositionMutationRefusalReason.StyleUnknown, bodyIndex);
+                    LabelPositionMutationRefusalReason.StyleUnknown,
+                    bodyIndex);
             }
         }
 

@@ -107,6 +107,15 @@ internal static class RibbonControlIds
     internal const string DateLabel = "ddnDateLabel";
 
     /// <summary>
+    /// The custom-style dropdown (<c>getEnabled</c> driven by workbook +
+    /// initialised + a single style-key row + at least one user-created
+    /// style key). R5.6a: items are the non-built-in keys of the
+    /// configuration style registry, projected at query time; assigning
+    /// writes the selected row's hidden <c>StyleKey</c> cell.
+    /// </summary>
+    internal const string CustomStyle = "ddnCustomStyle";
+
+    /// <summary>
     /// The Remove button (<c>getEnabled</c> driven by workbook +
     /// initialised). Destructive under ADR-0008: the command itself
     /// confirms before the mutator runs, so the enabled gate stays

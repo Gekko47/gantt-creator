@@ -327,12 +327,13 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// Returns the allowed label positions for a type in stable ribbon display
-    /// order (R5.5 D1 projection). <see cref="GanttEntityType.CustomActivity"/>
-    /// resolves from <paramref name="styleRegistry"/> via its
-    /// <c>StyleKey</c>; every other type reads its catalogue definition.
+    /// order (R5.5 D1 projection). A style-key type (Custom Activity, Custom
+    /// Milestone — the catalogue's <c>RequiresStyleKey</c> authority) resolves
+    /// from <paramref name="styleRegistry"/> via its <c>StyleKey</c>; every
+    /// other type reads its catalogue definition.
     /// </summary>
     /// <param name="type">The entity type.</param>
-    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleKey">The row's style key (style-key types only).</param>
     /// <param name="styleRegistry">The named-style capabilities, or null.</param>
     /// <returns>The allowed positions in display order; empty when unknown.</returns>
     public static IReadOnlyList<GanttLabelPosition> GetAllowedLabelPositions(
@@ -340,9 +341,17 @@ public static class EntityTypeCatalog
         string? styleKey = null,
         GanttStyleRegistry? styleRegistry = null)
     {
-        IReadOnlySet<GanttLabelPosition> allowed;
-        if (type == GanttEntityType.CustomActivity)
+        if (GetDefinition(type) is not { } definition)
         {
+            return [];
+        }
+
+        IReadOnlySet<GanttLabelPosition> allowed;
+        if (definition.RequiresStyleKey)
+        {
+            // R5.6a: both style-key types resolve from their row style. The
+            // catalogue set is only a placeholder for them (_noLabelPositions
+            // on Custom Milestone), never the authority.
             if (styleRegistry is null
                 || !styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
                 || style is null
@@ -352,10 +361,6 @@ public static class EntityTypeCatalog
             }
 
             allowed = style.AllowedLabelPositions;
-        }
-        else if (GetDefinition(type) is not { } definition)
-        {
-            return [];
         }
         else
         {
@@ -367,11 +372,11 @@ public static class EntityTypeCatalog
 
     /// <summary>
     /// Returns whether a label position is allowed for a type (R5.5 D1 guard).
-    /// <see cref="GanttEntityType.CustomActivity"/> delegates to its style.
+    /// A style-key type delegates to its row style.
     /// </summary>
     /// <param name="type">The entity type.</param>
     /// <param name="position">The candidate position.</param>
-    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleKey">The row's style key (style-key types only).</param>
     /// <param name="styleRegistry">The named-style capabilities, or null.</param>
     public static bool IsLabelPositionAllowed(
         GanttEntityType type,

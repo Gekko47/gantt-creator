@@ -370,6 +370,59 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
+    public void GetAllowedLabelPositions_custom_milestone_resolves_from_its_style()
+    {
+        // R5.6a regression: Custom Milestone is a style-key type, so its
+        // positions come from the row style exactly as a Custom Activity's
+        // do — the catalogue's placeholder set is never the authority.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyMilestoneStyle",
+                new HashSet<GanttLabelPosition>(
+                    [GanttLabelPosition.Left, GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomMilestone, "MyMilestoneStyle", registry);
+
+        Assert.Equal(
+            new[] { GanttLabelPosition.Left, GanttLabelPosition.TopRight },
+            positions);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Missing")]
+    public void GetAllowedLabelPositions_custom_milestone_without_style_is_empty(string? styleKey)
+    {
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomMilestone, styleKey, GanttStyleRegistry.Empty);
+
+        Assert.Empty(positions);
+    }
+
+    [Fact]
+    public void IsLabelPositionAllowed_custom_milestone_delegates_to_its_style()
+    {
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "MyMilestoneStyle",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        Assert.True(EntityTypeCatalog.IsLabelPositionAllowed(
+            GanttEntityType.CustomMilestone, GanttLabelPosition.TopRight, "MyMilestoneStyle", registry));
+        Assert.False(EntityTypeCatalog.IsLabelPositionAllowed(
+            GanttEntityType.CustomMilestone, GanttLabelPosition.Left, "MyMilestoneStyle", registry));
+    }
+
+    [Fact]
     public void GetAllowedLabelPositions_unknown_type_is_empty()
     {
         Assert.Empty(EntityTypeCatalog.GetAllowedLabelPositions((GanttEntityType)999));

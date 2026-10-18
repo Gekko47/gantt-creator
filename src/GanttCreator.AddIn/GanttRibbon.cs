@@ -1397,6 +1397,195 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Returns how many items the custom-style dropdown offers (R5.6a): the
+    /// user-created style keys from the state service snapshot. Excel's
+    /// dynamic dropDown contract asks for this through getItemCount. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetCustomStyleCount(IRibbonControl control) =>
+        GetCustomStyleCount(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleCount(IRibbonControl)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item count; zero when no single style-key row is selected.</returns>
+    internal static int GetCustomStyleCount(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleCount();
+        }
+        catch
+        {
+            return 0;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the item ID at the given index for the custom-style dropdown
+    /// (the style key itself). Excel's dynamic dropDown contract asks for
+    /// this through getItemID. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetCustomStyleItemID(IRibbonControl control, int index) =>
+        GetCustomStyleItemID(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleItemID(IRibbonControl, int)"/> against an
+    /// injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item ID, or an empty string when the index is out of range.</returns>
+    internal static string GetCustomStyleItemID(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleItemID(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the user-facing item label at the given index for the
+    /// custom-style dropdown (the style key, shown verbatim). Excel's
+    /// dynamic dropDown contract asks for this through getItemLabel. Never
+    /// throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    public string GetCustomStyleItemLabel(IRibbonControl control, int index) =>
+        GetCustomStyleItemLabel(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleItemLabel(IRibbonControl, int)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal static string GetCustomStyleItemLabel(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleItemLabel(index);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Returns the selected index of the custom-style dropdown. Excel's
+    /// dynamic dropDown contract asks for this through
+    /// getSelectedItemIndex; the answer comes from the state service
+    /// snapshot, so the dropdown reflects the selected row's stored cell.
+    /// Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    public int GetCustomStyleSelectedIndex(IRibbonControl control) =>
+        GetCustomStyleSelectedIndex(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetCustomStyleSelectedIndex(IRibbonControl)"/> against
+    /// an injected state service. Internal so contract tests can verify the
+    /// routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The zero-based selected index; -1 when no custom style is assigned.</returns>
+    internal static int GetCustomStyleSelectedIndex(
+        IRibbonControl? control,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetCustomStyleSelectedIndex();
+        }
+        catch
+        {
+            return -1;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Called when the user picks a custom style (R5.6a). The item ID is the
+    /// style key; an unknown key is refused by the command at execution
+    /// rather than defaulted. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="selectedId">The selected item id (the style key), or null in tests.</param>
+    /// <param name="selectedIndex">The selected item index (unused; the id is authoritative).</param>
+#pragma warning disable IDE0060 // The index is part of Excel's dropDown onAction contract; Excel always passes it.
+    public void OnCustomStyleChange(IRibbonControl control, string selectedId, int selectedIndex)
+        => OnCustomStyleChange(control, selectedId, RibbonStateService.Instance);
+#pragma warning restore IDE0060
+
+    /// <summary>
+    /// Runs <see cref="OnCustomStyleChange(IRibbonControl, string, int)"/>
+    /// against an injected state service. Internal so contract tests can verify
+    /// the routing without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The selected item id (the style key), or null in tests.</param>
+    /// <param name="stateService">The state service applying the setting.</param>
+    internal static void OnCustomStyleChange(
+        IRibbonControl? control,
+        string? id,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+#pragma warning disable CA1031
+        try
+        {
+            stateService.SetCustomStyleKey(id);
+        }
+        catch
+        {
+            // Intentionally empty: the command owns its own refusals and
+            // presents them; a failure here degrades to no change.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Returns the current custom margin in centimetres. The ribbon edit
     /// box asks for this through getText; the answer comes from the
     /// state service snapshot. Never throws.
