@@ -68,7 +68,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private const string _customStyleFillLabel = "Fill";
     private const string _customStyleStrokeLabel = "Stroke";
     private const string _customStyleTextLabel = "Text";
-    private const string _customStyleEmptyHint = "No custom styles defined yet. Click \"New custom style\" to add one.";
+    private const string _customStyleEmptyHint = "No custom styles defined yet.";
 
     private readonly ListBox _customStyleList = new()
     {
@@ -83,7 +83,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly Label _customStyleListHint = new()
     {
         Text = _customStyleEmptyHint,
-        Size = new Size(190, 40),
+        Size = new Size(190, 20),
         TextAlign = ContentAlignment.MiddleLeft,
         ForeColor = SystemColors.GrayText,
         Visible = false,
