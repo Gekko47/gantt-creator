@@ -107,10 +107,6 @@ public class ExcelStyleKeyMutator(
         string styleKey)
     {
         var key = styleKey?.Trim() ?? string.Empty;
-        if (key.Length == 0)
-        {
-            return StyleKeyMutationOutcome.Refused(StyleKeyMutationRefusalReason.StyleUnknown, bodyIndex);
-        }
 
         var selectedIndex = bodyIndex - 1;
         if (selectedIndex < 0 || selectedIndex >= body.Count)
@@ -143,13 +139,20 @@ public class ExcelStyleKeyMutator(
                 StyleKeyMutationRefusalReason.TypeNotCustomStyled, bodyIndex);
         }
 
+        // An explicit clear (the dropdown's <c>None</c> item) blanks the cell
+        // on a style-key-type row; an unknown non-empty key is still refused.
+        if (key.Length == 0)
+        {
+            return WriteCell(table, columnMap, selectedIndex, "StyleKey", string.Empty, bodyIndex);
+        }
+
         ConfigReadOutcome catalogue = ReadCatalogue();
         return !catalogue.Succeeded
             ? StyleKeyMutationOutcome.Refused(
                 StyleKeyMutationRefusalReason.TableInvalid, bodyIndex)
             : catalogue.Styles is null || !catalogue.Styles.TryGet(key, out _)
-            ? StyleKeyMutationOutcome.Refused(StyleKeyMutationRefusalReason.StyleUnknown, bodyIndex)
-            : WriteCell(table, columnMap, selectedIndex, "StyleKey", key, bodyIndex);
+                ? StyleKeyMutationOutcome.Refused(StyleKeyMutationRefusalReason.StyleUnknown, bodyIndex)
+                : WriteCell(table, columnMap, selectedIndex, "StyleKey", key, bodyIndex);
     }
 
     /// <summary>Reads the configuration catalogue (the style registry).</summary>

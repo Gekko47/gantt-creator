@@ -403,11 +403,10 @@ public class ExcelStyleKeyMutatorTests
     }
 
     [Fact]
-    public void SetStyleKey_refuses_a_blank_key_before_any_write()
+    public void SetStyleKey_clears_a_blank_key_on_a_style_key_row()
     {
-        // Positive test for the StyleUnknown validator on blank input: the
-        // row qualifies, the registry qualifies, but a blank key is never a
-        // style.
+        // The dropdown's <c>None</c> item clears the cell: a blank key on a
+        // style-key-type row writes empty and succeeds rather than refusing.
         var matrix = Matrix(Row(RowOneId, EntityTypeCatalog.Format(GanttEntityType.CustomActivity)));
         Graph graph = SeededGraph(matrix, activeRow: 2);
         graph.Catalogue = RegistryWith("MyStyle");
@@ -415,9 +414,12 @@ public class ExcelStyleKeyMutatorTests
         StyleKeyMutationOutcome outcome = graph.Build(NotProtected())
             .SetStyleKey("   ");
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(StyleKeyMutationRefusalReason.StyleUnknown, outcome.Refusal);
-        Assert.Empty(graph.WrittenCells);
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.CellsWritten);
+        (int RowIndex, int ColumnIndex, object? Value) write = Assert.Single(graph.WrittenCells);
+        Assert.Equal(1, write.RowIndex);
+        Assert.Equal("StyleKey", GanttTableSchema.Default.Columns[write.ColumnIndex - 1].Name);
+        Assert.Equal(string.Empty, write.Value);
     }
 
     [Fact]

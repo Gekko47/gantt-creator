@@ -1570,48 +1570,60 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Returns how many items the custom-style dropdown offers: the
-    /// user-created (non-built-in) style keys of the configuration registry
-    /// (R5.6a). There is no leading clear item — a style-key row always
-    /// names a style, so assigning never means clearing. A pure read of the
-    /// cached snapshot. Never throws.
+    /// Constants shared between the state service and the ribbon handlers
+    /// for the custom-style dropdown (R5.6a).
     /// </summary>
-    internal int GetCustomStyleCount() =>
-        _state.CustomStyleOptions is { Count: > 0 } options ? options.Count : 0;
+    private static class Constants
+    {
+        /// <summary>The leading clear item's ID.</summary>
+        internal const string NoneItem = "None";
+
+        /// <summary>The leading clear item's user-facing label.</summary>
+        internal const string NoneLabel = "None";
+    }
 
     /// <summary>
-    /// Returns the item ID at <paramref name="index"/>: the style key
-    /// itself (keys are user-authored names, so the key IS both the ID the
-    /// commit path parses and the label shown). An out-of-range index
-    /// yields an empty string. A pure read of the cached snapshot. Never
-    /// throws.
+    /// Returns how many items the custom-style dropdown offers: a leading
+    /// <c>None</c> clear item plus the user-created (non-built-in) style keys
+    /// of the configuration registry in catalogue order (R5.6a). Always at
+    /// least 1 so Excel never queries an out-of-range index. A pure read of
+    /// the cached snapshot. Never throws.
+    /// </summary>
+    internal int GetCustomStyleCount() =>
+        (_state.CustomStyleOptions is { Count: > 0 } options ? options.Count : 0) + 1;
+
+    /// <summary>
+    /// Returns the item ID at <paramref name="index"/>: <c>None</c> for the
+    /// leading clear item (blank key clears the row's StyleKey cell),
+    /// otherwise the style key itself. A pure read of the cached snapshot.
+    /// Never throws.
     /// </summary>
     /// <param name="index">The zero-based item index.</param>
     internal string GetCustomStyleItemID(int index) =>
+        index == 0 ? Constants.NoneItem :
         _state.CustomStyleOptions is { Count: > 0 } options
-        && index >= 0
-        && index < options.Count
-            ? options[index]
+        && index >= 1
+        && index < options.Count + 1
+            ? options[index - 1]
             : string.Empty;
 
     /// <summary>
-    /// Returns the user-facing label at <paramref name="index"/>: the
-    /// style key itself, shown verbatim (user-authored names need no
-    /// wording table). An out-of-range index yields an empty string. A
-    /// pure read of the cached snapshot. Never throws.
+    /// Returns the user-facing label at <paramref name="index"/>: <c>None</c>
+    /// for the clear item, otherwise the style key shown verbatim. A pure
+    /// read of the cached snapshot. Never throws.
     /// </summary>
     /// <param name="index">The zero-based item index.</param>
-    internal string GetCustomStyleItemLabel(int index) => GetCustomStyleItemID(index);
+    internal string GetCustomStyleItemLabel(int index) =>
+        index == 0 ? Constants.NoneLabel : GetCustomStyleItemID(index);
 
     /// <summary>
-    /// Returns the selected item index: the row's stored custom key's place
-    /// in the projected options, or 0 when the cell is blank, names a
-    /// built-in preset (the dropdown offers custom styles only, so a
-    /// built-in assignment displays as no match), or the selection is not a
-    /// single style-key row. Excel's dropDown requires a valid zero-based
-    /// index, so 0 is returned instead of -1 (matching the date-label and
-    /// description-label dropdowns). A pure read of the cached snapshot.
-    /// Never throws.
+    /// Returns the selected item index: 0 for <c>None</c> when the cell is
+    /// blank, names a built-in preset, or no single style-key row is
+    /// selected; otherwise the row's stored custom key's place in the
+    /// projected options plus 1. Excel's dropDown requires a valid
+    /// zero-based index, so -1 is never returned (matching the date-label
+    /// and description-label dropdowns). A pure read of the cached
+    /// snapshot. Never throws.
     /// </summary>
     internal int GetCustomStyleSelectedIndex()
     {
@@ -1625,7 +1637,7 @@ internal class RibbonStateService
         {
             if (string.Equals(options[index], selected, StringComparison.Ordinal))
             {
-                return index;
+                return index + 1;
             }
         }
 
@@ -1633,17 +1645,17 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Applies one custom-style selection to the selected row: the item ID
-    /// IS the style key (blank is ignored, the command refuses unknown keys
-    /// at execution), the command runs, and the ribbon refreshes so the
-    /// dropdown reflects the written cell (R1.5 D3). Never throws.
+    /// Applies one custom-style selection to the selected row: <c>None</c>
+    /// clears the row's StyleKey cell, otherwise the item ID IS the style
+    /// key. The command runs and the ribbon refreshes so the dropdown
+    /// reflects the written cell (R1.5 D3). Never throws.
     /// </summary>
-    /// <param name="styleKey">The selected item ID (the style key), or null in tests.</param>
+    /// <param name="styleKey">The selected item ID (<c>None</c> clears), or null in tests.</param>
     internal void SetCustomStyleKey(string? styleKey)
     {
-        if (string.IsNullOrWhiteSpace(styleKey))
+        if (string.IsNullOrWhiteSpace(styleKey) || styleKey == Constants.NoneItem)
         {
-            return;
+            styleKey = string.Empty;
         }
 
         SetStyleKeyCommand.RunForExcel(styleKey.Trim());

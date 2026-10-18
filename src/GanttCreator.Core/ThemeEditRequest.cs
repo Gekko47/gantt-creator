@@ -38,20 +38,29 @@ public enum CustomStyleOperation
     /// <summary>Create a new user-named style row.</summary>
     Create = 0,
 
-    /// <summary>Rename an existing custom style (and optionally edit its fields).</summary>
+    /// <summary>
+    /// Rename an existing custom style (and optionally edit its fields).
+    /// <c>NewStyleKey</c> is required and must differ from <c>StyleKey</c>.
+    /// </summary>
     Rename = 1,
 
+    /// <summary>
+    /// Update an existing custom style's fields in place (upsert by key).
+    /// <c>StyleKey</c> is unchanged; <c>NewStyleKey</c> is null.
+    /// </summary>
+    Update = 2,
+
     /// <summary>Delete an existing custom style row.</summary>
-    Delete = 2,
+    Delete = 3,
 }
 
 /// <summary>
 /// One custom style edit: create, rename, or delete a user-authored style row.
 /// Built-in preset keys are never custom and are excluded by validation.
 /// </summary>
-/// <param name="Operation">Create, rename, or delete.</param>
+/// <param name="Operation">Create, rename, update, or delete.</param>
 /// <param name="StyleKey">Target style key: new key for Create, old key for Rename, key to delete for Delete.</param>
-/// <param name="NewStyleKey">For Rename, the new style key; otherwise null.</param>
+/// <param name="NewStyleKey">For Rename, the new style key; null for Update and Delete.</param>
 /// <param name="DisplayName">For Create/Rename, the human-readable style name; otherwise null.</param>
 /// <param name="FillColour">For Create/Rename, the edited fill <c>#RRGGBB</c> or empty; otherwise null.</param>
 /// <param name="StrokeColour">For Create/Rename, the edited stroke <c>#RRGGBB</c> or empty; otherwise null.</param>
@@ -147,8 +156,9 @@ public sealed record ThemeEditRequest(
 
         // Validate custom style edits: keys must be non-empty, not collide with
         // built-in presets, and be unique within the request. Colours on
-        // Create/Rename must be well-formed. Rename/Delete targets are checked
-        // for existence at write time (the Office writer holds the registry).
+        // Create/Rename/Update must be well-formed. Rename/Delete targets are
+        // checked for existence at write time (the Office writer holds the
+        // registry). Update keeps its key, so it can never collide with itself.
         var seenCustomKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (CustomStyleEdit edit in request.CustomStyleEdits ?? [])
         {
@@ -174,7 +184,7 @@ public sealed record ThemeEditRequest(
                 return false;
             }
 
-            if (edit.Operation is CustomStyleOperation.Create or CustomStyleOperation.Rename)
+            if (edit.Operation is CustomStyleOperation.Create or CustomStyleOperation.Rename or CustomStyleOperation.Update)
             {
                 if ((edit.FillColour.Length > 0 && !IsOptionalColour(edit.FillColour))
                     || (edit.StrokeColour.Length > 0 && !IsOptionalColour(edit.StrokeColour))

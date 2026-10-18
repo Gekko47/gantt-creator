@@ -997,10 +997,13 @@ internal sealed partial class ThemeSettingsForm : Form
                 || original.StrokeColour != state.Stroke
                 || original.TextColour != state.Text)
             {
+                // Colour-only change on an existing key is an upsert by key:
+                // the key is unchanged, so it can never collide with another
+                // key (R5.6a D1). A Rename with identical old/new key would
+                // falsely fail the request's duplicate-key check.
                 customStyleEdits.Add(new CustomStyleEdit(
-                    CustomStyleOperation.Rename,
+                    CustomStyleOperation.Update,
                     key,
-                    NewStyleKey: key,
                     DisplayName: key,
                     FillColour: state.Fill,
                     StrokeColour: state.Stroke,

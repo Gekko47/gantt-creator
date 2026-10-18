@@ -184,6 +184,20 @@ public sealed class ThemeEditRequestTests
     }
 
     [Fact]
+    public void Custom_style_update_with_valid_key_passes()
+    {
+        // An upsert by key keeps the key, so it can never collide with itself:
+        // a colour-only change on an existing custom style validates cleanly.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Update, "MYSTYLE", FillColour: "#FF0000")]);
+        Assert.True(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Null(refusal);
+        Assert.Null(message);
+    }
+
+    [Fact]
     public void Custom_style_delete_with_valid_key_passes()
     {
         var request = new ThemeEditRequest(

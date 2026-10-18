@@ -201,7 +201,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
             selection,
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null));
 
-        Assert.Equal(0, service.GetCustomStyleCount());
+        Assert.Equal(1, service.GetCustomStyleCount()); // the leading <c>None</c> clear item
         Assert.False(service.GetEnabled(RibbonControlIds.CustomStyle));
     }
 
@@ -215,7 +215,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
             "MyStyle");
 
         Assert.False(service.GetEnabled(RibbonControlIds.CustomStyle));
-        Assert.Equal(0, service.GetCustomStyleCount());
+        Assert.Equal(1, service.GetCustomStyleCount()); // context capture is unavailable for non-style rows; only <c>None</c> remains
     }
 
     [Fact]
@@ -227,17 +227,52 @@ public sealed class CustomStyleRibbonTests : IDisposable
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
             "Alpha", "Beta");
 
-        Assert.Equal(2, service.GetCustomStyleCount());
-        Assert.Equal("Alpha", service.GetCustomStyleItemID(0));
-        Assert.Equal("Beta", service.GetCustomStyleItemID(1));
-        Assert.Equal("Alpha", service.GetCustomStyleItemLabel(0));
-        Assert.Equal("Beta", service.GetCustomStyleItemLabel(1));
+        Assert.Equal(3, service.GetCustomStyleCount()); // <c>None</c> plus the two custom styles
+        Assert.Equal("None", service.GetCustomStyleItemID(0));
+        Assert.Equal("Alpha", service.GetCustomStyleItemID(1));
+        Assert.Equal("Beta", service.GetCustomStyleItemID(2));
+        Assert.Equal("None", service.GetCustomStyleItemLabel(0));
+        Assert.Equal("Alpha", service.GetCustomStyleItemLabel(1));
+        Assert.Equal("Beta", service.GetCustomStyleItemLabel(2));
 
         // The built-in key seeded into the registry is never offered.
         for (var index = 0; index < service.GetCustomStyleCount(); index++)
         {
             Assert.NotEqual(BuiltInKey, service.GetCustomStyleItemID(index));
         }
+    }
+
+    [Fact]
+    public void The_leading_item_is_the_none_clear_item_and_count_includes_it()
+    {
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+
+        // Count always includes the leading <c>None</c> clear item.
+        var withStyles = ArmWithRow(
+            selection,
+            Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
+            "Alpha", "Beta");
+        Assert.Equal(3, withStyles.GetCustomStyleCount());
+        Assert.Equal("None", withStyles.GetCustomStyleItemID(0));
+        Assert.Equal("None", withStyles.GetCustomStyleItemLabel(0));
+        Assert.Equal("Alpha", withStyles.GetCustomStyleItemID(1));
+        Assert.Equal("Beta", withStyles.GetCustomStyleItemID(2));
+
+        // No custom styles: only <c>None</c> is offered, so the dropdown never
+        // presents an empty list that Excel would misread as index 0.
+        var noneOnly = ArmWithRow(
+            selection,
+            Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null));
+        Assert.Equal(1, noneOnly.GetCustomStyleCount());
+        Assert.Equal("None", noneOnly.GetCustomStyleItemID(0));
+        Assert.Equal("None", noneOnly.GetCustomStyleItemLabel(0));
+
+        // A blank style key selects <c>None</c> (index 0).
+        var blank = ArmWithRow(
+            selection,
+            Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null),
+            "Alpha");
+        Assert.Equal(0, blank.GetCustomStyleSelectedIndex());
     }
 
     [Fact]
@@ -250,7 +285,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
             "MyStyle");
 
         Assert.Equal(string.Empty, service.GetCustomStyleItemID(-1));
-        Assert.Equal(string.Empty, service.GetCustomStyleItemID(1));
+        Assert.Equal(string.Empty, service.GetCustomStyleItemID(2)); // out of range: <c>None</c> + one custom style
         Assert.Equal(string.Empty, service.GetCustomStyleItemLabel(5));
     }
 
@@ -263,7 +298,7 @@ public sealed class CustomStyleRibbonTests : IDisposable
             Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), "Beta"),
             "Alpha", "Beta");
 
-        Assert.Equal(1, service.GetCustomStyleSelectedIndex());
+        Assert.Equal(2, service.GetCustomStyleSelectedIndex()); // "Beta" is options[1], so it projects to index 2 (<c>None</c> leads)
     }
 
     [Fact]
@@ -324,10 +359,10 @@ public sealed class CustomStyleRibbonTests : IDisposable
         var control = new Mock<IRibbonControl>().Object;
         var service = new RibbonStateService();
 
-        Assert.Equal(0, GanttRibbon.GetCustomStyleCount(control, service));
+        Assert.Equal(1, GanttRibbon.GetCustomStyleCount(control, service)); // the leading <c>None</c> item
         Assert.Equal(0, GanttRibbon.GetCustomStyleSelectedIndex(control, service));
-        Assert.Equal(string.Empty, GanttRibbon.GetCustomStyleItemLabel(control, 0, service));
-        Assert.Equal(string.Empty, GanttRibbon.GetCustomStyleItemID(control, 0, service));
+        Assert.Equal("None", GanttRibbon.GetCustomStyleItemLabel(control, 0, service));
+        Assert.Equal("None", GanttRibbon.GetCustomStyleItemID(control, 0, service));
     }
 
     [Fact]

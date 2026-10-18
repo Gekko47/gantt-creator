@@ -248,6 +248,52 @@ public class ThemeSettingsFormTests
         });
     }
 
+    [Fact]
+    public void Ok_ColourChangeOnSavedCustomStyle_EmitsUpdateNotRename()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [], new Dictionary<string, double>(), null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                // Select the saved custom style: loads its colours into the editor.
+                var list = RequireListBox(tab);
+                list.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // Change only the fill colour; the key stays "SAVED".
+                GetField<TextBox>(form, "_customStyleFillText").Text = "#00FF00";
+                InvokeClick(form, "CustomStyleColourTextChanged");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edits = request.CustomStyleEdits ?? Enumerable.Empty<CustomStyleEdit>();
+                Assert.Single(edits);
+                var edit = Assert.Single(edits);
+                // A colour-only change is an upsert by key, not a rename into
+                // an existing key, so it cannot trigger the duplicate-key conflict.
+                Assert.Equal(CustomStyleOperation.Update, edit.Operation);
+                Assert.Equal("SAVED", edit.StyleKey);
+                Assert.Null(edit.NewStyleKey);
+                Assert.Equal("#00FF00", edit.FillColour);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)

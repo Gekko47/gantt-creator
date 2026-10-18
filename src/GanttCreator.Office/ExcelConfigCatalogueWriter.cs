@@ -591,6 +591,15 @@ public class ExcelConfigCatalogueWriter(
                     customStyles[custom.NewStyleKey ?? custom.StyleKey] = renamed;
                     break;
 
+                case CustomStyleOperation.Update:
+                    if (!customStyles.TryGetValue(custom.StyleKey, out var existingUpdate))
+                    {
+                        continue;
+                    }
+                    var updated = BuildCustomStyleRow(custom, existingUpdate);
+                    customStyles[custom.StyleKey] = updated;
+                    break;
+
                 case CustomStyleOperation.Delete:
                     _ = customStyles.Remove(custom.StyleKey);
                     break;
