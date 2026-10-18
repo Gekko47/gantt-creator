@@ -68,59 +68,104 @@ internal sealed partial class ThemeSettingsForm : Form
     private const string _customStyleFillLabel = "Fill";
     private const string _customStyleStrokeLabel = "Stroke";
     private const string _customStyleTextLabel = "Text";
+    private const string _customStyleEmptyHint = "No custom styles defined yet. Click \"New custom style\" to add one.";
 
     private readonly ListBox _customStyleList = new()
     {
-        Location = new Point(0, 0),
-        Size = new Size(200, 260),
+        Size = new Size(200, 200),
         IntegralHeight = false,
+    };
+    private readonly Label _customStyleListLabel = new()
+    {
+        Text = "Custom styles:",
+        Size = new Size(100, 20),
+    };
+    private readonly Label _customStyleListHint = new()
+    {
+        Text = _customStyleEmptyHint,
+        Size = new Size(190, 40),
+        TextAlign = ContentAlignment.MiddleLeft,
+        ForeColor = SystemColors.GrayText,
+        Visible = false,
     };
     private readonly TextBox _customStyleKeyText = new()
     {
-        Location = new Point(12, 34),
         Size = new Size(140, 22),
         CharacterCasing = CharacterCasing.Upper,
         MaxLength = 32,
     };
     private readonly TextBox _customStyleFillText = new()
     {
-        Location = new Point(12, 66),
         Size = new Size(100, 22),
         CharacterCasing = CharacterCasing.Upper,
         MaxLength = 9,
     };
     private readonly TextBox _customStyleStrokeText = new()
     {
-        Location = new Point(120, 66),
         Size = new Size(100, 22),
         CharacterCasing = CharacterCasing.Upper,
         MaxLength = 9,
     };
     private readonly TextBox _customStyleTextText = new()
     {
-        Location = new Point(228, 66),
         Size = new Size(100, 22),
         CharacterCasing = CharacterCasing.Upper,
         MaxLength = 9,
+    };
+    private readonly Button _customFillColorButton = new()
+    {
+        Text = "\u2026",
+        Size = new Size(26, 24),
+    };
+    private readonly Button _customStrokeColorButton = new()
+    {
+        Text = "\u2026",
+        Size = new Size(26, 24),
+    };
+    private readonly Button _customTextColorButton = new()
+    {
+        Text = "\u2026",
+        Size = new Size(26, 24),
+    };
+    private readonly Panel _customFillSwatch = new()
+    {
+        Size = new Size(24, 22),
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = SystemColors.Control,
+    };
+    private readonly Panel _customStrokeSwatch = new()
+    {
+        Size = new Size(24, 22),
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = SystemColors.Control,
+    };
+    private readonly Panel _customTextSwatch = new()
+    {
+        Size = new Size(24, 22),
+        BorderStyle = BorderStyle.FixedSingle,
+        BackColor = SystemColors.Control,
     };
     private readonly Button _customNewButton = new()
     {
         Text = "New custom style",
         AutoSize = true,
-        Margin = new Padding(4, 0, 0, 0),
     };
     private readonly Button _customDeleteButton = new()
     {
         Text = "Delete",
         AutoSize = true,
-        Margin = new Padding(4, 0, 0, 0),
         Enabled = false,
     };
-    private readonly Panel _customStyleEditPanel = new()
+    private readonly GroupBox _customStyleListGroup = new()
     {
-        Location = new Point(210, 8),
-        Size = new Size(340, 120),
-        Padding = new Padding(8),
+        Text = "Custom styles",
+        Size = new Size(220, 260),
+    };
+    private readonly GroupBox _customStyleEditGroup = new()
+    {
+        Text = "Edit selected style",
+        Size = new Size(320, 260),
+        Enabled = false,
     };
 
     private string? _selectedCustomStyleKey;
@@ -155,13 +200,22 @@ internal sealed partial class ThemeSettingsForm : Form
             _okButton.Dispose();
             _tabControl.Dispose();
             _customStyleList.Dispose();
+            _customStyleListLabel.Dispose();
+            _customStyleListHint.Dispose();
             _customStyleKeyText.Dispose();
             _customStyleFillText.Dispose();
             _customStyleStrokeText.Dispose();
             _customStyleTextText.Dispose();
+            _customFillColorButton.Dispose();
+            _customStrokeColorButton.Dispose();
+            _customTextColorButton.Dispose();
+            _customFillSwatch.Dispose();
+            _customStrokeSwatch.Dispose();
+            _customTextSwatch.Dispose();
             _customNewButton.Dispose();
             _customDeleteButton.Dispose();
-            _customStyleEditPanel.Dispose();
+            _customStyleListGroup.Dispose();
+            _customStyleEditGroup.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -534,77 +588,113 @@ internal sealed partial class ThemeSettingsForm : Form
         tab.Controls.Add(panel);
 
         // Left: list of existing custom styles
+        _customStyleListGroup.Location = new Point(8, 8);
+        _customStyleList.Location = new Point(16, 48);
+        _customStyleListLabel.Location = new Point(16, 24);
+        _customStyleListHint.Location = new Point(16, 256);
+
         _customStyleList.SelectedIndexChanged += CustomStyleList_SelectedIndexChanged;
-        panel.Controls.Add(_customStyleList);
+        _customStyleListGroup.Controls.Add(_customStyleListLabel);
+        _customStyleListGroup.Controls.Add(_customStyleList);
+        _customStyleListGroup.Controls.Add(_customStyleListHint);
+        panel.Controls.Add(_customStyleListGroup);
 
         // Right: edit panel for the selected custom style
-        _customStyleEditPanel.Location = new Point(210, 8);
-        _customStyleEditPanel.Size = new Size(340, 130);
+        _customStyleEditGroup.Location = new Point(240, 8);
 
         var keyLbl = new Label
         {
             Text = _customStyleKeyLabel,
-            Location = new Point(0, 8),
-            Size = new Size(60, 20),
+            Location = new Point(16, 28),
+            Size = new Size(64, 20),
         };
-        _customStyleEditPanel.Controls.Add(keyLbl);
-        _customStyleEditPanel.Controls.Add(_customStyleKeyText);
+        _customStyleKeyText.Location = new Point(84, 24);
 
         var fillLbl = new Label
         {
             Text = _customStyleFillLabel,
-            Location = new Point(0, 42),
-            Size = new Size(30, 20),
+            Location = new Point(16, 64),
+            Size = new Size(32, 20),
         };
-        _customStyleEditPanel.Controls.Add(fillLbl);
-        _customStyleEditPanel.Controls.Add(_customStyleFillText);
+        _customStyleFillText.Location = new Point(84, 60);
+        _customFillColorButton.Location = new Point(192, 58);
+        _customFillSwatch.Location = new Point(224, 60);
+        _customFillColorButton.Click += CustomFillColorButton_Click;
+        _customStyleFillText.TextChanged += CustomStyleColourTextChanged;
 
         var strokeLbl = new Label
         {
             Text = _customStyleStrokeLabel,
-            Location = new Point(108, 42),
-            Size = new Size(38, 20),
+            Location = new Point(16, 96),
+            Size = new Size(44, 20),
         };
-        _customStyleEditPanel.Controls.Add(strokeLbl);
-        _customStyleEditPanel.Controls.Add(_customStyleStrokeText);
+        _customStyleStrokeText.Location = new Point(84, 92);
+        _customStrokeColorButton.Location = new Point(192, 90);
+        _customStrokeSwatch.Location = new Point(224, 92);
+        _customStrokeColorButton.Click += CustomStrokeColorButton_Click;
+        _customStyleStrokeText.TextChanged += CustomStyleColourTextChanged;
 
         var textLbl = new Label
         {
             Text = _customStyleTextLabel,
-            Location = new Point(216, 42),
-            Size = new Size(30, 20),
+            Location = new Point(16, 128),
+            Size = new Size(36, 20),
         };
-        _customStyleEditPanel.Controls.Add(textLbl);
-        _customStyleEditPanel.Controls.Add(_customStyleTextText);
+        _customStyleTextText.Location = new Point(84, 124);
+        _customTextColorButton.Location = new Point(192, 122);
+        _customTextSwatch.Location = new Point(224, 124);
+        _customTextColorButton.Click += CustomTextColorButton_Click;
+        _customStyleTextText.TextChanged += CustomStyleColourTextChanged;
 
         var buttonPanel = new FlowLayoutPanel
         {
-            Location = new Point(210, 98),
-            Size = new Size(320, 26),
+            Location = new Point(16, 172),
+            Size = new Size(280, 30),
             FlowDirection = FlowDirection.LeftToRight,
         };
         _customNewButton.Click += CustomNewButton_Click;
         buttonPanel.Controls.Add(_customNewButton);
         _customDeleteButton.Click += CustomDeleteButton_Click;
         buttonPanel.Controls.Add(_customDeleteButton);
-        _customStyleEditPanel.Controls.Add(buttonPanel);
 
-        panel.Controls.Add(_customStyleEditPanel);
+        _customStyleEditGroup.Controls.Add(keyLbl);
+        _customStyleEditGroup.Controls.Add(_customStyleKeyText);
+        _customStyleEditGroup.Controls.Add(fillLbl);
+        _customStyleEditGroup.Controls.Add(_customStyleFillText);
+        _customStyleEditGroup.Controls.Add(_customFillColorButton);
+        _customStyleEditGroup.Controls.Add(_customFillSwatch);
+        _customStyleEditGroup.Controls.Add(strokeLbl);
+        _customStyleEditGroup.Controls.Add(_customStyleStrokeText);
+        _customStyleEditGroup.Controls.Add(_customStrokeColorButton);
+        _customStyleEditGroup.Controls.Add(_customStrokeSwatch);
+        _customStyleEditGroup.Controls.Add(textLbl);
+        _customStyleEditGroup.Controls.Add(_customStyleTextText);
+        _customStyleEditGroup.Controls.Add(_customTextColorButton);
+        _customStyleEditGroup.Controls.Add(_customTextSwatch);
+        _customStyleEditGroup.Controls.Add(buttonPanel);
+        panel.Controls.Add(_customStyleEditGroup);
+
+        UpdateCustomStyleListHint();
 #pragma warning restore CA1303
     }
 
     private void CustomStyleList_SelectedIndexChanged(object? sender, EventArgs e)
     {
         _selectedCustomStyleKey = _customStyleList.SelectedItem as string;
-        _customDeleteButton.Enabled = _selectedCustomStyleKey is not null;
+        var hasSelection = _selectedCustomStyleKey is not null;
+        _customDeleteButton.Enabled = hasSelection;
+        _customStyleEditGroup.Enabled = hasSelection;
 
-        if (_selectedCustomStyleKey is { } key &&
+        if (hasSelection && _selectedCustomStyleKey is { } key &&
             _customStyleEdits.TryGetValue(key, out var colours))
         {
-            _customStyleKeyText.Text = key;
+            _customStyleKeyText.Text = _selectedCustomStyleKey;
             _customStyleFillText.Text = colours.Fill;
             _customStyleStrokeText.Text = colours.Stroke;
             _customStyleTextText.Text = colours.Text;
+            _customFillSwatch.BackColor = ParseColourOrDefault(colours.Fill);
+            _customStrokeSwatch.BackColor = ParseColourOrDefault(colours.Stroke);
+            _customTextSwatch.BackColor = ParseColourOrDefault(colours.Text);
         }
         else
         {
@@ -612,7 +702,12 @@ internal sealed partial class ThemeSettingsForm : Form
             _customStyleFillText.Text = string.Empty;
             _customStyleStrokeText.Text = string.Empty;
             _customStyleTextText.Text = string.Empty;
+            _customFillSwatch.BackColor = SystemColors.Control;
+            _customStrokeSwatch.BackColor = SystemColors.Control;
+            _customTextSwatch.BackColor = SystemColors.Control;
         }
+
+        UpdateCustomStyleListHint();
     }
 
     private void CustomNewButton_Click(object? sender, EventArgs e)
@@ -667,6 +762,47 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleStrokeText.Text = string.Empty;
         _customStyleTextText.Text = string.Empty;
     }
+
+    private void UpdateCustomStyleListHint()
+    {
+        var empty = _customStyleList.Items.Count == 0;
+        _customStyleListHint.Visible = empty;
+        _customStyleList.Visible = !empty;
+        _customStyleListLabel.Visible = !empty;
+    }
+
+    private void CustomFillColorButton_Click(object? sender, EventArgs e) => PickCustomColour(_customStyleFillText, _customFillSwatch);
+    private void CustomStrokeColorButton_Click(object? sender, EventArgs e) => PickCustomColour(_customStyleStrokeText, _customStrokeSwatch);
+    private void CustomTextColorButton_Click(object? sender, EventArgs e) => PickCustomColour(_customStyleTextText, _customTextSwatch);
+
+    private void PickCustomColour(TextBox textBox, Panel swatch)
+    {
+        _colorDialog.Color = ColourHex.TryParse(textBox.Text, out var initial)
+            ? System.Drawing.Color.FromArgb((int)initial!.ARGB)
+            : SystemColors.Control;
+
+        if (_colorDialog.ShowDialog(this) == DialogResult.OK)
+        {
+            var color = _colorDialog.Color;
+            var hex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+            textBox.Text = hex;
+            swatch.BackColor = color;
+        }
+    }
+
+    private void CustomStyleColourTextChanged(object? sender, EventArgs e)
+    {
+        if (_selectedCustomStyleKey is null)
+        {
+            return;
+        }
+
+        _customStyleEdits[_selectedCustomStyleKey] = new CustomStyleState(
+            _customStyleFillText.Text,
+            _customStyleStrokeText.Text,
+            _customStyleTextText.Text);
+    }
+
     private void PopulateFromRequest(ThemeEditRequest request)
     {
         // Colours
@@ -715,6 +851,38 @@ internal sealed partial class ThemeSettingsForm : Form
                 DialogResult = DialogResult.None;
                 return;
             }
+        }
+
+        // Validate custom style colours
+        if (!string.IsNullOrEmpty(_customStyleFillText.Text) && !ColourHex.TryParse(_customStyleFillText.Text, out _))
+        {
+            _warningLabel.Text = "Invalid custom style fill colour '" + _customStyleFillText.Text + "'. Use uppercase #RRGGBB.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _customStyleEditGroup.Enabled = true;
+            _ = _customStyleFillText.Focus();
+            DialogResult = DialogResult.None;
+            return;
+        }
+        if (!string.IsNullOrEmpty(_customStyleStrokeText.Text) && !ColourHex.TryParse(_customStyleStrokeText.Text, out _))
+        {
+            _warningLabel.Text = "Invalid custom style stroke colour '" + _customStyleStrokeText.Text + "'. Use uppercase #RRGGBB.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _customStyleEditGroup.Enabled = true;
+            _ = _customStyleStrokeText.Focus();
+            DialogResult = DialogResult.None;
+            return;
+        }
+        if (!string.IsNullOrEmpty(_customStyleTextText.Text) && !ColourHex.TryParse(_customStyleTextText.Text, out _))
+        {
+            _warningLabel.Text = "Invalid custom style text colour '" + _customStyleTextText.Text + "'. Use uppercase #RRGGBB.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _customStyleEditGroup.Enabled = true;
+            _ = _customStyleTextText.Focus();
+            DialogResult = DialogResult.None;
+            return;
         }
 
         Dictionary<string, double> metricEdits = [];
