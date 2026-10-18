@@ -72,7 +72,7 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private readonly ListBox _customStyleList = new()
     {
-        Size = new Size(200, 200),
+        Size = new Size(200, 180),
         IntegralHeight = false,
     };
     private readonly Label _customStyleListLabel = new()
@@ -589,9 +589,9 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // Left: list of existing custom styles
         _customStyleListGroup.Location = new Point(8, 8);
-        _customStyleList.Location = new Point(16, 48);
         _customStyleListLabel.Location = new Point(16, 24);
-        _customStyleListHint.Location = new Point(16, 256);
+        _customStyleList.Location = new Point(16, 48);
+        _customStyleListHint.Location = new Point(16, 240);
 
         _customStyleList.SelectedIndexChanged += CustomStyleList_SelectedIndexChanged;
         _customStyleListGroup.Controls.Add(_customStyleListLabel);
