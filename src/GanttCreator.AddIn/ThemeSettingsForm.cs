@@ -68,7 +68,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private const string _customStyleFillLabel = "Fill";
     private const string _customStyleStrokeLabel = "Stroke";
     private const string _customStyleTextLabel = "Text";
-    private const string _customStyleEmptyHint = "No custom styles defined yet.";
+    private const string _customStyleEmptyHint = "No custom styles defined yet. Enter a key and click New custom style.";
 
     private readonly ListBox _customStyleList = new()
     {
@@ -150,6 +150,12 @@ internal sealed partial class ThemeSettingsForm : Form
         Text = "New custom style",
         AutoSize = true,
     };
+    private readonly TextBox _customNewKeyText = new()
+    {
+        Size = new Size(120, 22),
+        CharacterCasing = CharacterCasing.Upper,
+        MaxLength = 32,
+    };
     private readonly Button _customDeleteButton = new()
     {
         Text = "Delete",
@@ -213,6 +219,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _customStrokeSwatch.Dispose();
             _customTextSwatch.Dispose();
             _customNewButton.Dispose();
+            _customNewKeyText.Dispose();
             _customDeleteButton.Dispose();
             _customStyleListGroup.Dispose();
             _customStyleEditGroup.Dispose();
@@ -591,13 +598,16 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleListGroup.Location = new Point(8, 8);
         _customStyleListLabel.Location = new Point(16, 24);
         _customStyleList.Location = new Point(16, 48);
-        _customStyleListHint.Location = new Point(16, 240);
 
         _customStyleList.SelectedIndexChanged += CustomStyleList_SelectedIndexChanged;
         _customStyleListGroup.Controls.Add(_customStyleListLabel);
         _customStyleListGroup.Controls.Add(_customStyleList);
-        _customStyleListGroup.Controls.Add(_customStyleListHint);
         panel.Controls.Add(_customStyleListGroup);
+
+        // Empty-state hint (full width so the instruction stays readable).
+        _customStyleListHint.AutoSize = true;
+        _customStyleListHint.Location = new Point(8, 272);
+        panel.Controls.Add(_customStyleListHint);
 
         // Right: edit panel for the selected custom style
         _customStyleEditGroup.Location = new Point(240, 8);
@@ -646,14 +656,16 @@ internal sealed partial class ThemeSettingsForm : Form
         _customTextColorButton.Click += CustomTextColorButton_Click;
         _customStyleTextText.TextChanged += CustomStyleColourTextChanged;
 
+        // New-style entry is always available (not gated behind a selection).
+        _customNewButton.Click += CustomNewButton_Click;
+
+        // Delete only applies to a selected style; it lives inside the edit group.
         var buttonPanel = new FlowLayoutPanel
         {
             Location = new Point(16, 172),
             Size = new Size(280, 30),
             FlowDirection = FlowDirection.LeftToRight,
         };
-        _customNewButton.Click += CustomNewButton_Click;
-        buttonPanel.Controls.Add(_customNewButton);
         _customDeleteButton.Click += CustomDeleteButton_Click;
         buttonPanel.Controls.Add(_customDeleteButton);
 
@@ -673,6 +685,23 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleEditGroup.Controls.Add(_customTextSwatch);
         _customStyleEditGroup.Controls.Add(buttonPanel);
         panel.Controls.Add(_customStyleEditGroup);
+
+        // Always-visible new-style row: key entry + New button.
+        var customNewRow = new FlowLayoutPanel
+        {
+            Location = new Point(8, 296),
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+        };
+        var newKeyLabel = new Label
+        {
+            Text = "New key:",
+            AutoSize = true,
+        };
+        customNewRow.Controls.Add(newKeyLabel);
+        customNewRow.Controls.Add(_customNewKeyText);
+        customNewRow.Controls.Add(_customNewButton);
+        panel.Controls.Add(customNewRow);
 
         UpdateCustomStyleListHint();
 #pragma warning restore CA1303
@@ -698,30 +727,49 @@ internal sealed partial class ThemeSettingsForm : Form
         }
         else
         {
-            _customStyleKeyText.Text = string.Empty;
-            _customStyleFillText.Text = string.Empty;
-            _customStyleStrokeText.Text = string.Empty;
-            _customStyleTextText.Text = string.Empty;
-            _customFillSwatch.BackColor = SystemColors.Control;
-            _customStrokeSwatch.BackColor = SystemColors.Control;
-            _customTextSwatch.BackColor = SystemColors.Control;
+            ClearCustomStyleEditor();
         }
 
         UpdateCustomStyleListHint();
     }
 
+    private void ClearCustomStyleEditor()
+    {
+        _selectedCustomStyleKey = null;
+        _customDeleteButton.Enabled = false;
+        _customStyleEditGroup.Enabled = false;
+        _customStyleKeyText.Text = string.Empty;
+        _customStyleFillText.Text = string.Empty;
+        _customStyleStrokeText.Text = string.Empty;
+        _customStyleTextText.Text = string.Empty;
+        _customFillSwatch.BackColor = SystemColors.Control;
+        _customStrokeSwatch.BackColor = SystemColors.Control;
+        _customTextSwatch.BackColor = SystemColors.Control;
+    }
+
+#pragma warning disable CA1303 // Literal strings are UI labels in a WinForms dialog; localization is out of scope for R5.6a.
     private void CustomNewButton_Click(object? sender, EventArgs e)
     {
-        string newKey = Microsoft.VisualBasic.Interaction.InputBox(
-            "Enter a unique key for the new custom style:",
-            "New custom style",
-            "CUSTOM");
+        string newKey = _customNewKeyText.Text.Trim().ToUpperInvariant();
+        _customNewKeyText.Text = string.Empty;
+
         if (string.IsNullOrWhiteSpace(newKey))
         {
+            _warningLabel.Text = "Enter a key for the new custom style.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _ = _customNewKeyText.Focus();
             return;
         }
 
-        newKey = newKey.Trim().ToUpperInvariant();
+        if (IsBuiltInCustomKey(newKey))
+        {
+            _warningLabel.Text = $"Style key '{newKey}' is a built-in preset and cannot be used as a custom style.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            return;
+        }
+
         if (_customStyleEdits.ContainsKey(newKey))
         {
             _warningLabel.Text = $"Custom style '{newKey}' already exists.";
@@ -730,10 +778,17 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
+        _warningLabel.Visible = false;
+
         _customStyleEdits[newKey] = new CustomStyleState("#FFFFFF", "#000000", "#000000");
         _ = _customStyleList.Items.Add(newKey);
         _customStyleList.SelectedItem = newKey;
     }
+#pragma warning restore CA1303
+
+    private static bool IsBuiltInCustomKey(string key) =>
+        GanttCatalogues.StylePresets.Any(p =>
+            string.Equals(p.StyleKey, key, StringComparison.Ordinal));
 
     private void CustomDeleteButton_Click(object? sender, EventArgs e)
     {
@@ -755,12 +810,8 @@ internal sealed partial class ThemeSettingsForm : Form
 
         _ = _customStyleEdits.Remove(key);
         _customStyleList.Items.Remove(key);
-        _selectedCustomStyleKey = null;
-        _customDeleteButton.Enabled = false;
-        _customStyleKeyText.Text = string.Empty;
-        _customStyleFillText.Text = string.Empty;
-        _customStyleStrokeText.Text = string.Empty;
-        _customStyleTextText.Text = string.Empty;
+        ClearCustomStyleEditor();
+        UpdateCustomStyleListHint();
     }
 
     private void UpdateCustomStyleListHint()
@@ -835,6 +886,15 @@ internal sealed partial class ThemeSettingsForm : Form
                 nud.Value = (decimal)kvp.Value;
             }
         }
+
+        // Custom styles: load saved styles into the edit dictionary and list so
+        // they are visible on the tab and are not spuriously deleted on OK.
+        foreach (CustomStyleDef def in request.CustomStyleDefs ?? [])
+        {
+            _customStyleEdits[def.StyleKey] = new CustomStyleState(def.FillColour, def.StrokeColour, def.TextColour);
+            _ = _customStyleList.Items.Add(def.StyleKey);
+        }
+        UpdateCustomStyleListHint();
     }
 
     private void OkButton_Click(object? sender, EventArgs e)
