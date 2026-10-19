@@ -89,6 +89,9 @@ public class StyleWriteTests
                 _ = lineMock.SetupGet(l => l.Visible).Returns(() => LineVisible);
                 _ = lineMock.SetupSet(l => l.Visible = It.IsAny<MsoTriState>())
                     .Callback<MsoTriState>(value => LineVisible = value);
+                _ = lineMock.SetupGet(l => l.DashStyle).Returns(() => LineDash);
+                _ = lineMock.SetupSet(l => l.DashStyle = It.IsAny<MsoLineDashStyle>())
+                    .Callback<MsoLineDashStyle>(value => LineDash = value);
                 _ = lineMock.SetupGet(l => l.Transparency).Returns(() => LineTransparency);
                 _ = lineMock.SetupSet(l => l.Transparency = It.IsAny<float>())
                     .Callback<float>(value => LineTransparency = value);
@@ -175,6 +178,9 @@ public class StyleWriteTests
         public float LineTransparency { get; private set; }
 
         public MsoTriState LineVisible { get; private set; }
+
+        /// <summary>The dash the writer last wrote to the host's line.</summary>
+        public MsoLineDashStyle LineDash { get; private set; } = MsoLineDashStyle.msoLineSolid;
 
         /// <summary>The left internal margin the writer last wrote.</summary>
         public float MarginLeft { get; internal set; } = float.NaN;
@@ -478,6 +484,62 @@ public class StyleWriteTests
     }
 
     [Fact]
+    public void A_dashed_style_reaches_the_host_with_its_dash()
+    {
+        var host = new HostShape();
+        var writer = new StyleWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(Request(
+            fill: "#92D050",
+            stroke: "#548235",
+            width: 0.75,
+            dash: GanttStrokeDash.Dash));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(MsoLineDashStyle.msoLineDash, host.LineDash);
+    }
+
+    [Fact]
+    public void A_solid_style_reaches_the_host_with_a_solid_line()
+    {
+        // The dash is written explicitly, not left alone: the host keeps
+        // whichever dash it last had, so a style that resolved to Solid must
+        // say so rather than inherit a previous dash.
+        var host = new HostShape();
+        var writer = new StyleWriter(host);
+
+        ShapeWriteOutcome outcome = writer.Create(Request(
+            fill: "#92D050",
+            stroke: "#548235",
+            width: 0.75));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(MsoLineDashStyle.msoLineSolid, host.LineDash);
+    }
+
+    [Fact]
+    public void Every_dash_pattern_maps_to_a_host_member()
+    {
+        foreach (GanttStrokeDash dash in Enum.GetValues<GanttStrokeDash>())
+        {
+            MsoLineDashStyle mapped = ExcelShapeWriter.MapDashStyle(dash);
+            Assert.True(
+                Enum.IsDefined(mapped),
+                $"Dash '{dash}' mapped to an undefined host member.");
+        }
+    }
+
+    [Fact]
+    public void An_undefined_dash_pattern_is_refused_rather_than_substituted()
+    {
+        // The mapping is closed: an unmapped dash is a contract fault, so it
+        // throws rather than silently drawing a different line.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => ExcelShapeWriter.MapDashStyle((GanttStrokeDash)99));
+    }
+
+
+    [Fact]
     public void Creating_a_planned_activity_writes_its_fill_outline_and_width_to_the_host()
     {
         var host = new HostShape();
@@ -742,7 +804,8 @@ public class StyleWriteTests
         double? width = null,
         GanttHatchPattern hatch = GanttHatchPattern.None,
         OfficeShapeKind kind = OfficeShapeKind.Rectangle,
-        bool points = false) =>
+        bool points = false,
+        GanttStrokeDash dash = GanttStrokeDash.Solid) =>
         new(
             id,
             kind,
@@ -763,6 +826,7 @@ public class StyleWriteTests
             FillColour: fill is null ? null : ColourHex.Parse(fill),
             StrokeColour: stroke is null ? null : ColourHex.Parse(stroke),
             LineWidthPt: width,
-            HatchPattern: hatch);
+            HatchPattern: hatch,
+            StrokeDash: dash);
 }
 

@@ -26,6 +26,10 @@ namespace GanttCreator.Office;
 /// <paramref name="FillRgb"/> and <paramref name="LineRgb"/> so the three cannot
 /// disagree about byte order.
 /// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern, or <see cref="GanttStrokeDash.Solid"/>
+/// when the shape has no visible stroke.
+/// </param>
 /// <remarks>
 /// <para>
 /// Every value is a primitive or a Core-owned type, so this record and the mapper
@@ -51,7 +55,8 @@ public sealed record OfficeShapeStyle(
     int? LineRgb,
     float? LineWeightPt,
     float LineTransparency,
-    int? TextRgb);
+    int? TextRgb,
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid);
 
 /// <summary>
 /// Maps a scene-resolved shape request onto the host's fill and line property
@@ -117,7 +122,11 @@ public static class OfficeStyleMapper
             // the text-bearing kinds are exactly the ones a caller is most likely
             // to ask this of, and a null request colour must stay null rather than
             // be turned into black here.
-            TextRgb: request.TextColour is { } textColour ? ToOfficeRgb(textColour) : null);
+            TextRgb: request.TextColour is { } textColour ? ToOfficeRgb(textColour) : null,
+            // The dash travels with the stroke: a shape with no visible line
+            // has no dash to write, so the mapper reports Solid rather than
+            // carrying a dash the host would never draw.
+            StrokeDash: lineApplies ? request.StrokeDash : GanttStrokeDash.Solid);
     }
 
     /// <summary>

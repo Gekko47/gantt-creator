@@ -1119,9 +1119,37 @@ public class ExcelShapeWriter(
             line.Weight = weight;
         }
 
+        // The dash is a resolved style token, so the renderer writes it
+        // verbatim rather than choosing one: a line the scene resolved as
+        // dashed must reach the host dashed. Solid is written explicitly
+        // because the host keeps whichever dash it last had.
+        line.DashStyle = MapDashStyle(style.StrokeDash);
+
         line.Transparency = style.LineTransparency;
         line.Visible = MsoTriState.msoTrue;
     }
+
+    /// <summary>
+    /// Maps a resolved stroke dash pattern onto the host's line-dash constant.
+    /// </summary>
+    /// <param name="dash">The resolved dash pattern.</param>
+    /// <returns>The host's dash constant.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the dash has no host member. Never caught, because a
+    /// contract fault is not a host failure: the caller discards the shape
+    /// and reports the refusal (the same contract as
+    /// <see cref="MapHatchPattern"/>).
+    /// </exception>
+    internal static MsoLineDashStyle MapDashStyle(GanttStrokeDash dash) => dash switch
+    {
+        GanttStrokeDash.Solid => MsoLineDashStyle.msoLineSolid,
+        GanttStrokeDash.SquareDot => MsoLineDashStyle.msoLineSquareDot,
+        GanttStrokeDash.RoundDot => MsoLineDashStyle.msoLineRoundDot,
+        GanttStrokeDash.Dash => MsoLineDashStyle.msoLineDash,
+        GanttStrokeDash.DashDot => MsoLineDashStyle.msoLineDashDot,
+        GanttStrokeDash.LongDash => MsoLineDashStyle.msoLineLongDash,
+        _ => throw new ArgumentOutOfRangeException(nameof(dash), dash, "No host dash member."),
+    };
 
     /// <summary>
     /// Applies the style, discarding the shape if the host refuses it.

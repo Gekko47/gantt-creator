@@ -105,6 +105,7 @@ public static class GanttCatalogues
         "DefaultLabelPosition",
         "AllowedLabelPositions",
         "ColourCapability",
+        "StrokeDash",
     ];
 
     /// <summary>The <see cref="MetricsTableName"/> header row, in contract order.</summary>
@@ -484,7 +485,8 @@ public static class GanttCatalogues
         string textToken,
         string? outlineToken,
         string? heightToken,
-        string? milestoneToken)
+        string? milestoneToken,
+        GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
     {
         EntityTypeDefinition definition = EntityTypeCatalog.Entries.First(entry =>
             string.Equals(entry.DefaultStyleKey, styleKey, StringComparison.Ordinal));
@@ -512,7 +514,8 @@ public static class GanttCatalogues
             milestone,
             defaultLabelPosition,
             definition.AllowedLabelPositions,
-            definition.ColourCapability);
+            definition.ColourCapability,
+            strokeDash);
     }
 
     /// <summary>
@@ -737,7 +740,8 @@ public static class GanttCatalogues
                         preset.AllowedLabelPositions
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
-                    preset.ColourCapability.ToString()));
+                    preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString()));
         }
 
         AppendTableHeader(builder, MetricsTableName, MetricsHeaders);

@@ -71,7 +71,11 @@ public class GanttSchemaVersionTests
         // built-in presets' default label position becomes Auto. The catalogue
         // hash moves with the type and style rows. No migration (ADR-0029 D6);
         // Initialise is the remedy.
-        Assert.Equal(18, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v19 is R5.6a: the tblGanttStyles column schema gains the
+        // StrokeDash column (the style's line dash pattern). The column is
+        // appended at the end of the row, so every existing column index is
+        // unchanged. No migration (ADR-0029 D6); Initialise is the remedy.
+        Assert.Equal(19, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

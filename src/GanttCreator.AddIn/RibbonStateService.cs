@@ -966,7 +966,8 @@ internal class RibbonStateService
                         definition.ActivityHeightPt,
                         definition.MilestoneSizePt,
                         definition.DefaultLabelPosition ?? GanttLabelPosition.Auto,
-                        definition.AllowedLabelPositions));
+                        definition.AllowedLabelPositions,
+                        definition.StrokeDash ?? GanttStrokeDash.Solid));
                 }
             }
 

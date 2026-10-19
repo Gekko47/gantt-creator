@@ -584,6 +584,7 @@ public class ConfigCatalogueReaderTests
         "Inside",
         "Auto Inside",
         "Fill, Stroke",
+        "Solid",
     ];
 
     [Fact]

@@ -170,6 +170,18 @@ public static class GanttSchemaVersion
     /// the older hash and is reported as a mismatch; the remedy is Initialise
     /// (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Version 19 is R5.6a's stroke dash type.</b> The
+    /// <c>tblGanttStyles</c> column schema gains the engine-owned
+    /// <c>StrokeDash</c> column (the style's line dash pattern:
+    /// <c>Solid</c>, <c>SquareDot</c>, <c>RoundDot</c>, <c>Dash</c>,
+    /// <c>DashDot</c>, or <c>LongDash</c>), so a version-18 workbook's style
+    /// table lacks a column the running add-in reads and its stored catalogue
+    /// hash no longer matches. The column is appended at the end of the row, so
+    /// every existing column index is unchanged. There is no migration
+    /// (ADR-0029 D6): a version-18 workbook reports a mismatch and the remedy
+    /// is Initialise.
+    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 18;
+    public const int CurrentSchemaVersion = 19;
 }

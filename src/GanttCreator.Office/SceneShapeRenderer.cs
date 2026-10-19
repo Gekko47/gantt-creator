@@ -224,7 +224,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FillColour: rect.Style.FillColour,
             StrokeColour: rect.Style.StrokeColour,
             LineWidthPt: rect.Style.OutlineWidthPt,
-            HatchPattern: rect.Style.HatchPattern);
+            HatchPattern: rect.Style.HatchPattern,
+            StrokeDash: rect.Style.StrokeDash);
 
     /// <summary>
     /// Builds a plain-line request, preserving the scene's endpoint order and
@@ -260,7 +261,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             line.ZLayer,
             StrokeColour: line.Style.StrokeColour,
             LineWidthPt: line.Style.OutlineWidthPt,
-            HatchPattern: line.Style.HatchPattern);
+            HatchPattern: line.Style.HatchPattern,
+            StrokeDash: line.Style.StrokeDash);
 
     /// <summary>
     /// Determines whether four points form a symmetric axis-aligned diamond and,
@@ -392,7 +394,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             FillColour: polygon.Style.FillColour,
             StrokeColour: polygon.Style.StrokeColour,
             LineWidthPt: polygon.Style.OutlineWidthPt,
-            HatchPattern: polygon.Style.HatchPattern);
+            HatchPattern: polygon.Style.HatchPattern,
+            StrokeDash: polygon.Style.StrokeDash);
 
     /// <summary>Builds a text request, consuming the scene's resolved text verbatim.</summary>
     /// <remarks>
@@ -446,5 +449,6 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             Bold: text.Style.Bold,
             Text: text.Text,
             Alignment: text.Alignment,
-            TextColour: text.Style.TextColour);
+            TextColour: text.Style.TextColour,
+            StrokeDash: text.Style.StrokeDash);
 }

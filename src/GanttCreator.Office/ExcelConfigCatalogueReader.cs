@@ -312,6 +312,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 (0, preset.StyleKey),
                 (1, preset.DisplayName),
                 (4, preset.HatchPattern.ToString()),
+                (14, preset.StrokeDash.ToString()),
             ];
             foreach ((int column, string expected) in textCells)
             {
@@ -401,7 +402,9 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 preset.HatchLinePt,
                 preset.StandardOutlinePt,
                 preset.ActivityHeightPt,
-                preset.MilestoneSizePt));
+                preset.MilestoneSizePt,
+                DisplayName: null,
+                StrokeDash: preset.StrokeDash));
         }
 
         for (int index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)
@@ -428,7 +431,8 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 ToDouble(row[8]),
                 ToDouble(row[9]),
                 ToDouble(row[10]),
-                ToText(row[1])));
+                ToText(row[1]),
+                Enum.Parse<GanttStrokeDash>(ToText(row[14]), ignoreCase: false)));
         }
 
         styles = new GanttStyleRegistry(definitions);
@@ -477,6 +481,8 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             || !IsOptionalUppercaseColour(ToText(row[7]))
             || !Enum.TryParse(ToText(row[4]), ignoreCase: false, out GanttHatchPattern hatchPattern)
             || !Enum.IsDefined(hatchPattern)
+            || !Enum.TryParse(ToText(row[14]), ignoreCase: false, out GanttStrokeDash strokeDash)
+            || !Enum.IsDefined(strokeDash)
             || !allowed.Contains(defaultPosition)
             || !Enum.TryParse(ToText(row[13]), ignoreCase: false, out EntityColourCapability colourCapability)
             || !IsKnownColourCapability(colourCapability)

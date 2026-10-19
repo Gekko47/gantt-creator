@@ -17,6 +17,10 @@ public sealed record SceneStyle
     /// The resolved label text colour, if any. Null means the scene resolved no
     /// text colour for this entity, which is not the same fact as black.
     /// </param>
+    /// <param name="strokeDash">
+    /// The resolved stroke dash pattern. Solid is the default: a line is
+    /// continuous unless an approved named style specifies otherwise.
+    /// </param>
     public SceneStyle(
         string styleKey,
         ColourHex? fillColour = null,
@@ -27,7 +31,8 @@ public sealed record SceneStyle
         double? fontSizePt = null,
         bool? bold = null,
         GanttTextAlignment? alignment = null,
-        ColourHex? textColour = null)
+        ColourHex? textColour = null,
+        GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(styleKey);
         if (outlineWidthPt is { } outline && (!double.IsFinite(outline) || outline < 0))
@@ -50,6 +55,7 @@ public sealed record SceneStyle
         Bold = bold;
         Alignment = alignment;
         TextColour = textColour;
+        StrokeDash = strokeDash;
     }
 
     /// <summary>Gets the resolved style key.</summary>
@@ -89,6 +95,13 @@ public sealed record SceneStyle
     /// </remarks>
     public ColourHex? TextColour { get; }
 
+    /// <summary>
+    /// Gets the resolved stroke dash pattern. Solid is the default: a line is
+    /// continuous unless an approved named style specifies otherwise (entity
+    /// guide section 16).
+    /// </summary>
+    public GanttStrokeDash StrokeDash { get; }
+
     /// <summary>Returns this style with the supplied label text colour.</summary>
     /// <param name="textColour">The text colour the copy should carry.</param>
     /// <returns>A copy carrying <paramref name="textColour"/>.</returns>
@@ -117,5 +130,6 @@ public sealed record SceneStyle
             FontSizePt,
             Bold,
             Alignment,
-            textColour);
+            textColour,
+            StrokeDash);
 }

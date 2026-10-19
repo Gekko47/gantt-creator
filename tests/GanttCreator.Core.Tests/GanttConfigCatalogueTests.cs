@@ -867,10 +867,18 @@ public class GanttConfigCatalogueTests
     /// rows and the style rows; the hash moves with them. A version-17
     /// workbook carries the older hash and is reported as a mismatch; the
     /// remedy is Initialise (ADR-0029 D6, no migration).
+    /// <para>
+    /// <b>Advanced to 19 by R5.6a</b>: the style catalogue gains the
+    /// <c>StrokeDash</c> column (the style's line dash pattern). The column
+    /// is appended at the end of the row, so every existing column index is
+    /// unchanged, and the built-in presets all carry <c>Solid</c>. The
+    /// catalogue contents move through the style rows; the hash moves with
+    /// them. A version-18 workbook carries the older hash and is reported as
+    /// a mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "f0a5f71c588ddf059ebaa9f67fec6465204fb8dbf0f74d2c06fa83f97dbba147";
+        "42023d1d9b47e00247d8362266bd9e1b8dcd69afca6eac1af8b054499d9061ce";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

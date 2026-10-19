@@ -32,6 +32,10 @@ namespace GanttCreator.Office;
 /// shape that carries no text. The scene resolves this (ADR-0018 D4); the
 /// adapter only maps it to the host's alignment constant.
 /// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern. Solid is the default: a line is
+/// continuous unless an approved named style specifies otherwise.
+/// </param>
 /// <param name="TextColour">
 /// The resolved label text colour, or <see langword="null"/> when the scene
 /// resolved none. Entity guide §17's delay inside/outside switch is expressed
@@ -58,7 +62,8 @@ public sealed record OfficeShapeRequest(
     bool? Bold = null,
     string? Text = null,
     GanttTextAlignment? Alignment = null,
-    ColourHex? TextColour = null);
+    ColourHex? TextColour = null,
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and

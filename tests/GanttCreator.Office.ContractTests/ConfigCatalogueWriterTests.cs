@@ -409,6 +409,7 @@ public class ConfigCatalogueWriterTests
             "Inside",
             "Auto Inside",
             "Fill, Stroke",
+            "Solid",
         ];
         fake.Tables[1].Body.Add(userStyle);
 
@@ -686,6 +687,7 @@ public class ConfigCatalogueWriterTests
             "Inside",
             "Auto Inside",
             "Fill, Stroke, Hatch",
+            "Solid",
         ]);
 
         var request = new ThemeEditRequest(

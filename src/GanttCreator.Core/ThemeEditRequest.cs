@@ -88,6 +88,7 @@ public enum CustomStyleOperation
 /// <param name="MilestoneSizePt">The milestone tip-to-tip size in points; null preserves the stored value.</param>
 /// <param name="DefaultLabelPosition">The default label position; null preserves the stored position.</param>
 /// <param name="AllowedLabelPositions">The permitted label positions; null preserves the stored set.</param>
+/// <param name="StrokeDash">The stroke dash pattern; null preserves the stored dash.</param>
 public sealed record CustomStyleEdit(
     CustomStyleOperation Operation,
     string StyleKey,
@@ -101,7 +102,8 @@ public sealed record CustomStyleEdit(
     double? ActivityHeightPt = null,
     double? MilestoneSizePt = null,
     GanttLabelPosition? DefaultLabelPosition = null,
-    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null);
+    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null,
+    GanttStrokeDash? StrokeDash = null);
 
 /// <summary>
 /// One custom style's current state as read from the workbook registry.
@@ -120,6 +122,7 @@ public sealed record CustomStyleEdit(
 /// The resolved permitted label positions, or null when the caller does not
 /// carry them.
 /// </param>
+/// <param name="StrokeDash">The resolved stroke dash pattern.</param>
 public sealed record CustomStyleDef(
     string StyleKey,
     string DisplayName,
@@ -131,7 +134,8 @@ public sealed record CustomStyleDef(
     double ActivityHeightPt = 0,
     double MilestoneSizePt = 0,
     GanttLabelPosition DefaultLabelPosition = GanttLabelPosition.Auto,
-    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null);
+    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null,
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid);
 
 /// <summary>
 /// The pure R5.6 theme edit: per-preset colours plus metric values, validated
@@ -256,6 +260,16 @@ public sealed record ThemeEditRequest(
                 {
                     refusal = ThemeEditRefusal.InvalidCustomStyle;
                     message = $"Custom style '{key}' default label position is not a defined position.";
+                    return false;
+                }
+
+                // The stroke dash is a closed enum: an undefined member would
+                // serialise to a name the reader cannot parse, and the reader
+                // refuses the whole catalogue rather than skipping the row.
+                if (edit.StrokeDash is { } dash && !Enum.IsDefined(dash))
+                {
+                    refusal = ThemeEditRefusal.InvalidCustomStyle;
+                    message = $"Custom style '{key}' stroke dash is not a defined dash pattern.";
                     return false;
                 }
 

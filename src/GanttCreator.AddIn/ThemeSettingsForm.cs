@@ -28,7 +28,8 @@ internal sealed class CustomStyleState(
     double activityHeightPt = 0,
     double milestoneSizePt = 0,
     GanttLabelPosition defaultLabelPosition = GanttLabelPosition.Auto,
-    IReadOnlySet<GanttLabelPosition>? allowedLabelPositions = null)
+    IReadOnlySet<GanttLabelPosition>? allowedLabelPositions = null,
+    GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
 {
     public string Fill { get; } = fill;
     public string Stroke { get; } = stroke;
@@ -40,6 +41,7 @@ internal sealed class CustomStyleState(
     public GanttLabelPosition DefaultLabelPosition { get; } = defaultLabelPosition;
     public IReadOnlySet<GanttLabelPosition> AllowedLabelPositions { get; } =
         allowedLabelPositions ?? new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto };
+    public GanttStrokeDash StrokeDash { get; } = strokeDash;
 }
 
 internal sealed partial class ThemeSettingsForm : Form
@@ -221,6 +223,11 @@ internal sealed partial class ThemeSettingsForm : Form
         DropDownStyle = ComboBoxStyle.DropDownList,
         Size = new Size(140, 22),
     };
+    private readonly ComboBox _customStrokeDashCombo = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Size = new Size(140, 22),
+    };
     private readonly CheckedListBox _customAllowedLabelList = new()
     {
         CheckOnClick = true,
@@ -301,6 +308,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _customActivityHeightNumeric.Dispose();
             _customMilestoneSizeNumeric.Dispose();
             _customDefaultLabelCombo.Dispose();
+            _customStrokeDashCombo.Dispose();
             _customAllowedLabelList.Dispose();
         }
         base.Dispose(disposing);
@@ -736,7 +744,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             Text = "Outline",
             Location = new Point(12, 138),
-            Size = new Size(446, 78),
+            Size = new Size(446, 106),
         };
         AddCustomColourRow(outlineGroup, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 22);
         Label widthLbl = new Label
@@ -749,12 +757,22 @@ internal sealed partial class ThemeSettingsForm : Form
         outlineGroup.Controls.Add(widthLbl);
         _customOutlineWidthNumeric.Location = new Point(92, 48);
         outlineGroup.Controls.Add(_customOutlineWidthNumeric);
+        Label dashLbl = new Label
+        {
+            Text = "Line style",
+            Location = new Point(16, 80),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        outlineGroup.Controls.Add(dashLbl);
+        _customStrokeDashCombo.Location = new Point(92, 76);
+        outlineGroup.Controls.Add(_customStrokeDashCombo);
         _customStyleEditGroup.Controls.Add(outlineGroup);
 
         GroupBox labelGroup = new GroupBox
         {
             Text = "Label",
-            Location = new Point(12, 224),
+            Location = new Point(12, 252),
             Size = new Size(446, 118),
         };
         AddCustomColourRow(labelGroup, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 22);
@@ -783,7 +801,7 @@ internal sealed partial class ThemeSettingsForm : Form
         GroupBox sizeGroup = new GroupBox
         {
             Text = "Size",
-            Location = new Point(12, 350),
+            Location = new Point(12, 378),
             Size = new Size(446, 78),
         };
         Label barLbl = new Label
@@ -810,7 +828,7 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // Delete only applies to a selected style; it lives inside the edit group.
         _customDeleteButton.Click += CustomDeleteButton_Click;
-        _customDeleteButton.Location = new Point(16, 438);
+        _customDeleteButton.Location = new Point(16, 466);
         _customStyleEditGroup.Controls.Add(_customDeleteButton);
 
         _customStyleEditGroup.Controls.Add(keyLbl);
@@ -881,8 +899,14 @@ internal sealed partial class ThemeSettingsForm : Form
             _ = _customAllowedLabelList.Items.Add(new LabelPositionItem(position, DescribeLabelPosition(position)));
         }
 
+        foreach (GanttStrokeDash dash in Enum.GetValues<GanttStrokeDash>())
+        {
+            _ = _customStrokeDashCombo.Items.Add(new StrokeDashItem(dash, DescribeStrokeDash(dash)));
+        }
+
         _customHatchPatternCombo.SelectedIndexChanged += CustomStylePropertyChanged;
         _customDefaultLabelCombo.SelectedIndexChanged += CustomStylePropertyChanged;
+        _customStrokeDashCombo.SelectedIndexChanged += CustomStylePropertyChanged;
         _customOutlineWidthNumeric.ValueChanged += CustomStylePropertyChanged;
         _customActivityHeightNumeric.ValueChanged += CustomStylePropertyChanged;
         _customMilestoneSizeNumeric.ValueChanged += CustomStylePropertyChanged;
@@ -939,6 +963,33 @@ internal sealed partial class ThemeSettingsForm : Form
         /// <inheritdoc />
         public override string ToString() => Label;
     }
+
+    /// <summary>
+    /// A stroke dash pattern paired with its user-facing label.
+    /// </summary>
+    /// <param name="Dash">The dash value.</param>
+    /// <param name="Label">The display name.</param>
+    private sealed record StrokeDashItem(GanttStrokeDash Dash, string Label)
+    {
+        /// <inheritdoc />
+        public override string ToString() => Label;
+    }
+
+    /// <summary>
+    /// Returns the user-facing name of a stroke dash pattern.
+    /// </summary>
+    /// <param name="dash">The dash pattern.</param>
+    /// <returns>The display name.</returns>
+    private static string DescribeStrokeDash(GanttStrokeDash dash) => dash switch
+    {
+        GanttStrokeDash.Solid => "Solid",
+        GanttStrokeDash.SquareDot => "Square dot",
+        GanttStrokeDash.RoundDot => "Round dot",
+        GanttStrokeDash.Dash => "Dash",
+        GanttStrokeDash.DashDot => "Dash dot",
+        GanttStrokeDash.LongDash => "Long dash",
+        _ => dash.ToString(),
+    };
 
     /// <summary>
     /// Returns the user-facing name of a fill pattern.
@@ -1032,6 +1083,9 @@ internal sealed partial class ThemeSettingsForm : Form
         _customHatchPatternCombo.SelectedItem =
             _customHatchPatternCombo.Items.Cast<HatchPatternItem>()
                 .FirstOrDefault(item => item.Pattern == state.HatchPattern);
+        _customStrokeDashCombo.SelectedItem =
+            _customStrokeDashCombo.Items.Cast<StrokeDashItem>()
+                .FirstOrDefault(item => item.Dash == state.StrokeDash);
         _customDefaultLabelCombo.SelectedItem =
             _customDefaultLabelCombo.Items.Cast<LabelPositionItem>()
                 .FirstOrDefault(item => item.Position == state.DefaultLabelPosition);
@@ -1096,6 +1150,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _customTextSwatch.BackColor = SystemColors.Control;
         _customHatchPatternCombo.SelectedIndex = -1;
         _customDefaultLabelCombo.SelectedIndex = -1;
+        _customStrokeDashCombo.SelectedIndex = -1;
         for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
         {
             _customAllowedLabelList.SetItemChecked(index, false);
@@ -1158,7 +1213,8 @@ internal sealed partial class ThemeSettingsForm : Form
                 GanttLabelPosition.Right,
                 GanttLabelPosition.Inside,
                 GanttLabelPosition.None,
-            });
+            },
+            GanttStrokeDash.Solid);
         _ = _customStyleList.Items.Add(newKey);
         _customStyleList.SelectedItem = newKey;
     }
@@ -1317,7 +1373,8 @@ internal sealed partial class ThemeSettingsForm : Form
             (double)_customActivityHeightNumeric.Value,
             (double)_customMilestoneSizeNumeric.Value,
             SelectedDefaultLabelPosition(),
-            selected);
+            selected,
+            SelectedStrokeDash());
     }
 
     /// <summary>
@@ -1341,7 +1398,8 @@ internal sealed partial class ThemeSettingsForm : Form
             (double)_customActivityHeightNumeric.Value,
             (double)_customMilestoneSizeNumeric.Value,
             SelectedDefaultLabelPosition(),
-            SelectedAllowedLabelPositions());
+            SelectedAllowedLabelPositions(),
+            SelectedStrokeDash());
     }
 
     /// <summary>
@@ -1361,6 +1419,15 @@ internal sealed partial class ThemeSettingsForm : Form
         _customDefaultLabelCombo.SelectedItem is LabelPositionItem item
             ? item.Position
             : GanttLabelPosition.Auto;
+
+    /// <summary>
+    /// Returns the stroke dash pattern currently selected in the editor.
+    /// </summary>
+    /// <returns>The selected dash, or Solid when nothing is selected.</returns>
+    private GanttStrokeDash SelectedStrokeDash() =>
+        _customStrokeDashCombo.SelectedItem is StrokeDashItem item
+            ? item.Dash
+            : GanttStrokeDash.Solid;
 
     /// <summary>
     /// Returns the checked label positions in the editor.
@@ -1430,7 +1497,8 @@ internal sealed partial class ThemeSettingsForm : Form
                 def.ActivityHeightPt,
                 def.MilestoneSizePt,
                 def.DefaultLabelPosition,
-                def.AllowedLabelPositions);
+                def.AllowedLabelPositions,
+                def.StrokeDash);
             _ = _customStyleList.Items.Add(def.StyleKey);
         }
         UpdateCustomStyleListHint();
@@ -1536,7 +1604,8 @@ internal sealed partial class ThemeSettingsForm : Form
                     ActivityHeightPt: state.ActivityHeightPt,
                     MilestoneSizePt: state.MilestoneSizePt,
                     DefaultLabelPosition: state.DefaultLabelPosition,
-                    AllowedLabelPositions: state.AllowedLabelPositions));
+                    AllowedLabelPositions: state.AllowedLabelPositions,
+                    StrokeDash: state.StrokeDash));
             }
             else if (original.FillColour != state.Fill
                 || original.StrokeColour != state.Stroke
@@ -1546,6 +1615,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 || original.ActivityHeightPt != state.ActivityHeightPt
                 || original.MilestoneSizePt != state.MilestoneSizePt
                 || original.DefaultLabelPosition != state.DefaultLabelPosition
+                || original.StrokeDash != state.StrokeDash
                 || (original.AllowedLabelPositions is not null
                     && !SameLabelPositions(original.AllowedLabelPositions, state.AllowedLabelPositions)))
             {
@@ -1565,7 +1635,8 @@ internal sealed partial class ThemeSettingsForm : Form
                     ActivityHeightPt: state.ActivityHeightPt,
                     MilestoneSizePt: state.MilestoneSizePt,
                     DefaultLabelPosition: state.DefaultLabelPosition,
-                    AllowedLabelPositions: state.AllowedLabelPositions));
+                    AllowedLabelPositions: state.AllowedLabelPositions,
+                    StrokeDash: state.StrokeDash));
             }
         }
 

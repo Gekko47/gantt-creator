@@ -378,6 +378,49 @@ public class ThemeSettingsFormTests
     }
 
     [Fact]
+    public void Ok_DashChangeOnSavedCustomStyle_CarriesTheDash()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [], new Dictionary<string, double>(), null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                var list = RequireListBox(tab);
+                list.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // The stroke type is a first-class property: the line style
+                // picker must reach the emitted edit.
+                var dash = FindAll(tab, c => c is ComboBox)
+                    .Cast<ComboBox>()
+                    .First(combo => combo.Items.Cast<object>().Any(item => item.ToString() == "Dash"));
+                dash.SelectedItem = dash.Items.Cast<object>().First(item => item.ToString() == "Dash");
+                InvokeClick(form, "CustomStylePropertyChanged");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edit = Assert.Single(request.CustomStyleEdits ?? Enumerable.Empty<CustomStyleEdit>());
+                Assert.Equal(CustomStyleOperation.Update, edit.Operation);
+                Assert.Equal(GanttStrokeDash.Dash, edit.StrokeDash);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
     public void Ok_UntouchedSavedStyle_EmitsNoEdit()
     {
         // A style whose properties the user never touched must not produce an

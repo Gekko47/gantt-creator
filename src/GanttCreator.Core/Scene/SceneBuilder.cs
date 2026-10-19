@@ -1428,11 +1428,12 @@ public static class SceneBuilder
             ? definition!.ActivityHeightPt
             : preset?.ActivityHeightPt ?? 0;
 
-        // The hatch pattern and the standard outline width are resolved style
-        // tokens, not renderer choices: the guide requires a renderer's output to
-        // match the scene, so a hatch the scene drops can never be drawn. Both come
-        // from the same resolved definition as the height, and stay at their
-        // defaults for a capability-only definition that supplied no formatting.
+        // The hatch pattern, the standard outline width, and the stroke dash
+        // are resolved style tokens, not renderer choices: the guide requires a
+        // renderer's output to match the scene, so a hatch or a dash the scene
+        // drops can never be drawn. All three come from the same resolved
+        // definition as the height, and stay at their defaults for a
+        // capability-only definition that supplied no formatting.
         resolved = new ResolvedEventStyle(
             new SceneStyle(
                 style.StyleKey,
@@ -1442,7 +1443,10 @@ public static class SceneBuilder
                 hasDefinition
                     ? definition!.HatchPattern ?? GanttHatchPattern.None
                     : preset?.HatchPattern ?? GanttHatchPattern.None,
-                textColour: style.TextColour),
+                textColour: style.TextColour,
+                strokeDash: hasDefinition
+                    ? definition!.StrokeDash ?? GanttStrokeDash.Solid
+                    : preset?.StrokeDash ?? GanttStrokeDash.Solid),
             heightPt);
         return true;
     }

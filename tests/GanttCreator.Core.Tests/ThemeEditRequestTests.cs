@@ -276,6 +276,33 @@ public sealed class ThemeEditRequestTests
     }
 
     [Fact]
+    public void Custom_style_undefined_stroke_dash_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", StrokeDash: (GanttStrokeDash)99)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_with_a_stroke_dash_passes()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Create,
+                "MYSTYLE",
+                FillColour: "#FF0000",
+                StrokeDash: GanttStrokeDash.LongDash)]);
+        Assert.True(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Null(refusal);
+        Assert.Null(message);
+    }
+
+    [Fact]
     public void Custom_style_with_full_property_set_passes()
     {
         var request = new ThemeEditRequest(

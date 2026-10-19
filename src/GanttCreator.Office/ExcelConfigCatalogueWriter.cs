@@ -633,6 +633,7 @@ public class ExcelConfigCatalogueWriter(
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
                     preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString(),
                 ]);
             }
             else
@@ -657,6 +658,7 @@ public class ExcelConfigCatalogueWriter(
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
                     preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString(),
                 ]);
             }
         }
@@ -768,6 +770,12 @@ public class ExcelConfigCatalogueWriter(
                 ? parsedCapability
                 : EntityColourCapability.StyleDefined;
         row[13] = storedCapability.ToString();
+
+        // The dash follows the same "not carried means preserve" rule as the
+        // pattern: an edit that changes one colour must not reset the style's
+        // stroke type to the built-in default.
+        row[14] = custom.StrokeDash?.ToString()
+            ?? ToTextOrDefault(row[14], GanttStrokeDash.Solid.ToString());
 
         return row;
     }
@@ -1221,6 +1229,7 @@ public class ExcelConfigCatalogueWriter(
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
                     preset.ColourCapability.ToString(),
+                    preset.StrokeDash.ToString(),
                 }),
         ];
         foreach (object?[] userRow in userRows)

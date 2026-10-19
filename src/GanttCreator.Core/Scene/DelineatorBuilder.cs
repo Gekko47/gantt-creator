@@ -594,7 +594,8 @@ public static class DelineatorBuilder
             style.FontSizePt,
             style.Bold,
             style.Alignment,
-            style.TextColour);
+            style.TextColour,
+            style.StrokeDash);
 
     /// <summary>Builds one corner's box, offsetting the stack away from the plot edge.</summary>
     private static RectD CornerBox(

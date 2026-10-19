@@ -50,7 +50,7 @@ public static class SceneSnapshot
     private static SceneDocument ToDocument(GanttScene scene) =>
         new()
         {
-            Version = 2,
+            Version = 3,
             ChartBounds = ToRect(scene.ChartBounds),
             PlotBounds = ToRect(scene.PlotBounds),
             Primitives = [.. scene.Primitives.Select(ToPrimitive)],
@@ -140,7 +140,7 @@ public static class SceneSnapshot
 
     private static GanttScene FromDocument(SceneDocument document)
     {
-        if (document.Version != 2)
+        if (document.Version != 3)
         {
             throw new InvalidDataException($"Unsupported scene snapshot version {document.Version}.");
         }
@@ -266,6 +266,7 @@ public static class SceneSnapshot
             Bold = style.Bold,
             Alignment = style.Alignment is { } alignment ? (int)alignment : null,
             TextColour = style.TextColour?.ToString(),
+            StrokeDash = (int)style.StrokeDash,
         };
 
     private static SceneStyle FromStyle(StyleDocument document)
@@ -273,6 +274,9 @@ public static class SceneSnapshot
         GanttHatchPattern hatchPattern = Enum.IsDefined(typeof(GanttHatchPattern), document.HatchPattern)
             ? (GanttHatchPattern)document.HatchPattern
             : throw new InvalidDataException($"Invalid hatch pattern {document.HatchPattern}.");
+        GanttStrokeDash strokeDash = Enum.IsDefined(typeof(GanttStrokeDash), document.StrokeDash)
+            ? (GanttStrokeDash)document.StrokeDash
+            : throw new InvalidDataException($"Invalid stroke dash {document.StrokeDash}.");
         GanttTextAlignment? alignment = document.Alignment is { } value
             ? Enum.IsDefined(typeof(GanttTextAlignment), value)
                 ? (GanttTextAlignment)value
@@ -288,7 +292,8 @@ public static class SceneSnapshot
             document.FontSizePt,
             document.Bold,
             alignment,
-            ParseColour(document.TextColour, "style.textColour")
+            ParseColour(document.TextColour, "style.textColour"),
+            strokeDash
         );
     }
 
@@ -398,6 +403,7 @@ public static class SceneSnapshot
         public bool? Bold { get; init; }
         public int? Alignment { get; init; }
         public string? TextColour { get; init; }
+        public int StrokeDash { get; init; }
     }
 
     private sealed class WarningDocument

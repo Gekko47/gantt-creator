@@ -32,6 +32,9 @@ namespace GanttCreator.Core;
 /// column, so the reader projects it; the built-in presets carry their own
 /// code-owned names.
 /// </param>
+/// <param name="StrokeDash">
+/// The resolved stroke dash pattern, or null when the style carries none.
+/// </param>
 public sealed record GanttStyleDefinition(
     string StyleKey,
     IReadOnlySet<GanttLabelPosition> AllowedLabelPositions,
@@ -46,7 +49,8 @@ public sealed record GanttStyleDefinition(
     double StandardOutlinePt = 0,
     double ActivityHeightPt = 0,
     double MilestoneSizePt = 0,
-    string? DisplayName = null)
+    string? DisplayName = null,
+    GanttStrokeDash? StrokeDash = null)
 {
     /// <summary>
     /// Gets whether the catalogue supplied resolved formatting for this style.

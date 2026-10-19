@@ -24,6 +24,51 @@ public enum GanttHatchPattern
 }
 
 /// <summary>
+/// The stroke (line) dash pattern of a style preset, materialised to
+/// <c>tblGanttStyles</c> as its exact name. The entity guide's section 16
+/// makes a solid line the default and lets an approved named style specify a
+/// dash pattern, and its section 22 lists "dash pattern" among the properties
+/// a named style may define.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The set is a deliberate subset of the host's
+/// <c>Microsoft.Office.Core.MsoLineDashStyle</c> (12 members, all verified
+/// present on the installed interop assembly). The subset is the six a line
+/// style picker in a mainstream product actually offers; the host's
+/// <c>SysDash</c> family renders against the operating system's UI theme
+/// rather than a fixed geometry, so a workbook that carried one would look
+/// different on another machine. The renderer maps each member to its host
+/// constant and throws on an unmapped value rather than substituting a
+/// different dash.
+/// </para>
+/// <para>
+/// The member names are the code-owned vocabulary; the workbook stores the
+/// name, never a number, so a renumbering cannot orphan a stored value.
+/// </para>
+/// </remarks>
+public enum GanttStrokeDash
+{
+    /// <summary>A continuous line.</summary>
+    Solid = 0,
+
+    /// <summary>Square dots.</summary>
+    SquareDot = 1,
+
+    /// <summary>Round dots.</summary>
+    RoundDot = 2,
+
+    /// <summary>Dashes.</summary>
+    Dash = 3,
+
+    /// <summary>Dashes with dots.</summary>
+    DashDot = 4,
+
+    /// <summary>Long dashes.</summary>
+    LongDash = 5,
+}
+
+/// <summary>
 /// One named geometry metric token from the entity guide's "Shared metric
 /// tokens" table (23 tokens). Immutable; the catalogue is code-owned and the
 /// only source (ADR-0007 D2). Value equality enables round-trip comparison.
@@ -301,6 +346,9 @@ public sealed record GanttStylePreset
     /// <summary>Gets the fill/stroke/hatch override capability of the style.</summary>
     public EntityColourCapability ColourCapability { get; }
 
+    /// <summary>Gets the stroke dash pattern of the style.</summary>
+    public GanttStrokeDash StrokeDash { get; }
+
     /// <summary>
     /// Initialises a style preset with validation.
     /// </summary>
@@ -318,6 +366,7 @@ public sealed record GanttStylePreset
     /// <param name="defaultLabelPosition">The label position used when the row override is blank.</param>
     /// <param name="allowedLabelPositions">The label positions permitted by the style.</param>
     /// <param name="colourCapability">The fill/stroke/hatch override capability.</param>
+    /// <param name="strokeDash">The stroke dash pattern.</param>
     /// <exception cref="ArgumentNullException">Thrown when a text or set argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the style key or display name is empty, a colour is
@@ -338,7 +387,8 @@ public sealed record GanttStylePreset
         double milestoneSizePt,
         GanttLabelPosition defaultLabelPosition,
         IReadOnlySet<GanttLabelPosition> allowedLabelPositions,
-        EntityColourCapability colourCapability)
+        EntityColourCapability colourCapability,
+        GanttStrokeDash strokeDash = GanttStrokeDash.Solid)
     {
         ArgumentNullException.ThrowIfNull(styleKey);
         ArgumentNullException.ThrowIfNull(displayName);
@@ -398,6 +448,11 @@ public sealed record GanttStylePreset
             throw new ArgumentOutOfRangeException(nameof(colourCapability));
         }
 
+        if (!Enum.IsDefined(strokeDash))
+        {
+            throw new ArgumentOutOfRangeException(nameof(strokeDash));
+        }
+
         StyleKey = styleKey;
         DisplayName = displayName;
         FillColour = fillColour;
@@ -412,6 +467,7 @@ public sealed record GanttStylePreset
         DefaultLabelPosition = defaultLabelPosition;
         AllowedLabelPositions = allowedLabelPositions.ToFrozenSet();
         ColourCapability = colourCapability;
+        StrokeDash = strokeDash;
     }
 
     private static void ValidateOptionalColour(string styleKey, string colour, string parameterName)

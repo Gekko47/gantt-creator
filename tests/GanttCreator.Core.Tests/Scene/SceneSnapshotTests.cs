@@ -147,7 +147,7 @@ public sealed class SceneSnapshotTests
     {
         var json = SceneSnapshot
             .Serialize(CreateScene())
-            .Replace("\"Version\":2", "\"Version\":2,\"Unknown\":true", StringComparison.Ordinal);
+            .Replace("\"Version\":3", "\"Version\":3,\"Unknown\":true", StringComparison.Ordinal);
 
         _ = Assert.Throws<JsonException>(() => SceneSnapshot.Deserialize(json));
     }
