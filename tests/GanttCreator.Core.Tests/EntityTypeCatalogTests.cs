@@ -91,12 +91,12 @@ public class EntityTypeCatalogTests
             (GanttEntityType.AsBuiltProcurement, "As-Built Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsBuiltProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.AsPlannedProcurement, "As-Planned Procurement", EntityKind.Span, EntityDateMode.StartFinish, "AsPlannedProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
             (GanttEntityType.BaselineProcurement, "Baseline Procurement", EntityKind.Span, EntityDateMode.StartFinish, "BaselineProcurement", EntityColourCapability.Hatch | EntityColourCapability.Stroke, false, s_spanLabels),
-            (GanttEntityType.CustomActivity, "Custom Activity", EntityKind.Span, EntityDateMode.StartFinish, string.Empty, EntityColourCapability.StyleDefined, true, Array.Empty<GanttLabelPosition>()),
+            (GanttEntityType.CustomActivity, "Custom Activity", EntityKind.Span, EntityDateMode.StartFinish, "CustomActivity", EntityColourCapability.StyleDefined, true, s_spanLabels),
             (GanttEntityType.AsBuiltMilestone, "As-Built Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "AsBuiltMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.AsPlannedMilestone, "As-Planned Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "AsPlannedMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.BaselineMilestone, "Baseline Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "BaselineMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.CriticalMilestone, "Critical Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CriticalMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
-            (GanttEntityType.CustomMilestone, "Custom Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, string.Empty, EntityColourCapability.StyleDefined, true, Array.Empty<GanttLabelPosition>()),
+            (GanttEntityType.CustomMilestone, "Custom Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CustomMilestone", EntityColourCapability.StyleDefined, true, s_milestoneLabels),
             (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, false, s_delineatorLabels),
         };
 
@@ -187,15 +187,25 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
-    public void Custom_types_have_no_catalogue_default_style_and_no_label_set()
+    public void Custom_types_have_a_catalogue_default_style_and_their_family_label_set()
     {
+        // R5.6a: a style-key type's catalogue label set is the family set, not
+        // a {None} placeholder. The row's own named style is the authority for
+        // the label positions it allows, but the catalogue set is what the
+        // type's code-owned default preset carries, so a healed row (one whose
+        // user-created style was deleted) can still render a label.
         foreach (var type in new[] { GanttEntityType.CustomActivity, GanttEntityType.CustomMilestone })
         {
             var custom = Assert.Single(EntityTypeCatalog.Entries, e => e.Type == type);
 
-            Assert.Equal(string.Empty, custom.DefaultStyleKey);
+            string expectedKey = type == GanttEntityType.CustomActivity ? "CustomActivity" : "CustomMilestone";
+            Assert.Equal(expectedKey, custom.DefaultStyleKey);
             Assert.True(custom.RequiresStyleKey);
-            Assert.Empty(custom.AllowedLabelPositions);
+            Assert.Equal(
+                type == GanttEntityType.CustomActivity
+                    ? new[] { GanttLabelPosition.None, GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right, GanttLabelPosition.Inside }
+                    : new[] { GanttLabelPosition.None, GanttLabelPosition.Auto, GanttLabelPosition.Left, GanttLabelPosition.Right },
+                custom.AllowedLabelPositions.OrderBy(p => p));
         }
     }
 

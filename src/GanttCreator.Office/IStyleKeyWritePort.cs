@@ -68,7 +68,7 @@ public sealed record StyleKeyWriteOutcome(
 public interface IStyleKeyWritePort
 {
     /// <summary>Writes the planned <c>StyleKey</c> values.</summary>
-    /// <param name="plan">The plan produced by <see cref="Core.StyleKeyWritePlanner.Plan"/>.</param>
+    /// <param name="plan">The plan produced by <see cref="Core.StyleKeyWritePlanner.Plan(IReadOnlyList{Core.GanttEvent})"/>.</param>
     /// <returns>How many cells were written, or the refusal reason.</returns>
     StyleKeyWriteOutcome Write(Core.StyleKeyWritePlan plan);
 }

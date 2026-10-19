@@ -63,7 +63,15 @@ public class GanttSchemaVersionTests
         // title text. A version-16 workbook's stored catalogue hash no longer
         // matches because the initialiser no longer writes title text. No
         // migration (ADR-0029 D6); Initialise is the remedy.
-        Assert.Equal(17, GanttSchemaVersion.CurrentSchemaVersion);
+        // Schema v18 is R5.6a: the two style-key types (Custom Activity,
+        // Custom Milestone) carry a code-owned default style key and a matching
+        // built-in preset, so a row whose user-created style was deleted
+        // resolves to a renderable style instead of refusing the scene. Their
+        // allowed label positions become the span and milestone sets, and the
+        // built-in presets' default label position becomes Auto. The catalogue
+        // hash moves with the type and style rows. No migration (ADR-0029 D6);
+        // Initialise is the remedy.
+        Assert.Equal(18, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

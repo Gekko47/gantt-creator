@@ -44,11 +44,17 @@ public sealed record StyleKeyWritePlan(IReadOnlyList<StyleKeyWrite> Writes)
 /// current <c>Type</c> always wins.
 /// </para>
 /// <para>
-/// <b>Why <c>Custom Activity</c> is skipped.</b> It has no code-owned default
-/// (<see cref="EntityTypeDefinition.DefaultStyleKey"/> is empty because the row
-/// <see cref="EntityTypeDefinition.RequiresStyleKey"/>), so there is nothing to
-/// sync to: the planner leaves its cell alone rather than inventing or clearing a
-/// value the user must choose explicitly.
+/// <b>Why a <c>Custom Activity</c> or <c>Custom Milestone</c> choice is not
+/// overwritten.</b> Both require an explicit style key
+/// (<see cref="EntityTypeDefinition.RequiresStyleKey"/> is true), so the planner
+/// never replaces a choice that still resolves: the user picked that style, and
+/// the cell is theirs. Two cases are not a choice. A blank cell resolves to the
+/// type's code-owned built-in default at render time and is left blank, so the
+/// ribbon's <c>None</c> item keeps meaning "use the built-in default". A cell
+/// naming a style that is no longer in the registry is a dangling reference left
+/// behind by deleting that style; the registry-aware overload heals it to the
+/// type's default, so the row renders instead of refusing and the sheet stops
+/// carrying a reference to something that no longer exists.
 /// </para>
 /// <para>
 /// <b>Undefined behaviour is an unknown, not a guess.</b> A validated event always
@@ -69,7 +75,27 @@ public static class StyleKeyWritePlanner
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when an event's <see cref="GanttEvent.Type"/> is not in the catalogue.
     /// </exception>
-    public static StyleKeyWritePlan Plan(IReadOnlyList<GanttEvent> events)
+    public static StyleKeyWritePlan Plan(IReadOnlyList<GanttEvent> events) =>
+        Plan(events, null);
+
+    /// <summary>
+    /// Plans the <c>StyleKey</c> write from validated rows against the workbook's
+    /// named-style registry, healing a row whose named style has been deleted.
+    /// </summary>
+    /// <param name="events">The validated events, in any order.</param>
+    /// <param name="styleRegistry">
+    /// The workbook's named styles, or <see langword="null"/> for the compatibility
+    /// path, which cannot tell a deleted style from an unchosen one and therefore
+    /// leaves every style-key type's cell alone.
+    /// </param>
+    /// <returns>The write plan, ordered by row number so the plan is deterministic.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="events"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when an event's <see cref="GanttEvent.Type"/> is not in the catalogue.
+    /// </exception>
+    public static StyleKeyWritePlan Plan(
+        IReadOnlyList<GanttEvent> events,
+        GanttStyleRegistry? styleRegistry)
     {
         ArgumentNullException.ThrowIfNull(events);
 
@@ -84,10 +110,29 @@ public static class StyleKeyWritePlanner
                     "The event's type is not in the catalogue.");
 
             string target = definition.DefaultStyleKey;
+
+            if (definition.RequiresStyleKey)
+            {
+                // Custom Activity / Custom Milestone: see the class remarks. A
+                // choice that still resolves is never overwritten; a dangling
+                // reference is healed to the type's default.
+                if (styleRegistry is null || target.Length == 0)
+                {
+                    continue;
+                }
+
+                string? chosen = @event.StyleKey;
+                if (string.IsNullOrEmpty(chosen) || styleRegistry.TryGet(chosen, out _))
+                {
+                    continue;
+                }
+
+                writes.Add(new StyleKeyWrite(@event.RowNumber, target));
+                continue;
+            }
+
             if (target.Length == 0)
             {
-                // Custom Activity: requires an explicit style key. No default exists
-                // to sync to, so the cell is left exactly as the user left it.
                 continue;
             }
 

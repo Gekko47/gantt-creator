@@ -302,7 +302,7 @@ public class GanttConfigCatalogueTests
             .Where(entry => entry.DefaultStyleKey.Length > 0)
             .Select(entry => entry.DefaultStyleKey)
             .ToArray();
-        Assert.Equal(15, expected.Length);
+        Assert.Equal(17, expected.Length);
         Assert.Equal(
             expected,
             GanttCatalogues.StylePresets.Select(preset => preset.StyleKey).ToArray());
@@ -856,10 +856,21 @@ public class GanttConfigCatalogueTests
     /// the hash moves with them. A version-15 workbook carries the older hash
     /// and is reported as a mismatch; the remedy is Initialise (ADR-0029 D6,
     /// no migration).
+    /// <para>
+    /// <b>Advanced to 18 by R5.6a</b>: the two style-key types
+    /// (<c>CustomActivity</c>, <c>CustomMilestone</c>) carry a code-owned
+    /// default style key and a matching built-in preset, so a row whose
+    /// user-created style was deleted resolves to a renderable style instead
+    /// of refusing the scene. Their allowed label positions become the span
+    /// and milestone sets, and the built-in presets' default label position
+    /// becomes <c>Auto</c>. The catalogue contents move through both the type
+    /// rows and the style rows; the hash moves with them. A version-17
+    /// workbook carries the older hash and is reported as a mismatch; the
+    /// remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "e97758968622c98509e54b3c980c6d62302845424abd6a9abe3c95fd76c2ede8";
+        "f0a5f71c588ddf059ebaa9f67fec6465204fb8dbf0f74d2c06fa83f97dbba147";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

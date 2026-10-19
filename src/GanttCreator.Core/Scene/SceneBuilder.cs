@@ -1407,9 +1407,26 @@ public static class SceneBuilder
         // The resolved height comes from the catalogue definition rather than the
         // style key alone: a capability-only definition has no formatting, and
         // using it would contribute a zero-height lane that silently hides content.
+        //
+        // When the registry carries no formatting definition for the resolved
+        // style key, the code-owned preset is the authority for that key's
+        // metrics. This is the case the resolver's own preset fallback produces
+        // (a style-key row whose user-created style was deleted), and reading
+        // the height from the registry alone would leave it at zero -- a
+        // degenerate bar that draws nothing and can be refused mid-refresh.
+        // The preset is the same token authority the workbook's own row was
+        // written from, so both sources agree.
         bool hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
             && definition is { HasFormatting: true };
-        double heightPt = hasDefinition ? definition!.ActivityHeightPt : 0;
+        GanttStylePreset? preset = null;
+        if (!hasDefinition)
+        {
+            _ = GanttCatalogues.TryGetPreset(style.StyleKey, out preset);
+        }
+
+        double heightPt = hasDefinition
+            ? definition!.ActivityHeightPt
+            : preset?.ActivityHeightPt ?? 0;
 
         // The hatch pattern and the standard outline width are resolved style
         // tokens, not renderer choices: the guide requires a renderer's output to
@@ -1421,8 +1438,10 @@ public static class SceneBuilder
                 style.StyleKey,
                 style.FillColour,
                 style.StrokeColour,
-                hasDefinition ? definition!.StandardOutlinePt : null,
-                hasDefinition ? definition!.HatchPattern ?? GanttHatchPattern.None : GanttHatchPattern.None,
+                hasDefinition ? definition!.StandardOutlinePt : preset?.StandardOutlinePt,
+                hasDefinition
+                    ? definition!.HatchPattern ?? GanttHatchPattern.None
+                    : preset?.HatchPattern ?? GanttHatchPattern.None,
                 textColour: style.TextColour),
             heightPt);
         return true;

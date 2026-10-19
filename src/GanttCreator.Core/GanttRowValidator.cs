@@ -541,6 +541,15 @@ public static class GanttRowValidator
         // StyleKey: a type whose catalogue row requires one (Custom Activity,
         // Custom Milestone) demands it; a supplied key must resolve when the
         // caller supplies the validated style registry.
+        //
+        // A style-key type whose key does not resolve is a WARNING, not a
+        // blocking error: the key names a user-created style the user may
+        // have deleted, and the engine heals such a row to the type's
+        // code-owned default on the next Refresh (StyleKeyWritePlanner).
+        // Blocking here would make the row unrenderable and leave the sheet
+        // carrying a reference to a style that no longer exists -- the
+        // dead end R5.6a removed. The blank case stays blocking: a blank key
+        // is an unconfigured row, not a dangling reference.
         string? styleKey = row.StyleKey;
         GanttStyleDefinition? styleDefinition = null;
         if (!styleBlocked && definition is { RequiresStyleKey: true } && styleKey is null)
@@ -559,8 +568,8 @@ public static class GanttRowValidator
                 Add(
                     "StyleKey",
                     GanttValidationCodes.StyleKeyUnknown,
-                    GanttValidationSeverity.Error,
-                    $"StyleKey '{styleKey}' is not in the configured style catalogue."
+                    GanttValidationSeverity.Warning,
+                    $"StyleKey '{styleKey}' is not in the configured style catalogue; the built-in default is used until the style is chosen again."
                 );
             }
         }

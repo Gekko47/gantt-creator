@@ -603,16 +603,33 @@ public sealed class SceneBuilderTests
 
 
     [Fact]
-    public void An_unresolvable_style_is_refused_rather_than_defaulted_silently()
+    public void Custom_activity_resolves_via_builtin_preset_when_style_is_blank()
     {
-        // Custom Activity has no Type default, so a blank style key has nothing to
-        // fall back to. The build must refuse instead of rendering an unstyled bar.
-        // Note that an *empty registry* is deliberately not the trigger: the
-        // resolver falls back to the built-in preset for Types that have one.
-        Assert.Equal(
-            SceneBuilderRefusal.UnresolvableStyle,
-            SceneBuilder.TryBuild(
-                Request(Event(1, GanttEntityType.CustomActivity, styleKey: null))).Refusal);
+        // Custom Activity now carries a code-owned DefaultStyleKey and matching
+        // built-in preset, so a blank style key resolves through the preset
+        // instead of refusing with UnresolvableStyle.
+        var result = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.CustomActivity, styleKey: null)));
+        Assert.Null(result.Refusal);
+    }
+
+    [Fact]
+    public void Custom_activity_with_a_deleted_style_renders_a_visible_bar()
+    {
+        // R5.6a: the user deleted the custom style this row was using. The
+        // scene must still produce a RENDERABLE shape -- the earlier preset
+        // carried null metrics, which resolved to a zero-height bar that drew
+        // nothing and could be refused mid-refresh. The height must come from
+        // the code-owned preset's ActivityHeightPt token.
+        var result = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.CustomActivity, styleKey: "DeletedCustomStyle")));
+
+        Assert.Null(result.Refusal);
+        SceneRect bar = Assert.Single(
+            result.Result!.Scene.Primitives.OfType<SceneRect>(),
+            candidate => candidate.Style?.StyleKey == "CustomActivity");
+        Assert.True(bar.Bounds.Height > 0, "The healed bar must have a real height.");
+        Assert.NotNull(bar.Style!.FillColour);
     }
 
     [Fact]

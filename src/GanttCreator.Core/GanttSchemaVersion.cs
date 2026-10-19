@@ -157,6 +157,19 @@ public static class GanttSchemaVersion
     /// There is no migration: a workbook written against version 6 reports a version
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
+    /// <para>
+    /// <b>Version 18 is R5.6a's custom-style fallback.</b> The two style-key
+    /// types carry a code-owned default style key (<c>CustomActivity</c> and
+    /// <c>CustomMilestone</c>) and a matching built-in preset, so a row whose
+    /// user-created style was deleted resolves to a renderable style instead
+    /// of refusing the whole scene. Their allowed label positions become the
+    /// span and milestone sets, and the built-in presets' default label
+    /// position becomes <c>Auto</c>, so a healed row renders a label rather
+    /// than a bare bar. The catalogue contents move through the type rows and
+    /// the style rows; the hash moves with them. A version-17 workbook carries
+    /// the older hash and is reported as a mismatch; the remedy is Initialise
+    /// (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 17;
+    public const int CurrentSchemaVersion = 18;
 }

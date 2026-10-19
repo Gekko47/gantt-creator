@@ -274,7 +274,13 @@ public sealed class GanttRefreshOrchestrator(
 
         // Step 6. Validate every row. A blocking error means the refresh is not
         // attempted at all; the previous chart stays exactly as it was.
-        GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows);
+        //
+        // The style registry is passed so a Custom Activity / Custom Milestone
+        // row whose user-created style has been deleted is reported by name
+        // (a warning) rather than passing through unexamined. The registry
+        // comes from the same read at step 2, so no second sheet read is
+        // introduced.
+        GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows, config.Styles);
 
         // Step 6b. Bring the cell notes into line with what was just found, BEFORE
         // deciding whether to render.
@@ -337,7 +343,14 @@ public sealed class GanttRefreshOrchestrator(
         // cell already carries its type's default is absent from the plan, so a
         // correctly written sheet is not touched; a stale cell (for example K4
         // stamped As-Planned while the row is now As-Built) is overwritten.
-        StyleKeyWritePlan stylePlan = StyleKeyWritePlanner.Plan(events);
+        //
+        // The style registry is passed so a style-key row whose user-created
+        // style was deleted is HEALED: its cell is rewritten to the type's
+        // code-owned default key, which always resolves. Without the registry
+        // the planner cannot tell a deleted style from a deliberate choice, so
+        // the dangling reference would survive every Refresh and the row
+        // would keep rendering from a style that no longer exists.
+        StyleKeyWritePlan stylePlan = StyleKeyWritePlanner.Plan(events, config.Styles);
         int styleCellsWritten = 0;
         if (_styleKeyWriter is { } styleWriter)
         {
@@ -517,19 +530,31 @@ public sealed class GanttRefreshOrchestrator(
         // distinctly rather than as a plain refusal, because "the existing chart is
         // unchanged" would be false. REV5 defers transactional Refresh to R4.10, so
         // the tear is surfaced, not undone.
+        //
+        // The failing primitive and the host's own reason are named, because
+        // "Excel refused a change" on its own tells the user nothing they can
+        // act on: a ZOrderRefused means every shape was written and only the
+        // stacking is wrong, while an OperationRefused names the one shape the
+        // host rejected.
+        string detail = reconcile.Failure is { } failure
+            ? $" The refused element was '{failure.PrimitiveId}' ({failure.Refusal})."
+            : string.Empty;
+
         return reconcile.CompletedCount > 0
             ? GanttRefreshOutcome.Refused(
                 GanttRefreshRefusal.PartialReconciliation,
                 "The chart was partly updated before Excel refused a change ("
                     + reconcile.CompletedCount
-                    + " element(s) written), so it may show a mixture of the old and new layout. Refresh again to finish.",
+                    + " element(s) written), so it may show a mixture of the old and new layout. Refresh again to finish."
+                    + detail,
                 validation.Issues,
                 duration.CellsWritten,
                 reconcile.CompletedCount,
                 styleCellsWritten)
             : GanttRefreshOutcome.Refused(
                 GanttRefreshRefusal.ReconciliationRefused,
-                "Excel refused the first chart change, so the existing chart is unchanged.",
+                "Excel refused the first chart change, so the existing chart is unchanged."
+                    + detail,
                 validation.Issues,
                 duration.CellsWritten);
     }

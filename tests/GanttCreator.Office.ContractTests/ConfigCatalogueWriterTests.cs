@@ -413,13 +413,13 @@ public class ConfigCatalogueWriterTests
         fake.Tables[1].Body.Add(userStyle);
 
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
-        Assert.Equal(16, fake.Tables[1].Body.Count);
+        Assert.Equal(18, fake.Tables[1].Body.Count);
 
         var outcome = ConfigGraph.BuildWriter(fake).Write();
 
         Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
         Assert.Equal(5, fake.Tables.Count);
-        Assert.Equal(16, fake.Tables[1].Body.Count);
+        Assert.Equal(18, fake.Tables[1].Body.Count);
         Assert.Equal(userStyle, fake.Tables[1].Body[^1]);
         Assert.True(ConfigGraph.BuildReader(fake).Read().Succeeded);
     }

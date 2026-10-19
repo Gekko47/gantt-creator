@@ -374,12 +374,28 @@ public static class GanttCatalogues
         ["DefaultDelineator"] = () => Preset(
             "DefaultDelineator", "Delineator", null, "DelineatorStroke",
             GanttHatchPattern.None, "DefaultText", "DelineatorLinePt", null, null),
+        // The two custom types carry a code-owned default preset so a row whose
+        // named style is absent - no custom style chosen, or the one it named was
+        // deleted - still resolves to a renderable style. The tokens are the
+        // As-Planned ones, so the fallback looks like the As-Planned family until
+        // the user assigns a custom style. An earlier revision passed null for
+        // every colour and metric token, which resolved to an empty fill, an
+        // empty stroke, and zero height and size: a degenerate style that drew
+        // nothing and produced a shape the host could refuse mid-refresh.
+        ["CustomActivity"] = () => Preset(
+            "CustomActivity", "Custom Activity", "PlannedFill", "PlannedOutline",
+            GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", "ActivityHeightPt", null),
+        ["CustomMilestone"] = () => Preset(
+            "CustomMilestone", "Custom Milestone", "PlannedFill", "PlannedOutline",
+            GanttHatchPattern.None, "DefaultText", "StandardOutlinePt", null, "MilestoneSizePt"),
     };
 
     /// <summary>
     /// The built-in style presets, in <see cref="EntityTypeCatalog.Entries"/>
     /// order: one row per entry whose <c>DefaultStyleKey</c> is non-empty
-    /// (15 of 16; <c>Custom Activity</c> requires a user <c>StyleKey</c>).
+    /// (17 of 17; <c>Custom Activity</c> and <c>Custom Milestone</c> carry a
+    /// code-owned default preset so the scene always resolves a style even when
+    /// the user has not chosen a named style, or the one they named was deleted).
     /// Each preset resolves its colours and metrics from the token defaults
     /// above (ADR-0007 D7).
     /// </summary>
@@ -434,6 +450,25 @@ public static class GanttCatalogues
                 nameof(styleKey),
                 styleKey,
                 "Style key is not a built-in preset key.");
+
+    /// <summary>
+    /// Tries to find a built-in style preset by key without throwing.
+    /// </summary>
+    /// <param name="styleKey">The style key to look up.</param>
+    /// <param name="preset">The matching preset, or null when not found.</param>
+    /// <returns>True when a preset exists for the key.</returns>
+    public static bool TryGetPreset(string styleKey, out GanttStylePreset? preset)
+    {
+        if (_resolvers.TryGetValue(styleKey, out Func<GanttStylePreset>? resolve)
+            && resolve is not null)
+        {
+            preset = resolve();
+            return true;
+        }
+
+        preset = null;
+        return false;
+    }
 
     /// <summary>
     /// Resolves one preset from token names; a null token name means the

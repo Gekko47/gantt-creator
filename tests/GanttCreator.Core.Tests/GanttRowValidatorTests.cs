@@ -1161,14 +1161,23 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Custom_activity_with_registry_rejects_unknown_style_key()
+    public void Custom_activity_with_registry_warns_about_unknown_style_key()
     {
+        // R5.6a: a dangling style key is a WARNING, not a blocking error. The
+        // key names a user-created style the user may have deleted, and the
+        // engine heals the row to the type's code-owned default on the next
+        // Refresh. Blocking would make the row unrenderable and leave the
+        // sheet referencing a style that no longer exists.
         GanttRowDto row = ValidSpan(typeText: "Custom Activity", styleKey: "MissingStyle");
 
         GanttValidationOutcome outcome = GanttRowValidator.Validate([row], GanttStyleRegistry.Empty);
 
-        Assert.False(outcome.IsValid);
-        Assert.Contains(outcome.Issues, i => i.Field == "StyleKey" && i.Code == GanttValidationCodes.StyleKeyUnknown);
+        Assert.True(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            i => i.Field == "StyleKey"
+                && i.Code == GanttValidationCodes.StyleKeyUnknown
+                && i.Severity == GanttValidationSeverity.Warning);
     }
 
     [Fact]

@@ -109,12 +109,12 @@ public static class GanttStyleResolver
     /// </summary>
     /// <remarks>
     /// The registry is the single source of truth for named styles. Resolution is
-    /// two-path: an exact hit on <paramref name="styleKey"/>; otherwise a hit on
-    /// the Type's <c>DefaultStyleKey</c> (a blank key resolves there with
+    /// three-path: an exact hit on <paramref name="styleKey"/>; otherwise a hit on
+    /// the Type's <c>DefaultStyleKey</c>; otherwise a code-owned built-in preset
+    /// for that Type's <c>DefaultStyleKey</c> (a blank key resolves there with
     /// <see cref="GanttResolvedStyle.UsedFallback"/> false; an unknown key
-    /// resolves there with it true). A key and Type default both absent from the
-    /// registry are refused rather than satisfied from the code-owned built-in
-    /// presets, so a themed workbook colour cannot be silently bypassed.
+    /// resolves there with it true). When every path misses, the resolution is
+    /// refused.
     /// </remarks>
     /// <param name="type">The validated entity Type.</param>
     /// <param name="registry">The catalogue style registry.</param>
@@ -225,10 +225,34 @@ public static class GanttStyleResolver
             return true;
         }
 
-        // No code-owned preset fallback: the registry is the single source of
-        // truth for named styles. A key absent from the registry (and a Type
-        // default absent from it) is refused, not silently satisfied from the
-        // built-in catalogue.
+        // Built-in preset fallback for the two style-key types (Custom Activity,
+        // Custom Milestone) when their named style was removed from the
+        // workbook registry -- the user deleted the custom style the row was
+        // using. The explicit row styleKey is not tried here: a
+        // user-supplied-but-deleted style falls back to the type default, not
+        // to an unrelated preset.
+        //
+        // This path is scoped to RequiresStyleKey types on purpose. Every other
+        // type's style is a workbook-owned row whose absence means the
+        // configuration sheet is damaged, and refusing that is the R2.7c rule:
+        // a built-in type must never silently render as a code-owned preset
+        // while the sheet is broken. The two style-key types are different --
+        // their style is user-supplied by design, so its absence is an
+        // expected state with a defined answer rather than a damaged sheet.
+        if (definition.RequiresStyleKey
+            && !string.IsNullOrEmpty(definition.DefaultStyleKey)
+            && GanttCatalogues.TryGetPreset(definition.DefaultStyleKey, out GanttStylePreset? preset)
+            && preset is not null)
+        {
+            selected = new StyleBase(
+                preset.StyleKey,
+                preset.FillColour ?? string.Empty,
+                preset.StrokeColour ?? string.Empty,
+                preset.TextColour ?? string.Empty,
+                preset.DefaultLabelPosition);
+            return true;
+        }
+
         selected = default;
         return false;
     }

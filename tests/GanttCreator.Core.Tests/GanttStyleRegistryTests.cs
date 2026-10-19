@@ -80,37 +80,45 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
-    public void Resolver_refuses_a_supplied_style_key_that_cannot_resolve()
+    public void Resolver_resolves_custom_activity_via_builtin_preset_when_style_missing()
     {
-        // A supplied-but-unresolvable key is "unavailable", not "no default": the
-        // row asked for a style and none could be produced.
-        Assert.False(GanttStyleResolver.TryResolve(
+        // A Custom Activity row whose user-chosen custom style was deleted from
+        // the registry resolves through the code-owned CustomActivity preset
+        // instead of refusing with StyleUnavailable.
+        Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.CustomActivity,
-            "MissingCustomStyle",
+            GanttStyleRegistry.Empty,
+            "DeletedCustomStyle",
             null,
             null,
             null,
-            out _,
+            out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
-        Assert.Equal(GanttStyleResolutionRefusal.StyleUnavailable, refusal);
+        Assert.Null(refusal);
+        Assert.Equal("CustomActivity", resolved!.StyleKey);
+        Assert.True(resolved.UsedFallback);
     }
 
     [Fact]
-    public void Resolver_refuses_a_blank_style_key_on_a_type_without_a_default()
+    public void Resolver_resolves_custom_activity_via_builtin_preset_when_style_blank()
     {
-        // Custom Activity has no Type default, so a row that supplies no key has
-        // nothing to fall back to.
-        Assert.False(GanttStyleResolver.TryResolve(
+        // A Custom Activity row that never chose a style key resolves through
+        // the code-owned CustomActivity preset instead of refusing with
+        // NoDefaultStyle.
+        Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.CustomActivity,
+            GanttStyleRegistry.Empty,
             null,
             null,
             null,
             null,
-            out _,
+            out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
-        Assert.Equal(GanttStyleResolutionRefusal.NoDefaultStyle, refusal);
+        Assert.Null(refusal);
+        Assert.Equal("CustomActivity", resolved!.StyleKey);
+        Assert.False(resolved.UsedFallback);
     }
 
     [Fact]
@@ -144,33 +152,6 @@ public class GanttStyleRegistryTests
         Assert.Equal("#00B0F0", resolved.FillColour!.ToString());
         Assert.Equal("#0070C0", resolved.StrokeColour!.ToString());
         Assert.False(resolved.UsedFallback);
-    }
-
-    [Fact]
-    public void Resolver_refuses_blank_style_key_when_type_default_missing_from_registry()
-    {
-        // A blank style key with no matching DefaultStyleKey entry in the registry
-        // is refused rather than satisfied from a code-owned preset.
-        var registry = new GanttStyleRegistry([
-            new GanttStyleDefinition(
-                "SomeOtherStyle",
-                new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
-                EntityColourCapability.Fill,
-                GanttLabelPosition.Inside,
-                FillColour: "#112233",
-                HatchPattern: GanttHatchPattern.None)]);
-
-        Assert.False(GanttStyleResolver.TryResolve(
-            GanttEntityType.AsBuiltActivity,
-            registry,
-            null,
-            null,
-            null,
-            null,
-            out _,
-            out GanttStyleResolutionRefusal? refusal));
-
-        Assert.Equal(GanttStyleResolutionRefusal.NoDefaultStyle, refusal);
     }
 
     [Fact]
@@ -545,9 +526,13 @@ public sealed class GanttStyleFormattingTests
     [Fact]
     public void Resolver_refuses_unknown_style_key_even_when_type_has_preset()
     {
-        // The registry is the single source of truth: an unknown key is refused
-        // even though the type has a code-owned built-in preset. The preset is
-        // no longer consulted by TrySelect.
+        // The registry is the single source of truth for a BUILT-IN type: an
+        // unknown key is refused even though the type has a code-owned built-in
+        // preset. The code-owned preset fallback is scoped to the two
+        // style-key types (Custom Activity, Custom Milestone), whose style is
+        // user-supplied by design; for every other type a missing style means
+        // the configuration sheet is damaged, and silently rendering as a
+        // preset would hide that (R2.7c).
         var registry = new GanttStyleRegistry([Formatted()]);
 
         Assert.False(GanttStyleResolver.TryResolve(
@@ -647,6 +632,89 @@ public sealed class GanttStyleFormattingTests
 
         Assert.Equal("AsPlannedActivity", resolved!.StyleKey);
         Assert.Equal(GanttLabelPosition.BottomRight, resolved.LabelPosition);
+        Assert.False(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_falls_back_to_builtin_custom_activity_preset_when_custom_style_is_deleted()
+    {
+        // Simulates a workbook whose tblGanttStyles no longer contains the
+        // custom style that a Custom Activity row referenced. The row's explicit
+        // key is gone, so resolution falls back to the code-owned CustomActivity
+        // preset rather than refusing with StyleUnavailable.
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomActivity,
+            GanttStyleRegistry.Empty,
+            "DeletedCustomStyle",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("CustomActivity", resolved!.StyleKey);
+        Assert.True(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_falls_back_to_builtin_custom_milestone_preset_when_custom_style_is_deleted()
+    {
+        // Mirrors the Custom Activity case for Custom Milestone: a row whose
+        // user-chosen custom style was deleted from the registry still renders
+        // through the code-owned CustomMilestone preset.
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomMilestone,
+            GanttStyleRegistry.Empty,
+            "DeletedCustomStyle",
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("CustomMilestone", resolved!.StyleKey);
+        Assert.True(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_falls_back_to_builtin_custom_activity_preset_when_style_blank()
+    {
+        // A Custom Activity row that never chose a style key still resolves
+        // through the built-in CustomActivity preset instead of refusing
+        // with NoDefaultStyle.
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomActivity,
+            GanttStyleRegistry.Empty,
+            null,
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("CustomActivity", resolved!.StyleKey);
+        Assert.False(resolved.UsedFallback);
+    }
+
+    [Fact]
+    public void Resolver_falls_back_to_builtin_custom_milestone_preset_when_style_blank()
+    {
+        // Mirrors the Custom Activity blank-key case for Custom Milestone.
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.CustomMilestone,
+            GanttStyleRegistry.Empty,
+            null,
+            null,
+            null,
+            null,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("CustomMilestone", resolved!.StyleKey);
         Assert.False(resolved.UsedFallback);
     }
 }

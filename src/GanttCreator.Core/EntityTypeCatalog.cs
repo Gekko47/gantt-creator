@@ -66,8 +66,6 @@ public static class EntityTypeCatalog
             GanttLabelPosition.None,
         ]);
 
-    private static readonly IReadOnlySet<GanttLabelPosition> _noLabelPositions = new HashSet<GanttLabelPosition>();
-
     /// <summary>Returns a single-element position set for types that permit exactly one position.</summary>
     private static HashSet<GanttLabelPosition> OnlyLabelPositions(GanttLabelPosition position) =>
         new([position]);
@@ -174,10 +172,10 @@ public static class EntityTypeCatalog
             "Custom Activity",
             EntityKind.Span,
             EntityDateMode.StartFinish,
-            string.Empty,
+            "CustomActivity",
             EntityColourCapability.StyleDefined,
             requiresStyleKey: true,
-            _noLabelPositions),
+            _spanLabelPositions),
         new(
             GanttEntityType.AsBuiltMilestone,
             "As-Built Milestone",
@@ -219,10 +217,10 @@ public static class EntityTypeCatalog
             "Custom Milestone",
             EntityKind.Milestone,
             EntityDateMode.StartOnly,
-            string.Empty,
+            "CustomMilestone",
             EntityColourCapability.StyleDefined,
             requiresStyleKey: true,
-            _noLabelPositions),
+            _milestoneLabelPositions),
         new(
             GanttEntityType.Delineator,
             "Delineator",

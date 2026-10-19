@@ -117,4 +117,98 @@ public sealed class StyleKeyWritePlannerTests
     {
         Assert.Throws<ArgumentNullException>(() => StyleKeyWritePlanner.Plan(null!));
     }
+
+    [Theory]
+    [InlineData(GanttEntityType.CustomActivity, "CustomActivity")]
+    [InlineData(GanttEntityType.CustomMilestone, "CustomMilestone")]
+    public void A_deleted_custom_style_is_healed_to_the_type_default(
+        GanttEntityType type,
+        string expectedKey)
+    {
+        // R5.6a: the user deleted the custom style this row was using, so the
+        // cell names a key that is no longer in the registry. The registry-aware
+        // planner rewrites the cell to the type's code-owned default, which
+        // always resolves, so the row renders instead of carrying a reference
+        // to something that no longer exists.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "SomeOtherStyle",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill,
+                GanttLabelPosition.Auto,
+                FillColour: "#112233",
+                HatchPattern: GanttHatchPattern.None),
+        ]);
+
+        StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
+            [Event(4, type, "DeletedCustomStyle")],
+            registry);
+
+        StyleKeyWrite write = Assert.Single(plan.Writes);
+        Assert.Equal(4, write.RowNumber);
+        Assert.Equal(expectedKey, write.NewStyleKey);
+    }
+
+    [Fact]
+    public void A_custom_row_whose_style_still_resolves_is_left_alone()
+    {
+        // The heal must never overwrite a live user choice: a style that is
+        // still in the registry is the user's, and the planner leaves it.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "Fancy",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill,
+                GanttLabelPosition.Auto,
+                FillColour: "#112233",
+                HatchPattern: GanttHatchPattern.None),
+        ]);
+
+        StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
+            [Event(4, GanttEntityType.CustomActivity, "Fancy")],
+            registry);
+
+        Assert.Empty(plan.Writes);
+        Assert.Equal(0, plan.WriteCount);
+    }
+
+    [Fact]
+    public void A_blank_custom_style_key_is_left_blank_without_a_registry()
+    {
+        // The compatibility path (no registry) cannot tell a deleted style from
+        // an unchosen one, so it leaves every style-key row's cell alone. The
+        // blank cell resolves to the type's code-owned default at render time,
+        // so the ribbon's None item keeps meaning "use the built-in default".
+        StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
+            [Event(2, GanttEntityType.CustomActivity, null)]);
+
+        Assert.Empty(plan.Writes);
+        Assert.Equal(0, plan.WriteCount);
+    }
+
+    [Fact]
+    public void A_blank_custom_style_key_is_left_blank_even_with_a_registry()
+    {
+        // A blank cell is an unchosen style, not a dangling reference: the
+        // heal only fires for a key that no longer resolves.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "Fancy",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+                EntityColourCapability.Fill,
+                GanttLabelPosition.Auto,
+                FillColour: "#112233",
+                HatchPattern: GanttHatchPattern.None),
+        ]);
+
+        StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
+            [Event(2, GanttEntityType.CustomActivity, null)],
+            registry);
+
+        Assert.Empty(plan.Writes);
+        Assert.Equal(0, plan.WriteCount);
+    }
 }
