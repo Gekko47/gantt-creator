@@ -62,7 +62,12 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 name => string.Equals(name.Name, GanttWorkbookContract.TypeOptionsDefinedName, StringComparison.OrdinalIgnoreCase));
             Excel.Name typeOptions = workbook.Names.Item(GanttWorkbookContract.TypeOptionsDefinedName);
             Assert.Contains(GanttWorkbookContract.ConfigSheetName, typeOptions.RefersTo, StringComparison.Ordinal);
-            Assert.Contains("$B$2:$B$17", typeOptions.RefersTo, StringComparison.Ordinal);
+            // The range is derived from the catalogue rather than hard-coded:
+            // the type count moves with the catalogue (R5.6a added
+            // CustomMilestone), and a pinned range would fail on the next
+            // legitimate type addition instead of on a real defect.
+            string expectedTypeRange = $"$B$2:$B${GanttCatalogues.TypeRows.Count + 1}";
+            Assert.Contains(expectedTypeRange, typeOptions.RefersTo, StringComparison.Ordinal);
             Excel.ListColumn typeColumn = table.ListColumns["Type"];
             Assert.NotNull(typeColumn.DataBodyRange);
             Excel.Validation validation = typeColumn.DataBodyRange.Validation;
