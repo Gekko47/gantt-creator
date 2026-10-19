@@ -335,14 +335,14 @@ internal sealed partial class ThemeSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 480);
+        ClientSize = new Size(720, 560);
+        MinimumSize = new Size(720, 560);
         AutoScaleMode = AutoScaleMode.Dpi;
 
         Controls.Add(_tabControl);
 
         CreateColoursTab();
-        CreateHeightsTab();
-        CreateGridTab();
+        CreateChartTab();
         CreateCustomStylesTab();
 
         // Bottom buttons + warning label
@@ -378,7 +378,7 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void CreateColoursTab()
     {
-        TabPage tab = new TabPage("Colours")
+        TabPage tab = new TabPage("Entity styles")
         {
             Padding = new Padding(8),
         };
@@ -387,7 +387,12 @@ internal sealed partial class ThemeSettingsForm : Form
         Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
+        // The built-in styles are grouped by the entity family they belong to,
+        // so the list reads the way the chart does: the activities together,
+        // then the milestones, then the chart elements. Each group is one
+        // style object and shows that object's own properties.
         int y = 8;
+        string? currentFamily = null;
         foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
             if (!preset.ColourCapability.HasFlag(EntityColourCapability.Fill) &&
@@ -397,11 +402,27 @@ internal sealed partial class ThemeSettingsForm : Form
                 continue;
             }
 
+            string family = FamilyFor(preset.StyleKey);
+            if (!string.Equals(family, currentFamily, StringComparison.Ordinal))
+            {
+                currentFamily = family;
+                Label familyLabel = new()
+                {
+                    Text = family,
+                    Location = new Point(12, y),
+                    Size = new Size(300, 20),
+                    Font = new Font(Font.FontFamily, 9.75f, FontStyle.Bold),
+                    ForeColor = SystemColors.GrayText,
+                };
+                panel.Controls.Add(familyLabel);
+                y += 24;
+            }
+
             GroupBox group = new GroupBox
             {
                 Text = preset.DisplayName,
                 Location = new Point(8, y),
-                Size = new Size(500, 100),
+                Size = new Size(660, 100),
                 AutoSize = true,
             };
             panel.Controls.Add(group);
@@ -418,20 +439,53 @@ internal sealed partial class ThemeSettingsForm : Form
             if (preset.ColourCapability.HasFlag(EntityColourCapability.Stroke) ||
                 preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
             {
-                AddColourRow(group, $"stroke_{preset.StyleKey}", "Stroke", preset.StrokeColour, innerY);
+                AddColourRow(group, $"stroke_{preset.StyleKey}", "Outline", preset.StrokeColour, innerY);
                 innerY += 28;
             }
 
             if (preset.TextColour.Length > 0 ||
                 preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
             {
-                AddColourRow(group, $"text_{preset.StyleKey}", "Text", preset.TextColour, innerY);
+                AddColourRow(group, $"text_{preset.StyleKey}", "Label", preset.TextColour, innerY);
                 innerY += 28;
             }
+
+            // The pattern and the line style are code-owned for a built-in
+            // style, so they are shown but not offered: the reader exact-matches
+            // both against the preset, so an editable control would offer a
+            // change the workbook could not keep.
+            Label codeOwned = new()
+            {
+                Text = $"Pattern: {DescribeHatchPattern(preset.HatchPattern)}    Line style: {DescribeStrokeDash(preset.StrokeDash)}",
+                Location = new Point(12, innerY + 2),
+                Size = new Size(620, 20),
+                ForeColor = SystemColors.GrayText,
+            };
+            group.Controls.Add(codeOwned);
 
             y += group.Height + 8;
         }
     }
+
+    /// <summary>
+    /// Returns the entity family a built-in style key belongs to. The families
+    /// follow the type catalogue's own grouping, so the list reads the way the
+    /// chart does.
+    /// </summary>
+    /// <param name="styleKey">The built-in style key.</param>
+    /// <returns>The family name.</returns>
+    private static string FamilyFor(string styleKey) => styleKey switch
+    {
+        "AsBuiltActivity" or "AsPlannedActivity" or "BaselineActivity" or "DelayEvent" or "CriticalInterval"
+            => "Activities",
+        "AsBuiltMilestone" or "AsPlannedMilestone" or "BaselineMilestone" or "CriticalMilestone"
+            => "Milestones",
+        "AsBuiltProcurement" or "AsPlannedProcurement" or "BaselineProcurement"
+            => "Procurement",
+        "DefaultDelineator" or "Splitter" or "Spacer"
+            => "Chart elements",
+        _ => "Custom types",
+    };
 
     [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
         Justification = "Dialog UI strings are not localized in this release.")]
@@ -540,9 +594,16 @@ internal sealed partial class ThemeSettingsForm : Form
             : SystemColors.Control;
     }
 
-    private void CreateHeightsTab()
+    /// <summary>
+    /// Creates the chart-wide tab. The options are grouped by the chart object
+    /// they belong to, not by the metric token's name, so the user can see
+    /// which knob changes which part of the chart.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private void CreateChartTab()
     {
-        TabPage tab = new TabPage("Heights & sizes")
+        TabPage tab = new TabPage("Chart")
         {
             Padding = new Padding(8),
         };
@@ -552,110 +613,73 @@ internal sealed partial class ThemeSettingsForm : Form
         tab.Controls.Add(panel);
 
         int y = 8;
-        string[] metricKeys =
-        [
-            "ActivityHeightPt",
-            "MilestoneSizePt",
-            "StandardOutlinePt",
-            "GanttRowHeightPt",
-            "SplitterHeightPt",
-            "SpacerHeightPt",
-        ];
+        y = AddMetricGroup(panel, "Rows and lanes", y, "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt");
+        y = AddMetricGroup(panel, "Entity defaults", y, "ActivityHeightPt", "MilestoneSizePt", "StandardOutlinePt", "DelineatorLinePt");
+        y = AddMetricGroup(panel, "Grid", y, "GridLinePt", "MajorBoundaryPt");
+        _ = AddMetricGroup(panel, "Hatch spacing", y, "HatchPitchPt", "HatchLinePt");
 
-        foreach (string key in metricKeys)
+        Label note = new()
         {
-            GanttMetricToken? token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
-            if (token == null)
-            {
-                continue;
-            }
-
-            GroupBox group = new GroupBox
-            {
-                Text = key,
-                Location = new Point(8, y),
-                Size = new Size(500, 60),
-                AutoSize = true,
-            };
-            panel.Controls.Add(group);
-
-            Label lbl = new Label
-            {
-                Text = $"Range: {token.Minimum} – {token.Maximum} pt",
-                Location = new Point(12, 24),
-                AutoSize = true,
-            };
-            group.Controls.Add(lbl);
-
-            NumericUpDown nud = new NumericUpDown
-            {
-                Name = key,
-                Location = new Point(12, 46),
-                Size = new Size(80, 22),
-                Minimum = (decimal)token.Minimum,
-                Maximum = (decimal)token.Maximum,
-                DecimalPlaces = 2,
-                Increment = 0.25m,
-            };
-            group.Controls.Add(nud);
-            _metricNumericUpDowns[key] = nud;
-            _metricLabels[key] = lbl;
-
-            y += group.Height + 8;
-        }
-    }
-
-    private void CreateGridTab()
-    {
-        TabPage tab = new TabPage("Grid & bands")
-        {
-            Padding = new Padding(8),
+            Text = "Hatch spacing and line width are fixed by the Excel pattern: "
+                + "the host offers no member that controls either, so these two are shown for reference only.",
+            Location = new Point(12, y + 4),
+            Size = new Size(520, 34),
+            ForeColor = SystemColors.GrayText,
         };
-        _tabControl.TabPages.Add(tab);
+        panel.Controls.Add(note);
+    }
 
-        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        tab.Controls.Add(panel);
-
-        int y = 8;
-        string[] metricKeys =
-        [
-            "GridLinePt",
-            "MajorBoundaryPt",
-            "DelineatorLinePt",
-            "HatchPitchPt",
-            "HatchLinePt",
-        ];
-
+    /// <summary>
+    /// Adds a titled group of metric controls to the chart tab.
+    /// </summary>
+    /// <param name="panel">The tab's panel.</param>
+    /// <param name="title">The group title.</param>
+    /// <param name="top">The group's top offset.</param>
+    /// <param name="metricKeys">The metric tokens in the group, in display order.</param>
+    /// <returns>The next free top offset.</returns>
+    private int AddMetricGroup(Panel panel, string title, int top, params string[] metricKeys)
+    {
+        List<(string Key, GanttMetricToken Token)> tokens = [];
         foreach (string key in metricKeys)
         {
-            GanttMetricToken? token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
-            if (token == null)
+            GanttMetricToken? token = GanttCatalogues.Metrics.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, key, StringComparison.Ordinal));
+            if (token is not null)
             {
-                continue;
+                tokens.Add((key, token));
             }
+        }
 
-            GroupBox group = new GroupBox
-            {
-                Text = key,
-                Location = new Point(8, y),
-                Size = new Size(500, 60),
-                AutoSize = true,
-            };
-            panel.Controls.Add(group);
+        if (tokens.Count == 0)
+        {
+            return top;
+        }
 
-            Label lbl = new Label
+        GroupBox group = new GroupBox
+        {
+            Text = title,
+            Location = new Point(8, top),
+            Size = new Size(660, (tokens.Count * 26) + 20),
+        };
+        panel.Controls.Add(group);
+
+        int innerY = 24;
+        foreach ((string key, GanttMetricToken token) in tokens)
+        {
+            Label lbl = new()
             {
-                Text = $"Range: {token.Minimum} – {token.Maximum} pt",
-                Location = new Point(12, 24),
-                AutoSize = true,
+                Text = $"{DescribeMetric(key)} ({token.Minimum} to {token.Maximum} pt)",
+                Location = new Point(12, innerY),
+                Size = new Size(300, 20),
+                TextAlign = ContentAlignment.MiddleLeft,
             };
             group.Controls.Add(lbl);
 
-            NumericUpDown nud = new NumericUpDown
+            NumericUpDown nud = new()
             {
                 Name = key,
-                Location = new Point(12, 46),
-                Size = new Size(80, 22),
+                Location = new Point(460, innerY - 2),
+                Size = new Size(90, 22),
                 Minimum = (decimal)token.Minimum,
                 Maximum = (decimal)token.Maximum,
                 DecimalPlaces = 2,
@@ -665,9 +689,32 @@ internal sealed partial class ThemeSettingsForm : Form
             _metricNumericUpDowns[key] = nud;
             _metricLabels[key] = lbl;
 
-            y += group.Height + 8;
+            innerY += 26;
         }
+
+        return top + group.Height + 10;
     }
+
+    /// <summary>
+    /// Returns the user-facing name of a metric token.
+    /// </summary>
+    /// <param name="key">The metric token name.</param>
+    /// <returns>The display name.</returns>
+    private static string DescribeMetric(string key) => key switch
+    {
+        "GanttRowHeightPt" => "Row height",
+        "SplitterHeightPt" => "Splitter height",
+        "SpacerHeightPt" => "Spacer height",
+        "ActivityHeightPt" => "Bar height",
+        "MilestoneSizePt" => "Milestone size",
+        "StandardOutlinePt" => "Outline width",
+        "DelineatorLinePt" => "Delineator width",
+        "GridLinePt" => "Grid line width",
+        "MajorBoundaryPt" => "Major boundary width",
+        "HatchPitchPt" => "Hatch spacing",
+        "HatchLinePt" => "Hatch line width",
+        _ => key,
+    };
 
     private void CreateCustomStylesTab()
     {
@@ -1171,7 +1218,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = "Enter a key for the new custom style.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             _ = _customNewKeyText.Focus();
             return;
         }
@@ -1180,7 +1227,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = $"Style key '{newKey}' is a built-in preset and cannot be used as a custom style.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             return;
         }
 
@@ -1188,7 +1235,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = $"Custom style '{newKey}' already exists.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             return;
         }
 
@@ -1525,7 +1572,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = "Invalid custom style fill colour '" + _customStyleFillText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleFillText.Focus();
             DialogResult = DialogResult.None;
@@ -1535,7 +1582,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = "Invalid custom style stroke colour '" + _customStyleStrokeText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleStrokeText.Focus();
             DialogResult = DialogResult.None;
@@ -1545,7 +1592,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _warningLabel.Text = "Invalid custom style text colour '" + _customStyleTextText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
-            _tabControl.SelectedTab = _tabControl.TabPages[3];
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
             _customStyleEditGroup.Enabled = true;
             _ = _customStyleTextText.Focus();
             DialogResult = DialogResult.None;

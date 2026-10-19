@@ -378,6 +378,91 @@ public class ThemeSettingsFormTests
     }
 
     [Fact]
+    public void The_dialog_separates_entity_styles_chart_and_custom_styles()
+    {
+        // The three scopes are separate tabs, so the user can see which
+        // options belong to a style object, which belong to the chart, and
+        // which belong to a style they created.
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tabControl = Assert.IsType<TabControl>(Find(form, c => c is TabControl));
+                var titles = tabControl.TabPages.Cast<TabPage>().Select(page => page.Text).ToList();
+
+                Assert.Equal(3, titles.Count);
+                Assert.Equal("Entity styles", titles[0]);
+                Assert.Equal("Chart", titles[1]);
+                Assert.Equal("Custom styles", titles[2]);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_chart_tab_groups_the_options_by_the_object_they_change()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Chart");
+
+                var groups = FindAll(tab, c => c is GroupBox)
+                    .Cast<GroupBox>()
+                    .Select(group => group.Text)
+                    .ToList();
+
+                // Rows and lanes, entity defaults, and grid are different
+                // objects on the chart; the hatch spacing is a property of the
+                // fill pattern rather than of the chart's geometry.
+                Assert.Contains("Rows and lanes", groups);
+                Assert.Contains("Entity defaults", groups);
+                Assert.Contains("Grid", groups);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_entity_styles_tab_groups_the_built_in_styles_by_family()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                var familyLabels = FindAll(tab, c => c is Label)
+                    .Cast<Label>()
+                    .Select(label => label.Text)
+                    .ToList();
+
+                Assert.Contains("Activities", familyLabels);
+                Assert.Contains("Milestones", familyLabels);
+                Assert.Contains("Procurement", familyLabels);
+                Assert.Contains("Chart elements", familyLabels);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
     public void Ok_DashChangeOnSavedCustomStyle_CarriesTheDash()
     {
         RunOnStaThread(() =>
@@ -492,17 +577,19 @@ public class ThemeSettingsFormTests
         tcs.Task.GetAwaiter().GetResult();
     }
 
-    private static TabPage GetCustomStylesTab(Form form)
+    private static TabPage GetCustomStylesTab(Form form) => GetTab(form, "Custom styles");
+
+    private static TabPage GetTab(Form form, string title)
     {
         var tabControl = Assert.IsType<TabControl>(Find(form, c => c is TabControl));
         foreach (TabPage page in tabControl.TabPages)
         {
-            if (page.Text == "Custom styles")
+            if (page.Text == title)
             {
                 return page;
             }
         }
-        throw new InvalidOperationException("Custom styles tab not found.");
+        throw new InvalidOperationException($"Tab not found: {title}");
     }
 
     private static Control? Find(Control root, Func<Control, bool> match)
