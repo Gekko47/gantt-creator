@@ -175,6 +175,111 @@ public sealed class SceneBuilderTests
         Assert.Equal("#000000", label.Style.TextColour?.ToString());
     }
 
+    [Fact]
+    public void Auto_date_label_selection_renders_both_date_labels()
+    {
+        // R5.14 D3: a blank DateLabelPosition cell (Auto, null) keeps
+        // every existing row's behaviour -- both section-23 date labels.
+        // The label pass (description and date) requires a resolved
+        // LabelStyle, so the request supplies one, exactly as the
+        // description-label tests do.
+        //
+        // The bar is centred mid-month with a blank description. Each date
+        // label measures 80pt (10 chars x the 8pt per-character fake
+        // advance), so the bar needs ~80pt of plot free on both sides; a
+        // description label on either side would collide with one of them,
+        // so the description is blanked (the same isolation the milestone
+        // date-label test uses). The default 05/01-10/01 bar sits 40pt from
+        // the plot's left edge, too narrow for a Left date label.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21))
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText[] dateLabels = DateLabels(outcome);
+        Assert.Equal(2, dateLabels.Length);
+        Assert.Contains(dateLabels, text => text.PrimitiveId.EndsWith(":date-start", StringComparison.Ordinal));
+        Assert.Contains(dateLabels, text => text.PrimitiveId.EndsWith(":date-finish", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Start_date_label_selection_renders_only_the_start_date_label()
+    {
+        // R5.14: the row's choice selects which date label the scene
+        // plans. Start hides the finish label.
+        // The same centred, description-less bar as the Auto test, so the
+        // one surviving label (Start) has room on its Left side.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Start)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText only = Assert.Single(DateLabels(outcome));
+        Assert.EndsWith(":date-start", only.PrimitiveId, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Finish_date_label_selection_renders_only_the_finish_date_label()
+    {
+        // R5.14: Finish hides the start label. A span is the only kind
+        // that may name Finish, so this event keeps its finish date.
+        // The same centred, description-less bar as the Auto test, so the
+        // one surviving label (Finish) has room on its Right side.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.Finish)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        SceneText only = Assert.Single(DateLabels(outcome));
+        Assert.EndsWith(":date-finish", only.PrimitiveId, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void None_date_label_selection_renders_no_date_labels()
+    {
+        // R5.14 D5 (second owner ruling 2026-10-14): None names
+        // no date labels, so the scene plans an empty date-label
+        // set -- the build succeeds with no date-start/date-finish
+        // primitives and no warning. The same centred,
+        // description-less bar as the Auto test, so any label the
+        // builder might still plan would have room.
+        GanttEvent centred = Event(
+            1,
+            start: new DateOnly(2024, 1, 11),
+            finish: new DateOnly(2024, 1, 21),
+            dateLabelPosition: GanttDateLabelPosition.None)
+        with { Description = null };
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(centred) with { LabelStyle = new SceneStyle("DefaultText") });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Empty(DateLabels(outcome));
+    }
+
+    /// <summary>
+    /// The section-23 date labels a scene planned, identified by their
+    /// stable role-derived ids (<c>:date-start</c> / <c>:date-finish</c>).
+    /// </summary>
+    private static SceneText[] DateLabels(SceneBuildOutcome outcome) =>
+        [.. outcome.Result!.Scene.Primitives
+            .OfType<SceneText>()
+            .Where(text => text.PrimitiveId.EndsWith(":date-start", StringComparison.Ordinal)
+                || text.PrimitiveId.EndsWith(":date-finish", StringComparison.Ordinal))];
+
     private static SceneBuildRequest Request(params GanttEvent[] events) =>
         new()
         {
@@ -213,7 +318,8 @@ public sealed class SceneBuilderTests
         DateOnly? finish = null,
         string? styleKey = "AsPlannedActivity",
         bool visible = true,
-        GanttRowId? parentId = null) =>
+        GanttRowId? parentId = null,
+        GanttDateLabelPosition? dateLabelPosition = null) =>
         new(
             row,
             GanttRowId.New(),
@@ -229,7 +335,13 @@ public sealed class SceneBuilderTests
             null,
             null,
             visible,
-            null);
+            null)
+        {
+            // R5.14: the row's date-label choice is a non-positional
+            // init property, so the helper sets it through an object
+            // initializer; null (the default) is Auto = both labels.
+            DateLabelPosition = dateLabelPosition,
+        };
 
 
     [Fact]
@@ -565,8 +677,13 @@ public sealed class SceneBuilderTests
             null,
             styleKey: null);
 
-        // No anchor row: the bottom extension is off entirely.
-        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request(only) with { ChartAnchorRowHeightPt = 0 });
+        // No anchor row: the bottom extension is off entirely. The
+        // label style is supplied because the label-corner assertion
+        // below reads the delineator label, and the label is gated on
+        // the resolved label style exactly as every other
+        // description-label pass is (the R5.14 tests do the same).
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(only) with { ChartAnchorRowHeightPt = 0, LabelStyle = new SceneStyle("DefaultText") });
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
 
         SceneLine line = Assert.Single(

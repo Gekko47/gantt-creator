@@ -224,4 +224,782 @@ public sealed class HierarchyMutationsTests
         Assert.Null(plan.InheritedParentId);
         Assert.True(HierarchyMutations.RequiresParentRewrite(plan));
     }
+
+    /// <summary>
+    /// R5.3 D2: promoting the first of two children moves the promoted row's
+    /// content to the bottom of the run and resequences the remaining child
+    /// densely from zero.
+    /// </summary>
+    [Fact]
+    public void Promoting_the_first_child_moves_it_to_the_bottom_and_resequences()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, first);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(first, plan.TargetId);
+        Assert.Equal(parent, plan.ClearedParentId);
+        Assert.Equal(4, plan.MoveToBodyIndex);
+        // The remaining run resequences densely, and the
+        // promoted row joins the top-level run at its new
+        // position (the run bottom): the parent keeps 0 and
+        // the promoted row takes 1, so its stale child-run
+        // value is never carried over (R5.3 D2, amended
+        // 2026-10-11).
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(second, 0),
+                new SiblingOrderWrite(parent, 0),
+                new SiblingOrderWrite(first, 1),
+            ],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Promoting the last child is a clear plus a one-row resequence.
+    /// </summary>
+    [Fact]
+    public void Promoting_the_last_child_clears_with_no_gap_to_close()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, second);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(4, plan.MoveToBodyIndex);
+        // The remaining run resequences densely, and the
+        // promoted row joins the top-level run at its new
+        // position (the run bottom, unchanged here): the
+        // parent keeps 0 and the promoted row takes 1
+        // (R5.3 D2, amended 2026-10-11).
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(first, 0),
+                new SiblingOrderWrite(parent, 0),
+                new SiblingOrderWrite(second, 1),
+            ],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A promote between top-level rows inserts the promoted
+    /// row into the top-level run at its new position -- the
+    /// bottom of its former sibling run -- and the run
+    /// resequences densely around it: the rows below it shift
+    /// to make room, and the promoted row's stale child-run
+    /// value is never carried over (R5.3 D2, amended
+    /// 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Promoting_a_child_between_top_level_rows_resequences_the_run_it_joins()
+    {
+        GanttRowId top = NewId();
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        GanttRowId below = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, top),
+            Row(3, parent),
+            Row(4, first, parentId: parent),
+            Row(5, second, parentId: parent),
+            Row(6, below),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, first);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(5, plan.MoveToBodyIndex);
+        // The remaining run resequences densely; the
+        // top-level run resequences around the joined
+        // row: both top-level rows above it keep their
+        // order, the promoted row takes its position,
+        // and the row below shifts to make room.
+        Assert.Equal(
+            [
+                new SiblingOrderWrite(second, 0),
+                new SiblingOrderWrite(top, 0),
+                new SiblingOrderWrite(parent, 1),
+                new SiblingOrderWrite(first, 2),
+                new SiblingOrderWrite(below, 3),
+            ],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A top-level row is not a child, so promote refuses with
+    /// <c>NotAChild</c> and mutates nothing.
+    /// </summary>
+    [Fact]
+    public void Promoting_a_top_level_row_is_refused_as_not_a_child()
+    {
+        GanttRowId parent = NewId();
+        List<GanttEvent> rows = [Row(2, parent), Row(3, NewId(), parentId: parent)];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, parent);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.NotAChild, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// R5.3 D1: a Critical Interval can never be promoted, even though it is
+    /// always a child.
+    /// </summary>
+    [Fact]
+    public void Promoting_a_critical_interval_is_forbidden()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId interval = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, interval, GanttEntityType.CriticalInterval, parent),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, interval);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.PromotionForbiddenForType, plan.Refusal);
+    }
+
+    /// <summary>
+    /// A child that owns children of its own cannot be promoted: the plan
+    /// refuses rather than orphaning a third level.
+    /// </summary>
+    [Fact]
+    public void Promoting_a_row_that_owns_children_is_refused()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId middle = NewId();
+        GanttRowId leaf = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, middle, parentId: parent),
+            Row(4, leaf, parentId: middle),
+        ];
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(rows, middle);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.HasChildren, plan.Refusal);
+    }
+
+    /// <summary>
+    /// R5.3 D3: demoting a top-level row sets its parent to the nearest
+    /// eligible row above and assigns it the tail of the new run.
+    /// </summary>
+    [Fact]
+    public void Demoting_assigns_the_nearest_eligible_parent_above()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId other = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, other),
+            Row(4, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(target, plan.TargetId);
+        Assert.Equal(other, plan.NewParentId);
+        Assert.Contains(new SiblingOrderWrite(target, 0), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A selection directly beneath a parent's existing child run
+    /// extends the run: the demotion lands on that parent, the tail
+    /// assignment follows the run's new length, and the run stays one
+    /// contiguous outline group (R5.3 D3).
+    /// </summary>
+    [Fact]
+    public void Demoting_directly_beneath_a_child_run_extends_the_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, child, parentId: parent),
+            Row(4, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Contains(new SiblingOrderWrite(target, 1), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A selection separated from the target parent's child run by an
+    /// unrelated row MOVES to sit directly beneath the run: the demoted row
+    /// takes the tail of the new run, its content moves to the run bottom,
+    /// and the demotion stays one contiguous outline group (R5.3 D3, amended
+    /// 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Demoting_across_an_unrelated_row_moves_beneath_the_target_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        GanttRowId milestone = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, child, parentId: parent),
+            Row(4, milestone, GanttEntityType.AsPlannedMilestone),
+            Row(5, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(target, plan.TargetId);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Equal(4, plan.MoveToBodyIndex);
+        Assert.Empty(plan.RehomedChildIds);
+        Assert.Contains(new SiblingOrderWrite(target, 1), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Demoting a row that owns children re-homes them: the demoted row and
+    /// its children all join the new parent's run in row order, so nobody
+    /// nests three deep (R5.3 D3, amended 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Demoting_a_parent_rehomes_its_children_to_the_new_parent()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId target = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, target),
+            Row(4, first, parentId: target),
+            Row(5, second, parentId: target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(target, plan.TargetId);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Equal(3, plan.MoveToBodyIndex);
+        Assert.Equal([first, second], plan.RehomedChildIds);
+        Assert.Contains(new SiblingOrderWrite(target, 0), plan.SiblingOrderWrites);
+        Assert.Contains(new SiblingOrderWrite(first, 1), plan.SiblingOrderWrites);
+        Assert.Contains(new SiblingOrderWrite(second, 2), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Capacity counts the demoted row TOGETHER with its re-homed children:
+    /// a run that would exceed seven by taking them all refuses with
+    /// <c>ParentUnavailable</c> (R5.3 D3, amended 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Demoting_a_parent_counts_rehomed_children_against_capacity()
+    {
+        GanttRowId full = NewId();
+        GanttRowId target = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows = [Row(2, full)];
+        for (var i = 0; i < EntityHierarchyCatalog.MaxChildrenPerParent - 1; i++)
+        {
+            rows.Add(Row(3 + i, NewId(), parentId: full));
+        }
+
+        rows.Add(Row(3 + EntityHierarchyCatalog.MaxChildrenPerParent, target));
+        rows.Add(Row(4 + EntityHierarchyCatalog.MaxChildrenPerParent, first, parentId: target));
+        rows.Add(Row(5 + EntityHierarchyCatalog.MaxChildrenPerParent, second, parentId: target));
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.ParentUnavailable, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A delineator between the parent and the selection is skipped by the
+    /// scan -- and the demotion MOVES to sit directly beneath the parent's
+    /// run, so it stays one contiguous outline group (R5.3 D3, amended
+    /// 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Demoting_beneath_a_delineator_moves_beneath_the_parent_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId line = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, line, GanttEntityType.Delineator),
+            Row(4, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(target, plan.TargetId);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Equal(3, plan.MoveToBodyIndex);
+        Assert.Empty(plan.RehomedChildIds);
+        Assert.Contains(new SiblingOrderWrite(target, 0), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A selection adjacent to a full group's run extends that run,
+    /// and no parent further up can be adjacent either -- its run
+    /// would be broken by the full group's children. The capacity
+    /// rule therefore refuses with <c>ParentUnavailable</c> instead
+    /// of skipping to a landing the outline cannot represent
+    /// (R5.3 D3).
+    /// </summary>
+    [Fact]
+    public void Demoting_adjacent_to_a_full_group_is_refused_as_parent_unavailable()
+    {
+        GanttRowId upper = NewId();
+        GanttRowId full = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows = [Row(2, upper), Row(3, full)];
+        for (var i = 0; i < EntityHierarchyCatalog.MaxChildrenPerParent; i++)
+        {
+            rows.Add(Row(4 + i, NewId(), parentId: full));
+        }
+
+        rows.Add(Row(4 + EntityHierarchyCatalog.MaxChildrenPerParent, target));
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.ParentUnavailable, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Demoting a row that is already a child refuses with
+    /// <c>AlreadyAChild</c>.
+    /// </summary>
+    [Fact]
+    public void Demoting_a_child_is_refused_as_already_a_child()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        List<GanttEvent> rows = [Row(2, parent), Row(3, child, parentId: parent)];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, child);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.AlreadyAChild, plan.Refusal);
+    }
+
+    /// <summary>
+    /// A standalone row (Splitter) can never be demoted.
+    /// </summary>
+    [Fact]
+    public void Demoting_a_splitter_is_refused_as_wrong_type()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId splitter = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, splitter, GanttEntityType.Splitter),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, splitter);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.TypeCannotBeChild, plan.Refusal);
+    }
+
+    /// <summary>
+    /// With no eligible row above, demote refuses with
+    /// <c>NoEligibleParentAbove</c> and moves nothing.
+    /// </summary>
+    [Fact]
+    public void Demoting_with_nothing_eligible_above_is_refused()
+    {
+        GanttRowId line = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, line, GanttEntityType.Delineator),
+            Row(3, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.NoEligibleParentAbove, plan.Refusal);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A milestone between the parent and the selection is passed over by
+    /// the scan -- and the demotion MOVES to sit directly beneath the
+    /// parent's run, so it stays one contiguous outline group (R5.3 D3,
+    /// amended 2026-10-11).
+    /// </summary>
+    [Fact]
+    public void Demoting_beneath_a_milestone_moves_beneath_the_parent_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId milestone = NewId();
+        GanttRowId target = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, milestone, GanttEntityType.AsPlannedMilestone),
+            Row(4, target),
+        ];
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild(rows, target);
+
+        Assert.True(plan.Succeeded);
+        Assert.Equal(target, plan.TargetId);
+        Assert.Equal(parent, plan.NewParentId);
+        Assert.Equal(3, plan.MoveToBodyIndex);
+        Assert.Empty(plan.RehomedChildIds);
+        Assert.Contains(new SiblingOrderWrite(target, 0), plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Planner input is never mutated by any plan.
+    /// </summary>
+    [Fact]
+    public void Parent_child_planning_does_not_mutate_its_input()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        List<GanttEvent> rows = [Row(2, parent), Row(3, child, parentId: parent)];
+        List<GanttEvent> snapshot = [.. rows];
+
+        _ = HierarchyMutations.PlanPromoteToParent(rows, child);
+        _ = HierarchyMutations.PlanDemoteToChild(rows, parent);
+        _ = HierarchyMutations.PlanMove(rows, child, moveUp: true);
+
+        Assert.Equal(snapshot, rows);
+    }
+
+    // ---- R5.4: PlanMove (move-up / move-down) ----
+
+    /// <summary>
+    /// Moving a top-level group up swaps its whole window (row + child run)
+    /// with the group above it.
+    /// </summary>
+    [Fact]
+    public void Moving_a_top_level_group_up_swaps_it_with_the_group_above()
+    {
+        GanttRowId a = NewId();
+        GanttRowId aChild = NewId();
+        GanttRowId b = NewId();
+        GanttRowId bChild = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, a),
+            Row(3, aChild, parentId: a),
+            Row(4, b),
+            Row(5, bChild, parentId: b),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(b, plan.TargetId);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(2, plan.WindowLength);
+        Assert.Equal(0, plan.SwapStart);
+        Assert.Equal(2, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// Moving a top-level group down swaps it with the group below, taking
+    /// its child run with it.
+    /// </summary>
+    [Fact]
+    public void Moving_a_top_level_group_down_takes_its_child_run_with_it()
+    {
+        GanttRowId a = NewId();
+        GanttRowId aChild = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, a),
+            Row(3, aChild, parentId: a),
+            Row(4, b),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(0, plan.WindowStart);
+        Assert.Equal(2, plan.WindowLength);
+        Assert.Equal(2, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// Move-up at the top of the table is a silent no-op: succeeded, but it
+    /// moves nothing and plans no writes (R5.4 D4).
+    /// </summary>
+    [Fact]
+    public void Moving_the_top_group_up_is_a_silent_no_op()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, a, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// Move-down at the bottom of the table is a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_bottom_group_down_is_a_silent_no_op()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: false);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A child moves up within its sibling run only, swapping single rows.
+    /// </summary>
+    [Fact]
+    public void Moving_a_child_up_swaps_it_with_the_previous_sibling()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, second, moveUp: true);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(1, plan.WindowLength);
+        Assert.Equal(1, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+    }
+
+    /// <summary>
+    /// The first child cannot move up past its own parent: that is the run
+    /// boundary, a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_first_child_up_is_a_silent_no_op()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        List<GanttEvent> rows = [Row(2, parent), Row(3, child, parentId: parent)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, child, moveUp: true);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+        Assert.Empty(plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// The last child cannot move down past the end of its run: the next row
+    /// is top-level, so this is a silent no-op.
+    /// </summary>
+    [Fact]
+    public void Moving_the_last_child_down_is_a_silent_no_op()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId child = NewId();
+        GanttRowId other = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, child, parentId: parent),
+            Row(4, other),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, child, moveUp: false);
+
+        Assert.True(plan.Succeeded);
+        Assert.False(plan.MovesAnything);
+    }
+
+    /// <summary>
+    /// A top-level group's move-up resequences the whole top-level run
+    /// densely in post-swap row order (R5.3 D4: the planner is the
+    /// authority).
+    /// </summary>
+    [Fact]
+    public void Moving_a_group_resequences_the_top_level_run_in_post_swap_order()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        GanttRowId c = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b), Row(4, c)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.Equal(
+            [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1), new SiblingOrderWrite(c, 2)],
+            plan.SiblingOrderWrites);
+    }
+
+    /// <summary>
+    /// A child's move resequences only its own sibling run; top-level rows
+    /// are untouched.
+    /// </summary>
+    [Fact]
+    public void Moving_a_child_resequences_only_its_sibling_run()
+    {
+        GanttRowId parent = NewId();
+        GanttRowId first = NewId();
+        GanttRowId second = NewId();
+        GanttRowId other = NewId();
+        List<GanttEvent> rows =
+        [
+            Row(2, parent),
+            Row(3, first, parentId: parent),
+            Row(4, second, parentId: parent),
+            Row(5, other),
+        ];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, second, moveUp: true);
+
+        Assert.Equal(
+            [new SiblingOrderWrite(second, 0), new SiblingOrderWrite(first, 1)],
+            plan.SiblingOrderWrites);
+        Assert.DoesNotContain(plan.SiblingOrderWrites, write => write.RowId == parent);
+    }
+
+    /// <summary>
+    /// An unknown selection is the one typed refusal a move can produce.
+    /// </summary>
+    [Fact]
+    public void Moving_an_unknown_selection_is_refused()
+    {
+        GanttRowId a = NewId();
+        List<GanttEvent> rows = [Row(2, a)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, NewId(), moveUp: true);
+
+        Assert.False(plan.Succeeded);
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
+
+    /// <summary>
+    /// Repeated planning of the same input is deterministic, and the mirror
+    /// move returns the group to its original slot (stability).
+    /// </summary>
+    [Fact]
+    public void Repeated_moves_are_deterministic_and_round_trip()
+    {
+        GanttRowId a = NewId();
+        GanttRowId b = NewId();
+        GanttRowId c = NewId();
+        List<GanttEvent> rows = [Row(2, a), Row(3, b), Row(4, c)];
+
+        MovePlan first = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+        MovePlan again = HierarchyMutations.PlanMove(rows, a, moveUp: false);
+        Assert.True(first.Succeeded);
+        Assert.True(again.Succeeded);
+        Assert.Equal(first.WindowStart, again.WindowStart);
+        Assert.Equal(first.WindowLength, again.WindowLength);
+        Assert.Equal(first.SwapStart, again.SwapStart);
+        Assert.Equal(first.SwapLength, again.SwapLength);
+        Assert.Equal(first.SiblingOrderWrites, again.SiblingOrderWrites);
+
+        // Simulate the first swap as the Office layer would leave it: the
+        // content of body rows 2 and 3 exchanged, so row number follows
+        // position. The mirror move-up of the same group (now at index 1)
+        // must land back at index 0.
+        List<GanttEvent> moved =
+        [
+            Row(2, b),
+            Row(3, a),
+            Row(4, c),
+        ];
+        MovePlan back = HierarchyMutations.PlanMove(moved, a, moveUp: true);
+        Assert.True(back.MovesAnything);
+        Assert.Equal(1, back.WindowStart);
+        Assert.Equal(0, back.SwapStart);
+    }
+
+    /// <summary>
+    /// A malformed gap row between two groups stays in place: it is neither
+    /// moved with either group nor repaired.
+    /// </summary>
+    [Fact]
+    public void A_gap_row_between_groups_stays_in_place()
+    {
+        GanttRowId a = NewId();
+        GanttRowId orphan = NewId();
+        GanttRowId ghost = NewId();
+        GanttRowId b = NewId();
+
+        // The orphan names a parent that is not in the table, so it is not
+        // part of either group's contiguous window.
+        List<GanttEvent> rows = [Row(2, a), Row(3, orphan, parentId: ghost), Row(4, b)];
+
+        MovePlan plan = HierarchyMutations.PlanMove(rows, b, moveUp: true);
+
+        Assert.True(plan.MovesAnything);
+        Assert.Equal(2, plan.WindowStart);
+        Assert.Equal(1, plan.WindowLength);
+        Assert.Equal(0, plan.SwapStart);
+        Assert.Equal(1, plan.SwapLength);
+
+        // Post-swap top-level order is B then A; the orphan is not a
+        // top-level run member and receives no write.
+        Assert.Equal(
+            [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1)],
+            plan.SiblingOrderWrites);
+    }
 }

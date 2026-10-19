@@ -281,30 +281,42 @@ public class ExcelApplicationStateScopeTests
     ];
     [Theory]
     [MemberData(nameof(FailingWrites))]
-    public void A_failure_at_each_setting_still_restores_everything_captured_before_it(string failing)
+    public void A_refused_setting_write_is_recorded_and_does_not_abort_the_rest(string failing)
     {
-        // A failure at the Nth setting means settings 1..N-1 were captured and
-        // changed; the scope must still put all of them back, and the failing one
-        // itself was never changed so it needs no restore.
+        // The set path was unguarded: a host that refused one of the five
+        // writes (a modal dialog or busy state -- the measured refusal is
+        // COMException 0x800A03EC) propagated out of Suppress*/SetStatusBarText
+        // and aborted the whole refresh. The interface contract makes every
+        // member best-effort, so a refusal must be recorded and the remaining
+        // settings must still be suppressed and restored.
         var records = new List<string>();
         var scope = new TestableScope(records.Add) { FailOn = failing };
 
-        // Assert the injection actually fired. A bare try/catch would pass just as
-        // well if the seam silently stopped throwing, which would make every
-        // assertion below vacuous: nothing would have been captured or changed.
-        _ = Assert.Throws<InvalidOperationException>(() => SuppressAll(scope));
+        // The refusal must not escape: the whole suppress sequence runs to
+        // completion. The previous version of this test asserted the opposite
+        // (that the refusal propagated), which pinned the defect; this pins
+        // the contract.
+        Assert.Null(Record.Exception(() => SuppressAll(scope)));
 
+        // The refused setting kept its original value (its write never landed),
+        // so it needs no restore; every other setting was still suppressed.
+        Assert.True(scope.ScreenUpdatingState == (failing == "ScreenUpdating"));
+        Assert.True(scope.EnableEventsState == (failing == "EnableEvents"));
+        Assert.True(scope.DisplayAlertsState == (failing == "DisplayAlerts"));
+        Assert.True(scope.DisplayStatusBarState == (failing == "DisplayStatusBar"));
+        Assert.Equal(failing == "StatusBarText" ? "Ready" : "Rendering...", scope.StatusBarTextState);
+
+        // The degradation was reported through the technical-record sink, not
+        // swallowed silently.
+        Assert.Contains(records, record => record.Contains(failing, StringComparison.Ordinal));
+
+        // Dispose restores every setting that was actually changed.
         scope.Dispose();
 
-        Assert.True(scope.ScreenUpdatingState || failing == "ScreenUpdating");
-        Assert.True(scope.EnableEventsState || failing == "EnableEvents");
-        Assert.True(scope.DisplayAlertsState || failing == "DisplayAlerts");
-        Assert.True(scope.DisplayStatusBarState || failing == "DisplayStatusBar");
-
-        // The status-bar text is the last setting the command changes, so it is
-        // untouched when an earlier setting failed and restored when its own write
-        // is the one that failed before changing anything. Either way it must read
-        // "Ready" again here - the value this test started from.
+        Assert.True(scope.ScreenUpdatingState);
+        Assert.True(scope.EnableEventsState);
+        Assert.True(scope.DisplayAlertsState);
+        Assert.True(scope.DisplayStatusBarState);
         Assert.Equal("Ready", scope.StatusBarTextState);
     }
 

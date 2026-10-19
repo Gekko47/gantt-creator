@@ -22,9 +22,21 @@ public static class GanttSchemaVersion
 {
     /// <summary>
     /// The current workbook schema version. Starts at 1 (R2.1), advances
-    /// monotonically, and is currently 14 for the R5.2 plot margin.
+    /// monotonically, and is currently 15 for the R5.14 date-label column.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Version 15 is R5.14.</b> The <c>tblGanttData</c> column schema gains
+    /// the engine-hidden <c>DateLabelPosition</c> column (the per-row date-label
+    /// selector: blank/<c>Auto</c>, <c>Start</c>, <c>Finish</c>, or
+    /// <c>None</c>), so a
+    /// version-14 workbook's table lacks a column the running add-in reads and its
+    /// stored schema version no longer matches. The date-label capability is
+    /// derived from the existing <c>EntityDateMode</c> catalogue metadata, so no
+    /// catalogue row or stored hash changes — only the column. There is no
+    /// migration (ADR-0029 D6): a version-14 workbook reports a mismatch and the
+    /// remedy is Initialise, which materialises the column.
+    /// </para>
     /// <para>
     /// <b>Version 14 is R5.2.</b> The settings catalogue gains <c>Margin</c> and
     /// <c>MarginCm</c>, so a version-13 workbook's <c>tblGanttSettings</c> lacks
@@ -128,5 +140,5 @@ public static class GanttSchemaVersion
     /// mismatch and is reported, never coerced (ADR-0029 D6).
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 15;
 }

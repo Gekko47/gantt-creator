@@ -841,9 +841,19 @@ public class GanttConfigCatalogueTests
     /// workbook carries the older hash and is reported as a mismatch; the
     /// remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Advanced again to 15 by R5.14</b>: the table contract gains a
+    /// required <c>DateLabelPosition</c> column (the per-row date-label
+    /// selector). The catalogue contents are unchanged -- the allowed
+    /// date-label choices are derived from each type's date mode, not a new
+    /// catalogue row -- so the hash moves solely through the
+    /// <c>schema|{CurrentSchemaVersion}</c> seed. A version-14 workbook
+    /// carries the older hash and is reported as a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "b2dc61391ba11d5160f4c4afc3491a5805b6e54adc4ca55376b8dc6023109b35";
+        "256ff7da4852d4f1933c0e3e08aba48ad8cdb7578f780987096d396762c4b0c7";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

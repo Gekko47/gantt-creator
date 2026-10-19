@@ -10,6 +10,39 @@
           <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+          <button id="btnRemove" label="Remove" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnRemoveClick"/>
+        </group>
+        <group id="grpOrdering" label="Ordering">
+          <box id="boxOrdering" boxStyle="vertical">
+            <button id="btnPromoteToParent" label="Promote to parent" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
+            <button id="btnDemoteToChild" label="Demote to child" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
+            <!-- TODO(R5.10): getEnabled on both move buttons is workbook+initialised only. Once the
+                 add-in tracks the active cell (R5.10 cell tracking), gate these on a resolved table
+                 body selection and disable them at the top/bottom of the selection's set, so a
+                 boundary no-op cannot be requested from the ribbon. Until then the command is a
+                 quiet no-op by design (R5.4 D4). -->
+            <box id="boxMoveRows" boxStyle="horizontal">
+              <button id="btnMoveUp" label="Up" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnMoveUpClick"/>
+              <button id="btnMoveDown" label="Down" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnMoveDownClick"/>
+            </box>
+          </box>
+        </group>
+        <group id="grpLabels" label="Labels">
+          <!-- R5.5: dynamic item lists — items are projected from the selected
+               row's Type (EntityTypeCatalog) at query time, so no option list
+               is authored twice. R5.10 adds fill/stroke into this group. -->
+          <box id="boxDescriptionLabel" boxStyle="horizontal">
+            <labelControl id="lblDescriptionLabel" label="Description label"/>
+            <dropDown id="ddnDescriptionLabel" getEnabled="GetEnabled" getItemCount="GetDescriptionLabelCount" getItemID="GetDescriptionLabelItemID" getItemLabel="GetDescriptionLabelItemLabel" getSelectedItemIndex="GetDescriptionLabelSelectedIndex" onAction="OnDescriptionLabelChange"/>
+          </box>
+          <!-- R5.14: the parallel date-label dropdown. Its items are the
+               selected row's allowed date-label choices (projected from the
+               row's Type), led by Auto, which clears the cell. The capability
+               is type-only, so no option list is authored twice. -->
+          <box id="boxDateLabel" boxStyle="horizontal">
+            <labelControl id="lblDateLabel" label="Date label"/>
+            <dropDown id="ddnDateLabel" getEnabled="GetEnabled" getItemCount="GetDateLabelCount" getItemID="GetDateLabelItemID" getItemLabel="GetDateLabelItemLabel" getSelectedItemIndex="GetDateLabelSelectedIndex" onAction="OnDateLabelChange"/>
+          </box>
         </group>
         <group id="grpPlotArea" label="Plot Area">
           <box id="boxPlotStart" boxStyle="vertical">

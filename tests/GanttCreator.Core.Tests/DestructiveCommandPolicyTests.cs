@@ -19,6 +19,7 @@ public class DestructiveCommandPolicyTests
     [InlineData(CommandClass.ClearTableBody)]
     [InlineData(CommandClass.RecolumniseTable)]
     [InlineData(CommandClass.ResetCatalogues)]
+    [InlineData(CommandClass.RemoveRow)]
     public void Every_supported_destructive_command_is_destructive_but_confirmed(
         CommandClass commandClass)
     {
@@ -136,6 +137,7 @@ public class DestructiveCommandPolicyTests
     [InlineData(CommandClass.ClearTableBody)]
     [InlineData(CommandClass.RecolumniseTable)]
     [InlineData(CommandClass.ResetCatalogues)]
+    [InlineData(CommandClass.RemoveRow)]
     public void BuildConfirmationText_builds_a_complete_confirmation_for_every_command(
         CommandClass commandClass)
     {
@@ -175,6 +177,7 @@ public class DestructiveCommandPolicyTests
     [InlineData(CommandClass.ClearTableBody, "Clear table body")]
     [InlineData(CommandClass.RecolumniseTable, "Recolumnise table")]
     [InlineData(CommandClass.ResetCatalogues, "Reset configuration catalogues")]
+    [InlineData(CommandClass.RemoveRow, "Remove row")]
     public void CommandDisplayName_returns_the_pinned_name(
         CommandClass commandClass, string expected)
     {
@@ -197,6 +200,7 @@ public class DestructiveCommandPolicyTests
     [InlineData(CommandClass.ClearTableBody, "will delete all rows from the Gantt data table.")]
     [InlineData(CommandClass.RecolumniseTable, "will recreate the Gantt data table with the current columns.")]
     [InlineData(CommandClass.ResetCatalogues, "will restore the configuration catalogues to their defaults.")]
+    [InlineData(CommandClass.RemoveRow, "will delete the selected row; its children move up to that row's parent.")]
     public void CommandSubject_returns_the_pinned_subject(
         CommandClass commandClass, string expected)
     {

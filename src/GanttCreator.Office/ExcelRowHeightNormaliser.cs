@@ -91,6 +91,16 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
 /// would mark the workbook dirty on every Refresh.
 /// </para>
 /// <para>
+/// <b>Why a hidden row's state is restored.</b> A
+/// <c>RowHeight</c> write un-hides an outline-collapsed
+/// row on a live host, and this pass runs after the
+/// outline pass on every Refresh, so an unrestored write
+/// re-expands every collapsed group whose rows are off the
+/// height token. The row's hidden state is read before
+/// the write and put back after it, so normalising the
+/// height leaves the collapse presentation untouched.
+/// </para>
+/// <para>
 /// <b>COM ownership.</b> The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
 /// <c>ListObject</c> and <c>Range</c> objects reached here are Excel-owned shared
 /// roots. This adapter takes no ownership, never calls
@@ -289,12 +299,47 @@ public class ExcelRowHeightNormaliser(
                 continue;
             }
 
+            // A RowHeight write un-hides an outline-collapsed row
+            // (measured on a live Excel 16.0 host), and this pass
+            // runs after the outline pass on every Refresh, so an
+            // unrestored write re-expands every collapsed group
+            // whose rows are off-token. The row's hidden state is
+            // read before the write and put back after it, so the
+            // height is normalised without touching the collapse
+            // presentation.
+            var wasHidden = ReadHidden(targetRow);
             targetRow.RowHeight = target;
+            if (wasHidden)
+            {
+                targetRow.Hidden = true;
+            }
+
             writtenAfterBody++;
         }
 
         return RowHeightNormalisationOutcome.Ok(written + writtenAfterBody);
     }
+
+    /// <summary>
+    /// Reads a row's hidden state as a real <see cref="bool"/>.
+    /// </summary>
+    /// <param name="range">The row range.</param>
+    /// <returns>Whether the row is hidden.</returns>
+    /// <remarks>
+    /// The PIA declares <c>Range.Hidden</c> as <see cref="object"/>,
+    /// so the value arrives boxed and must be unwrapped before it can
+    /// decide anything. An unrecognised value reads as visible -- the
+    /// ordinary default -- so a row whose state the host does not
+    /// report is left un-hidden rather than re-hidden.
+    /// </remarks>
+    private static bool ReadHidden(Excel.Range range) =>
+        range.Hidden switch
+        {
+            bool flag => flag,
+            int value => value != 0,
+            double value => value != 0,
+            _ => false,
+        };
 
     /// <summary>
     /// Resolves and verifies the reserved bottom padding row from the body's

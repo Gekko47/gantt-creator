@@ -258,6 +258,29 @@ public sealed class CommandBoundary
     }
 
     /// <summary>
+    /// Writes a technical record to the rolling log, degrading to nothing
+    /// when no log is injected or the write fails. Adapters that report a
+    /// best-effort degradation outside the command-error path -- for example
+    /// the application-state scope's refused setting writes -- call this; the
+    /// caller owns the operation ID and the message wording.
+    /// </summary>
+    /// <param name="message">The technical record to write.</param>
+    internal void WriteTechnicalRecord(string message)
+    {
+        // CA1031: a logging failure must never escape into Excel.
+#pragma warning disable CA1031
+        try
+        {
+            _log?.Write("TechnicalRecord: {0}", message);
+        }
+        catch
+        {
+            // Intentionally empty: the record degrades to nothing.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Produces the next deterministic operation ID:
     /// <c>GC-&lt;yyyyMMdd-HHmmss-fff&gt;-&lt;NN&gt;</c> in UTC with invariant
     /// culture; <c>NN</c> is a per-instance monotonic counter that makes

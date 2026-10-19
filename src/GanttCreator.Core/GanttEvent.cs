@@ -43,5 +43,27 @@ public sealed record GanttEvent(
     string? FillColour,
     string? StrokeColour,
     bool Visible,
-    int? SortOrder
-);
+    int? SortOrder)
+{
+    /// <summary>
+    /// The explicit date-label choice, or <see langword="null"/> when blank
+    /// (<c>Auto</c>: both date labels the type uses). Set from the row's
+    /// DateLabelPosition cell by <see cref="GanttRowValidator"/>; layout
+    /// never supplies it. The <see langword="null"/> default keeps the
+    /// pre-R5.14 both-labels behaviour for every event constructed without
+    /// a choice.
+    /// </summary>
+    public GanttDateLabelPosition? DateLabelPosition { get; init; }
+
+    /// <summary>
+    /// The explicit date-label position, or <see langword="null"/>
+    /// when blank (<c>Auto</c>). Only a delineator's date label is
+    /// positionable (owner ruling 2026-10-14): its
+    /// <c>DateLabelPosition</c> cell names a corner from the
+    /// description label's set, while every other dated type's cell
+    /// names a which-date choice in <see cref="DateLabelPosition"/>.
+    /// Set from the row's DateLabelPosition cell by
+    /// <see cref="GanttRowValidator"/>; layout never supplies it.
+    /// </summary>
+    public GanttLabelPosition? DateLabelPlacement { get; init; }
+}

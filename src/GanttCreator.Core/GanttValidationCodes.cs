@@ -82,6 +82,12 @@ public static class GanttValidationCodes
     /// <summary>A <c>LabelPosition</c> value is not permitted for the row's type.</summary>
     public const string LabelNotAllowedForType = nameof(LabelNotAllowedForType);
 
+    /// <summary>A <c>DateLabelPosition</c> value is not a known choice.</summary>
+    public const string UnknownDateLabelPosition = nameof(UnknownDateLabelPosition);
+
+    /// <summary>A <c>DateLabelPosition</c> value is not permitted for the row's type.</summary>
+    public const string DateLabelNotAllowedForType = nameof(DateLabelNotAllowedForType);
+
     /// <summary>A colour override is not <c>#RRGGBB</c>.</summary>
     public const string BadColourFormat = nameof(BadColourFormat);
 

@@ -38,7 +38,7 @@ public enum GanttColumnAccess
     /// <summary>
     /// Engine-hidden and locked: <c>Id</c>, <c>ParentId</c>, <c>SiblingOrder</c>,
     /// <c>LaneId</c>, <c>StackIndex</c>, <c>StyleKey</c>, <c>LabelPosition</c>,
-    /// <c>FillColour</c>, <c>StrokeColour</c>, <c>Visible</c>, <c>SortOrder</c>.
+    /// <c>DateLabelPosition</c>, <c>FillColour</c>, <c>StrokeColour</c>, <c>Visible</c>, <c>SortOrder</c>.
     /// They stay physically in <c>tblGanttData</c> so one logical row is one
     /// table row (ADR-0029 D7).
     /// </summary>
@@ -173,7 +173,8 @@ public sealed class GanttTableSchema
     /// by the optional <c>SortOrder</c> column. R4.7A added <c>SiblingOrder</c>
     /// immediately after <c>ParentId</c> and advanced the schema version 3 → 4.
     /// R4.7C added <c>Duration</c> immediately after <c>Finish</c>, classified
-    /// every column, and advanced 4 → 5.
+    /// every column, and advanced 4 → 5. R5.14 added <c>DateLabelPosition</c>
+    /// immediately after <c>LabelPosition</c> and advanced 14 → 15.
     /// </summary>
     /// <remarks>
     /// The authoring columns are deliberately grouped in the middle of the
@@ -181,6 +182,15 @@ public sealed class GanttTableSchema
     /// <c>StackIndex</c> are hidden, so the first <em>visible</em> column the user
     /// sees is <c>Type</c>. Moving them would have been a second, unrecorded
     /// column-order change in the same schema bump.
+    ///
+    /// <c>DateLabelPosition</c> is OPTIONAL (the <c>SortOrder</c> precedent):
+    /// a workbook saved before R5.14 legitimately lacks the column, and a
+    /// missing optional column reads as a blank cell (= Auto) rather than
+    /// failing the table read. Keeping it required would strand every
+    /// pre-R5.14 workbook behind a <c>TableMissing</c> refusal — the
+    /// ribbon-state gate keys on that read, so the whole Gantt group would
+    /// grey on open. Initialise still materialises the column and advances
+    /// the stored schema version to 15 (ADR-0029 D6: no migration).
     /// </remarks>
     public static GanttTableSchema Default { get; } = new(
     [
@@ -196,6 +206,7 @@ public sealed class GanttTableSchema
         new GanttTableColumn("SiblingOrder", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StyleKey", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("LabelPosition", isRequired: true, GanttColumnAccess.EngineHidden),
+        new GanttTableColumn("DateLabelPosition", isRequired: false, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("FillColour", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("StrokeColour", isRequired: true, GanttColumnAccess.EngineHidden),
         new GanttTableColumn("Visible", isRequired: true, GanttColumnAccess.EngineHidden),

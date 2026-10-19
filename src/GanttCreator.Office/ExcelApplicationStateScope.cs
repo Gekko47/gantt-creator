@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
@@ -80,55 +81,22 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// Turns screen updating off, capturing the previous value only when the host
     /// is currently updating.
     /// </summary>
-    public void SuppressScreenUpdating()
-    {
-        if (!IsAvailable)
-        {
-            return;
-        }
-
-        if (GetScreenUpdating())
-        {
-            Record(GetScreenUpdating, SetScreenUpdating);
-            SetScreenUpdating(false);
-        }
-    }
+    public void SuppressScreenUpdating() =>
+        SuppressBooleanSetting(GetScreenUpdating, SetScreenUpdating, "screen updating");
 
     /// <summary>
     /// Turns event dispatch off, capturing the previous value only when events
     /// are currently on.
     /// </summary>
-    public void SuppressEvents()
-    {
-        if (!IsAvailable)
-        {
-            return;
-        }
-
-        if (GetEnableEvents())
-        {
-            Record(GetEnableEvents, SetEnableEvents);
-            SetEnableEvents(false);
-        }
-    }
+    public void SuppressEvents() =>
+        SuppressBooleanSetting(GetEnableEvents, SetEnableEvents, "event dispatch");
 
     /// <summary>
     /// Turns alert dialogs off, capturing the previous value only when alerts
     /// are currently shown.
     /// </summary>
-    public void SuppressAlerts()
-    {
-        if (!IsAvailable)
-        {
-            return;
-        }
-
-        if (GetDisplayAlerts())
-        {
-            Record(GetDisplayAlerts, SetDisplayAlerts);
-            SetDisplayAlerts(false);
-        }
-    }
+    public void SuppressAlerts() =>
+        SuppressBooleanSetting(GetDisplayAlerts, SetDisplayAlerts, "alerts");
 
     /// <summary>
     /// Hides the status bar, capturing the previous value only when it is
@@ -140,23 +108,57 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// progress sets it through <see cref="SetStatusBarText"/>, and a command
     /// that does not must leave both alone.
     /// </remarks>
-    public void SuppressStatusBar()
+    public void SuppressStatusBar() =>
+        SuppressBooleanSetting(GetDisplayStatusBar, SetDisplayStatusBar, "the status bar");
+
+    /// <summary>
+    /// Turns one boolean application setting off, best-effort, and registers the
+    /// restore. A host that refuses the write -- a modal dialog or busy state,
+    /// which the host reports as a <see cref="COMException"/> or, through a
+    /// proxy, as an <see cref="InvalidOperationException"/> or
+    /// <see cref="NotSupportedException"/> (ADR-0020 D2) -- is recorded through
+    /// the technical-record sink and the command continues with the setting on,
+    /// per the <see cref="IApplicationStateScope"/> contract. The restore is
+    /// registered only after the write succeeds: a refused write leaves the
+    /// setting unchanged, so there is nothing to put back.
+    /// </summary>
+    /// <param name="read">Reads the current setting. Test seam.</param>
+    /// <param name="write">Writes the setting. Test seam.</param>
+    /// <param name="setting">The setting's name, for the technical record.</param>
+    private void SuppressBooleanSetting(Func<bool> read, Action<bool> write, string setting)
     {
         if (!IsAvailable)
         {
             return;
         }
 
-        if (GetDisplayStatusBar())
+        var original = read();
+        if (!original)
         {
-            Record(GetDisplayStatusBar, SetDisplayStatusBar);
-            SetDisplayStatusBar(false);
+            return; // Already off: nothing to suppress or restore.
         }
+
+        // CA1031: the filter narrows the catch to the three forms a host
+        // refusal surfaces in (ADR-0020 D2); any other exception is a
+        // genuine defect and must surface.
+#pragma warning disable CA1031
+        try
+        {
+            write(false);
+            Record(original, write);
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException or NotSupportedException)
+        {
+            Report("Gantt Creator could not turn off Excel " + setting + ": " + exception.Message);
+        }
+#pragma warning restore CA1031
     }
 
     /// <summary>
     /// Sets the status-bar text, capturing the previous text only when this call
-    /// would actually change it.
+    /// would actually change it. A host that refuses the write is recorded
+    /// through the technical-record sink and the command continues, per the
+    /// <see cref="IApplicationStateScope"/> contract.
     /// </summary>
     /// <param name="text">The text to display, or <see langword="null"/> to clear it.</param>
     public void SetStatusBarText(string? text)
@@ -175,11 +177,23 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
         // The already-read `current` is registered, not a second read: the
         // restore value is in hand, and StatusBar is a COM property whose
         // representation does not round-trip cleanly (see the test seam), so a
-        // second read could capture something the first did not. Recording the
-        // captured value also keeps the "register the restore BEFORE the write"
-        // rule that Record documents.
-        Record(current, SetStatusBarTextCore);
-        SetStatusBarTextCore(text);
+        // second read could capture something the first did not. It is
+        // registered only once the write has landed: a refused write leaves
+        // the text unchanged, so there is nothing to put back.
+        // CA1031: the filter narrows the catch to the three forms a host
+        // refusal surfaces in (ADR-0020 D2); any other exception is a
+        // genuine defect and must surface.
+#pragma warning disable CA1031
+        try
+        {
+            SetStatusBarTextCore(text);
+            Record(current, SetStatusBarTextCore);
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException or NotSupportedException)
+        {
+            Report("Gantt Creator could not set the Excel status-bar text: " + exception.Message);
+        }
+#pragma warning restore CA1031
     }
 
 
@@ -225,25 +239,12 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
     /// The overload a caller uses when it has already read the value it is about
     /// to change, which is the case for <c>StatusBar</c>: reading it twice would
     /// be a second COM call whose result could differ from the value the change
-    /// decision was made against.
+    /// decision was made against. Called only after the setting was successfully
+    /// changed: a refused write leaves the setting unchanged, so there is nothing
+    /// to put back and no restore is registered.
     /// </remarks>
     private void Record<T>(T original, Action<T> write) =>
         _restores.Add(() => write(original));
-
-    /// <summary>
-    /// Reads a setting and registers the restore that puts it back.
-    /// </summary>
-    /// <typeparam name="T">The setting's value type.</typeparam>
-    /// <param name="read">Reads the current value.</param>
-    /// <param name="write">Writes a value back.</param>
-    /// <remarks>
-    /// The restore is registered <em>before</em> the command changes the setting,
-    /// so a failure in the very next line still leaves the setting restorable. A
-    /// read that throws leaves nothing registered, which is correct: nothing was
-    /// changed, so nothing needs putting back.
-    /// </remarks>
-    private void Record<T>(Func<T> read, Action<T> write) =>
-        Record(read(), write);
 
     /// <summary>
     /// Restores every captured setting, then the selection last.

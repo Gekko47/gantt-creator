@@ -3,6 +3,13 @@ namespace GanttCreator.Core.Scene;
 /// <summary>One delineator request.</summary>
 /// <param name="Event">The validated delineator event. Only <c>Start</c> is read.</param>
 /// <param name="LineStyle">The resolved named style; its outline width is replaced by <paramref name="LineWidthPt"/>.</param>
+/// <param name="LabelStyle">
+/// The resolved description-label text style, or <see langword="null"/>
+/// for no label. This is the same predetermined style every other
+/// description-label path is gated on (<see cref="SceneBuildRequest.LabelStyle"/>),
+/// so a delineator label carries it too and renders in the typography the
+/// measuring seam measured at; the line style governs the line alone.
+/// </param>
 /// <param name="LineWidthPt">The line thickness, from the <c>DelineatorLinePt</c> token.</param>
 /// <param name="PlotBounds">The plot rectangle; the line spans its top and bottom exactly.</param>
 /// <param name="ChartBounds">The chart rectangle that must contain every label box.</param>
@@ -19,6 +26,15 @@ namespace GanttCreator.Core.Scene;
 /// The line's bottom Y, or <see langword="null"/> to end it exactly at
 /// <see cref="PlotBounds"/>'s bottom edge (ADR-0038 D2).
 /// </param>
+/// <param name="DateFormat">
+/// The approved invariant display format (ADR-0016) for the §23
+/// start-date label the row's <see cref="GanttEvent.DateLabelPlacement"/>
+/// selects.
+/// </param>
+/// <param name="ShowDateLabels">
+/// Whether the §23 start-date label is requested at all (the date-labels
+/// toggle gates every date-label path, the delineator's included).
+/// </param>
 public sealed record DelineatorRequest(
     GanttEvent Event,
     SceneStyle LineStyle,
@@ -31,7 +47,10 @@ public sealed record DelineatorRequest(
     int? LaneOrder = null,
     int? StackIndex = null,
     double? LineBottomPt = null,
-    double? LineTopPt = null
+    double? LineTopPt = null,
+    SceneStyle? LabelStyle = null,
+    GanttDateDisplayFormat DateFormat = GanttDateDisplayFormat.DdMMyyyy,
+    bool ShowDateLabels = true
 );
 
 /// <summary>The result of building one delineator.</summary>
@@ -40,6 +59,11 @@ public sealed record DelineatorRequest(
 /// <param name="Label">The corner label, or <see langword="null"/> when no label was emitted.</param>
 /// <param name="LabelBounds">The resolved label box, or <see langword="null"/>.</param>
 /// <param name="LabelPosition">The corner actually used, or <see langword="null"/>.</param>
+/// <param name="DateLabel">
+/// The §23 start-date label, or <see langword="null"/> when no date label
+/// was emitted (hidden, not requested, or no permitted corner held it).
+/// </param>
+/// <param name="DateLabelBounds">The resolved date-label box, or <see langword="null"/>.</param>
 /// <param name="Warnings">The deterministic non-blocking warnings.</param>
 public sealed record DelineatorResult(
     SceneLine? Primitive,
@@ -47,6 +71,8 @@ public sealed record DelineatorResult(
     SceneText? Label,
     RectD? LabelBounds,
     GanttLabelPosition? LabelPosition,
+    SceneText? DateLabel,
+    RectD? DateLabelBounds,
     IReadOnlyList<SceneWarning> Warnings
 );
 
@@ -112,6 +138,14 @@ public static class DelineatorBuilder
 
     /// <summary>The warning code emitted when no permitted corner can hold the label.</summary>
     public const string LabelSuppressedCode = "DelineatorLabelSuppressed";
+
+    /// <summary>
+    /// The warning code emitted when the requested date-label corner
+    /// fits nowhere inside the chart (the explicit-position discipline:
+    /// a requested box is never silently moved, so a miss is reported
+    /// rather than re-placed).
+    /// </summary>
+    public const string DateLabelSuppressedCode = "DelineatorDateLabelSuppressed";
 
     /// <summary>
     /// The §24 <c>Auto</c> order: <c>TopRight</c> is tried first and
@@ -198,7 +232,7 @@ public static class DelineatorBuilder
                 OutsidePlotRangeCode,
                 "The delineator date lies outside the plot range, so no line was drawn."));
             return new DelineatorCreationOutcome(
-                new DelineatorResult(null, null, null, null, null, warnings), null);
+                new DelineatorResult(null, null, null, null, null, null, null, warnings), null);
         }
 
 
@@ -241,34 +275,84 @@ public static class DelineatorBuilder
         // §24 allows a blank description only when the label position is None.
         // The value is captured once here so the label path never re-reads a
         // nullable property the compiler cannot prove is non-null.
+        //
+        // A missing resolved label style is the same no-label decision every
+        // other description-label path makes: BuildLabels and SplitterBuilder
+        // both skip silently when the predetermined style is absent, so a
+        // delineator label is gated on it too rather than falling back to the
+        // line's style, which carries no font the measuring seam recognises.
         var description = @event.Description;
-        if (request.LabelPosition == GanttLabelPosition.None || string.IsNullOrEmpty(description))
+        SceneText? label = null;
+        RectD? labelBounds = null;
+        GanttLabelPosition? usedPosition = null;
+        if (request.LabelPosition != GanttLabelPosition.None
+            && !string.IsNullOrEmpty(description)
+            && request.LabelStyle is not null)
         {
-            return new DelineatorCreationOutcome(
-                new DelineatorResult(line, x, null, null, null, warnings), null);
+            var placed = TryPlaceLabel(
+                request,
+                @event,
+                description,
+                x,
+                occupants ?? [],
+                stackOffsetPt,
+                warnings,
+                out label,
+                out labelBounds,
+                out usedPosition);
+
+            if (!placed)
+            {
+                warnings.Add(new SceneWarning(
+                    owner,
+                    LabelSuppressedCode,
+                    "No permitted corner held the delineator label, so no label was drawn."));
+            }
         }
 
-        var placed = TryPlaceLabel(
-            request,
-            @event,
-            description,
-            x,
-            occupants ?? [],
-            stackOffsetPt,
-            out SceneText? label,
-            out RectD? labelBounds,
-            out GanttLabelPosition? usedPosition);
-
-        if (!placed)
+        // §23's start-date label. A delineator reads Start only, and its
+        // date label is positionable with the description label's corner set
+        // (owner ruling 2026-10-14): the cell names a corner, not a
+        // which-date choice, so Start/Finish never apply. It is planned
+        // against the same occupants the description label saw plus that
+        // label's own box, so the two labels of one row never overlap. The
+        // same no-label style gate applies: the date label carries the
+        // predetermined DefaultText style or it is not drawn at all.
+        SceneText? dateLabel = null;
+        RectD? dateLabelBounds = null;
+        if (request.ShowDateLabels
+            && request.LabelStyle is not null
+            && @event.DateLabelPlacement is not GanttLabelPosition.None)
         {
-            warnings.Add(new SceneWarning(
-                owner,
-                LabelSuppressedCode,
-                "No permitted corner held the delineator label, so no label was drawn."));
+            var datePlaced = TryPlaceDateLabel(
+                request,
+                @event,
+                date,
+                x,
+                labelBounds,
+                occupants ?? [],
+                stackOffsetPt,
+                warnings,
+                out dateLabel,
+                out dateLabelBounds);
+
+            // The description label warns on any suppression, so the
+            // date label does too: Auto means "show the date at the
+            // first free corner", and a corner that holds neither
+            // label is a loss the user should see reported.
+            if (!datePlaced)
+            {
+                warnings.Add(new SceneWarning(
+                    owner,
+                    DateLabelSuppressedCode,
+                    "No permitted corner held the delineator date label, so no date label was drawn."));
+            }
         }
 
         return new DelineatorCreationOutcome(
-            new DelineatorResult(line, x, label, labelBounds, usedPosition, warnings), null);
+            new DelineatorResult(
+                line, x, label, labelBounds, usedPosition, dateLabel, dateLabelBounds, warnings),
+            null);
     }
 
     private static bool TryPlaceLabel(
@@ -278,6 +362,7 @@ public static class DelineatorBuilder
         double lineX,
         IReadOnlyList<RectD> occupants,
         double stackOffsetPt,
+        List<SceneWarning> warnings,
         out SceneText? label,
         out RectD? labelBounds,
         out GanttLabelPosition? usedPosition)
@@ -286,17 +371,42 @@ public static class DelineatorBuilder
         labelBounds = null;
         usedPosition = null;
 
-        if (!request.LabelMetrics.TryMeasure(text, out TextMeasurement? measurement) || measurement is null)
-        {
-            return false;
-        }
-
         IReadOnlyList<GanttLabelPosition> candidates = request.LabelPosition == GanttLabelPosition.Auto
             ? _autoOrder
             : [request.LabelPosition];
 
         foreach (GanttLabelPosition position in candidates)
         {
+            // §22's overflow rule applies to a delineator label exactly
+            // as it applies to a span's: the corner's available width is
+            // the chart-bounded distance from the line (plus the gap) to
+            // the chart's far edge, and a description that measures
+            // wider is clipped with an ellipsis to that width — the one
+            // truncation mechanism Core uses — never shrunk, wrapped, or
+            // suppressed. Measuring the clipped text is what keeps the
+            // box the host draws inside the box the scene measured.
+            var left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
+            var availablePt = left
+                ? lineX - request.LabelGapPt - request.ChartBounds.Left
+                : request.ChartBounds.Right - lineX - request.LabelGapPt;
+            if (availablePt <= 0)
+            {
+                continue;
+            }
+
+            var labelText = text;
+            var truncated = false;
+            if (LabelText.Overflows(text, availablePt, request.LabelMetrics))
+            {
+                labelText = LabelText.Ellipsize(text, availablePt, request.LabelMetrics);
+                truncated = true;
+            }
+
+            if (!request.LabelMetrics.TryMeasure(labelText, out TextMeasurement? measurement) || measurement is null)
+            {
+                return false;
+            }
+
             RectD box = CornerBox(
                 position, lineX, measurement, request.PlotBounds, request.LabelGapPt, stackOffsetPt);
 
@@ -319,9 +429,14 @@ public static class DelineatorBuilder
                 ScenePrimitive.CreateId(owner, "delineator-label"),
                 owner,
                 ZLayer.DelineatorLabel,
-                text,
+                labelText,
                 box,
-                request.LineStyle,
+                // The predetermined description-label style, the same
+                // DefaultText style every other description label carries:
+                // the line style governs the line alone. It carries the
+                // font family and size the measuring seam measured at, so
+                // the host draws the text the box was sized for.
+                request.LabelStyle!,
                 alignment,
                 @event.Type,
                 request.LaneOrder,
@@ -329,6 +444,14 @@ public static class DelineatorBuilder
                 @event.SortOrder);
             labelBounds = box;
             usedPosition = position;
+            if (truncated)
+            {
+                warnings.Add(new SceneWarning(
+                    owner,
+                    LabelPlanner.TruncatedToFitCode,
+                    "The label was truncated with an ellipsis to fit the available space."));
+            }
+
             return true;
         }
 
@@ -336,8 +459,114 @@ public static class DelineatorBuilder
     }
 
     /// <summary>
-    /// Returns the style with the delineator's own line width applied.
+    /// Places the §23 start-date label at the corner the row's
+    /// <see cref="GanttEvent.DateLabelPlacement"/> names, defaulting to
+    /// the §24 <c>Auto</c> corner order.
     /// </summary>
+    /// <remarks>
+    /// The date label shares the description label's corner geometry and
+    /// its §24 alignment rule, but never its clipping discipline: a
+    /// truncated date is not a date (D-G11), so a corner whose box would
+    /// leave the chart — which is precisely a box wider than the available
+    /// width — is declined rather than ellipsised. The occupant list
+    /// already carries every prior label of the scene plus this row's own
+    /// description label, so the two labels of one row never overlap.
+    /// </remarks>
+    /// <param name="request">The typed delineator request.</param>
+    /// <param name="event">The validated delineator event.</param>
+    /// <param name="start">The event's start date, the label's text source.</param>
+    /// <param name="lineX">The line's exact X.</param>
+    /// <param name="descriptionBounds">This row's description-label box, when placed.</param>
+    /// <param name="occupants">Already-placed label boxes this label must not intersect.</param>
+    /// <param name="stackOffsetPt">The row's stack offset, shared with its description label.</param>
+    /// <param name="warnings">The warning list (unused here; suppression is reported by the caller).</param>
+    /// <param name="dateLabel">The placed date-label text, or null.</param>
+    /// <param name="dateLabelBounds">The placed date-label box, or null.</param>
+    /// <returns>True when a corner held the full date.</returns>
+    private static bool TryPlaceDateLabel(
+        DelineatorRequest request,
+        GanttEvent @event,
+        DateOnly start,
+        double lineX,
+        RectD? descriptionBounds,
+        IReadOnlyList<RectD> occupants,
+        double stackOffsetPt,
+        List<SceneWarning> warnings,
+        out SceneText? dateLabel,
+        out RectD? dateLabelBounds)
+    {
+        _ = warnings;
+        dateLabel = null;
+        dateLabelBounds = null;
+
+        var dateText = GanttDateFormatting.Format(start, request.DateFormat);
+        if (!request.LabelMetrics.TryMeasure(dateText, out TextMeasurement? measurement)
+            || measurement is null)
+        {
+            return false;
+        }
+
+        GanttLabelPosition requested = @event.DateLabelPlacement ?? GanttLabelPosition.Auto;
+        IReadOnlyList<GanttLabelPosition> candidates = requested == GanttLabelPosition.Auto
+            ? _autoOrder
+            : [requested];
+
+        // This row's description label was placed first and blocks the
+        // date label: §23 plans a date label against the description
+        // label just placed for its row.
+        List<RectD> dateOccupants = [.. occupants];
+        if (descriptionBounds is { } placedDescription)
+        {
+            dateOccupants.Add(placedDescription);
+        }
+
+        foreach (GanttLabelPosition position in candidates)
+        {
+            RectD box = CornerBox(
+                position,
+                lineX,
+                measurement,
+                request.PlotBounds,
+                request.LabelGapPt,
+                stackOffsetPt);
+
+            if (!Contains(request.ChartBounds, box) || IntersectsAny(box, dateOccupants))
+            {
+                continue;
+            }
+
+            // §24's alignment rule, shared with the description label:
+            // the text hugs the line — a left-hand corner is right-aligned
+            // so it ends against the line, a right-hand corner reads away
+            // from it.
+            GanttTextAlignment alignment = position is GanttLabelPosition.TopLeft
+                or GanttLabelPosition.BottomLeft
+                ? GanttTextAlignment.Right
+                : GanttTextAlignment.Left;
+
+            var owner = SceneOwnerId.ForRow(@event.Id);
+            dateLabel = new SceneText(
+                ScenePrimitive.CreateId(owner, DateLabelBuilder.StartRole),
+                owner,
+                ZLayer.DelineatorLabel,
+                dateText,
+                box,
+                // The same predetermined description-label style the
+                // description label carries: §23 renders date labels in
+                // the body font and default text, and the style carries
+                // the font family and size the measuring seam measured at.
+                request.LabelStyle!,
+                alignment,
+                @event.Type,
+                request.LaneOrder,
+                request.StackIndex,
+                @event.SortOrder);
+            dateLabelBounds = box;
+            return true;
+        }
+
+        return false;
+    }
     /// <remarks>
     /// <para>
     /// <see cref="SceneStyle"/> exposes read-only properties, so it is rebuilt
@@ -592,15 +821,23 @@ public static class DelineatorLayout
             // twice ran the label placement pass twice for identical inputs, and
             // the first pass's label was discarded, so the member consumed a stack
             // offset's worth of gap it never occupied.
-            var needsLabel =
-                item.LabelPosition != GanttLabelPosition.None
-                && !string.IsNullOrEmpty(item.Event?.Description);
+            //
+            // The description label and the §23 date label share the row's stack
+            // slot: they sit at different corners of the same row, so both are
+            // placed at the same offset and the slot advances once, by the taller
+            // of the two placed boxes.
+            var contributesLabel =
+                (item.LabelPosition != GanttLabelPosition.None
+                    && !string.IsNullOrEmpty(item.Event?.Description))
+                || (item.ShowDateLabels
+                    && item.LabelStyle is not null
+                    && item.Event?.DateLabelPlacement is not GanttLabelPosition.None);
 
             DelineatorCreationOutcome outcome = DelineatorBuilder.TryBuild(
                 item,
                 timeScale,
                 placed,
-                needsLabel ? stackOffsetPt : 0);
+                contributesLabel ? stackOffsetPt : 0);
 
             // A refused member is a broken input, not an absent label. Silently
             // skipping it would drop a contributing row from the scene with no
@@ -623,7 +860,7 @@ public static class DelineatorLayout
                 line = Rebind(builtLine, owner);
             }
 
-            if (!needsLabel)
+            if (!contributesLabel)
             {
                 continue;
             }
@@ -633,10 +870,31 @@ public static class DelineatorLayout
                 primitives.Add(text);
             }
 
+            if (result.DateLabel is { } dateText)
+            {
+                primitives.Add(dateText);
+            }
+
+            // A placed box reserves its space for every later label,
+            // description and date alike. The row's slot advances once,
+            // by the taller of its two placed boxes: the description and
+            // date labels share the slot at different corners, so the
+            // space the row occupies is the taller box, not their sum.
+            var placedHeight = 0.0;
             if (result.LabelBounds is { } bounds)
             {
                 placed.Add(bounds);
+                placedHeight = bounds.Height;
+            }
 
+            if (result.DateLabelBounds is { } dateBounds)
+            {
+                placed.Add(dateBounds);
+                placedHeight = Math.Max(placedHeight, dateBounds.Height);
+            }
+
+            if (placedHeight > 0)
+            {
                 // The next label clears this one entirely: the placed box's own
                 // height is the space it occupies, and StackGapPt is the space left
                 // between them. Advancing by the height rather than by one gap per
@@ -644,7 +902,7 @@ public static class DelineatorLayout
                 // the label height, and for labels of differing heights. The offset
                 // is a distance from the plot edge whichever corner the label took,
                 // so accumulating it is correct for a top and a bottom label alike.
-                stackOffsetPt += bounds.Height + request.StackGapPt;
+                stackOffsetPt += placedHeight + request.StackGapPt;
             }
         }
 

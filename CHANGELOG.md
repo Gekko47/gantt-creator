@@ -47,6 +47,10 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **docs**: Update STATUS.md and SYNC.md to reflect current state
 - **docs**: Add .clinerules/SYNC.md
 - **ci**: Bump GitHub Actions to v5 to clear Node.js 20 deprecation warning
+- **feat(R5.3)**: Add Promote to Parent / Demote to Child commands in a new Ordering ribbon group — hierarchy role catalogue (`EntityHierarchyCatalog`), pure promote/demote planners, and a guarded mutator that writes `ParentId`/`SiblingOrder` only
+- **feat(R5.4)**: Add Move Up / Move Down commands — physical window swaps of full row content with dense `SiblingOrder` resequencing of the affected run; bounds are a silent success (D1-amended, D4, D5)
+- **feat(R5.4)**: Add Remove command — deletes the selected row, promotes its children to its former parent (or top-level), and densely resequences the surviving run (D6); destructive under ADR-0008 with the Core-pinned warned confirmation, performs no shape operations (R4.7A D1)
+- **feat(R5.13)**: Insert a row below a group child as a child of that group — a positional insert reads the post-insert body (via the shared `ExcelGanttRowProjection`), assigns the enclosing group's parent, and rebuilds the native outline through `IOutlineGroupPort`; an append stays top-level and a refused positional insert refuses before any read, write, or regroup
 
 ### Changed
 
@@ -63,6 +67,8 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 
 ### Fixed
 
+- **fix(office)**: keep a collapsed outline group collapsed across a Refresh — the row-height normaliser's level-1 padding pass wrote `OutlineLevel` across every body row, re-expanding any parent the user had collapsed (the outline writer's reset pass was already fixed by `b9e2145`). The normaliser's two passes are now disjoint — level 1 writes only ungrouped rows, level 2 only grouped rows — so a grouped row's outline is written exactly once. `ExcelRowHeightNormaliserTests` pins the pass split; `RowHeightNormaliserIntegrationTests.A_collapsed_group_stays_collapsed_through_height_normalisation` is the live-Excel gate.
+- **fix(office)**: unbox `Range.OutlineLevel`'s Variant in every whole-number shape, so Promote to Parent clears the row's old outline group
 - **fix**: Update AddInLogFactory with IsFailed fallback and isolated temp test directories
 - **fix**: Update active work item status and enhance verification scripts
 - **fix**: Anchor verify.ps1 dirty-tree check to repo root with git -C
@@ -136,6 +142,11 @@ and this project adheres to [Conventional Commits](https://www.conventionalcommi
 - **test(R0.5)**: Replace placeholders with sample tests, add VS Code tasks
 - **test**: Strengthen analyzer rules and update tests for compliance
 - **lint**: Enforce whitespace and strengthen test validations across 10 files
+- **fix(office)**: Preserve the user's collapsed outline groups across Refresh — the outline reset pass no longer writes level 1 over a level-1 parent that still carries a collapsed group
+- **fix(office)**: Route the R5.3 parent/child mutator's single-cell writes through `Range.Cells` — live Excel 16.0 refuses the two-argument `Range` indexer (`COMException 0x800A03EC`), so Promote and Demote always failed
+- **fix(core)**: Refuse a Demote to Child whose landing the Excel outline cannot represent — the scan now requires the selection to land directly beneath the target parent's existing child run, so a demotion separated by a milestone, splitter or other non-owner row refuses with the new `LandingNotAdjacent` reason instead of writing a `ParentId` the outline parks as top-level on every Refresh; an adjacent parent at capacity refuses with `ParentUnavailable` **(superseded: the owner direction of 2026-10-11 replaces the refusal with a content move — see the Demote entry below)**
+- **fix(core)**: Assign the promoted row its top-level `SiblingOrder` on Promote to Parent — the promoted row kept its stale child-run value after becoming top-level, colliding with the top-level run's dense ordering; the top-level run now resequences densely around the row's new position, mirroring the demote
+- **feat(core, office)**: Demote to Child moves the selection beneath the new parent's child run and re-homes its children — the demoted row's content moves to sit directly beneath the target group's existing child run so the demotion stays one contiguous outline group; its existing children are re-homed to the new parent (staying depth 2) and counted together with it against the seven-child maximum; the withdrawn `LandingNotAdjacent` refusal and its enum member are deleted
 
 ### Chore
 

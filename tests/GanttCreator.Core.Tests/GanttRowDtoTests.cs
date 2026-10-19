@@ -94,6 +94,7 @@ public class GanttRowDtoTests
             GanttCells.Empty<string>(),
             GanttCells.Empty<string>(),
             GanttCells.Empty<string>(),
+            GanttCells.Empty<string>(),
             GanttCells.Unsupported<bool?>(),
             GanttCells.Empty<string>());
 

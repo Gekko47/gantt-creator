@@ -284,4 +284,300 @@ public static class EntityTypeCatalog
         type = default;
         return false;
     }
+
+    /// <summary>
+    /// The ribbon item identifier that clears the row's <c>LabelPosition</c>
+    /// cell (blank), resolving to the style default / <c>Auto</c> cascade per
+    /// entity-guide §22. It is the absence of a value, not a catalogue
+    /// position, so it never appears in <see cref="GetAllowedLabelPositions"/>.
+    /// </summary>
+    public const string DefaultLabelSelectionId = "Default";
+
+    /// <summary>
+    /// Display order for ribbon label options: the catalogue set in a stable,
+    /// deterministic order (Ordinal by enum name would scatter the UX, so the
+    /// order is fixed here once). Every element comes from
+    /// <see cref="EntityTypeDefinition.AllowedLabelPositions"/> or the row's
+    /// style registry set — never a second authority.
+    /// </summary>
+    private static readonly GanttLabelPosition[] _displayOrder =
+    [
+        GanttLabelPosition.Auto,
+        GanttLabelPosition.Left,
+        GanttLabelPosition.Right,
+        GanttLabelPosition.Inside,
+        GanttLabelPosition.TopLeft,
+        GanttLabelPosition.TopRight,
+        GanttLabelPosition.BottomLeft,
+        GanttLabelPosition.BottomRight,
+        GanttLabelPosition.DataPanelLeft,
+        GanttLabelPosition.PlotCentre,
+        GanttLabelPosition.Both,
+        GanttLabelPosition.None,
+    ];
+
+    /// <summary>
+    /// Returns the allowed label positions for a type in stable ribbon display
+    /// order (R5.5 D1 projection). <see cref="GanttEntityType.CustomActivity"/>
+    /// resolves from <paramref name="styleRegistry"/> via its
+    /// <c>StyleKey</c>; every other type reads its catalogue definition.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    /// <returns>The allowed positions in display order; empty when unknown.</returns>
+    public static IReadOnlyList<GanttLabelPosition> GetAllowedLabelPositions(
+        GanttEntityType type,
+        string? styleKey = null,
+        GanttStyleRegistry? styleRegistry = null)
+    {
+        IReadOnlySet<GanttLabelPosition> allowed;
+        if (type == GanttEntityType.CustomActivity)
+        {
+            if (styleRegistry is null
+                || !styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
+                || style is null
+                || style.AllowedLabelPositions is null)
+            {
+                return [];
+            }
+
+            allowed = style.AllowedLabelPositions;
+        }
+        else if (GetDefinition(type) is not { } definition)
+        {
+            return [];
+        }
+        else
+        {
+            allowed = definition.AllowedLabelPositions;
+        }
+
+        return [.. _displayOrder.Where(allowed.Contains)];
+    }
+
+    /// <summary>
+    /// Returns whether a label position is allowed for a type (R5.5 D1 guard).
+    /// <see cref="GanttEntityType.CustomActivity"/> delegates to its style.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate position.</param>
+    /// <param name="styleKey">The row's style key (Custom Activity only).</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    public static bool IsLabelPositionAllowed(
+        GanttEntityType type,
+        GanttLabelPosition position,
+        string? styleKey = null,
+        GanttStyleRegistry? styleRegistry = null) =>
+        GetAllowedLabelPositions(type, styleKey, styleRegistry).Contains(position);
+
+    /// <summary>
+    /// Parses a ribbon label-selection identifier. <c>Default</c> parses to a
+    /// null position (clear the cell to blank); otherwise the identifier must
+    /// name a defined <see cref="GanttLabelPosition"/> Ordinally. Unknown text
+    /// is refused, never defaulted (the TimeScale-selection precedent).
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="position">The parsed position, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined position name.</returns>
+    public static bool TryParseLabelSelection(string? selectionId, out GanttLabelPosition? position)
+    {
+        if (string.Equals(selectionId, DefaultLabelSelectionId, StringComparison.Ordinal))
+        {
+            position = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            position = parsed;
+            return true;
+        }
+
+        position = null;
+        return false;
+    }
+
+    /// <summary>
+    /// The ribbon item identifier that clears the row's
+    /// <c>DateLabelPosition</c> cell (blank), resolving to
+    /// <c>Auto</c> per R5.14 D3. It is the absence of a value,
+    /// not a catalogue choice, so it never appears in
+    /// <see cref="GetAllowedDateLabelPositions"/>.
+    /// </summary>
+    public const string DefaultDateLabelSelectionId = "Default";
+
+    /// <summary>
+    /// Display order for ribbon date-label options: <c>Auto</c>
+    /// first, then the single-date choices in date order, then
+    /// the no-label choice. Every element is derived from the
+    /// row type's <see cref="EntityDateMode"/> — never a second
+    /// authority.
+    /// </summary>
+    private static readonly GanttDateLabelPosition[] _dateLabelDisplayOrder =
+    [
+        GanttDateLabelPosition.Auto,
+        GanttDateLabelPosition.Start,
+        GanttDateLabelPosition.Finish,
+        GanttDateLabelPosition.None,
+    ];
+
+    /// <summary>
+    /// Display order for the delineator's positionable date label:
+    /// the description label's corner set (owner ruling 2026-10-14),
+    /// <c>Auto</c> first and the no-label choice last. The date label
+    /// of a plot-spanning line has no bar to anchor Left/Right of,
+    /// so it shares the description label's corners.
+    /// </summary>
+    private static readonly GanttLabelPosition[] _dateLabelPlacementOrder =
+    [
+        GanttLabelPosition.Auto,
+        GanttLabelPosition.TopLeft,
+        GanttLabelPosition.TopRight,
+        GanttLabelPosition.BottomLeft,
+        GanttLabelPosition.BottomRight,
+        GanttLabelPosition.None,
+    ];
+
+    /// <summary>
+    /// Returns the allowed date-label choices for a type in stable
+    /// ribbon display order (R5.14 D1 projection), derived from the
+    /// type's <see cref="EntityDateMode"/>: a dateless type names
+    /// none (the control is disabled), a <c>StartOnly</c> type names
+    /// <c>Auto</c>, <c>Start</c>, and <c>None</c>, and a span names
+    /// all four. The delineator is the exception (owner ruling
+    /// 2026-10-14): its date label is positionable, not selectable
+    /// per date — it reads Start only, so <see
+    /// cref="GetAllowedDateLabelPlacements"/> projects its set
+    /// instead and the which-date set no longer applies to it.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The allowed choices in display order; empty for a dateless, delineator, or unknown type.</returns>
+    public static IReadOnlyList<GanttDateLabelPosition> GetAllowedDateLabelPositions(
+        GanttEntityType type)
+    {
+        EntityTypeDefinition? definition = GetDefinition(type);
+        // The delineator is the exception (owner ruling 2026-10-14): its
+        // date label is positionable, not selectable per date — it reads
+        // Start only, so <see cref="GetAllowedDateLabelPlacements"/>
+        // projects its set instead and the which-date set no longer
+        // applies to it.
+        return definition is not null && type != GanttEntityType.Delineator
+            ? definition.DateMode switch
+            {
+                EntityDateMode.None => [],
+                EntityDateMode.StartOnly
+                    => [.. _dateLabelDisplayOrder.Where(p => p != GanttDateLabelPosition.Finish)],
+                EntityDateMode.StartFinish => [.. _dateLabelDisplayOrder],
+                // An out-of-range date mode is a catalogue corruption; the
+                // safe default is to treat the type as dateless (no options).
+                _ => [],
+            }
+            : [];
+    }
+
+    /// <summary>
+    /// Returns the allowed date-label positions for a type in
+    /// stable ribbon display order — the description label's
+    /// corner set (owner ruling 2026-10-14). Only the
+    /// delineator's date label is positionable: a plot-spanning
+    /// line has no bar to anchor Left/Right of, and Start is
+    /// its only date, so the cell names a corner instead of a
+    /// which-date choice. Every other type's date label selects
+    /// which date shows (<see cref="GetAllowedDateLabelPositions"/>),
+    /// not where it sits, so the set is empty for them.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <returns>The allowed positions in display order; empty for every type but the delineator.</returns>
+    public static IReadOnlyList<GanttLabelPosition> GetAllowedDateLabelPlacements(
+        GanttEntityType type) =>
+        type == GanttEntityType.Delineator ? _dateLabelPlacementOrder : [];
+
+    /// <summary>
+    /// Returns whether a date-label choice is allowed for a type
+    /// (R5.14 D1/D4 guard). The capability is type-only: a
+    /// <c>Custom Activity</c> style carries no date mode, so it
+    /// cannot narrow the set the way it narrows
+    /// <see cref="GanttLabelPosition"/>.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate choice.</param>
+    public static bool IsDateLabelPositionAllowed(
+        GanttEntityType type, GanttDateLabelPosition position) =>
+        GetAllowedDateLabelPositions(type).Contains(position);
+
+    /// <summary>
+    /// Returns whether a date-label position is allowed for a
+    /// type (the delineator-only capability, owner ruling
+    /// 2026-10-14). The capability is type-only, exactly like
+    /// the which-date guard above: a <c>Custom Activity</c>
+    /// style carries no date mode and cannot narrow the set.
+    /// </summary>
+    /// <param name="type">The entity type.</param>
+    /// <param name="position">The candidate corner.</param>
+    public static bool IsDateLabelPlacementAllowed(
+        GanttEntityType type, GanttLabelPosition position) =>
+        GetAllowedDateLabelPlacements(type).Contains(position);
+
+    /// <summary>
+    /// Parses a ribbon date-label-selection identifier. <c>Default</c>
+    /// parses to a null choice (clear the cell to blank = <c>Auto</c>);
+    /// otherwise the identifier must name a defined
+    /// <see cref="GanttDateLabelPosition"/> Ordinally. Unknown text is
+    /// refused, never defaulted (the label-selection precedent).
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="position">The parsed choice, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined choice name.</returns>
+    public static bool TryParseDateLabelSelection(
+        string? selectionId, out GanttDateLabelPosition? position)
+    {
+        if (string.Equals(selectionId, DefaultDateLabelSelectionId, StringComparison.Ordinal))
+        {
+            position = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttDateLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            position = parsed;
+            return true;
+        }
+
+        position = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Parses a ribbon date-label-selection identifier for a
+    /// positionable date label (the delineator, owner ruling
+    /// 2026-10-14). <c>Default</c> parses to a null position
+    /// (clear the cell to blank = <c>Auto</c>); otherwise the
+    /// identifier must name a defined <see cref="GanttLabelPosition"/>
+    /// Ordinally. Unknown text is refused, never defaulted.
+    /// </summary>
+    /// <param name="selectionId">The ribbon item identifier.</param>
+    /// <param name="placement">The parsed corner, or null for Default.</param>
+    /// <returns>True when the identifier is Default or a defined position name.</returns>
+    public static bool TryParseDateLabelPlacementSelection(
+        string? selectionId, out GanttLabelPosition? placement)
+    {
+        if (string.Equals(selectionId, DefaultDateLabelSelectionId, StringComparison.Ordinal))
+        {
+            placement = null;
+            return true;
+        }
+
+        if (Enum.TryParse(selectionId, out GanttLabelPosition parsed)
+            && Enum.IsDefined(parsed))
+        {
+            placement = parsed;
+            return true;
+        }
+
+        placement = null;
+        return false;
+    }
 }

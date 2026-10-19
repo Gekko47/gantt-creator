@@ -89,6 +89,34 @@ public sealed class ProtectionGuardFirstTests
         // its first mutating member. It also reads the same code-owned GanttTableSchema
         // as the initialiser, so the classification has one authority.
         new("src/GanttCreator.Office/ExcelColumnPresentationRestorer.cs", "EnsureClassification"),
+        // R5.3 D2: the parent/child mutator rewrites the user's VISIBLE table -- a
+        // promote rotates a sibling run and clears the moved row's ParentId, a demote
+        // assigns a ParentId and a SiblingOrder, a move rotates a sibling window, and
+        // a remove re-homes the deleted row's children and deletes the row -- so it is
+        // a data mutation under ADR-0008 D4. Listed at "Mutate", the shared entry that
+        // Promote, Demote, Move and Remove delegate to, so the guard is reached before
+        // any ranged write.
+        new("src/GanttCreator.Office/ExcelParentChildMutator.cs", "Mutate"),
+        // R5.5: the label-position mutator writes the user's VISIBLE table -- exactly
+        // one LabelPosition cell on one body row (bespoke per entity, never
+        // group-applied) -- so it is a data mutation under ADR-0008 D4. Listed at
+        // "SetLabelPosition", the entry point that consults the shared guard before
+        // any workbook or table access.
+        new("src/GanttCreator.Office/ExcelLabelPositionMutator.cs", "SetLabelPosition"),
+        // R5.14: the date-label mutator writes the user's VISIBLE table --
+        // exactly one DateLabelPosition cell on one body row (bespoke per
+        // entity, never group-applied) -- so it is a data mutation under
+        // ADR-0008 D4. Listed at "SetDateLabelPosition", the entry point
+        // that consults the shared guard before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPosition"),
+        // Owner ruling 2026-10-14: the positionable date label added a
+        // SECOND mutating entry point to the same adapter (a delineator's
+        // corner write). Both entry points carry their own guard query as
+        // their first statement, so both are registered here — the
+        // discovery rule works per file, but the order rule works per
+        // entry point, and an unregistered entry point could silently
+        // drop the guard.
+        new("src/GanttCreator.Office/ExcelDateLabelPositionMutator.cs", "SetDateLabelPlacement"),
     ];
 
     /// <summary>
@@ -116,6 +144,12 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
         "src/GanttCreator.Office/ExcelValue2Matrix.cs",
+        // R5.13: the shared body projection. It is pure -- it reads the raw
+        // cell matrix the adapters already bulk-read and projects it into the
+        // neutral GanttEvent list the Core hierarchy and outline planners
+        // consume; it writes nothing and touches no COM object, so it is
+        // read-only and consults no guard.
+        "src/GanttCreator.Office/ExcelGanttRowProjection.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",
@@ -147,6 +181,23 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/ProtectionGuardOutcome.cs",
         "src/GanttCreator.Office/ValidationReportComposer.cs",
         "src/GanttCreator.Office/WorkbookInitialiseOutcome.cs",
+        // R5.3 D2: the parent/child mutation port and its outcome. The port declares
+        // Promote/Demote and the typed outcome; it performs no mutation of its own --
+        // the mutating implementation is registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IParentChildMutator.cs",
+        // R5.5: the label-position port and the selection identifier. The port declares
+        // the single write and its typed outcome -- the mutating implementation is
+        // registered in MutatingAdapters above. The identifier reads the active cell
+        // against the table and pushes the native SheetSelectionChange event; it
+        // mutates no workbook content, so a guard consultation would be unreachable
+        // code rather than a missing guard.
+        "src/GanttCreator.Office/ILabelPositionMutator.cs",
+        // R5.14: the date-label port. The port declares the single
+        // write and its typed outcome -- the mutating implementation is
+        // registered in MutatingAdapters above.
+        "src/GanttCreator.Office/IDateLabelPositionMutator.cs",
+        "src/GanttCreator.Office/ISelectionIdentifier.cs",
+        "src/GanttCreator.Office/ExcelSelectionIdentifier.cs",
         // R4.3: the origin translation and the scene-to-request renderer. Both
         // are pure functions over already-resolved Core values - neither holds a
         // COM proxy, names an interop type, or mutates anything - so a protection

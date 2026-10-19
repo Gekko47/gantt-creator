@@ -215,6 +215,27 @@ public sealed class OutlineGroupPlannerTests
     }
 
     /// <summary>
+    /// R5.3 D1/D3: a child Delineator groups under its parent exactly as any
+    /// other child does, so the outline can collapse it. Rendering stays
+    /// plot-global; only the grouping changes.
+    /// </summary>
+    [Fact]
+    public void A_child_delineator_forms_a_group()
+    {
+        GanttRowId activity = NewId();
+        GanttRowId line = NewId();
+
+        OutlineGroupPlan plan = OutlineGroupPlanner.Plan(
+            [
+                Event(2, activity),
+                Event(3, line, activity, GanttEntityType.Delineator),
+            ]);
+
+        OutlineGroup group = Assert.Single(plan.Groups);
+        Assert.Equal([3], group.ChildRowNumbers);
+    }
+
+    /// <summary>
     /// A top-level row that is nobody's parent produces no groups at all. The common
     /// case -- a flat table -- must not draw outline controls.
     /// </summary>

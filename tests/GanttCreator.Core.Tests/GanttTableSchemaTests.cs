@@ -2,11 +2,14 @@ namespace GanttCreator.Core.Tests;
 
 public class GanttTableSchemaTests
 {
-    private static readonly string[] s_requiredColumnNames =
+    private static readonly (string Name, bool IsRequired)[] s_columnContract =
     [
-        "Id", "LaneId", "StackIndex", "Type", "Description", "Start", "Finish",
-        "Duration", "ParentId", "SiblingOrder", "StyleKey", "LabelPosition", "FillColour",
-        "StrokeColour", "Visible",
+        ("Id", true), ("LaneId", true), ("StackIndex", true), ("Type", true),
+        ("Description", true), ("Start", true), ("Finish", true), ("Duration", true),
+        ("ParentId", true), ("SiblingOrder", true), ("StyleKey", true),
+        ("LabelPosition", true), ("DateLabelPosition", false),
+        ("FillColour", true), ("StrokeColour", true), ("Visible", true),
+        ("SortOrder", false),
     ];
 
     [Fact]
@@ -16,22 +19,24 @@ public class GanttTableSchemaTests
     }
 
     [Fact]
-    public void Default_schema_lists_the_required_columns_in_contract_order()
+    public void Default_schema_lists_the_columns_in_contract_order()
     {
         var columns = GanttTableSchema.Default.Columns;
 
-        // 15 required + the optional SortOrder. R4.7A added SiblingOrder, taking
-        // the required count from 13 to 14; R4.7C added Duration, taking it to 15.
-        Assert.Equal(16, columns.Count);
-        for (var i = 0; i < s_requiredColumnNames.Length; i++)
+        // 15 required + two optional. R4.7A added SiblingOrder, taking
+        // the required count from 13 to 14; R4.7C added Duration, taking
+        // it to 15. R5.14 added DateLabelPosition as the second OPTIONAL
+        // column (the SortOrder precedent): a workbook saved before
+        // R5.14 legitimately lacks it, and a missing optional column
+        // reads as a blank cell (= Auto) instead of failing the table
+        // read, which would strand every pre-R5.14 workbook behind a
+        // TableMissing refusal.
+        Assert.Equal(s_columnContract.Length, columns.Count);
+        for (var i = 0; i < s_columnContract.Length; i++)
         {
-            Assert.Equal(s_requiredColumnNames[i], columns[i].Name);
-            Assert.True(columns[i].IsRequired);
+            Assert.Equal(s_columnContract[i].Name, columns[i].Name);
+            Assert.Equal(s_columnContract[i].IsRequired, columns[i].IsRequired);
         }
-
-        var last = columns[^1];
-        Assert.Equal("SortOrder", last.Name);
-        Assert.False(last.IsRequired);
     }
 
     [Fact]
@@ -81,6 +86,7 @@ public class GanttTableSchemaTests
     [InlineData("LaneId", GanttColumnAccess.EngineHidden)]
     [InlineData("StackIndex", GanttColumnAccess.EngineHidden)]
     [InlineData("StyleKey", GanttColumnAccess.EngineHidden)]
+        [InlineData("DateLabelPosition", GanttColumnAccess.EngineHidden)]
     [InlineData("LabelPosition", GanttColumnAccess.EngineHidden)]
     [InlineData("FillColour", GanttColumnAccess.EngineHidden)]
     [InlineData("StrokeColour", GanttColumnAccess.EngineHidden)]

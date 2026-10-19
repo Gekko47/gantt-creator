@@ -24,6 +24,168 @@ public sealed record HierarchyPromotionPlan(
 }
 
 /// <summary>
+/// One <c>SiblingOrder</c> cell rewrite within a single sibling run.
+/// </summary>
+/// <param name="RowId">The row whose <c>SiblingOrder</c> cell is rewritten.</param>
+/// <param name="SiblingOrder">The dense order value (<c>0..n</c>) the cell takes.</param>
+public sealed record SiblingOrderWrite(GanttRowId RowId, int SiblingOrder);
+
+/// <summary>
+/// Why a promote or demote plan was refused. Every refusal leaves the
+/// workbook untouched.
+/// </summary>
+public enum ParentChildRefusalReason
+{
+    /// <summary>The selected identifier names no row of the table.</summary>
+    SelectionUnknown = 0,
+
+    /// <summary>Promote was asked of a row that is not a child (blank <c>ParentId</c>).</summary>
+    NotAChild = 1,
+
+    /// <summary>Demote was asked of a row that is already a child.</summary>
+    AlreadyAChild = 2,
+
+    /// <summary>The row's type may never be a child (standalone or leaf-parent).</summary>
+    TypeCannotBeChild = 3,
+
+    /// <summary>A <c>CriticalInterval</c> was asked to promote; it is child-only by contract.</summary>
+    PromotionForbiddenForType = 4,
+
+    /// <summary>The promoted row owns children of its own; promotion would orphan them.</summary>
+    HasChildren = 5,
+
+    /// <summary>No eligible parent-capable row exists above the selection.</summary>
+    NoEligibleParentAbove = 6,
+
+    /// <summary>The only eligible parent above refused the child (capacity exhausted up the table).</summary>
+    ParentUnavailable = 7,
+
+    /// <summary>The child would nest three deep (the candidate parent is itself a child).</summary>
+    TooDeep = 8,
+
+    /// <summary>The move would create a parent cycle.</summary>
+    Cycle = 9,
+
+    /// <summary>A <c>CriticalInterval</c> child would land on a non-span parent.</summary>
+    ParentNotSpan = 10,
+}
+
+/// <summary>
+/// The result of planning one child-to-parent promotion (R5.3 D2): which row
+/// moves to the bottom of its sibling run, which <c>ParentId</c> is cleared,
+/// and which <c>SiblingOrder</c> cells close the gap.
+/// </summary>
+/// <param name="TargetId">The promoted row.</param>
+/// <param name="ClearedParentId">The parent the row leaves.</param>
+/// <param name="MoveToBodyIndex">
+/// The one-based body index the row's content moves to (the bottom of its
+/// former sibling run; equal to its current index when already last).
+/// </param>
+/// <param name="SiblingOrderWrites">
+/// Dense resequencing of the remaining run, ascending row order. Empty when
+/// the promoted row was its parent's only child.
+/// </param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/>.</param>
+public sealed record PromotePlan(
+    GanttRowId? TargetId,
+    GanttRowId? ClearedParentId,
+    int? MoveToBodyIndex,
+    IReadOnlyList<SiblingOrderWrite> SiblingOrderWrites,
+    ParentChildRefusalReason? Refusal)
+{
+    /// <summary>Gets whether planning succeeded.</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Creates a refusal plan. Nothing is mutated.</summary>
+    /// <param name="refusal">Why no plan was produced.</param>
+    /// <returns>The refusal plan.</returns>
+    public static PromotePlan Refused(ParentChildRefusalReason refusal) =>
+        new(null, null, null, [], refusal);
+}
+
+/// <summary>
+/// The result of planning one parent-to-child demotion (R5.3 D3): which row
+/// gains which <c>ParentId</c>, where its content moves, which existing
+/// children move with it to the new parent, and which
+/// <c>SiblingOrder</c> cells resequence.
+/// </summary>
+/// <param name="TargetId">The demoted row.</param>
+/// <param name="NewParentId">The nearest eligible parent above the selection.</param>
+/// <param name="MoveToBodyIndex">
+/// The one-based body index the row's content moves to (directly beneath the
+/// new parent's existing child run, so the demotion stays one contiguous
+/// outline group; equal to its current index when already there).
+/// </param>
+/// <param name="RehomedChildIds">
+/// The demoted row's existing children, in ascending row order, whose
+/// <c>ParentId</c> moves with it to the new parent so they stay depth 2.
+/// </param>
+/// <param name="SiblingOrderWrites">
+/// The demoted row's tail assignment in its new run, plus the dense
+/// resequencing of the top-level run it leaves.
+/// </param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/>.</param>
+public sealed record DemotePlan(
+    GanttRowId? TargetId,
+    GanttRowId? NewParentId,
+    int? MoveToBodyIndex,
+    IReadOnlyList<GanttRowId> RehomedChildIds,
+    IReadOnlyList<SiblingOrderWrite> SiblingOrderWrites,
+    ParentChildRefusalReason? Refusal)
+{
+    /// <summary>Gets whether planning succeeded.</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Creates a refusal plan. Nothing is mutated.</summary>
+    /// <param name="refusal">Why no plan was produced.</param>
+    /// <returns>The refusal plan.</returns>
+    public static DemotePlan Refused(ParentChildRefusalReason refusal) =>
+        new(null, null, null, [], [], refusal);
+}
+
+/// <summary>The result of planning one move-up or move-down (R5.4 D5):
+/// which two contiguous windows of body rows swap content, and which
+/// <c>SiblingOrder</c> cells resequence the affected run. A plan with
+/// <see cref="WindowLength"/> 0 is a silent boundary no-op (R5.4 D4):
+/// the selection already sits at the top or bottom of its set and
+/// nothing changes.</summary>
+/// <param name="TargetId">The moved row, or <see langword="null"/> on refusal.</param>
+/// <param name="WindowStart">The zero-based body index the selection's window starts at (0 when no-op).</param>
+/// <param name="WindowLength">How many rows the selection's window contains (0 when no-op).</param>
+/// <param name="SwapStart">The zero-based body index the neighbour's window starts at (0 when no-op).</param>
+/// <param name="SwapLength">How many rows the neighbour's window contains (0 when no-op).</param>
+/// <param name="SiblingOrderWrites">Dense resequencing of the affected run in post-swap row order. Empty on refusal or no-op.</param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/>.</param>
+public sealed record MovePlan(
+    GanttRowId? TargetId,
+    int WindowStart,
+    int WindowLength,
+    int SwapStart,
+    int SwapLength,
+    IReadOnlyList<SiblingOrderWrite> SiblingOrderWrites,
+    ParentChildRefusalReason? Refusal)
+{
+    /// <summary>Gets whether planning succeeded (a no-op plan succeeds).</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Gets whether the plan swaps anything at all (false at a boundary).</summary>
+    public bool MovesAnything => Succeeded && WindowLength > 0;
+
+    /// <summary>Creates a refusal plan. Nothing is mutated.</summary>
+    /// <param name="refusal">Why no plan was produced.</param>
+    /// <returns>The refusal plan.</returns>
+    public static MovePlan Refused(ParentChildRefusalReason refusal) =>
+        new(null, 0, 0, 0, 0, [], refusal);
+
+    /// <summary>Creates a silent boundary no-op plan: the selection is
+    /// already at the top or bottom of its set.</summary>
+    /// <param name="targetId">The selected row.</param>
+    /// <returns>The no-op plan.</returns>
+    public static MovePlan NoChange(GanttRowId targetId) =>
+        new(targetId, 0, 0, 0, 0, [], null);
+}
+
+/// <summary>
 /// Pure, deterministic hierarchy mutations that do not touch Excel. Every result
 /// is a <em>plan</em>: the caller applies it. Nothing here writes a cell, reads a
 /// workbook, or mutates its input.
@@ -98,4 +260,570 @@ public static class HierarchyMutations
         ArgumentNullException.ThrowIfNull(plan);
         return plan.PromotedAnything;
     }
+
+    /// <summary>
+    /// Plans one child-to-parent promotion (R5.3 D2). The target must be a
+    /// child of a promotable type that owns no children of its own; its table
+    /// content moves to the bottom of its former sibling run, its
+    /// <c>ParentId</c> is cleared, the remaining run is resequenced
+    /// densely, and the promoted row joins the top-level run at its new
+    /// position with the run resequenced around it (R5.3 D4). Nothing is
+    /// mutated; the caller applies the plan.
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="selectedId">The identifier of the row being promoted.</param>
+    /// <returns>The promotion plan, or a typed refusal that mutates nothing.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    public static PromotePlan PlanPromoteToParent(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId selectedId)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(selectedId);
+
+        Dictionary<GanttRowId, GanttEvent> byId = [];
+        foreach (GanttEvent row in rows)
+        {
+            // First-wins mirrors the validator's first-canonical policy: a
+            // duplicated id is already a validation error, so last-wins would
+            // be arbitrary.
+            _ = byId.TryAdd(row.Id, row);
+        }
+
+        if (!byId.TryGetValue(selectedId, out GanttEvent? target))
+        {
+            return PromotePlan.Refused(ParentChildRefusalReason.SelectionUnknown);
+        }
+
+        if (target.ParentId is null)
+        {
+            return PromotePlan.Refused(ParentChildRefusalReason.NotAChild);
+        }
+
+        if (!EntityHierarchyCatalog.MayBeChild(target.Type))
+        {
+            return PromotePlan.Refused(ParentChildRefusalReason.TypeCannotBeChild);
+        }
+
+        if (target.Type == GanttEntityType.CriticalInterval)
+        {
+            return PromotePlan.Refused(ParentChildRefusalReason.PromotionForbiddenForType);
+        }
+
+        foreach (GanttEvent row in rows)
+        {
+            if (row.Id != selectedId && row.ParentId == selectedId)
+            {
+                return PromotePlan.Refused(ParentChildRefusalReason.HasChildren);
+            }
+        }
+
+        GanttRowId parentId = target.ParentId;
+        List<GanttEvent> siblings = [.. rows
+            .Where(row => row.ParentId == parentId)
+            .OrderBy(static row => row.RowNumber)];
+
+        // The move target is the bottom of the run: the highest body index
+        // among the siblings, which is the promoted row's own index when it
+        // is already last.
+        var moveTo = siblings.Count == 0
+            ? target.RowNumber
+            : siblings[^1].RowNumber;
+
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent sibling in siblings)
+        {
+            if (sibling.Id == selectedId)
+            {
+                continue;
+            }
+
+            writes.Add(new SiblingOrderWrite(sibling.Id, order));
+            order++;
+        }
+
+        // The promoted row joins the top-level run at its
+        // new position -- the bottom of its former sibling
+        // run -- and the run resequences densely around it,
+        // exactly as a demote resequences the run a row
+        // leaves. The promoted row's stale child-run value
+        // is never carried into the top-level run: the
+        // planner is the authority (R5.3 D4, D2 amended
+        // 2026-10-11).
+        writes.AddRange(ResequenceTopLevelRunWithJoin(rows, selectedId, moveTo));
+
+        return new PromotePlan(selectedId, parentId, moveTo, writes, null);
+    }
+
+    /// <summary>
+    /// Plans one parent-to-child demotion (R5.3 D3, amended 2026-10-11). The
+    /// target must be a top-level row of a demotable type; it joins the
+    /// nearest eligible parent-capable row above it in body order. The
+    /// selection's content moves to sit directly beneath the new parent's
+    /// existing child run, so the demotion stays one contiguous outline
+    /// group; the target's existing children move with it, their
+    /// <c>ParentId</c> rewritten to the new parent so they stay depth 2
+    /// rather than nesting three deep. Nothing is mutated; the caller
+    /// applies the plan.
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="selectedId">The identifier of the row being demoted.</param>
+    /// <returns>The demotion plan, or a typed refusal that mutates nothing.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    public static DemotePlan PlanDemoteToChild(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId selectedId)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(selectedId);
+
+        Dictionary<GanttRowId, GanttEvent> byId = [];
+        foreach (GanttEvent row in rows)
+        {
+            _ = byId.TryAdd(row.Id, row);
+        }
+
+        if (!byId.TryGetValue(selectedId, out GanttEvent? target))
+        {
+            return DemotePlan.Refused(ParentChildRefusalReason.SelectionUnknown);
+        }
+
+        if (target.ParentId is not null)
+        {
+            return DemotePlan.Refused(ParentChildRefusalReason.AlreadyAChild);
+        }
+
+        if (!EntityHierarchyCatalog.MayBeChild(target.Type))
+        {
+            return DemotePlan.Refused(ParentChildRefusalReason.TypeCannotBeChild);
+        }
+
+        List<GanttEvent> rehomed =
+        [
+            .. rows.Where(row => row.ParentId == selectedId).OrderBy(static row => row.RowNumber),
+        ];
+
+        Dictionary<GanttRowId, int> childCountByParent = [];
+        foreach (GanttEvent row in rows)
+        {
+            if (row.ParentId is { } parent)
+            {
+                childCountByParent[parent] = childCountByParent.GetValueOrDefault(parent) + 1;
+            }
+        }
+
+        List<GanttEvent> above = [.. rows
+            .Where(row => row.RowNumber < target.RowNumber)
+            .OrderByDescending(static row => row.RowNumber)];
+
+        foreach (GanttEvent candidate in above)
+        {
+            if (candidate.Type == GanttEntityType.Delineator)
+            {
+                continue;
+            }
+
+            if (!EntityHierarchyCatalog.MayOwnChildren(candidate.Type))
+            {
+                continue;
+            }
+
+            if (candidate.ParentId is not null)
+            {
+                // A child cannot own: that would be depth 3.
+                continue;
+            }
+
+            if (IsDescendantOf(byId, candidate.Id, selectedId))
+            {
+                return DemotePlan.Refused(ParentChildRefusalReason.Cycle);
+            }
+
+            if (target.Type == GanttEntityType.CriticalInterval && !IsSpan(candidate.Type))
+            {
+                return DemotePlan.Refused(ParentChildRefusalReason.ParentNotSpan);
+            }
+
+            // The selection's content moves to sit directly beneath the new
+            // parent's existing child run, so the demotion stays one
+            // contiguous outline group: the run's last child's row plus one.
+            var moveTo = candidate.RowNumber + 1;
+            foreach (GanttEvent child in rows
+                .Where(row => row.ParentId == candidate.Id)
+                .OrderBy(static row => row.RowNumber))
+            {
+                if (child.RowNumber >= moveTo)
+                {
+                    moveTo = child.RowNumber + 1;
+                }
+            }
+
+            // The demoted row plus its re-homed children all join the run, so
+            // capacity counts them together against the seven-child maximum.
+            var joining = 1 + rehomed.Count;
+            if (childCountByParent.GetValueOrDefault(candidate.Id) + joining > EntityHierarchyCatalog.MaxChildrenPerParent)
+            {
+                // No parent further up can take this landing either: the
+                // rows up there are separated from the selection by this
+                // candidate's run, so skipping would strand the demotion
+                // outside the only contiguous group it can join (R5.3 D3).
+                return DemotePlan.Refused(ParentChildRefusalReason.ParentUnavailable);
+            }
+
+            var order = childCountByParent.GetValueOrDefault(candidate.Id);
+            List<SiblingOrderWrite> writes = [new(target.Id, order)];
+            foreach (GanttEvent child in rehomed)
+            {
+                order++;
+                writes.Add(new SiblingOrderWrite(child.Id, order));
+            }
+
+            writes.AddRange(ResequenceTopLevelRun(rows, selectedId));
+
+            return new DemotePlan(
+                target.Id,
+                candidate.Id,
+                moveTo,
+                [.. rehomed.Select(static child => child.Id)],
+                writes,
+                null);
+        }
+
+        return DemotePlan.Refused(ParentChildRefusalReason.NoEligibleParentAbove);
+    }
+
+    /// <summary>
+    /// Plans one move-up or move-down (R5.4 D5, D1-amended). A top-level
+    /// selection moves the contiguous window of its row plus its child run
+    /// past the adjacent top-level group's window; a child selection swaps
+    /// with the adjacent row carrying the same <c>ParentId</c>. At the top
+    /// or bottom of the selection's set the plan is a silent no-op (R5.4
+    /// D4) rather than a refusal. Hierarchy relations never change, so no
+    /// type rules apply and IDs are never written (R2.3). Nothing is
+    /// mutated; the caller applies the plan.
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="selectedId">The identifier of the row being moved.</param>
+    /// <param name="moveUp"><see langword="true"/> for move-up, <see langword="false"/> for move-down.</param>
+    /// <returns>The move plan (possibly a boundary no-op), or a typed refusal that mutates nothing.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    public static MovePlan PlanMove(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId selectedId,
+        bool moveUp)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ArgumentNullException.ThrowIfNull(selectedId);
+
+        List<GanttEvent> ordered = [.. rows.OrderBy(static row => row.RowNumber)];
+        var index = -1;
+        for (var position = 0; position < ordered.Count; position++)
+        {
+            if (ordered[position].Id == selectedId)
+            {
+                index = position;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return MovePlan.Refused(ParentChildRefusalReason.SelectionUnknown);
+        }
+
+        GanttEvent target = ordered[index];
+        int windowStart;
+        int windowLength;
+        int swapStart;
+        int swapLength;
+        GanttRowId? affectedRun;
+
+        if (target.ParentId is null)
+        {
+            // Top-level: the window is the row plus its contiguous child
+            // run (the same "child run" definition R5.3 D3 lands a demote
+            // beneath). Children of the selection that a malformed table
+            // scattered beyond the contiguous run do not move.
+            windowStart = index;
+            windowLength = 1;
+            while (index + windowLength < ordered.Count
+                && ordered[index + windowLength].ParentId == selectedId)
+            {
+                windowLength++;
+            }
+
+            var neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
+            if (neighbour < 0)
+            {
+                return MovePlan.NoChange(selectedId);
+            }
+
+            swapStart = neighbour;
+            swapLength = 1;
+            var next = neighbour + 1;
+            var limit = moveUp ? windowStart : ordered.Count;
+            while (next < limit && ordered[next].ParentId == ordered[neighbour].Id)
+            {
+                swapLength++;
+                next++;
+            }
+
+            // Both windows start with a top-level row and contain only
+            // their own children below it, so the top-level run's member
+            // set is unchanged by the swap; only its order moves.
+            affectedRun = null;
+        }
+        else
+        {
+            // A child swaps with the adjacent row of the same run only.
+            // Anything else (its parent, another parent's child, a
+            // top-level row, the body edge) is the run boundary: the
+            // selection is already at the top or bottom of its set.
+            var neighbour = moveUp ? index - 1 : index + 1;
+            if (neighbour < 0
+                || neighbour >= ordered.Count
+                || ordered[neighbour].ParentId != target.ParentId)
+            {
+                return MovePlan.NoChange(selectedId);
+            }
+
+            windowStart = index;
+            windowLength = 1;
+            swapStart = neighbour;
+            swapLength = 1;
+            affectedRun = target.ParentId;
+        }
+
+        // Resequencing is keyed by row identifier and resolved against
+        // POST-swap positions, so the dense order is computed from the
+        // row order the swap produces (R5.3 D4: the planner is the
+        // authority; existing values are ignored).
+        List<GanttEvent> post = [.. ordered];
+        BlockSwap(post, windowStart, windowLength, swapStart, swapLength);
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent row in post)
+        {
+            if (row.ParentId != affectedRun)
+            {
+                continue;
+            }
+
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        return new MovePlan(selectedId, windowStart, windowLength, swapStart, swapLength, writes, null);
+    }
+
+    /// <summary>
+    /// Finds the adjacent top-level neighbour of a top-level group: the
+    /// closest row with a blank <c>ParentId</c> above the window for
+    /// move-up, or below it for move-down.
+    /// </summary>
+    /// <param name="ordered">The rows in body order.</param>
+    /// <param name="windowStart">The zero-based index of the group's window.</param>
+    /// <param name="windowLength">The length of the group's window.</param>
+    /// <param name="moveUp">The move direction.</param>
+    /// <returns>The neighbour's zero-based index, or -1 at the boundary.</returns>
+    private static int FindAdjacentTopLevel(
+        List<GanttEvent> ordered,
+        int windowStart,
+        int windowLength,
+        bool moveUp)
+    {
+        if (moveUp)
+        {
+            for (var position = windowStart - 1; position >= 0; position--)
+            {
+                if (ordered[position].ParentId is null)
+                {
+                    return position;
+                }
+            }
+
+            return -1;
+        }
+
+        for (var position = windowStart + windowLength; position < ordered.Count; position++)
+        {
+            if (ordered[position].ParentId is null)
+            {
+                return position;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Swaps two disjoint contiguous blocks of the list in place. Rows in
+    /// any gap between the blocks keep their positions (a malformed
+    /// table's orphan rows are neither moved nor repaired). Deterministic:
+    /// the same input always produces the same post-swap order.
+    /// </summary>
+    /// <param name="list">The list to swap within.</param>
+    /// <param name="firstStart">The zero-based start of the first block.</param>
+    /// <param name="firstLength">The length of the first block.</param>
+    /// <param name="secondStart">The zero-based start of the second block.</param>
+    /// <param name="secondLength">The length of the second block.</param>
+    private static void BlockSwap(
+        List<GanttEvent> list,
+        int firstStart,
+        int firstLength,
+        int secondStart,
+        int secondLength)
+    {
+        var lowStart = Math.Min(firstStart, secondStart);
+        var highStart = Math.Max(firstStart, secondStart);
+        var lowLength = firstStart < secondStart ? firstLength : secondLength;
+        var highLength = firstStart < secondStart ? secondLength : firstLength;
+
+        List<GanttEvent> span = list.GetRange(lowStart, highStart - lowStart + highLength);
+        List<GanttEvent> low = span.GetRange(0, lowLength);
+        var secondOffset = highStart - lowStart;
+        List<GanttEvent> gap = span.GetRange(lowLength, secondOffset - lowLength);
+        List<GanttEvent> high = span.GetRange(secondOffset, highLength);
+
+        var writeIndex = lowStart;
+        foreach (GanttEvent row in high)
+        {
+            list[writeIndex++] = row;
+        }
+
+        foreach (GanttEvent row in gap)
+        {
+            list[writeIndex++] = row;
+        }
+
+        foreach (GanttEvent row in low)
+        {
+            list[writeIndex++] = row;
+        }
+    }
+
+    /// <summary>
+    /// Whether the parent chain of <paramref name="id"/> contains
+    /// <paramref name="rootId"/>. Guards the demote scan against pathological
+    /// input where the nearest-above row is already below the selection in
+    /// the parent graph.
+    /// </summary>
+    private static bool IsDescendantOf(
+        Dictionary<GanttRowId, GanttEvent> byId,
+        GanttRowId id,
+        GanttRowId rootId)
+    {
+        GanttRowId? cursor = byId.TryGetValue(id, out GanttEvent? current) ? current.ParentId : null;
+        HashSet<GanttRowId> seen = [];
+        while (cursor is not null)
+        {
+            if (cursor == rootId)
+            {
+                return true;
+            }
+
+            if (!seen.Add(cursor) || !byId.TryGetValue(cursor, out GanttEvent? next))
+            {
+                return false;
+            }
+
+            cursor = next.ParentId;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Dense resequencing of the top-level run after a row
+    /// joins it at <paramref name="joinedRowNumber"/> (R5.3
+    /// D2). The joining row takes its position in row order
+    /// and the rows below it shift to make room. Existing
+    /// <c>SiblingOrder</c> values are ignored: the planner
+    /// is the authority (R5.3 D4).
+    /// </summary>
+    /// <param name="rows">The validated rows, in any order. Not mutated.</param>
+    /// <param name="joinedId">The row joining the top-level run.</param>
+    /// <param name="joinedRowNumber">The row's body index after its content moves.</param>
+    /// <returns>The dense resequencing of the whole top-level run, ascending row order.</returns>
+    private static List<SiblingOrderWrite> ResequenceTopLevelRunWithJoin(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId joinedId,
+        int joinedRowNumber)
+    {
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent row in rows
+            .Where(row => row.ParentId is null && row.RowNumber < joinedRowNumber)
+            .OrderBy(static row => row.RowNumber))
+        {
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        writes.Add(new SiblingOrderWrite(joinedId, order));
+        order++;
+
+        foreach (GanttEvent row in rows
+            .Where(row => row.ParentId is null && row.RowNumber > joinedRowNumber)
+            .OrderBy(static row => row.RowNumber))
+        {
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        return writes;
+    }
+
+    /// <summary>
+    /// Dense resequencing of the top-level run after a row leaves it. Existing
+    /// <c>SiblingOrder</c> values are ignored: the planner is the authority
+    /// (R5.3 D4).
+    /// </summary>
+    private static List<SiblingOrderWrite> ResequenceTopLevelRun(
+        IReadOnlyList<GanttEvent> rows,
+        GanttRowId leavingId)
+    {
+        List<SiblingOrderWrite> writes = [];
+        var order = 0;
+        foreach (GanttEvent row in rows
+            .Where(static row => row.ParentId is null)
+            .OrderBy(static row => row.RowNumber))
+        {
+            if (row.Id == leavingId)
+            {
+                continue;
+            }
+
+            writes.Add(new SiblingOrderWrite(row.Id, order));
+            order++;
+        }
+
+        return writes;
+    }
+
+    /// <summary>
+    /// Whether the type is a span a <c>CriticalInterval</c> child may land on.
+    /// Mirrors the validator's span rule without duplicating its diagnostics.
+    /// </summary>
+    private static bool IsSpan(GanttEntityType type) => type switch
+    {
+        GanttEntityType.Splitter => false,
+        GanttEntityType.Spacer => false,
+        GanttEntityType.AsBuiltActivity => true,
+        GanttEntityType.AsPlannedActivity => true,
+        GanttEntityType.BaselineActivity => true,
+        GanttEntityType.CriticalInterval => false,
+        GanttEntityType.DelayEvent => true,
+        GanttEntityType.AsBuiltProcurement => true,
+        GanttEntityType.AsPlannedProcurement => true,
+        GanttEntityType.BaselineProcurement => true,
+        GanttEntityType.CustomActivity => true,
+        GanttEntityType.AsBuiltMilestone => false,
+        GanttEntityType.AsPlannedMilestone => false,
+        GanttEntityType.BaselineMilestone => false,
+        GanttEntityType.CriticalMilestone => false,
+        GanttEntityType.Delineator => false,
+        _ => false,
+    };
 }

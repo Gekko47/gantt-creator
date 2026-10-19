@@ -280,6 +280,7 @@ public static class GanttRowValidator
         var parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
         var styleRelevant = true;
         var labelRelevant = true;
+        var dateLabelRelevant = true;
         var fillRelevant = true;
         var strokeRelevant = true;
         const bool visibleRelevant = true;
@@ -292,6 +293,7 @@ public static class GanttRowValidator
         var parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
         var styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
         var labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
+        var dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, dateLabelRelevant, Add);
         var fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
         var strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
         _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
@@ -485,14 +487,16 @@ public static class GanttRowValidator
         //     after its parent is deleted;
         //   * a type the matrix excludes still reports NotUsedByType.
         // The `isCriticalInterval` branch used to make ParentId mandatory for that
-        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, which
-        // lists CriticalInterval among the types that may own children precisely so
-        // a TOP-LEVEL interval can own a level-2 child under the uniform depth
-        // rule -- and it contradicted <c>EntityProjection</c>, which resolves such
-        // a child onto the interval's own lane. The requirement therefore made the
-        // catalogue's entry and the projection's boundary unreachable. A blank
-        // ParentId is now legal for every child-capable type, and the DEPTH rule is
-        // the single authority on what a Critical Interval may parent.
+        // one type. That contradicted <see cref="EntityHierarchyCatalog"/>, whose
+        // pre-R5.3 matrix listed CriticalInterval among the types that may own
+        // children -- a rule the R5.3 owner ruling (2026-10-10) withdrew, making
+        // the interval child-only and never an owner -- and it contradicted
+        // <c>EntityProjection</c>, which resolves such a child onto the interval's
+        // own lane. The requirement therefore made the catalogue's entry and the
+        // projection's boundary unreachable. A blank ParentId is now legal for
+        // every child-capable type, and no Critical Interval may parent anything:
+        // the capability itself is gone (R5.3 D1), so the depth rule below only
+        // ever evaluates activity-type parents.
         // The previous `else if (parentText is not null)` branch was reached by any
         // non-critical row, so a child-capable span carrying a real ParentId emitted
         // a spurious "not used by this Type" warning *alongside* its legitimate
@@ -602,6 +606,65 @@ public static class GanttRowValidator
             }
         }
 
+        // DateLabelPosition (R5.14; delimiter ruling 2026-10-14):
+        // blank resolves to Auto. The cell's vocabulary is
+        // type-dependent: a delineator's date label is
+        // positionable, so its cell names a corner from the
+        // description label's set; every other dated type's cell
+        // names a which-date choice from the type's date-mode-
+        // derived set. The capability is type-only (R5.14 D4) --
+        // a Custom Activity style carries no date mode -- so there
+        // is no style-resolved branch and no StyleUnknown refusal,
+        // unlike LabelPosition above.
+        GanttDateLabelPosition? dateLabelPosition = null;
+        GanttLabelPosition? dateLabelPlacement = null;
+        if (!dateLabelBlocked && row.DateLabelPositionText is not null && type is not null)
+        {
+            if (type.Value == GanttEntityType.Delineator)
+            {
+                if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttLabelPosition parsedPlacement) || !Enum.IsDefined(parsedPlacement))
+                {
+                    Add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.UnknownDateLabelPosition,
+                        GanttValidationSeverity.Error,
+                        $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+                }
+                else if (!EntityTypeCatalog.IsDateLabelPlacementAllowed(type.Value, parsedPlacement))
+                {
+                    Add(
+                        "DateLabelPosition",
+                        GanttValidationCodes.DateLabelNotAllowedForType,
+                        GanttValidationSeverity.Error,
+                        $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+                }
+                else
+                {
+                    dateLabelPlacement = parsedPlacement;
+                }
+            }
+            else if (!Enum.TryParse(row.DateLabelPositionText, ignoreCase: false, out GanttDateLabelPosition parsedDateLabel) || !Enum.IsDefined(parsedDateLabel))
+            {
+                Add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.UnknownDateLabelPosition,
+                    GanttValidationSeverity.Error,
+                    $"Unknown DateLabelPosition '{row.DateLabelPositionText}'.");
+            }
+            else if (!EntityTypeCatalog.IsDateLabelPositionAllowed(type.Value, parsedDateLabel))
+            {
+                Add(
+                    "DateLabelPosition",
+                    GanttValidationCodes.DateLabelNotAllowedForType,
+                    GanttValidationSeverity.Error,
+                    $"DateLabelPosition '{row.DateLabelPositionText}' is not allowed for this Type.");
+            }
+            else
+            {
+                dateLabelPosition = parsedDateLabel;
+            }
+        }
+
         // Colours: format plus type capability, or the selected Custom style's
         // capability. A Custom row with an unresolved style remains blocked by
         // StyleKeyUnknown and receives no colour-capability finding.
@@ -654,8 +717,11 @@ public static class GanttRowValidator
             fill,
             stroke,
             row.Visible ?? true,
-            sortOrder
-        );
+            sortOrder)
+        {
+            DateLabelPosition = dateLabelPosition,
+            DateLabelPlacement = dateLabelPlacement
+        };
 
         return new ValidatedRow(id, type, definition, @event, hasError);
     }
@@ -808,10 +874,11 @@ public static class GanttRowValidator
             }
 
             // R4.7A D9: a parent must be able to OWN children per the matrix, not
-            // merely be a Span. A child milestone projecting onto a milestone parent
-            // is a legal case (REV5's MilestoneOnParent), so the old Span-only test
-            // would have rejected a hierarchy the matrix permits. The matrix is the
-            // single authority; this check simply consults it.
+            // merely be a Span. R5.3 D1: only activities, procurement, delay
+            // events and custom activities own; milestones are leaves,
+            // CriticalInterval and Delineator are child-only, Splitter/Spacer
+            // are standalone. The matrix is the single authority; this check
+            // simply consults it.
             if (!EntityHierarchyCatalog.MayOwnChildren(parent.Type!.Value))
             {
                 issues.Add(
@@ -827,11 +894,11 @@ public static class GanttRowValidator
             }
         }
 
-        // A Critical Interval can itself be the parent of another Critical
-        // Interval, and the child is commonly authored above its parent. The
-        // loop above therefore decides a child against a parent that has not
-        // been decided yet, so the same rows in the opposite order would block
-        // the child. Propagate each newly blocked parent to its dependents
+        // R5.3 D1: CriticalInterval and Delineator never own, so they can never
+        // be the parent in a resolved hierarchy. The loop above therefore
+        // decides a child against a parent that has not been decided yet, so
+        // the same rows in the opposite order would block the child.
+        // Propagate each newly blocked parent to its dependents
         // until no further row changes, which makes the outcome independent of
         // the input order.
         PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);

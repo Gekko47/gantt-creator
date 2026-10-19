@@ -37,6 +37,54 @@ namespace GanttCreator.AddIn;
 /// <see cref="GanttPeriodLabelFormat.MMM"/> on the month scale, the scale's
 /// canonical form on the quarter and week scales (R5.12).
 /// </param>
+/// <param name="DescriptionLabelSelectionAvailable">
+/// True when the selection resolves to exactly one table body row (R5.5
+/// ruling 6). False disables the description-label dropdown; a collapsed
+/// parent row still qualifies (ruling 7) and edits its own cell only.
+/// </param>
+/// <param name="SelectedDescriptionLabelPosition">
+/// The selected row's stored <c>LabelPosition</c> (its
+/// description-label position), or null when the cell
+/// is blank (Default) or the selection is not a single row.
+/// </param>
+/// <param name="DescriptionLabelOptions">
+/// The selected row's allowed description-label positions in ribbon
+/// display order
+/// (projected from the catalogue/style — R5.5 D1), or null when the
+/// selection is not a single row.
+/// </param>
+/// <param name="DateLabelSelectionAvailable">
+/// True when the selection resolves to exactly one table body row
+/// (R5.14). False disables the date-label dropdown; a collapsed parent
+/// row still qualifies and edits its own cell only.
+/// </param>
+/// <param name="SelectedDateLabelPosition">
+/// The selected row's stored <c>DateLabelPosition</c> (its
+/// date-label choice), or null when the cell is blank (Auto) or the
+/// selection is not a single row.
+/// </param>
+/// <param name="DateLabelOptions">
+/// The selected row's allowed date-label choices in ribbon display
+/// order (projected from the row's Type — R5.14 D1/D4), or null when
+/// the selection is not a single row.
+/// </param>
+/// <param name="DateLabelPlacementSelectionAvailable">
+/// True when the selection resolves to exactly one body row whose
+/// Type's date label is positionable — the delineator (owner ruling
+/// 2026-10-14). False disables the date-label dropdown for every
+/// other type, whose date label selects which date shows.
+/// </param>
+/// <param name="SelectedDateLabelPlacement">
+/// The selected row's stored <c>DateLabelPosition</c> read as a
+/// date-label <em>position</em> (the delineator's corner), or null
+/// when the cell is blank (Auto) or the selection is not a single
+/// positionable row.
+/// </param>
+/// <param name="DateLabelPlacementOptions">
+/// The selected row's allowed date-label positions in ribbon display
+/// order (the description label's corner set), or null when the
+/// selection is not a single positionable row.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -53,7 +101,16 @@ internal sealed record RibbonState(
     SizePreset? Preset,
     double? PlotWidthPt,
     double? PlotHeightPt,
-    GanttPeriodLabelFormat PeriodLabelFormat)
+    GanttPeriodLabelFormat PeriodLabelFormat,
+    bool DescriptionLabelSelectionAvailable = false,
+    GanttLabelPosition? SelectedDescriptionLabelPosition = null,
+    IReadOnlyList<GanttLabelPosition>? DescriptionLabelOptions = null,
+    bool DateLabelSelectionAvailable = false,
+    GanttDateLabelPosition? SelectedDateLabelPosition = null,
+    IReadOnlyList<GanttDateLabelPosition>? DateLabelOptions = null,
+    bool DateLabelPlacementSelectionAvailable = false,
+    GanttLabelPosition? SelectedDateLabelPlacement = null,
+    IReadOnlyList<GanttLabelPosition>? DateLabelPlacementOptions = null)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -104,6 +161,27 @@ internal sealed record RibbonState(
         RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddDelineator => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.PromoteToParent => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.DemoteToChild => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.MoveUp => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.MoveDown => HasActiveWorkbook && SheetInitialised,
+        // R5.5 ruling 6: the description-label dropdown is the first
+        // selection-gated control — it enables only for exactly one
+        // resolved body row, so a header/multi/no selection disables it
+        // and the command still re-checks at execution time (ruling 1).
+        RibbonControlIds.DescriptionLabel =>
+            HasActiveWorkbook && SheetInitialised && DescriptionLabelSelectionAvailable,
+        // R5.14: the date-label dropdown is gated on the same single-body-row
+        // selection facts as the description-label dropdown (the capability is
+        // type-only, so the options projection needs no style registry).
+        // Owner ruling 2026-10-14: the dropdown carries one of two
+        // vocabularies — which-date choices for dated types, positions
+        // for the delineator — so it enables when either context
+        // resolved.
+        RibbonControlIds.DateLabel =>
+            HasActiveWorkbook && SheetInitialised
+            && (DateLabelSelectionAvailable || DateLabelPlacementSelectionAvailable),
+        RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,

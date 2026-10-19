@@ -307,6 +307,48 @@ public class GanttTableReaderTests
     }
 
     [Fact]
+    public void Read_reads_a_table_saved_before_the_date_label_column()
+    {
+        // R5.14 defect regression: a workbook saved before R5.14 has no
+        // DateLabelPosition column. The column is optional (the SortOrder
+        // precedent), so the legacy table still reads and its date-label
+        // cells come back blank (= Auto). The ribbon-state gate keys on
+        // this read; a TableMissing refusal here greyed the whole Gantt
+        // group on every pre-R5.14 workbook.
+        var headers = SchemaHeaders();
+        headers.Remove("DateLabelPosition");
+        var table = new TableGraph(GanttTableSchema.TableName, headers);
+        var sheet = new SheetGraph(table);
+        var row = FullRow(id: "G-legacy", type: "As-Planned Activity").ToList();
+        row.RemoveAt(GanttTableSchema.Default.Columns.Select(c => c.Name).ToList().IndexOf("DateLabelPosition"));
+
+        // The legacy body is one column narrower than the running
+        // schema, so the matrix is built at the row's own width
+        // rather than through BodyMatrix (which sizes to the schema).
+        var matrix = Array.CreateInstance(typeof(object), [1, row.Count], [1, 1]);
+        for (var column = 1; column <= row.Count; column++)
+        {
+            matrix.SetValue(row[column - 1], 1, column);
+        }
+
+        var reader = Build(
+            new Mock<Excel.Application>(),
+            new Mock<Excel.Workbook>(),
+            [sheet],
+            _ => matrix);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.Null(outcome.Refusal);
+        GanttRowDto read = Assert.Single(outcome.Rows);
+        Assert.Equal("G-legacy", read.Id);
+        Assert.Equal("As-Planned Activity", read.TypeText);
+        Assert.Equal(GanttCellState.Empty, read.DateLabelPositionCell.State);
+        Assert.Null(read.DateLabelPositionText);
+    }
+
+    [Fact]
     public void ExcelValue2Matrix_normalizes_one_based_and_zero_based_matrices()
     {
         var oneBased = Array.CreateInstance(typeof(object), [1, 2], [1, 1]);

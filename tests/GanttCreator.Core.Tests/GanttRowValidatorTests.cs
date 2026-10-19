@@ -27,7 +27,8 @@ public class GanttRowValidatorTests
         string? fillColourText = null,
         string? strokeColourText = null,
         bool? visible = true,
-        string? sortOrder = null
+        string? sortOrder = null,
+        string? dateLabelPositionText = null
     ) =>
         new(
             rowNumber,
@@ -44,7 +45,8 @@ public class GanttRowValidatorTests
             fillColourText,
             strokeColourText,
             visible,
-            sortOrder
+            sortOrder,
+            dateLabelPositionText
         );
 
     [Fact]
@@ -72,6 +74,281 @@ public class GanttRowValidatorTests
         Assert.Equal(new DateOnly(2026, 9, 1), @event.Start);
         Assert.Equal(new DateOnly(2026, 9, 5), @event.Finish);
         Assert.True(@event.Visible);
+    }
+
+    [Fact]
+    public void A_date_label_position_allowed_for_the_type_is_accepted_and_carried_to_the_event()
+    {
+        // R5.14 positive pin: a span admits Finish, so the choice is
+        // valid and the validated event carries it -- the scene reads
+        // it to plan only the finish date label.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Equal(GanttDateLabelPosition.Finish, @event.DateLabelPosition);
+    }
+
+    [Theory]
+    [InlineData("As-Planned Activity", true)]
+    [InlineData("As-Planned Milestone", false)]
+    [InlineData("Delineator", false)]
+    public void A_none_date_label_position_is_accepted_and_carried_to_the_event(
+        string typeText, bool isSpan)
+    {
+        // R5.14 D5 (second owner ruling 2026-10-14): None names
+        // no date labels, so every dated type admits it and the
+        // validated event carries it -- the scene then plans no
+        // date labels for the row. Only a span supplies the
+        // lane/stack/finish cells its type reads (the all-16-types
+        // construction pattern), so the row has no other findings.
+        GanttRowDto row = isSpan
+            ? ValidSpan(
+                typeText: typeText,
+                dateLabelPositionText: nameof(GanttDateLabelPosition.None))
+            : new(
+                2,
+                NewId(),
+                null,
+                null,
+                typeText,
+                "Build frame",
+                new DateOnly(2026, 9, 1),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true,
+                null,
+                nameof(GanttDateLabelPosition.None));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        // Owner ruling 2026-10-14: a delineator's cell names a
+        // date-label POSITION (None hides the date label), while
+        // every other dated type's cell names a which-date choice.
+        if (typeText == "Delineator")
+        {
+            Assert.Null(@event.DateLabelPosition);
+            Assert.Equal(GanttLabelPosition.None, @event.DateLabelPlacement);
+        }
+        else
+        {
+            Assert.Equal(GanttDateLabelPosition.None, @event.DateLabelPosition);
+            Assert.Null(@event.DateLabelPlacement);
+        }
+    }
+
+    [Fact]
+    public void A_blank_date_label_position_resolves_to_auto_and_carries_no_choice()
+    {
+        // R5.14 positive pin: blank is Auto (both date labels), so a row
+        // with no explicit choice stays valid and the event carries no
+        // choice, which the scene reads as "both" -- the pre-R5.14
+        // behaviour every existing row relies on.
+        GanttRowDto row = ValidSpan(typeText: "As-Planned Activity");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Null(@event.DateLabelPosition);
+    }
+
+    [Fact]
+    public void An_unknown_date_label_position_is_reported_and_never_coerced()
+    {
+        // Mirrors the LabelPosition precedent: an unparseable name is
+        // REPORTED, never defaulted to a neighbouring choice. "Both" is
+        // a valid LabelPosition but not a valid DateLabelPosition, so
+        // this also pins that the two enumerations are distinct.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: "Both");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_date_label_position_not_allowed_for_the_type_is_reported()
+    {
+        // A milestone reads only Start (its Finish is null), so Finish is
+        // outside its date-mode-derived capability set (R5.14 D4).
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Milestone",
+            dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_is_accepted_and_carried_to_the_event()
+    {
+        // Owner ruling 2026-10-14 (positive test for the
+        // positionable vocabulary): a delineator's cell names a
+        // corner from the description label's set, the row is
+        // valid, and the event carries the placement — not a
+        // which-date choice, which the delineator's empty
+        // which-date set forbids.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttLabelPosition.TopLeft));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Null(@event.DateLabelPosition);
+        Assert.Equal(GanttLabelPosition.TopLeft, @event.DateLabelPlacement);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_parses_the_position_vocabulary()
+    {
+        // The vocabulary split, pinned from the bad side: "Start"
+        // is a which-date choice, not a corner, so a delineator
+        // cell carrying it is an unknown date-label position —
+        // reported, never coerced to a neighbouring corner.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttDateLabelPosition.Start));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_delineator_date_label_position_outside_the_corner_set_is_reported()
+    {
+        // "Inside" is a description-label position but not one of
+        // the six corners the positionable date-label set names,
+        // so the type-only capability set (D4) refuses it.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "Delineator",
+            "Gate",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            nameof(GanttLabelPosition.Inside));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
+    }
+
+    [Fact]
+    public void A_date_label_position_on_a_non_delineator_does_not_parse_as_a_position()
+    {
+        // The mirror of the vocabulary split: a which-date type's
+        // cell carrying a corner name is an unknown date-label
+        // position, because its cell parses as a which-date choice.
+        GanttRowDto row = ValidSpan(
+            typeText: "As-Planned Activity",
+            dateLabelPositionText: nameof(GanttLabelPosition.TopLeft));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.UnknownDateLabelPosition);
+    }
+
+    [Fact]
+    public void A_none_date_label_position_is_refused_for_a_dateless_type()
+    {
+        // R5.14 D5 (second owner ruling): None is a date-label
+        // choice, so the type-only capability set (D4) still
+        // governs it -- a dateless type names no choice at all.
+        // The row supplies no dates or lane cells, so the
+        // DateLabelPosition finding is the row's only one.
+        GanttRowDto row = ValidSpan(
+            typeText: "Splitter",
+            laneId: null,
+            stackIndex: null,
+            start: null,
+            finish: null,
+            dateLabelPositionText: nameof(GanttDateLabelPosition.None));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.False(outcome.IsValid);
+        Assert.Contains(
+            outcome.Issues,
+            issue => issue.Field == "DateLabelPosition"
+                && issue.Code == GanttValidationCodes.DateLabelNotAllowedForType);
     }
 
     [Theory]
@@ -787,12 +1064,14 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void Parent_on_a_structural_type_is_a_not_used_warning()
+    public void Parent_on_a_standalone_type_is_a_not_used_warning()
     {
         // The D9 guarantee that nothing becomes silently permitted: a type the
         // matrix does not classify as child-capable still reports NotUsedByType
         // rather than being accepted as a child or blocked as an unresolvable one.
-        foreach (string typeText in new[] { "Splitter", "Spacer", "Delineator" })
+        // R5.3 D1 narrows the standalone set to Splitter/Spacer; Delineator is
+        // child-only, so it is covered by the child-delineator tests instead.
+        foreach (string typeText in new[] { "Splitter", "Spacer" })
         {
             GanttRowDto row = new(
                 2,
@@ -1435,10 +1714,12 @@ public class GanttRowValidatorTests
     [Fact]
     public void Critical_interval_child_of_an_ambiguous_interval_is_blocked_in_either_input_order()
     {
-        // A Critical Interval can itself be a parent. The child is authored
-        // above its parent here, so the direct parent pass decides the child
-        // before the parent is known to be ambiguous; propagation must block it
-        // anyway, and the same rows reversed must produce the same outcome.
+        // R5.3 D1: intervals never own, so the ambiguous interval is refused
+        // for naming a duplicated id. The child's code depends on input order:
+        // child-first, the parent is undecided so the ownership check fires
+        // (ParentNotSpan); parent-first, the parent is already blocked so
+        // propagation fires (ParentInvalid). Either way both intervals drop
+        // out and the two orders agree on which rows survive.
         string ambiguousId = NewId();
         string childId = NewId();
         string duplicatedId = NewId();
@@ -1452,15 +1733,18 @@ public class GanttRowValidatorTests
         GanttValidationOutcome parentFirst = GanttRowValidator.Validate(
             [ambiguousInterval, child, firstDuplicate, secondDuplicate]);
 
-        foreach (GanttValidationOutcome outcome in new[] { childFirst, parentFirst })
-        {
-            Assert.False(outcome.IsValid);
-            Assert.Contains(outcome.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
-            Assert.Contains(outcome.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentInvalid);
-            Assert.DoesNotContain(outcome.Events, e => e.RowNumber is 2 or 3);
-        }
+        Assert.False(childFirst.IsValid);
+        Assert.Contains(childFirst.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
+        Assert.Contains(childFirst.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentNotSpan);
+        Assert.DoesNotContain(childFirst.Events, e => e.RowNumber is 2 or 3);
 
-        Assert.Equal(childFirst.Issues, parentFirst.Issues);
+        Assert.False(parentFirst.IsValid);
+        Assert.Contains(parentFirst.Issues, i => i.RowNumber == 3 && i.Code == GanttValidationCodes.ParentAmbiguous);
+        Assert.Contains(parentFirst.Issues, i => i.RowNumber == 2 && i.Code == GanttValidationCodes.ParentInvalid);
+        Assert.DoesNotContain(parentFirst.Events, e => e.RowNumber is 2 or 3);
+
+        // Both orders agree on which rows survive, even though the child's
+        // finding code differs by order (see above).
 
         // The canonical duplicate row stays a valid event; only the two
         // Critical Intervals must drop out.

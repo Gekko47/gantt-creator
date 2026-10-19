@@ -992,6 +992,76 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     /// <summary>
+    /// A margin change recomputes the width display: the plot
+    /// width depends on the margin, so a margin committed without
+    /// re-measuring would leave the box showing the pre-change
+    /// figure (R5.2 D4).
+    /// </summary>
+    [Fact]
+    public void SetMargin_recomputes_the_width_display_from_the_resolver()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        service.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+        service.SetPreset(SizePresets.A4Portrait);
+        var normalWidth = service.GetPlotWidth();
+
+        service.SetMargin(GanttPlotMargin.Wide);
+
+        var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Wide, GanttPlotMargins.DefaultCustomCm);
+        var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        var expected = PlotGeometryResolver.MeasurePlotWidth(
+            SizePresets.A4Portrait,
+            300.0,
+            0,
+            (marginPt * 2) + chrome);
+        Assert.Equal(
+            expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            service.GetPlotWidth());
+        Assert.NotEqual(normalWidth, service.GetPlotWidth());
+    }
+
+    /// <summary>
+    /// A custom-margin centimetre change recomputes the width
+    /// display for the same reason: the clamped value feeds the
+    /// resolver, so the box must show the re-measured figure.
+    /// </summary>
+    [Fact]
+    public void SetMarginCm_recomputes_the_width_display_from_the_resolver()
+    {
+        var service = RibbonStateService.Instance;
+        service.SetCatalogueWriter(null);
+        var grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Task", 300.0)],
+            [12.0],
+            12.0,
+            []).Grid ?? throw new InvalidOperationException("Fixture grid should be valid.");
+        service.SetPanelGridMeasurementPort(new FakePanelGridMeasurementPort(grid));
+        service.SetPreset(SizePresets.A4Portrait);
+        service.SetMargin(GanttPlotMargin.Custom);
+        var beforeWidth = service.GetPlotWidth();
+
+        service.SetMarginCm(2.5);
+
+        var marginPt = GanttPlotMargins.MarginPt(GanttPlotMargin.Custom, 2.5);
+        var chrome = GanttCatalogues.MetricDefault("ChartOuterPaddingPt");
+        var expected = PlotGeometryResolver.MeasurePlotWidth(
+            SizePresets.A4Portrait,
+            300.0,
+            0,
+            (marginPt * 2) + chrome);
+        Assert.Equal(
+            expected?.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            service.GetPlotWidth());
+        Assert.NotEqual(beforeWidth, service.GetPlotWidth());
+    }
+
+    /// <summary>
     /// Reset drops the measurement port: a width computed before the reset
     /// is not recomputed from a stale port afterwards, so a fresh session
     /// starts with no grid to measure against.

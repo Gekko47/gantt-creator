@@ -102,7 +102,7 @@ public sealed class AddInHost(
             try
             {
                 AddInIdentity identity = _identitySource();
-                new AddInLifecycle(log).LogOpen(identity);
+                LogOpenRecord(log, identity);
                 _sessionToken = identity.SessionToken;
             }
             catch
@@ -155,6 +155,12 @@ public sealed class AddInHost(
                 new ExcelConfigCatalogueReader(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetTableReader(
                 new ExcelGanttTableReader(ExcelDnaUtil.Application));
+            // R5.5 ruling 6: the standalone selection identifier feeds the
+            // label dropdown's per-row gating and item list. It is separate
+            // from the workbook-state adapter, which keeps its single
+            // responsibility, and R5.10 reuses it for fill/stroke.
+            RibbonStateService.Instance.SetSelectionIdentifier(
+                new ExcelSelectionIdentifier(ExcelDnaUtil.Application));
             RibbonStateService.Instance.SetPanelGridMeasurementPort(
                 new ExcelPanelGridMeasurement(ExcelDnaUtil.Application));
             RibbonStateService.Instance.Activate();
@@ -258,6 +264,33 @@ public sealed class AddInHost(
             _sessionToken = null;
         }
 #pragma warning restore CA1031
+    }
+    /// <summary>
+    /// Writes the <c>open</c> record with a bounded retry so a transient
+    /// write hiccup (for example the rolling log re-opening its file while it
+    /// rotates) can never silently drop the one record the load attribution
+    /// test depends on. A persistent failure is observable through the test's
+    /// log assertion — <see cref="DiagnosticsService"/> cannot record it here,
+    /// because its log reference is only injected after <c>LogOpen</c>
+    /// succeeds.
+    /// </summary>
+    internal static void LogOpenRecord(IRollingLog log, AddInIdentity identity)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                new AddInLifecycle(log).LogOpen(identity);
+                return;
+            }
+            catch
+            {
+                if (attempt == 1)
+                {
+                    throw;
+                }
+            }
+        }
     }
 
     /// <summary>

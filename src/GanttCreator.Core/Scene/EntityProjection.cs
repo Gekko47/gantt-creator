@@ -183,9 +183,13 @@ public static class ProjectionResolver
                 return new ProjectionResolution([], ProjectionRefusal.UnresolvableParent);
             }
 
+            // R5.3 D1: a child Delineator keeps PlotGlobal rendering (D3) while
+            // carrying a collapse-only ParentId, so the parent side is gated
+            // on ownership alone — never on the parent's own child-capability.
+            // Splitter, Spacer, milestones, CriticalInterval and Delineator
+            // never own, so they can never be parents; every owner does both.
             if (!EntityHierarchyCatalog.MayBeChild(@event.Type)
-                || !EntityHierarchyCatalog.MayOwnChildren(parent.Type)
-                || !EntityHierarchyCatalog.MayBeChild(parent.Type))
+                || !EntityHierarchyCatalog.MayOwnChildren(parent.Type))
             {
                 return new ProjectionResolution([], ProjectionRefusal.IncompatibleHierarchy);
             }
@@ -194,9 +198,11 @@ public static class ProjectionResolver
             // LEVEL-2 child whenever it has a parent, so an interval that is itself a
             // child cannot own a further child -- that would be depth 3. The test is
             // therefore on the parent of the CHILD, which is the same distinction the
-            // validator's depth check uses, so the two cannot disagree. A TOP-LEVEL
-            // Critical Interval (no parent of its own) may own a child; the comment
-            // that claimed otherwise described the withdrawn exemption.
+            // validator's depth check uses, so the two cannot disagree. A Critical
+            // Interval never owns at all (R5.3 D1: child-only), so the
+            // MayOwnChildren check above already refuses an interval parent with
+            // IncompatibleHierarchy and this depth test only ever evaluates
+            // activity-type parents.
             if (parent.ParentId is not null)
             {
                 return new ProjectionResolution([], ProjectionRefusal.HierarchyTooDeep);

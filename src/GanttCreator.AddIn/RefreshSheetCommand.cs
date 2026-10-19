@@ -123,8 +123,11 @@ internal static class RefreshSheetCommand
             // ADR-0020's five-setting scope. It is a single object owned by the
             // orchestrator, which disposes it on every path; constructing one per
             // operation would capture-and-restore the same setting several times and
-            // restore the wrong value.
-            new ExcelApplicationStateScope(application),
+            // restore the wrong value. The technical-record sink is wired here so a
+            // host that refuses one of the five writes (ADR-0020: every member is
+            // best-effort) is recorded to the log instead of leaving the degradation
+            // silent; a null sink was the previous behaviour.
+            new ExcelApplicationStateScope(application, CommandBoundary.Instance.WriteTechnicalRecord),
 
             // The notes reporter. Without it here, Refresh never touched the cell notes:
             // Validate wrote them and Refresh left them alone, so a user who fixed a

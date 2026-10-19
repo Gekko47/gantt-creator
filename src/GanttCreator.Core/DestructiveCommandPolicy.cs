@@ -76,6 +76,16 @@ public static class DestructiveCommandPolicy
         /// and must be confirmed.
         /// </summary>
         ResetCatalogues = 2,
+
+        /// <summary>
+        /// Deletes the one <c>tblGanttData</c> body row under the active cell,
+        /// re-homing its children to its parent (R4.7A D1 promotion) and
+        /// leaving the next Refresh to retire the row's shapes. Under ADR-0008
+        /// this is destructive and must be confirmed: it is a single row
+        /// rather than the whole body, but the row's content is user data and
+        /// there is no undo.
+        /// </summary>
+        RemoveRow = 3,
     }
 
     /// <summary>
@@ -107,7 +117,7 @@ public static class DestructiveCommandPolicy
     /// command today this is <see cref="ConfirmationKind.DestructiveButConfirmed"/>.
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// Thrown when <paramref name="commandClass"/> is not one of the five
     /// recognised values. The default <c>0</c> value is a valid, named class
     /// (<see cref="CommandClass.ClearTableBody"/>) and does not trigger this
     /// exception.
@@ -131,7 +141,8 @@ public static class DestructiveCommandPolicy
         {
             CommandClass.ClearTableBody or
             CommandClass.RecolumniseTable or
-            CommandClass.ResetCatalogues => ConfirmationKind.DestructiveButConfirmed,
+            CommandClass.ResetCatalogues or
+            CommandClass.RemoveRow => ConfirmationKind.DestructiveButConfirmed,
 
             _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
@@ -189,7 +200,7 @@ public static class DestructiveCommandPolicy
     /// The display name, e.g. "Clear table body".
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// Thrown when <paramref name="commandClass"/> is not one of the five
     /// recognised values, per <see cref="Classify(CommandClass)"/>.
     /// </exception>
     public static string CommandDisplayName(CommandClass commandClass) =>
@@ -198,6 +209,7 @@ public static class DestructiveCommandPolicy
             CommandClass.ClearTableBody => "Clear table body",
             CommandClass.RecolumniseTable => "Recolumnise table",
             CommandClass.ResetCatalogues => "Reset configuration catalogues",
+            CommandClass.RemoveRow => "Remove row",
             _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
                 commandClass,
@@ -213,7 +225,7 @@ public static class DestructiveCommandPolicy
     /// The subject phrase, e.g. "will delete all rows from the Gantt data table."
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="commandClass"/> is not one of the three
+    /// Thrown when <paramref name="commandClass"/> is not one of the five
     /// recognised values, per <see cref="Classify(CommandClass)"/>.
     /// </exception>
     public static string CommandSubject(CommandClass commandClass) =>
@@ -225,6 +237,8 @@ public static class DestructiveCommandPolicy
                 "will recreate the Gantt data table with the current columns.",
             CommandClass.ResetCatalogues =>
                 "will restore the configuration catalogues to their defaults.",
+            CommandClass.RemoveRow =>
+                "will delete the selected row; its children move up to that row's parent.",
             _ => throw new ArgumentOutOfRangeException(
                 nameof(commandClass),
                 commandClass,

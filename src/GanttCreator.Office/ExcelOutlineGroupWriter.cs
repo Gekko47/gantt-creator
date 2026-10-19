@@ -26,10 +26,12 @@ namespace GanttCreator.Office;
 /// coordinates.
 /// </para>
 /// <para>
-/// <b>Why collapse state is not written.</b> <c>Group</c> is called on the child
-/// range only. The parent row's <c>OutlineLevel</c> and the group's
-/// <c>ShowLevels</c> are left alone, so a collapsed parent stays collapsed across a
-/// Refresh instead of being re-expanded under the user.
+/// <b>Collapse state is preserved.</b> The reset pass only clears rows that are
+/// currently grouped and no longer planned, and the group pass only writes the
+/// planned grouping. Rows already at <c>TopLevelOutlineLevel</c> are left alone:
+/// writing their level re-evaluates the outline and re-expands every collapsed
+/// group. A collapsed parent therefore stays collapsed across a <c>Refresh</c>
+/// instead of being re-expanded under the user.
 /// </para>
 /// <para>
 /// The <c>internal virtual</c> seams isolate the COM parameterised properties for
@@ -92,12 +94,23 @@ public class ExcelOutlineGroupWriter(
 
         OutlineGroupPlan plan = OutlineGroupPlanner.Plan(events);
 
-        // The reset pass covers the table's own rows, not just the events supplied:
-        // a row whose parent was deleted is still a body row, and it is exactly the
-        // row carrying the stale level. When the host reports no body the pass writes
-        // nothing at all, which keeps the "already correct sheet stays untouched"
-        // property intact.
+        // Read the outline level of every body row before anything is written,
+        // so the reset pass below only clears rows that are currently grouped
+        // and no longer planned. Writing level 1 to a level-1 parent row (or any
+        // row of an active group) re-evaluates the outline and re-expands every
+        // collapsed group, which is exactly what a Refresh must not do to a
+        // user's collapsed presentation state.
         var bodyRowCount = GetBodyRowCount(body);
+        var currentLevels = new Dictionary<int, int>(bodyRowCount);
+        for (var rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
+        {
+            Excel.Range? range = GetRowsRange(worksheet, firstWorksheetRow + rowNumber - 1, firstWorksheetRow + rowNumber - 1);
+            currentLevels[rowNumber] = range is not null
+                ? ReadOutlineLevel(range) ?? TopLevelOutlineLevel
+                : TopLevelOutlineLevel;
+        }
+
+        // The reset pass covers the table's own rows, not just the events supplied:
 
         // Stale groups are cleared first: Excel refuses to regroup a sheet whose
         // outline disagrees with the request. The two lists never overlap, so the
@@ -113,7 +126,7 @@ public class ExcelOutlineGroupWriter(
         // Refresh, so the sheet kept a collapse control for a hierarchy that no
         // longer existed, and re-collapsing it hid a top-level row.
         var ungrouped = 0;
-        foreach ((var first, var last) in ContiguousRanges(RowsToReset(plan, bodyRowCount)))
+        foreach ((var first, var last) in ContiguousRanges(RowsToReset(plan, bodyRowCount, currentLevels)))
         {
             if (UngroupRange(worksheet, firstWorksheetRow, first, last))
             {
@@ -135,20 +148,27 @@ public class ExcelOutlineGroupWriter(
     }
 
     /// <summary>
-    /// The body rows the plan does not place in a group, and which therefore carry a
-    /// stale outline level if they had one.
+    /// The body rows that carry a stale outline group -- they are currently at
+    /// <c>ChildOutlineLevel</c> but the plan no longer places them in a group --
+    /// and therefore must be cleared before the new groups are written. Rows already
+    /// at <c>TopLevelOutlineLevel</c> (parents and unrelated rows) are left alone:
+    /// writing level 1 to them would re-evaluate the outline and re-expand every
+    /// collapsed group, which is exactly what a Refresh must not do to a user's
+    /// collapsed presentation state.
     /// </summary>
     /// <param name="plan">The planned groups.</param>
     /// <param name="bodyRowCount">How many body rows the table has.</param>
+    /// <param name="currentLevels">The outline level each body row currently carries.</param>
     /// <returns>The rows to reset, ascending.</returns>
-    private static List<int> RowsToReset(OutlineGroupPlan plan, int bodyRowCount)
+    private static List<int> RowsToReset(OutlineGroupPlan plan, int bodyRowCount, IReadOnlyDictionary<int, int> currentLevels)
     {
         HashSet<int> grouped = [.. plan.Groups.SelectMany(group => group.ChildRowNumbers)];
         return
         [
             .. Enumerable
                 .Range(1, bodyRowCount)
-                .Where(row => !grouped.Contains(row))
+                .Where(row => currentLevels.GetValueOrDefault(row) == ChildOutlineLevel
+                              && !grouped.Contains(row))
                 .Order(),
         ];
     }
@@ -376,6 +396,55 @@ public class ExcelOutlineGroupWriter(
     /// <returns>The row-span address.</returns>
     internal static string RowSpanAddress(int firstRow, int lastRow) =>
         string.Create(CultureInfo.InvariantCulture, $"{firstRow}:{lastRow}");
+
+    /// <summary>
+    /// Reads the outline level of a single row range: the raw boxed
+    /// value from <see cref="ReadOutlineLevelValue"/>, unboxed by
+    /// <see cref="UnboxOutlineLevel"/>.
+    /// </summary>
+    internal int? ReadOutlineLevel(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return UnboxOutlineLevel(ReadOutlineLevelValue(range));
+    }
+
+    /// <summary>
+    /// Reads the outline level exactly as the host boxed it. The COM
+    /// <c>OutlineLevel</c> property is <c>Object</c>-typed in the PIA,
+    /// so the value arrives as a Variant whose boxed runtime type the
+    /// host chooses; contract tests override this seam to return known
+    /// levels.
+    /// </summary>
+    internal virtual object? ReadOutlineLevelValue(Excel.Range range)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+        return range.OutlineLevel;
+    }
+
+    /// <summary>
+    /// Unboxes an outline level the host returned as a Variant.
+    /// </summary>
+    /// <returns>
+    /// The level the Variant carries, or <see langword="null"/> when the
+    /// value is not a whole number in a shape this list covers.
+    /// </returns>
+    /// <remarks>
+    /// The level is a whole number, but <c>OutlineLevel</c> is
+    /// <c>Object</c>-typed in the interop assembly and the host's Variant
+    /// marshaling picks the boxed runtime type: a boxed <see cref="int"/>
+    /// is the common shape, while other hosts box the same value as a
+    /// <see cref="short"/>, <see cref="long"/>, <see cref="double"/>,
+    /// or <see cref="decimal"/>.
+    /// </remarks>
+    internal static int? UnboxOutlineLevel(object? boxed) => boxed switch
+    {
+        int value => value,
+        short value => value,
+        long value => (int)value,
+        double value => (int)value,
+        decimal value => (int)value,
+        _ => null,
+    };
 
     /// <summary>
     /// Writes an outline level to a row range. Test seam over the COM

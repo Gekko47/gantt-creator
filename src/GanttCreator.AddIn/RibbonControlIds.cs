@@ -50,6 +50,70 @@ internal static class RibbonControlIds
     /// <summary>The Add delineator button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string AddDelineator = "btnAddDelineator";
 
+    /// <summary>The Promote to parent button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string PromoteToParent = "btnPromoteToParent";
+
+    /// <summary>The Demote to child button (<c>getEnabled</c> driven by workbook + initialised).</summary>
+    internal const string DemoteToChild = "btnDemoteToChild";
+
+    /// <summary>
+    /// The Move up button (<c>getEnabled</c> driven by workbook + initialised).
+    /// </summary>
+    /// <remarks>
+    /// Gated on workbook + initialised only, exactly as promote and demote are: the
+    /// top of the selection's set is a quiet no-op by design (R5.4 D4), and a
+    /// wrong-kind selection refuses at execution time with a message. Selection-aware
+    /// gating is owed work (see the <c>TODO(R5.10)</c> note in <c>Ribbon.xml</c>).
+    /// </remarks>
+    internal const string MoveUp = "btnMoveUp";
+
+    /// <summary>
+    /// The Move down button (<c>getEnabled</c> driven by workbook + initialised).
+    /// </summary>
+    /// <remarks>
+    /// The mirror of <see cref="MoveUp"/>; the bottom of the selection's set is a
+    /// quiet no-op by design (R5.4 D4).
+    /// </remarks>
+    internal const string MoveDown = "btnMoveDown";
+
+    /// <summary>
+    /// The description-label dropdown (<c>getEnabled</c> driven by workbook
+    /// + initialised + one body row selected). The ribbon's <c>Labels</c>
+    /// group carries it beside a <c>Description label</c> row label; the
+    /// date-label dropdown (R5.14) is its parallel.
+    /// </summary>
+    /// <remarks>
+    /// R5.5 owner ruling 6: per-row gating ships with the label controls, so
+    /// the dropdown enables only when the selection resolves to exactly one
+    /// table body row (a collapsed parent qualifies and edits its own cell
+    /// only — ruling 7). R5.10 reuses the same selection facts for fill/stroke.
+    /// </remarks>
+    internal const string DescriptionLabel = "ddnDescriptionLabel";
+
+    /// <summary>
+    /// The date-label dropdown (<c>getEnabled</c> driven by workbook
+    /// + initialised + one body row selected). The ribbon's <c>Labels</c>
+    /// group carries it beside a <c>Date label</c> row label; it is the
+    /// parallel of <see cref="DescriptionLabel"/>.
+    /// </summary>
+    /// <remarks>
+    /// R5.14: the item list is projected at query time from the selected
+    /// row's <c>Type</c> through <c>EntityTypeCatalog.GetAllowedDateLabelPositions</c>
+    /// (the capability is type-only — a Custom Activity style carries no
+    /// date mode, so it cannot narrow the set). The dropdown enables only
+    /// when the selection resolves to exactly one table body row, reusing
+    /// the same selection facts the description-label dropdown uses.
+    /// </remarks>
+    internal const string DateLabel = "ddnDateLabel";
+
+    /// <summary>
+    /// The Remove button (<c>getEnabled</c> driven by workbook +
+    /// initialised). Destructive under ADR-0008: the command itself
+    /// confirms before the mutator runs, so the enabled gate stays
+    /// at workbook + initialised like every other Data-group button.
+    /// </summary>
+    internal const string Remove = "btnRemove";
+
     /// <summary>The Plot start AUTO checkbox (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PlotStartAuto = "chkPlotStartAuto";
 

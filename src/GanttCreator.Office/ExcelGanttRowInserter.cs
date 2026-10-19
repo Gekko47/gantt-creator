@@ -13,13 +13,22 @@ public class ExcelGanttRowInserter(
     object? application,
     IWorksheetProtectionGuard? protectionGuard = null,
     ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
-    IRowHeightNormalisationPort? rowHeightNormaliser = null) : IGanttRowInserter
+    IRowHeightNormalisationPort? rowHeightNormaliser = null,
+    IOutlineGroupPort? outlineGroups = null) : IGanttRowInserter
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
     private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
         typeOptionsMaterialiser ?? new ExcelTypeOptionsMaterialiser(application);
+
+    /// <summary>
+    /// The outline adapter, consulted after a successful positional
+    /// insert so the native <c>-</c>/<c>+</c> controls reflect the
+    /// new row's parent without waiting for the next Refresh (R5.13).
+    /// Null in tests and when the host supplied no outline writer.
+    /// </summary>
+    private readonly IOutlineGroupPort? _outlineGroups = outlineGroups;
 
     /// <summary>
     /// The verified row-height normaliser, which owns the reserved rows below the body.
@@ -194,6 +203,24 @@ public class ExcelGanttRowInserter(
                 _ = ex;
                 return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
             }
+
+            // R5.13: a positional insert lands BELOW the active cell. When that
+            // puts the new row inside a group's contiguous child run, make it a
+            // child of that group's parent so the run stays contiguous and the
+            // outline planner can still represent the group. The append branch
+            // (position null) and the header row (position 1) stay top-level.
+            //
+            // This runs only with an outline writer -- without one there is no
+            // grouping to preserve, so the row is the plain top-level append the
+            // contract pins. It runs only AFTER the row-creation seams succeeded:
+            // a refused positional insert returned above, so a refusal never
+            // reads the user's existing rows (ADR-0008 D4). The neighbours are
+            // read as one bulk body read, never through GetListRowAt, so the
+            // insert's own row-acquisition seam call count is unchanged.
+            if (_outlineGroups is not null && position.HasValue && position.Value > 1)
+            {
+                values = ApplyGroupAwareParent(values, table, position.Value, columnMap);
+            }
         }
 
         try
@@ -214,6 +241,14 @@ public class ExcelGanttRowInserter(
             _ = ex;
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
         }
+
+        // R5.13: rebuild the native outline from the post-insert table so the
+        // -/+ controls reflect the new row's parent immediately, mirroring the
+        // parent/child mutator's Finish. A regroup refusal degrades to the
+        // pre-D12 behaviour -- the insert stands and the next Refresh rebuilds
+        // the outline -- rather than failing work that already landed.
+        RegroupOutline(table, columnMap);
+
         TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
         if (!typeOptions.Succeeded)
         {
@@ -528,6 +563,178 @@ public class ExcelGanttRowInserter(
         columnMap = map;
         return true;
     }
+
+    /// <summary>
+    /// Applies group-aware parenting to a positional insert (R5.13).
+    /// A positional insert lands BELOW the active cell, so once the
+    /// worksheet-row insert has shifted the rows the active cell sits
+    /// at the one-based body position <c>position - 1</c> and the row
+    /// that ends up below the new row at <c>position + 1</c>. When
+    /// the new row lands inside a group's contiguous child run it
+    /// becomes a child of that group's parent; when it lands between
+    /// a top-level parent and its first child it becomes that
+    /// parent's first child; every other position -- including the
+    /// header row (position 1) and the append (position
+    /// <see langword="null"/>) -- stays top-level, matching the host's
+    /// own outline-insert behaviour.
+    /// </summary>
+    /// <remarks>
+    /// The two neighbours are read as ONE bulk body read
+    /// (<see cref="GetDataBodyRange"/>/<see cref="GetRangeValue2"/>),
+    /// never through <see cref="GetListRowAt"/>: that seam is the
+    /// insert's own row-acquisition step, whose call count and order
+    /// the contract pins. Reusing <see cref="ReadBody"/> also matches
+    /// the projection authority the regroup that follows consumes.
+    /// </remarks>
+    /// <param name="values">The scaffold row, in schema-column order.</param>
+    /// <param name="table">The Gantt data table, post-insert.</param>
+    /// <param name="position">The one-based body position the new row lands at.</param>
+    /// <param name="columnMap">The schema-column to table-column index map.</param>
+    /// <returns>The scaffold, with its <c>ParentId</c> set when the new row joins a group.</returns>
+    private IReadOnlyList<object?> ApplyGroupAwareParent(
+        IReadOnlyList<object?> values,
+        Excel.ListObject table,
+        int position,
+        int[] columnMap)
+    {
+        // The active cell is at 0-based body position position - 2 and the
+        // row that ends up below the new row at 0-based position. Both must
+        // be in range; position 1 (header selected) has no active data cell
+        // above the new row, so it stays top-level.
+        List<object?[]> body = ReadBody(table);
+        if (position < 2 || position >= body.Count)
+        {
+            return values;
+        }
+
+        var activeRow = body[position - 2];
+        var belowRow = body[position];
+
+        GanttRowId? activeId = TryParseId(activeRow, columnMap);
+        GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
+        GanttRowId? belowParentId = TryParseParentId(belowRow, columnMap);
+
+        // The active cell is a child of P and the row below is also a
+        // child of P: the new row lands inside P's contiguous child run,
+        // so it joins that run.
+        if (activeParentId is not null && belowParentId == activeParentId)
+        {
+            return WithParentId(values, activeParentId);
+        }
+
+        // The active cell is a top-level parent and the row below is
+        // its child: the new row lands between the parent and its first
+        // child, so it becomes that parent's first child.
+        if (activeParentId is null && activeId is not null && belowParentId == activeId)
+        {
+            return WithParentId(values, activeId);
+        }
+
+        // Every other position -- below a top-level leaf, below a group's
+        // last child, or between two different groups -- is top-level,
+        // matching the host's own outline-insert behaviour.
+        return values;
+    }
+
+    /// <summary>
+    /// Reads the table's data body as a row matrix (R5.13), the same
+    /// bulk read the projection authority and the regroup consume, so
+    /// the inserter never re-derives a second copy of the body.
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <returns>
+    /// One array per body row, in body order; empty when the table
+    /// has no body rows.
+    /// </returns>
+    private List<object?[]> ReadBody(Excel.ListObject table)
+    {
+        Excel.Range? dataBody = GetDataBodyRange(table);
+        return dataBody is null
+            ? []
+            : ExcelValue2Matrix.ReadRows(GetRangeValue2(dataBody));
+    }
+
+    /// <summary>
+    /// Parses a row's <c>Id</c> cell, or <see langword="null"/>
+    /// when the cell is blank or unparseable.
+    /// </summary>
+    private static GanttRowId? TryParseId(object?[] row, int[] columnMap) =>
+        GanttRowId.TryParse(
+            ExcelGanttRowProjection.CellText(row, columnMap, "Id"),
+            out GanttRowId? id) && id is not null
+                ? id
+                : null;
+
+    /// <summary>
+    /// Parses a row's <c>ParentId</c> cell, or <see langword="null"/>
+    /// for a top-level row -- the same convention the shared projection
+    /// applies, so a top-level run is matched by its blank cells.
+    /// </summary>
+    private static GanttRowId? TryParseParentId(object?[] row, int[] columnMap) =>
+        GanttRowId.TryParse(
+            ExcelGanttRowProjection.CellText(row, columnMap, "ParentId"),
+            out GanttRowId? parentId) && parentId is not null
+                ? parentId
+                : null;
+
+    /// <summary>
+    /// Returns a copy of the scaffold with its <c>ParentId</c> set
+    /// to the given parent, leaving every other column untouched.
+    /// </summary>
+    /// <param name="values">The scaffold row, in schema-column order.</param>
+    /// <param name="parentId">The parent to assign.</param>
+    /// <returns>The copied scaffold with the <c>ParentId</c> cell populated.</returns>
+    private static object?[] WithParentId(
+        IReadOnlyList<object?> values,
+        GanttRowId parentId)
+    {
+        var mutable = new object?[values.Count];
+        for (var index = 0; index < values.Count; index++)
+        {
+            mutable[index] = values[index];
+        }
+
+        mutable[ExcelGanttRowProjection.SchemaIndexOf("ParentId")] = parentId.Value;
+        return mutable;
+    }
+
+    /// <summary>
+    /// Rebuilds the native outline from the post-insert table (R5.13),
+    /// the same re-read/project/apply sequence the parent/child
+    /// mutator's <c>Finish</c> uses, so the <c>-</c>/<c>+</c> controls
+    /// reflect the new row's parent without waiting for the next
+    /// Refresh. A regroup refusal degrades to the pre-D12 behaviour:
+    /// the insert stands and the next Refresh rebuilds the outline.
+    /// </summary>
+    /// <param name="table">The Gantt data table, post-insert.</param>
+    /// <param name="columnMap">The schema-column to table-column index map.</param>
+    private void RegroupOutline(Excel.ListObject table, int[] columnMap)
+    {
+        if (_outlineGroups is null)
+        {
+            return;
+        }
+
+        List<object?[]> body = ReadBody(table);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out var _);
+        if (events is null)
+        {
+            return;
+        }
+
+        _ = _outlineGroups.Apply(events);
+    }
+
+    /// <summary>
+    /// Returns the table's data body range. Test seam over the COM
+    /// parameterised <c>ListObject.DataBodyRange</c> property.
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <returns>
+    /// The table's data body range, or <see langword="null"/> when the
+    /// table has no data rows.
+    /// </returns>
+    internal virtual Excel.Range? GetDataBodyRange(Excel.ListObject table) => table.DataBodyRange;
 
     private static void WriteRow(
         Excel.Range rowRange,

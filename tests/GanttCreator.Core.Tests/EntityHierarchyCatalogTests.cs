@@ -34,12 +34,12 @@ public sealed class EntityHierarchyCatalogTests
     }
 
     /// <summary>
-    /// The excluded set is exactly the structural remainder, so
+    /// The excluded set is exactly the standalone remainder (R5.3 D1), so
     /// <see cref="EntityHierarchyCatalog.IsExcludedFromHierarchy"/> cannot
     /// disagree with the two tables it is derived from.
     /// </summary>
     [Fact]
-    public void Excluded_set_is_exactly_the_structural_types()
+    public void Excluded_set_is_exactly_the_standalone_types()
     {
         var classified = EntityHierarchyCatalog.TypesThatMayOwnChildren()
             .Concat(EntityHierarchyCatalog.TypesThatMayBeChild())
@@ -50,10 +50,9 @@ public sealed class EntityHierarchyCatalogTests
             .Where(EntityHierarchyCatalog.IsExcludedFromHierarchy)
             .ToHashSet();
 
-        Assert.Equal(3, excluded.Count);
+        Assert.Equal(2, excluded.Count);
         Assert.Contains(GanttEntityType.Splitter, excluded);
         Assert.Contains(GanttEntityType.Spacer, excluded);
-        Assert.Contains(GanttEntityType.Delineator, excluded);
 
         // Nothing is both classified and excluded.
         Assert.Empty(classified.Intersect(excluded));
@@ -80,18 +79,15 @@ public sealed class EntityHierarchyCatalogTests
     }
 
     /// <summary>
-    /// A Critical Interval is both a child of an activity and a parent, but the
-    /// two are not independent: a Critical Interval may own a child only while it
-    /// is TOP-LEVEL. Once it is a child itself, any child of its own is depth 3
-    /// and the uniform depth check refuses it. This asserts the capability pair
-    /// separately from that depth rule, which
-    /// <c>GanttHierarchyLimitsTests</c> and <c>ProjectionResolverTests</c> own.
+    /// R5.3 D1: a Critical Interval is child-only and never owns. The depth
+    /// rule the limits and projection tests own still refuses any hierarchy
+    /// that would nest through it, but the capability itself is gone.
     /// </summary>
     [Fact]
-    public void Critical_interval_may_be_both_a_child_and_a_parent()
+    public void Critical_interval_is_child_only_and_never_owns()
     {
         Assert.True(EntityHierarchyCatalog.MayBeChild(GanttEntityType.CriticalInterval));
-        Assert.True(EntityHierarchyCatalog.MayOwnChildren(GanttEntityType.CriticalInterval));
+        Assert.False(EntityHierarchyCatalog.MayOwnChildren(GanttEntityType.CriticalInterval));
     }
 
     /// <summary>
@@ -129,20 +125,33 @@ public sealed class EntityHierarchyCatalogTests
     }
 
     /// <summary>
-    /// Structural rows take no part in a hierarchy in either direction. This is
-    /// the positive assertion for the widened <c>ParentId</c> rule: a
+    /// Standalone rows take no part in a hierarchy in either direction. This is
+    /// the positive assertion for the <c>ParentId</c> rule: a
     /// <c>Splitter</c> carrying a <c>ParentId</c> is not permitted, so it still
     /// reports <c>NotUsedByType</c> rather than becoming silently accepted.
+    /// R5.3 D1 narrows this to Splitter/Spacer only; Delineator is child-only.
     /// </summary>
     [Theory]
     [InlineData(GanttEntityType.Splitter)]
     [InlineData(GanttEntityType.Spacer)]
-    [InlineData(GanttEntityType.Delineator)]
-    public void Structural_types_are_excluded_in_both_directions(GanttEntityType type)
+    public void Standalone_types_are_excluded_in_both_directions(GanttEntityType type)
     {
         Assert.False(EntityHierarchyCatalog.MayOwnChildren(type));
         Assert.False(EntityHierarchyCatalog.MayBeChild(type));
         Assert.True(EntityHierarchyCatalog.IsExcludedFromHierarchy(type));
+    }
+
+    /// <summary>
+    /// R5.3 D1: a Delineator is child-only (collapse-only ParentId) and never
+    /// owns, so it is classified, not excluded.
+    /// </summary>
+    [Fact]
+    public void Delineator_is_child_only_and_never_owns()
+    {
+        Assert.True(EntityHierarchyCatalog.MayBeChild(GanttEntityType.Delineator));
+        Assert.False(EntityHierarchyCatalog.MayOwnChildren(GanttEntityType.Delineator));
+        Assert.False(EntityHierarchyCatalog.IsExcludedFromHierarchy(GanttEntityType.Delineator));
+        Assert.True(EntityHierarchyCatalog.ParentIdIsRelevant(GanttEntityType.Delineator));
     }
 
     /// <summary>
@@ -193,7 +202,8 @@ public sealed class EntityHierarchyCatalogTests
 
     /// <summary>
     /// A type that may own children must be child-capable too, or the hierarchy
-    /// could describe a parent that no child may reference.
+    /// could describe a parent that no child may reference. R5.3 D1 keeps this
+    /// true: every owner (activities, procurement, delay, custom) does both.
     /// </summary>
     [Fact]
     public void Every_child_owning_type_is_also_child_capable()

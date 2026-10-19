@@ -51,6 +51,13 @@ public class GanttRibbonTests
         "getShowLabel",
         "getShowImage",
         "getSelectedItemIndex",
+
+        // R5.5: the dynamic dropDown item callbacks. Excel calls getItemCount
+        // first, then getItemID/getItemLabel for each index, then
+        // getSelectedItemIndex — all four must resolve to a public method.
+        "getItemCount",
+        "getItemID",
+        "getItemLabel",
     ];
 
     private const string NamespaceCustomUI2010 =
@@ -382,6 +389,11 @@ public class GanttRibbonTests
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
+                RibbonControlIds.Remove,
+                RibbonControlIds.PromoteToParent,
+                RibbonControlIds.DemoteToChild,
+                RibbonControlIds.MoveUp,
+                RibbonControlIds.MoveDown,
                 RibbonControlIds.PresetA4Portrait,
                 RibbonControlIds.PresetA4Landscape,
                 RibbonControlIds.PresetPresentation16x9,
@@ -389,6 +401,13 @@ public class GanttRibbonTests
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
+                // R5.5: the description-label dropdown is the first
+                // selection-gated control — it shares the workbook+initialised
+                // part of the truth table and adds the single-row condition
+                // inside it. R5.14 adds the parallel date-label dropdown
+                // beside it in the Labels group, gated on the same facts.
+                RibbonControlIds.DescriptionLabel,
+                RibbonControlIds.DateLabel,
                 RibbonControlIds.PlotTimeScale,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
@@ -452,6 +471,10 @@ public class GanttRibbonTests
             RibbonControlIds.AddActivity,
             RibbonControlIds.AddMilestone,
             RibbonControlIds.AddDelineator,
+            RibbonControlIds.PromoteToParent,
+            RibbonControlIds.DemoteToChild,
+            RibbonControlIds.MoveUp,
+            RibbonControlIds.MoveDown,
             RibbonControlIds.RefreshSheet,
             RibbonControlIds.PlotStartDate,
             RibbonControlIds.PlotFinishDate,
@@ -1466,27 +1489,47 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotStartAuto_uncheck_with_a_stored_date_persists_explicit()
     {
+        // CommandBoundary.Instance is a process-wide singleton: save
+        // its log and restore it afterwards so this test's mock does
+        // not leak into other tests. SetLog(null) throws, so a null
+        // original is restored by resetting the boundary to its
+        // pristine state.
+        var originalLog = CommandBoundary.Instance.GetLog();
         var log = new Mock<IRollingLog>();
         CommandBoundary.Instance.SetLog(log.Object);
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        service.SetPlotStartDate("15-Mar-26");
-        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
-        _ = writer
-            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
-                settings =>
-                    settings["PlotStartMode"] == "Explicit"
-                    && settings["PlotStartDate"] == "15-Mar-26")))
-            .Returns(ConfigWriteOutcome.Ok());
-        service.SetCatalogueWriter(writer.Object);
+        try
+        {
+            var service = new RibbonStateService();
+            service.SetCatalogueWriter(null);
+            service.SetPlotStartDate("15-Mar-26");
+            var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+            _ = writer
+                .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                    settings =>
+                        settings["PlotStartMode"] == "Explicit"
+                        && settings["PlotStartDate"] == "15-Mar-26")))
+                .Returns(ConfigWriteOutcome.Ok());
+            service.SetCatalogueWriter(writer.Object);
 
-        service.SetPlotStartAuto(false);
+            service.SetPlotStartAuto(false);
 
-        writer.Verify(
-            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
-            Times.Once);
-        Assert.False(service.IsPlotStartAuto());
-        Assert.Equal("15-Mar-26", service.GetPlotStartDate());
+            writer.Verify(
+                w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+                Times.Once);
+            Assert.False(service.IsPlotStartAuto());
+            Assert.Equal("15-Mar-26", service.GetPlotStartDate());
+        }
+        finally
+        {
+            if (originalLog is null)
+            {
+                CommandBoundary.Reset();
+            }
+            else
+            {
+                CommandBoundary.Instance.SetLog(originalLog);
+            }
+        }
     }
 
     /// <summary>
@@ -1497,27 +1540,47 @@ public class GanttRibbonTests
     [Fact]
     public void SetPlotFinishAuto_uncheck_with_a_stored_date_persists_explicit()
     {
+        // CommandBoundary.Instance is a process-wide singleton: save
+        // its log and restore it afterwards so this test's mock does
+        // not leak into other tests. SetLog(null) throws, so a null
+        // original is restored by resetting the boundary to its
+        // pristine state.
+        var originalLog = CommandBoundary.Instance.GetLog();
         var log = new Mock<IRollingLog>();
         CommandBoundary.Instance.SetLog(log.Object);
-        var service = new RibbonStateService();
-        service.SetCatalogueWriter(null);
-        service.SetPlotFinishDate("30-Jun-26");
-        var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
-        _ = writer
-            .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
-                settings =>
-                    settings["PlotFinishMode"] == "Explicit"
-                    && settings["PlotFinishDate"] == "30-Jun-26")))
-            .Returns(ConfigWriteOutcome.Ok());
-        service.SetCatalogueWriter(writer.Object);
+        try
+        {
+            var service = new RibbonStateService();
+            service.SetCatalogueWriter(null);
+            service.SetPlotFinishDate("30-Jun-26");
+            var writer = new Mock<IConfigCatalogueWriter>(MockBehavior.Strict);
+            _ = writer
+                .Setup(w => w.WriteSettings(It.Is<IReadOnlyDictionary<string, string>>(
+                    settings =>
+                        settings["PlotFinishMode"] == "Explicit"
+                        && settings["PlotFinishDate"] == "30-Jun-26")))
+                .Returns(ConfigWriteOutcome.Ok());
+            service.SetCatalogueWriter(writer.Object);
 
-        service.SetPlotFinishAuto(false);
+            service.SetPlotFinishAuto(false);
 
-        writer.Verify(
-            w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
-            Times.Once);
-        Assert.False(service.IsPlotFinishAuto());
-        Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
+            writer.Verify(
+                w => w.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()),
+                Times.Once);
+            Assert.False(service.IsPlotFinishAuto());
+            Assert.Equal("30-Jun-26", service.GetPlotFinishDate());
+        }
+        finally
+        {
+            if (originalLog is null)
+            {
+                CommandBoundary.Reset();
+            }
+            else
+            {
+                CommandBoundary.Instance.SetLog(originalLog);
+            }
+        }
     }
 
     /// <summary>Null dependencies are refused at the boundary, not at first use.</summary>
@@ -1655,6 +1718,18 @@ public class GanttRibbonTests
             // edited text: public void OnChange(IRibbonControl, string).
             if (parameters[0].ParameterType == typeof(IRibbonControl)
                 && parameters[1].ParameterType == typeof(string))
+            {
+                return true;
+            }
+
+            // The RibbonX dynamic dropDown item callbacks (R5.5) pass the
+            // control plus the zero-based item index:
+            // public string GetItemID(IRibbonControl, int) and
+            // public string GetItemLabel(IRibbonControl, int). Excel
+            // dispatches both by reflection, so a missing int parameter
+            // throws at dropdown-population time.
+            if (parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(int))
             {
                 return true;
             }

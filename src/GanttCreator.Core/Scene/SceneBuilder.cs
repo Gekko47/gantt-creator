@@ -1049,7 +1049,10 @@ public static class SceneBuilder
                     request.Metrics!,
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     LineBottomPt: lineBottomPt,
-                    LineTopPt: lineTopPt)),
+                    LineTopPt: lineTopPt,
+                    LabelStyle: request.LabelStyle,
+                    DateFormat: request.DateFormat,
+                    ShowDateLabels: request.ShowDateLabels)),
             ];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
@@ -1220,6 +1223,17 @@ public static class SceneBuilder
             // placed inside a body, so it always takes the outside style. Passing
             // the inside style here would put a delay event's DelayText beside its
             // bar, where white-on-white is unreadable.
+            // R5.14 D3: the row's date-label choice selects which of the
+            // two date labels the scene plans. A blank cell (Auto) keeps
+            // both, which is the behaviour every existing row already
+            // produces, so the default scene is unchanged. D5 (second
+            // owner ruling 2026-10-14): None names no date labels at
+            // all, so both flags clear and the builder plans an empty
+            // set -- it succeeds with no primitives rather than
+            // refusing, so a None row emits no date-label warning.
+            var none = @event.DateLabelPosition == GanttDateLabelPosition.None;
+            var showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
+            var showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -1229,6 +1243,8 @@ public static class SceneBuilder
                     request.Metrics!,
                     request.DateFormat,
                     outsideLabelStyle,
+                    ShowStart: showStart,
+                    ShowFinish: showFinish,
                     Occupants: VerticalBand(occupants, shapeBounds),
                     LaneOrder: placement.LaneOrder,
                     StackIndex: placement.EffectiveStackIndex));
