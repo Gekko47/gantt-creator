@@ -661,6 +661,103 @@ public class ConfigCatalogueWriterTests
         }
     }
 
+    [Fact]
+    public void WriteTheme_update_preserves_the_fields_the_edit_does_not_carry()
+    {
+        // R5.6a F2: an update that changes one colour must not reset the
+        // style's pattern, outline width, sizes, or label vocabulary. The
+        // earlier writer rebuilt the whole row from catalogue defaults, so
+        // the "not carried" fields were silently overwritten.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        fake.Tables[1].Body.Add(
+        [
+            "UserStyle",
+            "User Style",
+            "#112233",
+            "#445566",
+            "Cross",
+            4.0,
+            0.5,
+            "#FFFFFF",
+            0.75,
+            8.0,
+            12.0,
+            "Inside",
+            "Auto Inside",
+            "Fill, Stroke, Hatch",
+        ]);
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Update,
+                "UserStyle",
+                DisplayName: "User Style",
+                FillColour: "#AABBCC",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF")]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        object?[] row = styles.Body[^1];
+        Assert.Equal("#AABBCC", row[2]);
+        Assert.Equal("Cross", row[4]);
+        Assert.Equal(0.75, CellDouble(row[8]));
+        Assert.Equal(8.0, CellDouble(row[9]));
+        Assert.Equal(12.0, CellDouble(row[10]));
+        Assert.Equal("Inside", row[11]);
+        Assert.Equal("Auto Inside", row[12]);
+        Assert.Equal("Fill, Stroke, Hatch", row[13]);
+    }
+
+    [Fact]
+    public void WriteTheme_create_writes_the_carried_pattern_and_sizes()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Create,
+                "UserStyle",
+                DisplayName: "User Style",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF",
+                HatchPattern: GanttHatchPattern.ForwardDiagonal,
+                StandardOutlinePt: 1.25,
+                ActivityHeightPt: 9.5,
+                MilestoneSizePt: 11,
+                DefaultLabelPosition: GanttLabelPosition.Inside,
+                AllowedLabelPositions: new HashSet<GanttLabelPosition>
+                {
+                    GanttLabelPosition.Auto,
+                    GanttLabelPosition.Inside,
+                })]);
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        object?[] row = styles.Body[^1];
+        Assert.Equal("UserStyle", row[0]);
+        Assert.Equal("ForwardDiagonal", row[4]);
+        Assert.Equal(1.25, CellDouble(row[8]));
+        Assert.Equal(9.5, CellDouble(row[9]));
+        Assert.Equal(11.0, CellDouble(row[10]));
+        Assert.Equal("Inside", row[11]);
+        Assert.Equal("Auto Inside", row[12]);
+        Assert.Equal("StyleDefined", row[13]);
+    }
+
     private static void AssertContractTable(
         ConfigSheetFake.TableFake table,
         string[] expectedHeaders,

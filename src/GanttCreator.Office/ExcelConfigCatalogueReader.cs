@@ -427,7 +427,8 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 ToDouble(row[6]),
                 ToDouble(row[8]),
                 ToDouble(row[9]),
-                ToDouble(row[10])));
+                ToDouble(row[10]),
+                ToText(row[1])));
         }
 
         styles = new GanttStyleRegistry(definitions);

@@ -294,6 +294,138 @@ public class ThemeSettingsFormTests
         });
     }
 
+    [Fact]
+    public void CustomStyleEditor_OffersTheFillPatternAndTheStyleSizes()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                // The fill type, the outline width, the two sizes, and the
+                // label vocabulary are properties of the STYLE, so they live in
+                // the style editor rather than in the chart-wide metric tabs.
+                var pattern = RequireComboBox(tab);
+                Assert.Contains(
+                    pattern.Items.Cast<object>().Select(item => item.ToString()),
+                    label => label == "Solid");
+
+                var numerics = FindAll(tab, c => c is NumericUpDown)
+                    .Cast<NumericUpDown>()
+                    .ToList();
+                Assert.Equal(3, numerics.Count);
+
+                var defaultLabel = FindAll(tab, c => c is ComboBox)
+                    .Cast<ComboBox>()
+                    .First(combo => combo.Items.Count > 0 && combo.Items[0] is not null);
+                Assert.NotEmpty(defaultLabel.Items);
+
+                var allowedLabels = Assert.IsType<CheckedListBox>(Find(tab, c => c is CheckedListBox));
+                Assert.NotEmpty(allowedLabels.Items);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void Ok_PatternChangeOnSavedCustomStyle_CarriesThePattern()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [], new Dictionary<string, double>(), null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                var list = RequireListBox(tab);
+                list.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // Choose a hatch pattern: the fill type is the property the
+                // user asked for, and it must reach the emitted edit.
+                var pattern = FindAll(tab, c => c is ComboBox)
+                    .Cast<ComboBox>()
+                    .First(combo => combo.Items.Cast<object>().Any(item => item.ToString() == "Cross"));
+                pattern.SelectedItem = pattern.Items.Cast<object>()
+                    .First(item => item.ToString() == "Cross");
+                InvokeClick(form, "CustomStylePropertyChanged");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edit = Assert.Single(request.CustomStyleEdits ?? Enumerable.Empty<CustomStyleEdit>());
+                Assert.Equal(CustomStyleOperation.Update, edit.Operation);
+                Assert.Equal(GanttHatchPattern.Cross, edit.HatchPattern);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void Ok_UntouchedSavedStyle_EmitsNoEdit()
+    {
+        // A style whose properties the user never touched must not produce an
+        // edit: the stored pattern, sizes, and label vocabulary are carried
+        // by the load, not by an edit.
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [], new Dictionary<string, double>(), null,
+                new List<CustomStyleDef>
+                {
+                    new(
+                        "SAVED",
+                        "SAVED",
+                        "#FF0000",
+                        "#00FF00",
+                        "#0000FF",
+                        GanttHatchPattern.Cross,
+                        0.75,
+                        8.0,
+                        12.0,
+                        GanttLabelPosition.Inside,
+                        new HashSet<GanttLabelPosition>
+                        {
+                            GanttLabelPosition.Auto,
+                            GanttLabelPosition.Inside,
+                        }),
+                }));
+            try
+            {
+                form.CreateControl();
+                var list = RequireListBox(GetCustomStylesTab(form));
+                list.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                Assert.Empty(request.CustomStyleEdits ?? Enumerable.Empty<CustomStyleEdit>());
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)
@@ -349,11 +481,30 @@ public class ThemeSettingsFormTests
         return null;
     }
 
+    private static IEnumerable<Control> FindAll(Control root, Func<Control, bool> match)
+    {
+        if (match(root))
+        {
+            yield return root;
+        }
+
+        foreach (Control child in root.Controls)
+        {
+            foreach (var found in FindAll(child, match))
+            {
+                yield return found;
+            }
+        }
+    }
+
     private static Button RequireButton(TabPage tab, string text) =>
         Assert.IsType<Button>(Find(tab, c => c is Button b && b.Text == text));
 
     private static ListBox RequireListBox(TabPage tab) =>
         Assert.IsType<ListBox>(Find(tab, c => c is ListBox));
+
+    private static ComboBox RequireComboBox(TabPage tab) =>
+        Assert.IsType<ComboBox>(Find(tab, c => c is ComboBox));
 
     private static GroupBox RequireGroupBox(TabPage tab, string text) =>
         Assert.IsType<GroupBox>(Find(tab, c => c is GroupBox g && g.Text == text));

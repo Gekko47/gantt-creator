@@ -26,6 +26,12 @@ namespace GanttCreator.Core;
 /// <param name="StandardOutlinePt">The outline width in points.</param>
 /// <param name="ActivityHeightPt">The entity height in points.</param>
 /// <param name="MilestoneSizePt">The diamond tip-to-tip size in points.</param>
+/// <param name="DisplayName">
+/// The human-readable style name, or null when the registry does not carry
+/// one. A user-authored style row stores its display name in the second
+/// column, so the reader projects it; the built-in presets carry their own
+/// code-owned names.
+/// </param>
 public sealed record GanttStyleDefinition(
     string StyleKey,
     IReadOnlySet<GanttLabelPosition> AllowedLabelPositions,
@@ -39,7 +45,8 @@ public sealed record GanttStyleDefinition(
     double HatchLinePt = 0,
     double StandardOutlinePt = 0,
     double ActivityHeightPt = 0,
-    double MilestoneSizePt = 0)
+    double MilestoneSizePt = 0,
+    string? DisplayName = null)
 {
     /// <summary>
     /// Gets whether the catalogue supplied resolved formatting for this style.

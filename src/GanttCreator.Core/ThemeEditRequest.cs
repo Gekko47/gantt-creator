@@ -55,16 +55,39 @@ public enum CustomStyleOperation
 }
 
 /// <summary>
-/// One custom style edit: create, rename, or delete a user-authored style row.
-/// Built-in preset keys are never custom and are excluded by validation.
+/// One custom style edit: create, rename, update, or delete a user-authored
+/// style row. Built-in preset keys are never custom and are excluded by
+/// validation.
 /// </summary>
+/// <remarks>
+/// <para>
+/// A null optional member means <b>not carried by this edit</b>: the writer
+/// preserves the stored value. That distinction is the reason the nullable
+/// members exist at all. An earlier revision rebuilt the whole row from
+/// hard-coded catalogue defaults and back-filled the gaps with
+/// <c>??=</c>, but the fresh defaults were never null, so the back-fill never
+/// fired and an update that changed one colour silently reset the style's
+/// pattern, sizes, and label vocabulary to the catalogue defaults.
+/// </para>
+/// <para>
+/// The three colour members are not nullable: an empty colour is a
+/// meaningful value (the entity genuinely has no fill or stroke), so they are
+/// always carried.
+/// </para>
+/// </remarks>
 /// <param name="Operation">Create, rename, update, or delete.</param>
 /// <param name="StyleKey">Target style key: new key for Create, old key for Rename, key to delete for Delete.</param>
 /// <param name="NewStyleKey">For Rename, the new style key; null for Update and Delete.</param>
-/// <param name="DisplayName">For Create/Rename, the human-readable style name; otherwise null.</param>
-/// <param name="FillColour">For Create/Rename, the edited fill <c>#RRGGBB</c> or empty; otherwise null.</param>
-/// <param name="StrokeColour">For Create/Rename, the edited stroke <c>#RRGGBB</c> or empty; otherwise null.</param>
-/// <param name="TextColour">For Create/Rename, the edited label text <c>#RRGGBB</c> or empty; otherwise null.</param>
+/// <param name="DisplayName">The human-readable style name; null preserves the stored name.</param>
+/// <param name="FillColour">The fill <c>#RRGGBB</c>, or empty for no fill.</param>
+/// <param name="StrokeColour">The stroke <c>#RRGGBB</c>, or empty for no stroke.</param>
+/// <param name="TextColour">The label text <c>#RRGGBB</c>, or empty.</param>
+/// <param name="HatchPattern">The fill pattern; null preserves the stored pattern.</param>
+/// <param name="StandardOutlinePt">The outline width in points; null preserves the stored value.</param>
+/// <param name="ActivityHeightPt">The bar height in points; null preserves the stored value.</param>
+/// <param name="MilestoneSizePt">The milestone tip-to-tip size in points; null preserves the stored value.</param>
+/// <param name="DefaultLabelPosition">The default label position; null preserves the stored position.</param>
+/// <param name="AllowedLabelPositions">The permitted label positions; null preserves the stored set.</param>
 public sealed record CustomStyleEdit(
     CustomStyleOperation Operation,
     string StyleKey,
@@ -72,7 +95,13 @@ public sealed record CustomStyleEdit(
     string? DisplayName = null,
     string FillColour = "",
     string StrokeColour = "",
-    string TextColour = "");
+    string TextColour = "",
+    GanttHatchPattern? HatchPattern = null,
+    double? StandardOutlinePt = null,
+    double? ActivityHeightPt = null,
+    double? MilestoneSizePt = null,
+    GanttLabelPosition? DefaultLabelPosition = null,
+    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null);
 
 /// <summary>
 /// One custom style's current state as read from the workbook registry.
@@ -82,12 +111,27 @@ public sealed record CustomStyleEdit(
 /// <param name="FillColour">The resolved fill <c>#RRGGBB</c>, or empty.</param>
 /// <param name="StrokeColour">The resolved stroke <c>#RRGGBB</c>, or empty.</param>
 /// <param name="TextColour">The resolved label text <c>#RRGGBB</c>, or empty.</param>
+/// <param name="HatchPattern">The resolved fill pattern.</param>
+/// <param name="StandardOutlinePt">The resolved outline width in points.</param>
+/// <param name="ActivityHeightPt">The resolved bar height in points.</param>
+/// <param name="MilestoneSizePt">The resolved milestone tip-to-tip size in points.</param>
+/// <param name="DefaultLabelPosition">The resolved default label position.</param>
+/// <param name="AllowedLabelPositions">
+/// The resolved permitted label positions, or null when the caller does not
+/// carry them.
+/// </param>
 public sealed record CustomStyleDef(
     string StyleKey,
     string DisplayName,
     string FillColour,
     string StrokeColour,
-    string TextColour);
+    string TextColour,
+    GanttHatchPattern HatchPattern = GanttHatchPattern.None,
+    double StandardOutlinePt = 0,
+    double ActivityHeightPt = 0,
+    double MilestoneSizePt = 0,
+    GanttLabelPosition DefaultLabelPosition = GanttLabelPosition.Auto,
+    IReadOnlySet<GanttLabelPosition>? AllowedLabelPositions = null);
 
 /// <summary>
 /// The pure R5.6 theme edit: per-preset colours plus metric values, validated
@@ -195,6 +239,57 @@ public sealed record ThemeEditRequest(
                     return false;
                 }
 
+                // The fill pattern is a closed enum: an undefined member would
+                // serialise to a name the reader cannot parse, and the reader
+                // refuses the whole catalogue rather than skipping the row.
+                if (edit.HatchPattern is { } hatch && !Enum.IsDefined(hatch))
+                {
+                    refusal = ThemeEditRefusal.InvalidCustomStyle;
+                    message = $"Custom style '{key}' fill pattern is not a defined pattern.";
+                    return false;
+                }
+
+                // The label vocabulary is a closed enum too, and the default
+                // must be one of the permitted positions: the reader enforces
+                // exactly this, so a row that breaks it would be unreadable.
+                if (edit.DefaultLabelPosition is { } defaultPosition && !Enum.IsDefined(defaultPosition))
+                {
+                    refusal = ThemeEditRefusal.InvalidCustomStyle;
+                    message = $"Custom style '{key}' default label position is not a defined position.";
+                    return false;
+                }
+
+                if (edit.AllowedLabelPositions is { } allowed)
+                {
+                    if (allowed.Count == 0 || allowed.Any(position => !Enum.IsDefined(position)))
+                    {
+                        refusal = ThemeEditRefusal.InvalidCustomStyle;
+                        message = $"Custom style '{key}' must permit at least one defined label position.";
+                        return false;
+                    }
+
+                    if (edit.DefaultLabelPosition is { } required
+                        && !allowed.Contains(required))
+                    {
+                        refusal = ThemeEditRefusal.InvalidCustomStyle;
+                        message =
+                            $"Custom style '{key}' default label position '{required}' is not in its permitted set.";
+                        return false;
+                    }
+                }
+
+                // The style's own sizes are range-checked against the same
+                // catalogue tokens the global metrics use, so a custom style
+                // cannot carry a size the entity guide forbids.
+                if (!IsValidCustomStyleMetric(edit.StandardOutlinePt, "StandardOutlinePt")
+                    || !IsValidCustomStyleMetric(edit.ActivityHeightPt, "ActivityHeightPt")
+                    || !IsValidCustomStyleMetric(edit.MilestoneSizePt, "MilestoneSizePt"))
+                {
+                    refusal = ThemeEditRefusal.MetricOutOfRange;
+                    message = $"Custom style '{key}' has a size outside the catalogue range.";
+                    return false;
+                }
+
                 if (edit.Operation == CustomStyleOperation.Rename)
                 {
                     string? newKey = edit.NewStyleKey;
@@ -295,6 +390,47 @@ public sealed record ThemeEditRequest(
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Validates one optional custom-style size against its catalogue token's
+    /// range. A null value is valid: it means the edit does not carry that
+    /// size, and the writer preserves the stored one.
+    /// </summary>
+    /// <param name="value">The edited size, or null when not carried.</param>
+    /// <param name="tokenName">The catalogue metric token name.</param>
+    /// <returns>Whether the value is absent or inside the token's range.</returns>
+    /// <remarks>
+    /// Zero is valid for a style size and means <b>not applicable to this
+    /// entity kind</b>: a style used by an activity carries a zero milestone
+    /// size, and a style used by a milestone carries a zero bar height. The
+    /// built-in presets use exactly that convention, so a style size is
+    /// range-checked only when it is non-zero. The catalogue's minimum for
+    /// <c>ActivityHeightPt</c> is 2 and for <c>MilestoneSizePt</c> is 3, so
+    /// treating zero as a violation would refuse every style that names only
+    /// one entity kind.
+    /// </remarks>
+    private static bool IsValidCustomStyleMetric(double? value, string tokenName)
+    {
+        if (value is not { } metric)
+        {
+            return true;
+        }
+
+        if (!double.IsFinite(metric))
+        {
+            return false;
+        }
+
+        if (metric == 0)
+        {
+            return true;
+        }
+
+        GanttMetricToken? token = FindMetric(tokenName);
+        return token is not null
+            && metric >= token.Minimum
+            && metric <= token.Maximum;
     }
 
     private static GanttMetricToken? FindMetric(string name)

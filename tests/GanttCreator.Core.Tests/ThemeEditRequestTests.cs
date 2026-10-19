@@ -160,6 +160,152 @@ public sealed class ThemeEditRequestTests
     }
 
     [Fact]
+    public void Custom_style_undefined_hatch_pattern_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", HatchPattern: (GanttHatchPattern)99)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_undefined_default_label_position_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", DefaultLabelPosition: (GanttLabelPosition)99)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_empty_allowed_label_set_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [
+                new CustomStyleEdit(
+                    CustomStyleOperation.Create,
+                    "MYSTYLE",
+                    AllowedLabelPositions: new HashSet<GanttLabelPosition>()),
+            ]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_default_label_position_outside_allowed_set_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [
+                new CustomStyleEdit(
+                    CustomStyleOperation.Create,
+                    "MYSTYLE",
+                    DefaultLabelPosition: GanttLabelPosition.Inside,
+                    AllowedLabelPositions: new HashSet<GanttLabelPosition>
+                    {
+                        GanttLabelPosition.Auto,
+                        GanttLabelPosition.Left,
+                    }),
+            ]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_size_outside_catalogue_range_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", ActivityHeightPt: 10_000)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.MetricOutOfRange, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_negative_size_is_refused()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", MilestoneSizePt: -1)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.MetricOutOfRange, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_zero_size_is_accepted_as_not_applicable()
+    {
+        // Zero is the style contract's "not applicable to this entity kind"
+        // value: an activity style carries a zero milestone size and a
+        // milestone style carries a zero bar height. The catalogue's minimum
+        // for both tokens is above zero, so this case must be handled
+        // explicitly rather than by the range check.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Create,
+                "MYSTYLE",
+                ActivityHeightPt: 0,
+                MilestoneSizePt: 0,
+                StandardOutlinePt: 0)]);
+        Assert.True(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Null(refusal);
+        Assert.Null(message);
+    }
+
+    [Fact]
+    public void Custom_style_size_below_the_catalogue_minimum_is_refused()
+    {
+        // A non-zero size must be inside the token's range. ActivityHeightPt's
+        // minimum is 2, so 1 is refused.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(CustomStyleOperation.Create, "MYSTYLE", ActivityHeightPt: 1)]);
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.MetricOutOfRange, refusal);
+    }
+
+    [Fact]
+    public void Custom_style_with_full_property_set_passes()
+    {
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [
+                new CustomStyleEdit(
+                    CustomStyleOperation.Create,
+                    "MYSTYLE",
+                    FillColour: "#FF0000",
+                    StrokeColour: "#C00000",
+                    TextColour: "#FFFFFF",
+                    HatchPattern: GanttHatchPattern.Cross,
+                    StandardOutlinePt: 0.75,
+                    ActivityHeightPt: 10,
+                    MilestoneSizePt: 12,
+                    DefaultLabelPosition: GanttLabelPosition.Inside,
+                    AllowedLabelPositions: new HashSet<GanttLabelPosition>
+                    {
+                        GanttLabelPosition.Auto,
+                        GanttLabelPosition.Inside,
+                        GanttLabelPosition.None,
+                    }),
+            ]);
+        Assert.True(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Null(refusal);
+        Assert.Null(message);
+    }
+
+    [Fact]
     public void Custom_style_create_with_valid_key_and_colours_passes()
     {
         var request = new ThemeEditRequest(

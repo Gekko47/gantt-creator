@@ -691,39 +691,126 @@ public class ExcelConfigCatalogueWriter(
     }
 
     /// <summary>
-    /// Builds a style row array for a custom style create or rename.
+    /// Builds a style row array for a custom style create, rename, or update.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A null optional member on the edit means <b>not carried</b>, so the
+    /// stored value is preserved. An earlier revision rebuilt the row from
+    /// hard-coded catalogue defaults and back-filled the gaps with
+    /// <c>??=</c>: the fresh defaults were never null, so the back-fill never
+    /// fired and an update that changed one colour silently reset the style's
+    /// pattern, outline width, sizes, and label vocabulary to the catalogue
+    /// defaults. This version starts from the stored row and overlays only the
+    /// members the edit actually carries.
+    /// </para>
+    /// <para>
+    /// A create has no stored row, so the catalogue defaults supply the
+    /// starting point for the members the edit does not carry.
+    /// </para>
+    /// </remarks>
+    /// <param name="custom">The validated custom style edit.</param>
+    /// <param name="existingRow">The stored row for an update or rename, or null for a create.</param>
+    /// <returns>The style payload row.</returns>
     private static List<object?> BuildCustomStyleRow(
         CustomStyleEdit custom,
         List<object?>? existingRow = null)
     {
-        List<object?> row = new List<object?>(GanttCatalogues.StylesHeaders.Length)
-        {
-            custom.NewStyleKey ?? custom.StyleKey,
-            custom.DisplayName ?? ToText(existingRow?[1]),
-            custom.FillColour,
-            custom.StrokeColour,
-            GanttHatchPattern.None.ToString(),
-            GanttCatalogues.MetricDefault("HatchPitchPt"),
-            GanttCatalogues.MetricDefault("HatchLinePt"),
-            custom.TextColour,
-            GanttCatalogues.MetricDefault("StandardOutlinePt"),
-            GanttCatalogues.MetricDefault("ActivityHeightPt"),
-            GanttCatalogues.MetricDefault("MilestoneSizePt"),
-            GanttLabelPosition.Auto.ToString(),
-            GanttLabelPosition.Auto.ToString(),
-            EntityColourCapability.StyleDefined.ToString(),
-        };
+        List<object?> row = existingRow is null
+            ? []
+            : [.. existingRow];
 
-        if (existingRow is not null)
+        // A stored row read back from an older sheet may be short; pad it so
+        // the column assignments below cannot overrun it.
+        while (row.Count < GanttCatalogues.StylesHeaders.Length)
         {
-            for (int i = 0; i < row.Count && i < existingRow.Count; i++)
-            {
-                row[i] ??= existingRow[i];
-            }
+            row.Add(string.Empty);
         }
 
+        row[0] = custom.NewStyleKey ?? custom.StyleKey;
+        row[1] = custom.DisplayName ?? ToText(row[1]);
+        row[2] = custom.FillColour;
+        row[3] = custom.StrokeColour;
+        row[5] = ToDoubleOrDefault(row[5], "HatchPitchPt");
+        row[6] = ToDoubleOrDefault(row[6], "HatchLinePt");
+        row[7] = custom.TextColour;
+        row[8] = custom.StandardOutlinePt ?? ToDoubleOrDefault(row[8], "StandardOutlinePt");
+        row[9] = custom.ActivityHeightPt ?? ToDoubleOrDefault(row[9], "ActivityHeightPt");
+        row[10] = custom.MilestoneSizePt ?? ToDoubleOrDefault(row[10], "MilestoneSizePt");
+
+        // The pattern, the default label position, and the permitted label
+        // set are preserved from the stored row unless the edit carries them.
+        row[4] = custom.HatchPattern?.ToString()
+            ?? ToTextOrDefault(row[4], GanttHatchPattern.None.ToString());
+
+        row[11] = custom.DefaultLabelPosition?.ToString()
+            ?? ToTextOrDefault(row[11], GanttLabelPosition.Auto.ToString());
+
+        row[12] = custom.AllowedLabelPositions is { } allowed
+            ? string.Join(
+                " ",
+                allowed.Select(position => position.ToString())
+                    .OrderBy(name => name, StringComparer.Ordinal))
+            : ToTextOrDefault(row[12], GanttLabelPosition.Auto.ToString());
+
+        // The capability is PRESERVED, not recomputed. It governs which
+        // per-row colour overrides the row validator permits, so an update
+        // must not change it as a side effect of a colour edit. A create has
+        // no stored capability, so it takes the code-owned default: a custom
+        // style defines the whole colour scheme, so the row's own colour
+        // columns are not overridable. The hatch pattern lives in its own
+        // column and needs no capability bit.
+        EntityColourCapability storedCapability =
+            Enum.TryParse(
+                ToText(row[13]),
+                ignoreCase: false,
+                out EntityColourCapability parsedCapability)
+                ? parsedCapability
+                : EntityColourCapability.StyleDefined;
+        row[13] = storedCapability.ToString();
+
         return row;
+    }
+
+    /// <summary>
+    /// Returns a cell's numeric value, or the catalogue default for the named
+    /// metric when the cell is absent or unparseable.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="tokenName">The catalogue metric token name.</param>
+    /// <returns>The stored value, or the token's default.</returns>
+    private static double ToDoubleOrDefault(object? cell, string tokenName) =>
+        ToNumberOrDefault(cell, GanttCatalogues.MetricDefault(tokenName));
+
+    /// <summary>
+    /// Returns a numeric cell's value, or the supplied fallback when the cell
+    /// is absent or unparseable.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="fallback">The value used when the cell carries no number.</param>
+    /// <returns>The cell's value, or the fallback.</returns>
+    private static double ToNumberOrDefault(object? cell, double fallback) =>
+        cell switch
+        {
+            double number => number,
+            not null when double.TryParse(
+                cell.ToString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double parsed) => parsed,
+            _ => fallback,
+        };
+
+    /// <summary>
+    /// Returns a cell's text, or the supplied fallback when the cell is empty.
+    /// </summary>
+    /// <param name="cell">The stored cell value.</param>
+    /// <param name="fallback">The value used when the cell carries no text.</param>
+    /// <returns>The cell's text, or the fallback.</returns>
+    private static string ToTextOrDefault(object? cell, string fallback)
+    {
+        string text = ToText(cell);
+        return text.Length > 0 ? text : fallback;
     }
 
     /// <summary>

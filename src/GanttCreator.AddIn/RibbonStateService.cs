@@ -953,12 +953,20 @@ internal class RibbonStateService
                 if (outcome.Styles.TryGet(key, out GanttStyleDefinition? definition)
                     && definition is { HasFormatting: true })
                 {
+                    // The user row's display name is projected by the reader;
+                    // the key is the fallback when the row carries no name.
                     currentCustomDefs.Add(new CustomStyleDef(
                         key,
-                        key, // DisplayName: registry doesn't carry it; fall back to key
+                        definition.DisplayName is { Length: > 0 } name ? name : key,
                         definition.FillColour ?? "",
                         definition.StrokeColour ?? "",
-                        definition.TextColour ?? ""));
+                        definition.TextColour ?? "",
+                        definition.HatchPattern ?? GanttHatchPattern.None,
+                        definition.StandardOutlinePt,
+                        definition.ActivityHeightPt,
+                        definition.MilestoneSizePt,
+                        definition.DefaultLabelPosition ?? GanttLabelPosition.Auto,
+                        definition.AllowedLabelPositions));
                 }
             }
 

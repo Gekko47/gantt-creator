@@ -7,12 +7,39 @@ namespace GanttCreator.AddIn;
 /// WinForms modal dialog for R5.6 theme settings (Colours / Heights and sizes / Grid and bands tabs).
 /// Runs on the Excel main STA thread via ShowDialog; fully offline.
 /// </summary>
-/// <summary>Snapshot of one custom style's colour state.</summary>
-internal sealed class CustomStyleState(string fill, string stroke, string text)
+/// <summary>
+/// Snapshot of one custom style's full property state: the colours, the fill
+/// pattern, the sizes, and the label vocabulary.
+/// </summary>
+/// <remarks>
+/// Every member mirrors one column of <c>tblGanttStyles</c>, so the dialog
+/// edits an object rather than a bag of loosely related options. The sizes
+/// and the label vocabulary are carried here because they belong to the
+/// style, not to the chart: a custom style used by a Custom Activity row and
+/// the same style used by a Custom Milestone row are one object with one set
+/// of properties.
+/// </remarks>
+internal sealed class CustomStyleState(
+    string fill,
+    string stroke,
+    string text,
+    GanttHatchPattern hatchPattern = GanttHatchPattern.None,
+    double standardOutlinePt = 0,
+    double activityHeightPt = 0,
+    double milestoneSizePt = 0,
+    GanttLabelPosition defaultLabelPosition = GanttLabelPosition.Auto,
+    IReadOnlySet<GanttLabelPosition>? allowedLabelPositions = null)
 {
     public string Fill { get; } = fill;
     public string Stroke { get; } = stroke;
     public string Text { get; } = text;
+    public GanttHatchPattern HatchPattern { get; } = hatchPattern;
+    public double StandardOutlinePt { get; } = standardOutlinePt;
+    public double ActivityHeightPt { get; } = activityHeightPt;
+    public double MilestoneSizePt { get; } = milestoneSizePt;
+    public GanttLabelPosition DefaultLabelPosition { get; } = defaultLabelPosition;
+    public IReadOnlySet<GanttLabelPosition> AllowedLabelPositions { get; } =
+        allowedLabelPositions ?? new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto };
 }
 
 internal sealed partial class ThemeSettingsForm : Form
@@ -65,9 +92,6 @@ internal sealed partial class ThemeSettingsForm : Form
 
     // Custom styles tab controls
     private const string _customStyleKeyLabel = "Style key:";
-    private const string _customStyleFillLabel = "Fill";
-    private const string _customStyleStrokeLabel = "Stroke";
-    private const string _customStyleTextLabel = "Text";
     private const string _customStyleEmptyHint = "No custom styles defined yet. Enter a key and click New custom style.";
 
     private readonly ListBox _customStyleList = new()
@@ -162,6 +186,47 @@ internal sealed partial class ThemeSettingsForm : Form
         AutoSize = true,
         Enabled = false,
     };
+
+    // The fill pattern, the outline width, the two sizes, and the label
+    // vocabulary are properties of the STYLE, so they sit in the style editor
+    // beside the colours rather than in the chart-wide metric tabs.
+    private readonly ComboBox _customHatchPatternCombo = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Size = new Size(140, 22),
+    };
+    private readonly NumericUpDown _customOutlineWidthNumeric = new()
+    {
+        Size = new Size(80, 22),
+        DecimalPlaces = 2,
+        Increment = 0.25m,
+        Minimum = 0m,
+    };
+    private readonly NumericUpDown _customActivityHeightNumeric = new()
+    {
+        Size = new Size(80, 22),
+        DecimalPlaces = 2,
+        Increment = 0.25m,
+        Minimum = 0m,
+    };
+    private readonly NumericUpDown _customMilestoneSizeNumeric = new()
+    {
+        Size = new Size(80, 22),
+        DecimalPlaces = 2,
+        Increment = 0.25m,
+        Minimum = 0m,
+    };
+    private readonly ComboBox _customDefaultLabelCombo = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Size = new Size(140, 22),
+    };
+    private readonly CheckedListBox _customAllowedLabelList = new()
+    {
+        CheckOnClick = true,
+        IntegralHeight = false,
+        Size = new Size(140, 74),
+    };
     private readonly GroupBox _customStyleListGroup = new()
     {
         Text = "Custom styles",
@@ -176,6 +241,14 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private string? _selectedCustomStyleKey;
     private readonly Dictionary<string, CustomStyleState> _customStyleEdits = [];
+
+    /// <summary>
+    /// Suppresses the editor's change handlers while the editor is being
+    /// populated from the stored state. Without it, loading a style would fire
+    /// the change handlers and mark the style as edited — the dialog would
+    /// then emit an update for a style the user never touched.
+    /// </summary>
+    private bool _suppressCustomStyleSync;
 
     private readonly ColorDialog _colorDialog = new()
     {
@@ -223,6 +296,12 @@ internal sealed partial class ThemeSettingsForm : Form
             _customDeleteButton.Dispose();
             _customStyleListGroup.Dispose();
             _customStyleEditGroup.Dispose();
+            _customHatchPatternCombo.Dispose();
+            _customOutlineWidthNumeric.Dispose();
+            _customActivityHeightNumeric.Dispose();
+            _customMilestoneSizeNumeric.Dispose();
+            _customDefaultLabelCombo.Dispose();
+            _customAllowedLabelList.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -594,10 +673,13 @@ internal sealed partial class ThemeSettingsForm : Form
         Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
-        // Left: list of existing custom styles
+        // Left: the list of user-created styles. The list is the master; the
+        // property panel on the right edits the selected object.
         _customStyleListGroup.Location = new Point(8, 8);
+        _customStyleListGroup.Size = new Size(210, 300);
         _customStyleListLabel.Location = new Point(16, 24);
         _customStyleList.Location = new Point(16, 48);
+        _customStyleList.Size = new Size(178, 240);
 
         _customStyleList.SelectedIndexChanged += CustomStyleList_SelectedIndexChanged;
         _customStyleListGroup.Controls.Add(_customStyleListLabel);
@@ -606,106 +688,293 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // Empty-state hint (full width so the instruction stays readable).
         _customStyleListHint.AutoSize = true;
-        _customStyleListHint.Location = new Point(8, 272);
+        _customStyleListHint.Location = new Point(8, 316);
         panel.Controls.Add(_customStyleListHint);
 
-        // Right: edit panel for the selected custom style
-        _customStyleEditGroup.Location = new Point(240, 8);
+        // New-style entry is always available: it is not gated behind a
+        // selection, so the first custom style can always be created.
+        _customNewButton.Click += CustomNewButton_Click;
+        _customNewButton.Location = new Point(16, 344);
+        panel.Controls.Add(_customNewButton);
+        _customNewKeyText.Location = new Point(112, 342);
+        panel.Controls.Add(_customNewKeyText);
+
+        // Right: the property panel for the selected style, grouped by concern
+        // (Fill / Outline / Label / Size) rather than by table column.
+        _customStyleEditGroup.Location = new Point(230, 8);
+        _customStyleEditGroup.Size = new Size(470, 470);
 
         Label keyLbl = new Label
         {
             Text = _customStyleKeyLabel,
-            Location = new Point(16, 28),
-            Size = new Size(64, 20),
+            Location = new Point(16, 26),
+            Size = new Size(70, 20),
         };
-        _customStyleKeyText.Location = new Point(84, 24);
+        _customStyleKeyText.Location = new Point(92, 22);
+        _customStyleKeyText.ReadOnly = true;
 
-        Label fillLbl = new Label
+        GroupBox fillGroup = new GroupBox
         {
-            Text = _customStyleFillLabel,
-            Location = new Point(16, 64),
-            Size = new Size(32, 20),
+            Text = "Fill",
+            Location = new Point(12, 52),
+            Size = new Size(446, 78),
         };
-        _customStyleFillText.Location = new Point(84, 60);
-        _customFillColorButton.Location = new Point(192, 58);
-        _customFillSwatch.Location = new Point(224, 60);
-        _customFillColorButton.Click += CustomFillColorButton_Click;
-        _customStyleFillText.TextChanged += CustomStyleColourTextChanged;
-
-        Label strokeLbl = new Label
+        AddCustomColourRow(fillGroup, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 22);
+        Label patternLbl = new Label
         {
-            Text = _customStyleStrokeLabel,
-            Location = new Point(16, 96),
-            Size = new Size(44, 20),
+            Text = "Pattern",
+            Location = new Point(16, 52),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
-        _customStyleStrokeText.Location = new Point(84, 92);
-        _customStrokeColorButton.Location = new Point(192, 90);
-        _customStrokeSwatch.Location = new Point(224, 92);
-        _customStrokeColorButton.Click += CustomStrokeColorButton_Click;
-        _customStyleStrokeText.TextChanged += CustomStyleColourTextChanged;
+        fillGroup.Controls.Add(patternLbl);
+        _customHatchPatternCombo.Location = new Point(92, 48);
+        fillGroup.Controls.Add(_customHatchPatternCombo);
+        _customStyleEditGroup.Controls.Add(fillGroup);
 
-        Label textLbl = new Label
+        GroupBox outlineGroup = new GroupBox
         {
-            Text = _customStyleTextLabel,
-            Location = new Point(16, 128),
-            Size = new Size(36, 20),
+            Text = "Outline",
+            Location = new Point(12, 138),
+            Size = new Size(446, 78),
         };
-        _customStyleTextText.Location = new Point(84, 124);
-        _customTextColorButton.Location = new Point(192, 122);
-        _customTextSwatch.Location = new Point(224, 124);
-        _customTextColorButton.Click += CustomTextColorButton_Click;
-        _customStyleTextText.TextChanged += CustomStyleColourTextChanged;
+        AddCustomColourRow(outlineGroup, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 22);
+        Label widthLbl = new Label
+        {
+            Text = "Width",
+            Location = new Point(16, 52),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        outlineGroup.Controls.Add(widthLbl);
+        _customOutlineWidthNumeric.Location = new Point(92, 48);
+        outlineGroup.Controls.Add(_customOutlineWidthNumeric);
+        _customStyleEditGroup.Controls.Add(outlineGroup);
 
-        // New-style entry is always available (not gated behind a selection).
-        _customNewButton.Click += CustomNewButton_Click;
+        GroupBox labelGroup = new GroupBox
+        {
+            Text = "Label",
+            Location = new Point(12, 224),
+            Size = new Size(446, 118),
+        };
+        AddCustomColourRow(labelGroup, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 22);
+        Label defaultLbl = new Label
+        {
+            Text = "Default",
+            Location = new Point(16, 52),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        labelGroup.Controls.Add(defaultLbl);
+        _customDefaultLabelCombo.Location = new Point(92, 48);
+        labelGroup.Controls.Add(_customDefaultLabelCombo);
+        Label allowedLbl = new Label
+        {
+            Text = "Allowed",
+            Location = new Point(16, 80),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        labelGroup.Controls.Add(allowedLbl);
+        _customAllowedLabelList.Location = new Point(92, 74);
+        labelGroup.Controls.Add(_customAllowedLabelList);
+        _customStyleEditGroup.Controls.Add(labelGroup);
+
+        GroupBox sizeGroup = new GroupBox
+        {
+            Text = "Size",
+            Location = new Point(12, 350),
+            Size = new Size(446, 78),
+        };
+        Label barLbl = new Label
+        {
+            Text = "Bar height",
+            Location = new Point(16, 22),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        sizeGroup.Controls.Add(barLbl);
+        _customActivityHeightNumeric.Location = new Point(92, 18);
+        sizeGroup.Controls.Add(_customActivityHeightNumeric);
+        Label milestoneLbl = new Label
+        {
+            Text = "Milestone",
+            Location = new Point(16, 52),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        sizeGroup.Controls.Add(milestoneLbl);
+        _customMilestoneSizeNumeric.Location = new Point(92, 48);
+        sizeGroup.Controls.Add(_customMilestoneSizeNumeric);
+        _customStyleEditGroup.Controls.Add(sizeGroup);
 
         // Delete only applies to a selected style; it lives inside the edit group.
-        FlowLayoutPanel buttonPanel = new FlowLayoutPanel
-        {
-            Location = new Point(16, 172),
-            Size = new Size(280, 30),
-            FlowDirection = FlowDirection.LeftToRight,
-        };
         _customDeleteButton.Click += CustomDeleteButton_Click;
-        buttonPanel.Controls.Add(_customDeleteButton);
+        _customDeleteButton.Location = new Point(16, 438);
+        _customStyleEditGroup.Controls.Add(_customDeleteButton);
 
         _customStyleEditGroup.Controls.Add(keyLbl);
         _customStyleEditGroup.Controls.Add(_customStyleKeyText);
-        _customStyleEditGroup.Controls.Add(fillLbl);
-        _customStyleEditGroup.Controls.Add(_customStyleFillText);
-        _customStyleEditGroup.Controls.Add(_customFillColorButton);
-        _customStyleEditGroup.Controls.Add(_customFillSwatch);
-        _customStyleEditGroup.Controls.Add(strokeLbl);
-        _customStyleEditGroup.Controls.Add(_customStyleStrokeText);
-        _customStyleEditGroup.Controls.Add(_customStrokeColorButton);
-        _customStyleEditGroup.Controls.Add(_customStrokeSwatch);
-        _customStyleEditGroup.Controls.Add(textLbl);
-        _customStyleEditGroup.Controls.Add(_customStyleTextText);
-        _customStyleEditGroup.Controls.Add(_customTextColorButton);
-        _customStyleEditGroup.Controls.Add(_customTextSwatch);
-        _customStyleEditGroup.Controls.Add(buttonPanel);
-        panel.Controls.Add(_customStyleEditGroup);
 
-        // Always-visible new-style row: key entry + New button.
-        FlowLayoutPanel customNewRow = new FlowLayoutPanel
-        {
-            Location = new Point(8, 296),
-            AutoSize = true,
-            FlowDirection = FlowDirection.LeftToRight,
-        };
-        Label newKeyLabel = new Label
-        {
-            Text = "New key:",
-            AutoSize = true,
-        };
-        customNewRow.Controls.Add(newKeyLabel);
-        customNewRow.Controls.Add(_customNewKeyText);
-        customNewRow.Controls.Add(_customNewButton);
-        panel.Controls.Add(customNewRow);
+        PopulateCustomStyleVocabularies();
+        panel.Controls.Add(_customStyleEditGroup);
 
         UpdateCustomStyleListHint();
 #pragma warning restore CA1303
     }
+
+    /// <summary>
+    /// Adds a labelled colour row (hex text box, picker button, swatch) to a
+    /// property group.
+    /// </summary>
+    /// <param name="parent">The group to add the row to.</param>
+    /// <param name="label">The property label.</param>
+    /// <param name="textBox">The hex text box.</param>
+    /// <param name="pickerButton">The colour picker button.</param>
+    /// <param name="swatch">The colour swatch.</param>
+    /// <param name="top">The row's top offset inside the group.</param>
+    private void AddCustomColourRow(
+        Control parent,
+        string label,
+        TextBox textBox,
+        Button pickerButton,
+        Panel swatch,
+        int top)
+    {
+        Label lbl = new Label
+        {
+            Text = label,
+            Location = new Point(16, top + 3),
+            Size = new Size(70, 20),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        parent.Controls.Add(lbl);
+
+        textBox.Location = new Point(92, top);
+        textBox.TextChanged += CustomStyleColourTextChanged;
+
+        pickerButton.Location = new Point(200, top - 1);
+        pickerButton.Click += CustomFillColorButton_Click;
+
+        swatch.Location = new Point(232, top);
+
+        parent.Controls.Add(textBox);
+        parent.Controls.Add(pickerButton);
+        parent.Controls.Add(swatch);
+    }
+
+    /// <summary>
+    /// Populates the closed vocabularies the custom-style editor offers: the
+    /// fill patterns and the label positions. They are code-owned, so they are
+    /// listed once rather than edited.
+    /// </summary>
+    private void PopulateCustomStyleVocabularies()
+    {
+        foreach (GanttHatchPattern pattern in Enum.GetValues<GanttHatchPattern>())
+        {
+            _ = _customHatchPatternCombo.Items.Add(new HatchPatternItem(pattern, DescribeHatchPattern(pattern)));
+        }
+
+        foreach (GanttLabelPosition position in Enum.GetValues<GanttLabelPosition>())
+        {
+            _ = _customDefaultLabelCombo.Items.Add(new LabelPositionItem(position, DescribeLabelPosition(position)));
+            _ = _customAllowedLabelList.Items.Add(new LabelPositionItem(position, DescribeLabelPosition(position)));
+        }
+
+        _customHatchPatternCombo.SelectedIndexChanged += CustomStylePropertyChanged;
+        _customDefaultLabelCombo.SelectedIndexChanged += CustomStylePropertyChanged;
+        _customOutlineWidthNumeric.ValueChanged += CustomStylePropertyChanged;
+        _customActivityHeightNumeric.ValueChanged += CustomStylePropertyChanged;
+        _customMilestoneSizeNumeric.ValueChanged += CustomStylePropertyChanged;
+        _customAllowedLabelList.ItemCheck += CustomStyleAllowedLabelItemCheck;
+
+        // The size controls are bounded by the same catalogue tokens the
+        // global metric controls use, so a custom style cannot carry a size
+        // the entity guide forbids and the control can refuse the value
+        // rather than the writer.
+        ApplyMetricRange(_customOutlineWidthNumeric, "StandardOutlinePt");
+        ApplyMetricRange(_customActivityHeightNumeric, "ActivityHeightPt");
+        ApplyMetricRange(_customMilestoneSizeNumeric, "MilestoneSizePt");
+    }
+
+    /// <summary>
+    /// Bounds a numeric control by its catalogue metric token's range. The
+    /// minimum is zero rather than the token's minimum, because zero is the
+    /// style contract's "not applicable to this entity kind" value: a style
+    /// used by an activity carries a zero milestone size and vice versa.
+    /// </summary>
+    /// <param name="numeric">The control to bound.</param>
+    /// <param name="tokenName">The catalogue metric token name.</param>
+    private static void ApplyMetricRange(NumericUpDown numeric, string tokenName)
+    {
+        GanttMetricToken? token = GanttCatalogues.Metrics
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, tokenName, StringComparison.Ordinal));
+        if (token is null)
+        {
+            return;
+        }
+
+        numeric.Minimum = 0m;
+        numeric.Maximum = (decimal)token.Maximum;
+    }
+
+    /// <summary>
+    /// A hatch pattern paired with its user-facing label.
+    /// </summary>
+    /// <param name="Pattern">The pattern value.</param>
+    /// <param name="Label">The display name.</param>
+    private sealed record HatchPatternItem(GanttHatchPattern Pattern, string Label)
+    {
+        /// <inheritdoc />
+        public override string ToString() => Label;
+    }
+
+    /// <summary>
+    /// A label position paired with its user-facing label.
+    /// </summary>
+    /// <param name="Position">The position value.</param>
+    /// <param name="Label">The display name.</param>
+    private sealed record LabelPositionItem(GanttLabelPosition Position, string Label)
+    {
+        /// <inheritdoc />
+        public override string ToString() => Label;
+    }
+
+    /// <summary>
+    /// Returns the user-facing name of a fill pattern.
+    /// </summary>
+    /// <param name="pattern">The pattern.</param>
+    /// <returns>The display name.</returns>
+    private static string DescribeHatchPattern(GanttHatchPattern pattern) => pattern switch
+    {
+        GanttHatchPattern.None => "Solid",
+        GanttHatchPattern.ForwardDiagonal => "Forward diagonal",
+        GanttHatchPattern.BackwardDiagonal => "Backward diagonal",
+        GanttHatchPattern.Cross => "Cross",
+        _ => pattern.ToString(),
+    };
+
+    /// <summary>
+    /// Returns the user-facing name of a label position.
+    /// </summary>
+    /// <param name="position">The position.</param>
+    /// <returns>The display name.</returns>
+    private static string DescribeLabelPosition(GanttLabelPosition position) => position switch
+    {
+        GanttLabelPosition.None => "None",
+        GanttLabelPosition.Auto => "Automatic",
+        GanttLabelPosition.Left => "Left",
+        GanttLabelPosition.Right => "Right",
+        GanttLabelPosition.Inside => "Inside",
+        GanttLabelPosition.TopLeft => "Top left",
+        GanttLabelPosition.TopRight => "Top right",
+        GanttLabelPosition.BottomLeft => "Bottom left",
+        GanttLabelPosition.BottomRight => "Bottom right",
+        GanttLabelPosition.DataPanelLeft => "Data panel",
+        GanttLabelPosition.PlotCentre => "Plot centre",
+        GanttLabelPosition.Both => "Both",
+        _ => position.ToString(),
+    };
 
     private void CustomStyleList_SelectedIndexChanged(object? sender, EventArgs e)
     {
@@ -715,15 +984,9 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleEditGroup.Enabled = hasSelection;
 
         if (hasSelection && _selectedCustomStyleKey is { } key &&
-            _customStyleEdits.TryGetValue(key, out CustomStyleState? colours))
+            _customStyleEdits.TryGetValue(key, out CustomStyleState? state))
         {
-            _customStyleKeyText.Text = _selectedCustomStyleKey;
-            _customStyleFillText.Text = colours.Fill;
-            _customStyleStrokeText.Text = colours.Stroke;
-            _customStyleTextText.Text = colours.Text;
-            _customFillSwatch.BackColor = ParseColourOrDefault(colours.Fill);
-            _customStrokeSwatch.BackColor = ParseColourOrDefault(colours.Stroke);
-            _customTextSwatch.BackColor = ParseColourOrDefault(colours.Text);
+            LoadCustomStyleIntoEditor(state);
         }
         else
         {
@@ -733,7 +996,93 @@ internal sealed partial class ThemeSettingsForm : Form
         UpdateCustomStyleListHint();
     }
 
+    /// <summary>
+    /// Loads a style's full property state into the editor controls. The
+    /// controls are written directly rather than through their change events,
+    /// so populating the editor does not itself mark the style as edited.
+    /// </summary>
+    /// <param name="state">The style state to load.</param>
+    private void LoadCustomStyleIntoEditor(CustomStyleState state)
+    {
+        _suppressCustomStyleSync = true;
+        try
+        {
+            LoadCustomStyleIntoEditorCore(state);
+        }
+        finally
+        {
+            _suppressCustomStyleSync = false;
+        }
+    }
+
+    /// <summary>
+    /// Writes a style's property state into the editor controls.
+    /// </summary>
+    /// <param name="state">The style state to load.</param>
+    private void LoadCustomStyleIntoEditorCore(CustomStyleState state)
+    {
+        _customStyleKeyText.Text = _selectedCustomStyleKey ?? string.Empty;
+        _customStyleFillText.Text = state.Fill;
+        _customStyleStrokeText.Text = state.Stroke;
+        _customStyleTextText.Text = state.Text;
+        _customFillSwatch.BackColor = ParseColourOrDefault(state.Fill);
+        _customStrokeSwatch.BackColor = ParseColourOrDefault(state.Stroke);
+        _customTextSwatch.BackColor = ParseColourOrDefault(state.Text);
+
+        _customHatchPatternCombo.SelectedItem =
+            _customHatchPatternCombo.Items.Cast<HatchPatternItem>()
+                .FirstOrDefault(item => item.Pattern == state.HatchPattern);
+        _customDefaultLabelCombo.SelectedItem =
+            _customDefaultLabelCombo.Items.Cast<LabelPositionItem>()
+                .FirstOrDefault(item => item.Position == state.DefaultLabelPosition);
+
+        for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
+        {
+            bool isChecked = _customAllowedLabelList.Items[index] is LabelPositionItem item
+                && state.AllowedLabelPositions.Contains(item.Position);
+            _customAllowedLabelList.SetItemChecked(index, isChecked);
+        }
+
+        _customOutlineWidthNumeric.Value = ClampToNumericRange(state.StandardOutlinePt, _customOutlineWidthNumeric);
+        _customActivityHeightNumeric.Value = ClampToNumericRange(state.ActivityHeightPt, _customActivityHeightNumeric);
+        _customMilestoneSizeNumeric.Value = ClampToNumericRange(state.MilestoneSizePt, _customMilestoneSizeNumeric);
+    }
+
+    /// <summary>
+    /// Clamps a stored value into a numeric control's range, so a stored
+    /// value outside the control's bounds cannot throw on assignment.
+    /// </summary>
+    /// <param name="value">The stored value.</param>
+    /// <param name="numeric">The target control.</param>
+    /// <returns>The clamped value.</returns>
+    private static decimal ClampToNumericRange(double value, NumericUpDown numeric)
+    {
+        if (!double.IsFinite(value))
+        {
+            return numeric.Minimum;
+        }
+
+        decimal candidate = (decimal)Math.Clamp(value, (double)numeric.Minimum, (double)numeric.Maximum);
+        return candidate;
+    }
+
     private void ClearCustomStyleEditor()
+    {
+        _suppressCustomStyleSync = true;
+        try
+        {
+            ClearCustomStyleEditorCore();
+        }
+        finally
+        {
+            _suppressCustomStyleSync = false;
+        }
+    }
+
+    /// <summary>
+    /// Resets the editor controls to their empty state.
+    /// </summary>
+    private void ClearCustomStyleEditorCore()
     {
         _selectedCustomStyleKey = null;
         _customDeleteButton.Enabled = false;
@@ -745,6 +1094,16 @@ internal sealed partial class ThemeSettingsForm : Form
         _customFillSwatch.BackColor = SystemColors.Control;
         _customStrokeSwatch.BackColor = SystemColors.Control;
         _customTextSwatch.BackColor = SystemColors.Control;
+        _customHatchPatternCombo.SelectedIndex = -1;
+        _customDefaultLabelCombo.SelectedIndex = -1;
+        for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
+        {
+            _customAllowedLabelList.SetItemChecked(index, false);
+        }
+
+        _customOutlineWidthNumeric.Value = 0m;
+        _customActivityHeightNumeric.Value = 0m;
+        _customMilestoneSizeNumeric.Value = 0m;
     }
 
 #pragma warning disable CA1303 // Literal strings are UI labels in a WinForms dialog; localization is out of scope for R5.6a.
@@ -780,11 +1139,65 @@ internal sealed partial class ThemeSettingsForm : Form
 
         _warningLabel.Visible = false;
 
-        _customStyleEdits[newKey] = new CustomStyleState("#FFFFFF", "#000000", "#000000");
+        // The new style starts from the As-Planned tokens so it renders as a
+        // visible entity rather than a degenerate one, and it permits the
+        // label positions a span or a milestone both accept.
+        _customStyleEdits[newKey] = new CustomStyleState(
+            "#FFFFFF",
+            "#000000",
+            "#000000",
+            GanttHatchPattern.None,
+            GanttCatalogues.MetricDefault("StandardOutlinePt"),
+            GanttCatalogues.MetricDefault("ActivityHeightPt"),
+            GanttCatalogues.MetricDefault("MilestoneSizePt"),
+            GanttLabelPosition.Auto,
+            new HashSet<GanttLabelPosition>
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.Inside,
+                GanttLabelPosition.None,
+            });
         _ = _customStyleList.Items.Add(newKey);
         _customStyleList.SelectedItem = newKey;
     }
 #pragma warning restore CA1303
+
+    /// <summary>
+    /// Determines whether two permitted-label sets are the same. A null set and
+    /// an empty set are the same (neither permits a position); the comparison
+    /// is ordinal so the two sets cannot disagree over case.
+    /// </summary>
+    /// <param name="left">The first set.</param>
+    /// <param name="right">The second set.</param>
+    /// <returns>Whether the sets permit the same positions.</returns>
+    private static bool SameLabelPositions(
+        IReadOnlySet<GanttLabelPosition>? left,
+        IReadOnlySet<GanttLabelPosition>? right)
+    {
+        int leftCount = left?.Count ?? 0;
+        int rightCount = right?.Count ?? 0;
+        if (leftCount != rightCount)
+        {
+            return false;
+        }
+
+        if (leftCount == 0)
+        {
+            return true;
+        }
+
+        foreach (GanttLabelPosition position in left!)
+        {
+            if (!right!.Contains(position))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static bool IsBuiltInCustomKey(string key) =>
         GanttCatalogues.StylePresets.Any(p =>
@@ -843,6 +1256,77 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void CustomStyleColourTextChanged(object? sender, EventArgs e)
     {
+        if (_selectedCustomStyleKey is null || _suppressCustomStyleSync)
+        {
+            return;
+        }
+
+        SyncSelectedCustomStyleState();
+    }
+
+    /// <summary>
+    /// Handles a change to one of the custom style's non-colour properties
+    /// (the fill pattern, the outline width, the sizes, the default label
+    /// position) by writing the whole style state back to the edit model.
+    /// </summary>
+    /// <param name="sender">The changed control.</param>
+    /// <param name="e">The event arguments.</param>
+    private void CustomStylePropertyChanged(object? sender, EventArgs e)
+    {
+        if (_selectedCustomStyleKey is null || _suppressCustomStyleSync)
+        {
+            return;
+        }
+
+        SyncSelectedCustomStyleState();
+    }
+
+    /// <summary>
+    /// Handles a check/uncheck in the permitted-label list. The list's
+    /// <c>ItemCheck</c> event fires <em>before</em> the check state changes, so
+    /// the new set is computed from the event's own index and new value rather
+    /// than read back from the control.
+    /// </summary>
+    /// <param name="sender">The list.</param>
+    /// <param name="e">The event arguments.</param>
+    private void CustomStyleAllowedLabelItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        if (_selectedCustomStyleKey is null || _suppressCustomStyleSync)
+        {
+            return;
+        }
+
+        HashSet<GanttLabelPosition> selected = [];
+        for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
+        {
+            bool isChecked = index == e.Index
+                ? e.NewValue == CheckState.Checked
+                : _customAllowedLabelList.GetItemChecked(index);
+            if (isChecked && _customAllowedLabelList.Items[index] is LabelPositionItem item)
+            {
+                _ = selected.Add(item.Position);
+            }
+        }
+
+        _customStyleEdits[_selectedCustomStyleKey] = new CustomStyleState(
+            _customStyleFillText.Text,
+            _customStyleStrokeText.Text,
+            _customStyleTextText.Text,
+            SelectedHatchPattern(),
+            (double)_customOutlineWidthNumeric.Value,
+            (double)_customActivityHeightNumeric.Value,
+            (double)_customMilestoneSizeNumeric.Value,
+            SelectedDefaultLabelPosition(),
+            selected);
+    }
+
+    /// <summary>
+    /// Copies the current editor values into the edit model for the selected
+    /// style. The whole object is written, so every property the editor owns
+    /// is carried in the edit and nothing is left to a stale default.
+    /// </summary>
+    private void SyncSelectedCustomStyleState()
+    {
         if (_selectedCustomStyleKey is null)
         {
             return;
@@ -851,7 +1335,50 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleEdits[_selectedCustomStyleKey] = new CustomStyleState(
             _customStyleFillText.Text,
             _customStyleStrokeText.Text,
-            _customStyleTextText.Text);
+            _customStyleTextText.Text,
+            SelectedHatchPattern(),
+            (double)_customOutlineWidthNumeric.Value,
+            (double)_customActivityHeightNumeric.Value,
+            (double)_customMilestoneSizeNumeric.Value,
+            SelectedDefaultLabelPosition(),
+            SelectedAllowedLabelPositions());
+    }
+
+    /// <summary>
+    /// Returns the fill pattern currently selected in the editor.
+    /// </summary>
+    /// <returns>The selected pattern, or None when nothing is selected.</returns>
+    private GanttHatchPattern SelectedHatchPattern() =>
+        _customHatchPatternCombo.SelectedItem is HatchPatternItem item
+            ? item.Pattern
+            : GanttHatchPattern.None;
+
+    /// <summary>
+    /// Returns the default label position currently selected in the editor.
+    /// </summary>
+    /// <returns>The selected position, or Auto when nothing is selected.</returns>
+    private GanttLabelPosition SelectedDefaultLabelPosition() =>
+        _customDefaultLabelCombo.SelectedItem is LabelPositionItem item
+            ? item.Position
+            : GanttLabelPosition.Auto;
+
+    /// <summary>
+    /// Returns the checked label positions in the editor.
+    /// </summary>
+    /// <returns>The checked positions.</returns>
+    private HashSet<GanttLabelPosition> SelectedAllowedLabelPositions()
+    {
+        HashSet<GanttLabelPosition> selected = [];
+        for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
+        {
+            if (_customAllowedLabelList.GetItemChecked(index)
+                && _customAllowedLabelList.Items[index] is LabelPositionItem item)
+            {
+                _ = selected.Add(item.Position);
+            }
+        }
+
+        return selected;
     }
 
     private void PopulateFromRequest(ThemeEditRequest request)
@@ -889,9 +1416,21 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // Custom styles: load saved styles into the edit dictionary and list so
         // they are visible on the tab and are not spuriously deleted on OK.
+        // The whole property set is loaded, not just the colours: an editor
+        // that showed only the colours would overwrite the stored pattern,
+        // sizes, and label vocabulary with defaults the user never chose.
         foreach (CustomStyleDef def in request.CustomStyleDefs ?? [])
         {
-            _customStyleEdits[def.StyleKey] = new CustomStyleState(def.FillColour, def.StrokeColour, def.TextColour);
+            _customStyleEdits[def.StyleKey] = new CustomStyleState(
+                def.FillColour,
+                def.StrokeColour,
+                def.TextColour,
+                def.HatchPattern,
+                def.StandardOutlinePt,
+                def.ActivityHeightPt,
+                def.MilestoneSizePt,
+                def.DefaultLabelPosition,
+                def.AllowedLabelPositions);
             _ = _customStyleList.Items.Add(def.StyleKey);
         }
         UpdateCustomStyleListHint();
@@ -991,15 +1530,28 @@ internal sealed partial class ThemeSettingsForm : Form
                     DisplayName: key,
                     FillColour: state.Fill,
                     StrokeColour: state.Stroke,
-                    TextColour: state.Text));
+                    TextColour: state.Text,
+                    HatchPattern: state.HatchPattern,
+                    StandardOutlinePt: state.StandardOutlinePt,
+                    ActivityHeightPt: state.ActivityHeightPt,
+                    MilestoneSizePt: state.MilestoneSizePt,
+                    DefaultLabelPosition: state.DefaultLabelPosition,
+                    AllowedLabelPositions: state.AllowedLabelPositions));
             }
             else if (original.FillColour != state.Fill
                 || original.StrokeColour != state.Stroke
-                || original.TextColour != state.Text)
+                || original.TextColour != state.Text
+                || original.HatchPattern != state.HatchPattern
+                || original.StandardOutlinePt != state.StandardOutlinePt
+                || original.ActivityHeightPt != state.ActivityHeightPt
+                || original.MilestoneSizePt != state.MilestoneSizePt
+                || original.DefaultLabelPosition != state.DefaultLabelPosition
+                || (original.AllowedLabelPositions is not null
+                    && !SameLabelPositions(original.AllowedLabelPositions, state.AllowedLabelPositions)))
             {
-                // Colour-only change on an existing key is an upsert by key:
-                // the key is unchanged, so it can never collide with another
-                // key (R5.6a D1). A Rename with identical old/new key would
+                // A change on an existing key is an upsert by key: the key is
+                // unchanged, so it can never collide with another key
+                // (R5.6a D1). A Rename with identical old/new key would
                 // falsely fail the request's duplicate-key check.
                 customStyleEdits.Add(new CustomStyleEdit(
                     CustomStyleOperation.Update,
@@ -1007,7 +1559,13 @@ internal sealed partial class ThemeSettingsForm : Form
                     DisplayName: key,
                     FillColour: state.Fill,
                     StrokeColour: state.Stroke,
-                    TextColour: state.Text));
+                    TextColour: state.Text,
+                    HatchPattern: state.HatchPattern,
+                    StandardOutlinePt: state.StandardOutlinePt,
+                    ActivityHeightPt: state.ActivityHeightPt,
+                    MilestoneSizePt: state.MilestoneSizePt,
+                    DefaultLabelPosition: state.DefaultLabelPosition,
+                    AllowedLabelPositions: state.AllowedLabelPositions));
             }
         }
 
