@@ -89,7 +89,7 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
             return InertSubscription.Instance;
         }
 
-        var subscription = new WorkbookStateSubscription(events, handler);
+        WorkbookStateSubscription subscription = new WorkbookStateSubscription(events, handler);
         subscription.Attach();
         return subscription;
     }

@@ -134,7 +134,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
                 _ => throw new ArgumentOutOfRangeException(nameof(periodScale)),
             };
             DateOnly periodFinish = next.AddDays(-1);
-            var label = FormatPeriod(periodStart, format);
+            string label = FormatPeriod(periodStart, format);
             AddInterval(intervals, scale, periodStart, periodFinish, label, RequiredPeriodWidth(label, minimumWidth, periodMeasurer));
             periodStart = next;
         }
@@ -158,7 +158,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     /// closing it (an infinite width suppresses every label).
     /// </remarks>
     private static double RequiredPeriodWidth(string label, double floorWidthPt, ITextWidthMeasurer? measurer) =>
-        measurer is not null && measurer.TryMeasure(label, out var widthPt) && double.IsFinite(widthPt) && widthPt >= 0
+        measurer is not null && measurer.TryMeasure(label, out double widthPt) && double.IsFinite(widthPt) && widthPt >= 0
             ? widthPt
             : floorWidthPt;
 
@@ -173,8 +173,8 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     {
         DateOnly visibleStart = periodStart < scale.PlotStart ? scale.PlotStart : periodStart;
         DateOnly visibleFinish = periodFinish > scale.PlotFinish ? scale.PlotFinish : periodFinish;
-        var left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
-        var right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
+        double left = visibleStart == scale.PlotStart ? scale.PlotLeftPt : scale.DateToX(visibleStart);
+        double right = visibleFinish == scale.PlotFinish ? scale.PlotRightPt : scale.DateToX(periodFinish.AddDays(1));
         intervals.Add(new BandInterval(visibleStart, visibleFinish, left, right, label, right - left >= requiredWidth));
     }
 
@@ -201,7 +201,7 @@ public sealed record BandSequence(IReadOnlyList<BandInterval> Years, IReadOnlyLi
     /// </remarks>
     private static DateOnly StartOfIsoWeek(DateOnly date)
     {
-        var offset = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        int offset = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
         return date.AddDays(-offset);
     }
 

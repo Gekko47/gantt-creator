@@ -152,7 +152,7 @@ public static class GanttStyleResolver
             return false;
         }
 
-        var usedFallback = styleKey is not null && !string.Equals(
+        bool usedFallback = styleKey is not null && !string.Equals(
             selected.StyleKey,
             styleKey,
             StringComparison.Ordinal);

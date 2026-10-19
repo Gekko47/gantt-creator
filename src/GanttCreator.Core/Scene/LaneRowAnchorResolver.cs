@@ -166,7 +166,7 @@ public static class LaneRowAnchorResolver
         // The body-row ordinal of every event: its position in row order, which is
         // the position its measured height occupies in the grid.
         Dictionary<GanttRowId, int> ordinalById = [];
-        var ordinal = 0;
+        int ordinal = 0;
         foreach (GanttEvent @event in events
             .OrderBy(static candidate => candidate.RowNumber)
             .ThenBy(static candidate => candidate.Id.Value, StringComparer.Ordinal))
@@ -199,7 +199,7 @@ public static class LaneRowAnchorResolver
                 }
             }
 
-            if (owner is null || !ordinalById.TryGetValue(owner.Event.Id, out var ownerOrdinal))
+            if (owner is null || !ordinalById.TryGetValue(owner.Event.Id, out int ownerOrdinal))
             {
                 return Refused(LaneRowAnchorRefusal.UnknownLaneOwner);
             }
@@ -209,7 +209,7 @@ public static class LaneRowAnchorResolver
                 return Refused(LaneRowAnchorRefusal.RowOutsideMeasuredRows);
             }
 
-            var rowHeight = grid.RowHeightsPt[ownerOrdinal];
+            double rowHeight = grid.RowHeightsPt[ownerOrdinal];
             if (rowHeight <= 0)
             {
                 return Refused(LaneRowAnchorRefusal.DegenerateRowHeight);

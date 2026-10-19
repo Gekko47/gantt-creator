@@ -162,7 +162,7 @@ public class ExcelConfigCatalogueWriter(
 
         // Mutation phase: per-table delete-and-recreate under one
         // DisplayAlerts save/restore (table deletion prompts).
-        var original = _application!.DisplayAlerts;
+        bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -272,7 +272,7 @@ public class ExcelConfigCatalogueWriter(
         }
 
         Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
-        var original = _application!.DisplayAlerts;
+        bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -334,7 +334,7 @@ public class ExcelConfigCatalogueWriter(
         Exception exception,
         Dictionary<string, Excel.Range> written)
     {
-        var progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
+        string progress = string.Join(",", _contractTableNames.Where(written.ContainsKey));
         _log?.Write(
             "CatalogueWriteRejected exception={0} hresult=0x{1:X8} written={2} detail={3}",
             exception.GetType().FullName,
@@ -411,7 +411,7 @@ public class ExcelConfigCatalogueWriter(
         List<TableSnapshot> snapshots = [snapshot];
         Dictionary<string, Excel.Range> written = new(StringComparer.Ordinal);
 
-        var original = _application!.DisplayAlerts;
+        bool original = _application!.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -498,8 +498,8 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>One snapshot per contract table, in write order.</returns>
     private List<TableSnapshot> CapturePriorState(Worksheet config)
     {
-        var snapshots = new List<TableSnapshot>(_contractTableNames.Length);
-        foreach (var tableName in _contractTableNames)
+        List<TableSnapshot> snapshots = new List<TableSnapshot>(_contractTableNames.Length);
+        foreach (string tableName in _contractTableNames)
         {
             ListObject? table = FindTable(config, tableName);
             snapshots.Add(
@@ -525,8 +525,8 @@ public class ExcelConfigCatalogueWriter(
     private List<TableSnapshot> CaptureThemedPriorState(Worksheet config)
     {
         string[] themed = [GanttCatalogues.StylesTableName, GanttCatalogues.MetricsTableName];
-        var snapshots = new List<TableSnapshot>(themed.Length);
-        foreach (var tableName in themed)
+        List<TableSnapshot> snapshots = new List<TableSnapshot>(themed.Length);
+        foreach (string tableName in themed)
         {
             ListObject? table = FindTable(config, tableName);
             snapshots.Add(
@@ -561,10 +561,10 @@ public class ExcelConfigCatalogueWriter(
         }
 
         // Parse existing user custom style rows into mutable dictionaries.
-        var customStyles = new Dictionary<string, List<object?>>(StringComparer.Ordinal);
-        foreach (var row in preservation.UserStyleRows)
+        Dictionary<string, List<object?>> customStyles = new Dictionary<string, List<object?>>(StringComparer.Ordinal);
+        foreach (object?[] row in preservation.UserStyleRows)
         {
-            var key = ToText(row[0]);
+            string key = ToText(row[0]);
             customStyles[key] = [.. row.Cast<object?>()];
         }
 
@@ -582,21 +582,21 @@ public class ExcelConfigCatalogueWriter(
                     break;
 
                 case CustomStyleOperation.Rename:
-                    if (!customStyles.TryGetValue(custom.StyleKey, out var existing))
+                    if (!customStyles.TryGetValue(custom.StyleKey, out List<object?>? existing))
                     {
                         continue;
                     }
                     _ = customStyles.Remove(custom.StyleKey);
-                    var renamed = BuildCustomStyleRow(custom, existing);
+                    List<object?> renamed = BuildCustomStyleRow(custom, existing);
                     customStyles[custom.NewStyleKey ?? custom.StyleKey] = renamed;
                     break;
 
                 case CustomStyleOperation.Update:
-                    if (!customStyles.TryGetValue(custom.StyleKey, out var existingUpdate))
+                    if (!customStyles.TryGetValue(custom.StyleKey, out List<object?>? existingUpdate))
                     {
                         continue;
                     }
-                    var updated = BuildCustomStyleRow(custom, existingUpdate);
+                    List<object?> updated = BuildCustomStyleRow(custom, existingUpdate);
                     customStyles[custom.StyleKey] = updated;
                     break;
 
@@ -665,7 +665,7 @@ public class ExcelConfigCatalogueWriter(
         // Normalize every row to the contract column count so a user row read
         // back from the worksheet (which may carry fewer columns than the
         // current header set) cannot overrun the write matrix.
-        foreach (var customRow in customStyles.Values)
+        foreach (List<object?> customRow in customStyles.Values)
         {
             rows.Add(NormalizeRow(customRow, GanttCatalogues.StylesHeaders.Length));
         }
@@ -682,8 +682,8 @@ public class ExcelConfigCatalogueWriter(
     /// </summary>
     private static object?[] NormalizeRow(IReadOnlyList<object?> source, int columnCount)
     {
-        var result = new object?[columnCount];
-        for (var column = 0; column < columnCount; column++)
+        object?[] result = new object?[columnCount];
+        for (int column = 0; column < columnCount; column++)
         {
             result[column] = column < source.Count ? source[column] ?? string.Empty : string.Empty;
         }
@@ -697,7 +697,7 @@ public class ExcelConfigCatalogueWriter(
         CustomStyleEdit custom,
         List<object?>? existingRow = null)
     {
-        var row = new List<object?>(GanttCatalogues.StylesHeaders.Length)
+        List<object?> row = new List<object?>(GanttCatalogues.StylesHeaders.Length)
         {
             custom.NewStyleKey ?? custom.StyleKey,
             custom.DisplayName ?? ToText(existingRow?[1]),
@@ -717,7 +717,7 @@ public class ExcelConfigCatalogueWriter(
 
         if (existingRow is not null)
         {
-            for (var i = 0; i < row.Count && i < existingRow.Count; i++)
+            for (int i = 0; i < row.Count && i < existingRow.Count; i++)
             {
                 row[i] ??= existingRow[i];
             }
@@ -737,7 +737,7 @@ public class ExcelConfigCatalogueWriter(
         List<object?[]> rows = [];
         foreach (GanttMetricToken token in GanttCatalogues.Metrics)
         {
-            var value = request.MetricEdits.TryGetValue(token.Name, out var edited)
+            double value = request.MetricEdits.TryGetValue(token.Name, out double edited)
                 ? edited
                 : token.DefaultValue;
             rows.Add([token.Name, value, token.Minimum, token.Maximum]);
@@ -765,7 +765,7 @@ public class ExcelConfigCatalogueWriter(
         List<TableSnapshot> snapshots,
         Dictionary<string, Excel.Range> written)
     {
-        for (var index = snapshots.Count - 1; index >= 0; index--)
+        for (int index = snapshots.Count - 1; index >= 0; index--)
         {
             TableSnapshot snapshot = snapshots[index];
             if (snapshot.Existed)
@@ -813,9 +813,9 @@ public class ExcelConfigCatalogueWriter(
     private List<string> ReadHeaders(ListObject table)
     {
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        var headers = new List<string>(columnCount);
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        List<string> headers = new List<string>(columnCount);
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             headers.Add(column.Name);
@@ -832,10 +832,10 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The configuration worksheet, or <see langword="null"/>.</returns>
     private Worksheet? FindConfigSheet(Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet
                 && string.Equals(
                     worksheet.Name,
@@ -865,7 +865,7 @@ public class ExcelConfigCatalogueWriter(
         }
 
         List<object?[]> userStyles = ReadUserStyleRows(config);
-        var workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
+        string? workbookId = configValues.GetValueOrDefault(GanttCatalogues.ConfigWorkbookIdKey);
         return new CataloguePreservation(settings, userStyles, workbookId);
     }
 
@@ -888,9 +888,9 @@ public class ExcelConfigCatalogueWriter(
             return true;
         }
 
-        foreach (var row in ReadBodyRows(table))
+        foreach (object?[] row in ReadBodyRows(table))
         {
-            var key = ToText(row.ElementAtOrDefault(0));
+            string key = ToText(row.ElementAtOrDefault(0));
             if (key.Length == 0 || !values.TryAdd(key, ToText(row.ElementAtOrDefault(1))))
             {
                 values.Clear();
@@ -916,12 +916,12 @@ public class ExcelConfigCatalogueWriter(
             return userRows;
         }
 
-        var builtInKeys = GanttCatalogues.StylePresets
+        HashSet<string> builtInKeys = GanttCatalogues.StylePresets
             .Select(preset => preset.StyleKey)
             .ToHashSet(StringComparer.Ordinal);
-        foreach (var row in ReadBodyRows(table))
+        foreach (object?[] row in ReadBodyRows(table))
         {
-            var styleKey = ToText(row.ElementAtOrDefault(0));
+            string styleKey = ToText(row.ElementAtOrDefault(0));
             if (styleKey.Length > 0 && !builtInKeys.Contains(styleKey))
             {
                 userRows.Add(row);
@@ -945,8 +945,8 @@ public class ExcelConfigCatalogueWriter(
             return rows;
         }
 
-        var raw = GetBodyValues(body);
-        foreach (var row in ExcelValue2Matrix.ReadRows(raw))
+        object? raw = GetBodyValues(body);
+        foreach (object?[] row in ExcelValue2Matrix.ReadRows(raw))
         {
             rows.Add(row);
         }
@@ -984,9 +984,9 @@ public class ExcelConfigCatalogueWriter(
         existing?.Delete();
 
 
-        (var anchorRow, var anchorColumn) = ParseAnchor(anchor);
-        var rowCount = dataRows.Count + 1;
-        var columnCount = headers.Length;
+        (int anchorRow, int anchorColumn) = ParseAnchor(anchor);
+        int rowCount = dataRows.Count + 1;
+        int columnCount = headers.Length;
         Excel.Range anchorCell = GetCellRange(config, anchorRow, anchorColumn);
         Excel.Range extent = GetResizedRange(anchorCell, rowCount, columnCount);
 
@@ -994,16 +994,16 @@ public class ExcelConfigCatalogueWriter(
         // array (a COM SAFEARRAY of VARIANT); the multidimensional form is
         // the requirement, not a style choice.
 #pragma warning disable CA1814
-        var matrix = new object[rowCount, columnCount];
+        object[,] matrix = new object[rowCount, columnCount];
 #pragma warning restore CA1814
-        for (var column = 0; column < columnCount; column++)
+        for (int column = 0; column < columnCount; column++)
         {
             matrix[0, column] = headers[column];
         }
 
-        for (var row = 0; row < dataRows.Count; row++)
+        for (int row = 0; row < dataRows.Count; row++)
         {
-            for (var column = 0; column < columnCount; column++)
+            for (int column = 0; column < columnCount; column++)
             {
                 matrix[row + 1, column] = dataRows[row][column] ?? string.Empty;
             }
@@ -1069,8 +1069,8 @@ public class ExcelConfigCatalogueWriter(
     private ListObject? FindTable(Worksheet config, string tableName)
     {
         ListObjects listObjects = GetListObjects(config);
-        var count = listObjects.Count;
-        for (var index = 1; index <= count; index++)
+        int count = listObjects.Count;
+        for (int index = 1; index <= count; index++)
         {
             ListObject table = GetTableAt(listObjects, index);
             if (string.Equals(table.Name, tableName, StringComparison.Ordinal))
@@ -1136,7 +1136,7 @@ public class ExcelConfigCatalogueWriter(
                     preset.ColourCapability.ToString(),
                 }),
         ];
-        foreach (var userRow in userRows)
+        foreach (object?[] userRow in userRows)
         {
             rows.Add(NormalizeRow(userRow, GanttCatalogues.StylesHeaders.Length));
         }
@@ -1177,7 +1177,7 @@ public class ExcelConfigCatalogueWriter(
         List<object?[]> rows = [];
         foreach (GanttSettingDefinition setting in GanttCatalogues.Settings)
         {
-            var value = existing.TryGetValue(setting.Key, out var preserved) ? preserved : setting.DefaultValue;
+            string value = existing.TryGetValue(setting.Key, out string? preserved) ? preserved : setting.DefaultValue;
             if (setting.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
             {
                 value = setting.DefaultValue;
@@ -1198,7 +1198,7 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The data rows.</returns>
     private static List<object?[]> BuildConfigRows(string? existingWorkbookId)
     {
-        var workbookId = existingWorkbookId;
+        string? workbookId = existingWorkbookId;
         if (string.IsNullOrWhiteSpace(workbookId))
         {
             workbookId = Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture);
@@ -1237,19 +1237,19 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>The (row, column) pair.</returns>
     private static (int Row, int Column) ParseAnchor(string anchor)
     {
-        var letterCount = 0;
+        int letterCount = 0;
         while (letterCount < anchor.Length && char.IsAsciiLetterUpper(anchor[letterCount]))
         {
             letterCount++;
         }
 
-        var column = 0;
-        for (var index = 0; index < letterCount; index++)
+        int column = 0;
+        for (int index = 0; index < letterCount; index++)
         {
             column = (column * 26) + anchor[index] - 'A' + 1;
         }
 
-        var row = int.Parse(
+        int row = int.Parse(
             anchor[letterCount..],
             NumberStyles.None,
             CultureInfo.InvariantCulture);

@@ -90,7 +90,7 @@ internal sealed partial class ChartTitleForm : Form
         ClientSize = new Size(450, 150);
         AutoScaleMode = AutoScaleMode.Dpi;
 
-        var titleLabel = new Label
+        Label titleLabel = new Label
         {
             Text = "Title",
             Location = new Point(12, 10),
@@ -101,7 +101,7 @@ internal sealed partial class ChartTitleForm : Form
         Controls.Add(_showTitleCheckBox);
         Controls.Add(_warningLabel);
 
-        var buttonPanel = new FlowLayoutPanel
+        FlowLayoutPanel buttonPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = 40,
@@ -121,7 +121,7 @@ internal sealed partial class ChartTitleForm : Form
     {
         if (!ChartTitleEditRequest.TryCreate(
                 _titleTextBox.Text, _showTitleCheckBox.Checked,
-                out ChartTitleEditRequest? request, out _, out var message)
+                out ChartTitleEditRequest? request, out _, out string? message)
             || request is null)
         {
             _warningLabel.Text = message ?? "Invalid chart title.";

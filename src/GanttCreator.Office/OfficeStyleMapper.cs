@@ -80,7 +80,7 @@ public static class OfficeStyleMapper
         // record that reported FillVisible = false while still carrying a FillRgb
         // would be a trap for the next caller, and "there is no fill colour"
         // and "the fill is switched off" are the same fact here.
-        var fillApplies = CarriesFill(request.Kind) && !IsTextLabel(request.Kind);
+        bool fillApplies = CarriesFill(request.Kind) && !IsTextLabel(request.Kind);
         GanttHatchPattern? hatch = !fillApplies || request.HatchPattern == GanttHatchPattern.None
             ? null
             : request.HatchPattern;
@@ -93,7 +93,7 @@ public static class OfficeStyleMapper
         // default `DefaultText` style carried a black FILL, which is how every live
         // label reached the host as a black rectangle. Relying on "the token is
         // null" is what let that ship, so the rule is structural now.
-        var lineApplies = !IsTextLabel(request.Kind) && request.StrokeColour is not null;
+        bool lineApplies = !IsTextLabel(request.Kind) && request.StrokeColour is not null;
 
         return new OfficeShapeStyle(
             FillVisible: fillApplies && request.FillColour is not null,
@@ -147,10 +147,10 @@ public static class OfficeStyleMapper
     {
         ArgumentNullException.ThrowIfNull(colour);
 
-        var argb = colour.ARGB;
-        var red = (int)((argb >> 16) & 0xFF);
-        var green = (int)((argb >> 8) & 0xFF);
-        var blue = (int)(argb & 0xFF);
+        uint argb = colour.ARGB;
+        int red = (int)((argb >> 16) & 0xFF);
+        int green = (int)((argb >> 8) & 0xFF);
+        int blue = (int)(argb & 0xFF);
 
         return (blue * 65536) + (green * 256) + red;
     }
@@ -172,7 +172,7 @@ public static class OfficeStyleMapper
     {
         ArgumentNullException.ThrowIfNull(colour);
 
-        var alpha = (colour.ARGB >> 24) & 0xFF;
+        uint alpha = (colour.ARGB >> 24) & 0xFF;
         return 1f - (alpha / 255f);
     }
 

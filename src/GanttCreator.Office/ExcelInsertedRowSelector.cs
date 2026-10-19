@@ -1,4 +1,5 @@
 using GanttCreator.Core;
+using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
@@ -41,7 +42,7 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelector
 {
-    private readonly Excel.Workbook? _workbook = CaptureWorkbook(application);
+    private readonly Workbook? _workbook = CaptureWorkbook(application);
 
     /// <summary>
     /// Captures the currently active workbook, degrading to "no selection change"
@@ -54,9 +55,9 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// degrade to "no selection change" rather than escape the command and
     /// prevent the insert the user asked for.
     /// </remarks>
-    private static Excel.Workbook? CaptureWorkbook(object? application)
+    private static Workbook? CaptureWorkbook(object? application)
     {
-        var excel = application as Excel.Application;
+        Application? excel = application as Application;
 
         // CA1031: a best-effort read whose only failure mode is "the cursor stays
         // put" must not propagate into Excel.
@@ -76,7 +77,7 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// <inheritdoc />
     public void SelectBodyRow(int bodyIndex)
     {
-        Excel.Workbook? workbook = _workbook;
+        Workbook? workbook = _workbook;
         if (workbook is null)
         {
             return;
@@ -117,23 +118,23 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// <c>Select</c>. Every proxy is held in a local and used without chained
     /// member expressions.
     /// </remarks>
-    private void SelectBodyRowCore(Excel.Workbook workbook, int bodyIndex)
+    private void SelectBodyRowCore(Workbook workbook, int bodyIndex)
     {
-        Excel.Sheets sheets = workbook.Sheets;
-        var count = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= count; sheetIndex++)
+        Sheets sheets = workbook.Sheets;
+        int count = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= count; sheetIndex++)
         {
-            var sheet = GetSheetAt(sheets, sheetIndex);
-            if (sheet is not Excel.Worksheet worksheet)
+            object sheet = GetSheetAt(sheets, sheetIndex);
+            if (sheet is not Worksheet worksheet)
             {
                 continue;
             }
 
-            Excel.ListObjects listObjects = worksheet.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            ListObjects listObjects = worksheet.ListObjects;
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
-                Excel.ListObject table = GetTableAt(listObjects, tableIndex);
+                ListObject table = GetTableAt(listObjects, tableIndex);
                 if (!string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -149,8 +150,8 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
                 // through that name. It is Excel-owned and shared, reached from the
                 // captured workbook, so it is not force-released - see the class
                 // remarks.
-                Excel.ListRows listRows = GetListRows(table);
-                Excel.ListRow targetRow = GetListRowAt(listRows, bodyIndex);
+                ListRows listRows = GetListRows(table);
+                ListRow targetRow = GetListRowAt(listRows, bodyIndex);
 
                 // Range.Select only works on the active sheet, so the Gantt
                 // worksheet is activated first. A refused activation or selection
@@ -168,27 +169,27 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
     /// <param name="sheets">The workbook sheet collection.</param>
     /// <param name="index">The one-based sheet index.</param>
     /// <returns>The sheet object.</returns>
-    internal virtual object GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+    internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
 
     /// <summary>Returns the list object at the one-based index.</summary>
     /// <param name="listObjects">The worksheet list-object collection.</param>
     /// <param name="index">The one-based list-object index.</param>
     /// <returns>The list object.</returns>
-    internal virtual Excel.ListObject GetTableAt(Excel.ListObjects listObjects, int index) => listObjects[index];
+    internal virtual ListObject GetTableAt(ListObjects listObjects, int index) => listObjects[index];
 
     /// <summary>Returns the table's list rows.</summary>
     /// <param name="table">The Gantt table.</param>
     /// <returns>The list-row collection.</returns>
-    internal virtual Excel.ListRows GetListRows(Excel.ListObject table) => table.ListRows;
+    internal virtual ListRows GetListRows(ListObject table) => table.ListRows;
 
     /// <summary>Returns the one-based body row of the table.</summary>
     /// <param name="rows">The table's list rows.</param>
     /// <param name="bodyIndex">The one-based body-row index.</param>
     /// <returns>The list row.</returns>
-    internal virtual Excel.ListRow GetListRowAt(Excel.ListRows rows, int bodyIndex) => rows[bodyIndex];
+    internal virtual ListRow GetListRowAt(ListRows rows, int bodyIndex) => rows[bodyIndex];
 
     /// <summary>Returns the range spanning a list row.</summary>
     /// <param name="row">The list row.</param>
     /// <returns>The row's range.</returns>
-    internal virtual Excel.Range GetRowRange(Excel.ListRow row) => row.Range;
+    internal virtual Excel.Range GetRowRange(ListRow row) => row.Range;
 }

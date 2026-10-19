@@ -42,8 +42,8 @@ public class ExcelConfigIntegrityChecker(
             );
         }
 
-        var worksheetCount = sheets.Count;
-        for (var index = 1; index <= worksheetCount; index++)
+        int worksheetCount = sheets.Count;
+        for (int index = 1; index <= worksheetCount; index++)
         {
             if (
                 GetSheetAt(sheets, index) is Excel.Worksheet sheet
@@ -60,13 +60,13 @@ public class ExcelConfigIntegrityChecker(
             }
         }
 
-        var ganttFound =
+        bool ganttFound =
             TryFindGanttTable(sheets, out Excel.Worksheet? gantt, out Excel.ListObject? ganttTable)
             && gantt is not null
             && ganttTable is not null;
         if (ganttFound)
         {
-            var expectedAnchor = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt!.Name);
+            string expectedAnchor = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt!.Name);
             Excel.Names sheetNames = gantt.Names;
             Excel.Name? anchor = FindName(sheetNames, GanttWorkbookContract.PlotAnchorDefinedName);
             if (anchor is null || !string.Equals(anchor.RefersTo, expectedAnchor, StringComparison.Ordinal))
@@ -140,8 +140,8 @@ public class ExcelConfigIntegrityChecker(
     {
         worksheet = null;
         table = null;
-        var count = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= count; sheetIndex++)
+        int count = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= count; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
@@ -149,8 +149,8 @@ public class ExcelConfigIntegrityChecker(
             }
 
             Excel.ListObjects objects = candidate.ListObjects;
-            var objectCount = objects.Count;
-            for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+            int objectCount = objects.Count;
+            for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject listObject = objects[objectIndex];
                 if (string.Equals(listObject.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
@@ -167,8 +167,8 @@ public class ExcelConfigIntegrityChecker(
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)
     {
-        var count = names.Count;
-        for (var index = 1; index <= count; index++)
+        int count = names.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.Name candidate = names.Item(index);
             if (string.Equals(candidate.Name, nameText, StringComparison.OrdinalIgnoreCase))
@@ -182,8 +182,8 @@ public class ExcelConfigIntegrityChecker(
 
     private Excel.Worksheet? FindConfigSheet(Excel.Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             if (
                 GetSheetAt(sheets, index) is Excel.Worksheet worksheet

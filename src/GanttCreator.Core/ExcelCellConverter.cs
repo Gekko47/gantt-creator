@@ -103,7 +103,7 @@ public static class ExcelCellConverter
                 return true;
             case string text:
                 if (TrimOrNull(text) is not { } trimmed
-                    || !int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                    || !int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
                     || parsed < 0)
                 {
                     return false;
@@ -182,7 +182,7 @@ public static class ExcelCellConverter
     /// <returns>The trimmed text, or <see langword="null"/> when empty.</returns>
     private static string? TrimOrNull(string text)
     {
-        var trimmed = text.Trim();
+        string trimmed = text.Trim();
         return trimmed.Length == 0 ? null : trimmed;
     }
 

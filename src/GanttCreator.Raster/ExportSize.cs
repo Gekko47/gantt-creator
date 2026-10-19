@@ -126,7 +126,7 @@ public static class ExportSize
                 nameof(sceneHeightPt), sceneHeightPt, "Scene height must be finite and greater than zero.");
         }
 
-        var pixelWidth = request.Unit switch
+        double pixelWidth = request.Unit switch
         {
             ExportUnit.Centimetres => request.Value / CmPerInch * Dpi,
             ExportUnit.Inches => request.Value * Dpi,
@@ -134,7 +134,7 @@ public static class ExportSize
             _ => throw new ArgumentOutOfRangeException(nameof(request))
         };
 
-        var pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
+        double pixelHeight = pixelWidth * sceneHeightPt / sceneWidthPt;
 
         if (!double.IsFinite(pixelWidth) || pixelWidth > MaxPixelDimension)
         {
@@ -152,8 +152,8 @@ public static class ExportSize
                 $"Computed pixel height must be finite, greater than zero, and within the practical export limit of {MaxPixelDimension} px.");
         }
 
-        var pxWidth = (int)Math.Round(pixelWidth);
-        var pxHeight = (int)Math.Round(pixelHeight);
+        int pxWidth = (int)Math.Round(pixelWidth);
+        int pxHeight = (int)Math.Round(pixelHeight);
 
         // Reject rounded dimensions below 1: a sub-pixel request like 0.4 px is
         // positive and finite pre-rounding but rounds to 0, which must not
@@ -168,7 +168,7 @@ public static class ExportSize
         // Combined allocation budget: reject dimension pairs whose total pixel
         // count exceeds the budget before rasterization, even when each axis
         // is within the per-axis MaxPixelDimension limit.
-        var totalPixels = (long)pxWidth * pxHeight;
+        long totalPixels = (long)pxWidth * pxHeight;
 #pragma warning disable IDE0046
         if (totalPixels > MaxTotalPixels)
         {
@@ -190,7 +190,7 @@ public static class ExportSize
         // export is meaningless and would surface as a rasterizer failure
         // far from the cause (decision recorded in the W4 work item).
         return (text.Length, double.TryParse(text, NumberStyles.Float,
-                CultureInfo.InvariantCulture, out var value), value <= 0, double.IsFinite(value)) switch
+                CultureInfo.InvariantCulture, out double value), value <= 0, double.IsFinite(value)) switch
         {
             (0, _, _, _) => throw new FormatException("Width value is empty."),
             (_, false, _, _) => throw new FormatException($"'{text}' is not a valid width value."),

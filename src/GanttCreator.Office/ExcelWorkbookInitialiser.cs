@@ -127,15 +127,15 @@ public class ExcelWorkbookInitialiser(
         // adopted only when it is pristine; a chart sheet or any cell/non-cell
         // user state causes a fresh sheet to be created. A chart sheet is not
         // an Excel.Worksheet, so the cast selects the create path for it.
-        var activeWorksheet = workbook.ActiveSheet as Worksheet;
-        var adopt = activeWorksheet is not null
+        Worksheet? activeWorksheet = workbook.ActiveSheet as Worksheet;
+        bool adopt = activeWorksheet is not null
             && IsPristy(activeWorksheet, workbook, application);
 
         // Read-only check 3: resolve the label against every other sheet
         // (OrdinalIgnoreCase, matching Excel's own case-insensitive sheet-name
         // uniqueness) before any mutation. On the adopt path the target's own
         // current name is excluded — it is about to be renamed.
-        var label = ResolveAvailableLabel(sheets, adopt ? activeWorksheet!.Name : null);
+        string label = ResolveAvailableLabel(sheets, adopt ? activeWorksheet!.Name : null);
 
         // Read-only check 4: verify worksheet and workbook-structure
         // protection before any mutation. On the create path, both the
@@ -206,11 +206,11 @@ public class ExcelWorkbookInitialiser(
             }
         }
 
-        var wroteHeader = false;
-        var createdTable = false;
+        bool wroteHeader = false;
+        bool createdTable = false;
         ListObject? createdDataTable = null;
-        var createdConfigSheet = false;
-        var wrotePlotAnchor = false;
+        bool createdConfigSheet = false;
+        bool wrotePlotAnchor = false;
 
         try
         {
@@ -411,17 +411,17 @@ public class ExcelWorkbookInitialiser(
     /// <returns><see langword="true"/> when the table name is already taken on any worksheet.</returns>
     private bool AnyWorksheetContainsTable(Sheets sheets)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             // Only worksheets carry ListObjects; chart sheets are skipped
             // because the cast to Excel.Worksheet fails for them.
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
-                var tableCount = listObjects.Count;
-                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject table = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
@@ -451,15 +451,15 @@ public class ExcelWorkbookInitialiser(
     /// <returns>The available, culture-invariant label.</returns>
     private string ResolveAvailableLabel(Sheets sheets, string? excludeSheetName)
     {
-        var baseLabel = GanttWorkbookContract.GanttSheetLabel;
+        string baseLabel = GanttWorkbookContract.GanttSheetLabel;
         if (!NameTakenByOtherSheet(sheets, baseLabel, excludeSheetName))
         {
             return baseLabel;
         }
 
-        for (var suffix = 2; ; suffix++)
+        for (int suffix = 2; ; suffix++)
         {
-            var candidate = string.Create(
+            string candidate = string.Create(
                 CultureInfo.InvariantCulture, $"{baseLabel} ({suffix})");
             if (!NameTakenByOtherSheet(sheets, candidate, excludeSheetName))
             {
@@ -481,16 +481,16 @@ public class ExcelWorkbookInitialiser(
     /// <returns><see langword="true"/> when the name is taken.</returns>
     private bool NameTakenByOtherSheet(Sheets sheets, string name, string? excludeSheetName)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             // Every sheet in the collection exposes Name, including chart
             // sheets (which are not Excel.Worksheet). Use the unsealed cast
             // chain via GetSheetAt to keep the seam consistent with the test
             // seam pattern, then widen to object only for Name access on
             // chart sheets that are not Excel.Worksheet.
-            var sheet = GetSheetAt(sheets, index);
-            var sheetName = sheet switch
+            object sheet = GetSheetAt(sheets, index);
+            string sheetName = sheet switch
             {
                 Worksheet worksheet => worksheet.Name,
                 _ => (string)sheet.GetType().InvokeMember(
@@ -542,7 +542,7 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -592,15 +592,15 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
-            var count = sheets.Count;
-            for (var index = 1; index <= count; index++)
+            int count = sheets.Count;
+            for (int index = 1; index <= count; index++)
             {
-                var sheet = GetSheetAt(sheets, index);
-                var sheetName = sheet switch
+                object sheet = GetSheetAt(sheets, index);
+                string sheetName = sheet switch
                 {
                     Worksheet worksheet => worksheet.Name,
                     _ => (string)sheet.GetType().InvokeMember(
@@ -669,7 +669,7 @@ public class ExcelWorkbookInitialiser(
         {
             return;
         }
-        var original = _application.DisplayAlerts;
+        bool original = _application.DisplayAlerts;
         try
         {
             _application.DisplayAlerts = false;
@@ -753,8 +753,8 @@ public class ExcelWorkbookInitialiser(
         try
         {
             ListColumns listColumns = GetTableColumns(table);
-            var count = listColumns.Count;
-            for (var columnIndex = 1; columnIndex <= count; columnIndex++)
+            int count = listColumns.Count;
+            for (int columnIndex = 1; columnIndex <= count; columnIndex++)
             {
                 ListColumn column = GetColumnAt(listColumns, columnIndex);
                 Excel.Range columnRange = column.Range;
@@ -787,8 +787,8 @@ public class ExcelWorkbookInitialiser(
             // yields two RCWs for one host collection, which is exactly the chained
             // access the COM-ownership rule forbids.
             ListObjects listObjects = target.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var index = 1; index <= tableCount; index++)
+            int tableCount = listObjects.Count;
+            for (int index = 1; index <= tableCount; index++)
             {
                 ListObject table = GetTableAt(listObjects, index);
                 if (string.Equals(
@@ -843,8 +843,8 @@ public class ExcelWorkbookInitialiser(
         // to it. The multidimensional form is the requirement, not a style
         // choice.
 #pragma warning disable CA1814
-        var values = new object[1, columns.Count];
-        for (var index = 0; index < columns.Count; index++)
+        object[,] values = new object[1, columns.Count];
+        for (int index = 0; index < columns.Count; index++)
         {
             values[0, index] = columns[index].Name;
         }
@@ -876,7 +876,7 @@ public class ExcelWorkbookInitialiser(
     /// </remarks>
     private ListObject AddDataTable(Worksheet target)
     {
-        var columnCount = GanttTableSchema.Default.Columns.Count;
+        int columnCount = GanttTableSchema.Default.Columns.Count;
         Excel.Range tableRange = GetHeaderRange(target, columnCount);
         ListObjects listObjects = target.ListObjects;
         return listObjects.Add(
@@ -934,7 +934,7 @@ public class ExcelWorkbookInitialiser(
     {
         ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        for (var index = 1; index <= schema.Count; index++)
+        for (int index = 1; index <= schema.Count; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             Excel.Range columnRange = column.Range;
@@ -949,7 +949,7 @@ public class ExcelWorkbookInitialiser(
             // for a sheet that is already in the intended state. The value is unwrapped
             // to a real `bool` first, so a column already carrying the schema's
             // visibility is left alone.
-            var wanted = schema[index - 1].IsHidden;
+            bool wanted = schema[index - 1].IsHidden;
             if (ReadHiddenFlag(entireColumn) != wanted)
             {
                 entireColumn.Hidden = wanted;
@@ -990,7 +990,7 @@ public class ExcelWorkbookInitialiser(
     /// <param name="target">The Gantt worksheet the config sheet follows.</param>
     private static void CreateConfigurationSheet(Sheets sheets, Worksheet target)
     {
-        var config = (Worksheet)sheets.Add(After: target);
+        Worksheet config = (Worksheet)sheets.Add(After: target);
         config.Name = GanttWorkbookContract.ConfigSheetName;
         config.Visible = XlSheetVisibility.xlSheetVeryHidden;
     }

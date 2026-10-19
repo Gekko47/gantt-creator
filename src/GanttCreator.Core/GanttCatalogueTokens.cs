@@ -156,9 +156,9 @@ public sealed record GanttColourToken
             return false;
         }
 
-        for (var index = 1; index < 7; index++)
+        for (int index = 1; index < 7; index++)
         {
-            var c = text[index];
+            char c = text[index];
             if (c is not ((>= '0' and <= '9') or (>= 'A' and <= 'F')))
             {
                 return false;

@@ -142,7 +142,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunOpenLog()
     {
-        var path = DiagnosticsService.Instance.LogFilePath;
+        string? path = DiagnosticsService.Instance.LogFilePath;
         if (!string.IsNullOrWhiteSpace(path))
         {
             DiagnosticsService.OpenLogFile(path);
@@ -919,7 +919,7 @@ public class GanttRibbon : ExcelRibbon
             return false;
         }
 
-        var separator = id.IndexOf('-', StringComparison.Ordinal);
+        int separator = id.IndexOf('-', StringComparison.Ordinal);
         if (!GanttChartSettings.TryParseTimeScale(
             separator < 0 ? id : id[..separator],
             out scale))
@@ -1674,7 +1674,7 @@ public class GanttRibbon : ExcelRibbon
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cm))
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double cm))
         {
             stateService.SetMarginCm(cm);
         }
@@ -1914,7 +1914,7 @@ public class GanttRibbon : ExcelRibbon
     /// <returns>The command name used in log records and the force-failure hook.</returns>
     internal static string ResolveCommandName(IRibbonControl? control, string fallbackCommandName)
     {
-        var id = control?.Id;
+        string? id = control?.Id;
         return string.IsNullOrWhiteSpace(id) ? fallbackCommandName : id;
     }
 }

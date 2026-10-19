@@ -67,12 +67,12 @@ internal static class ValidationReportComposer
     {
         ArgumentNullException.ThrowIfNull(issues);
 
-        var result = new List<NotePayload>(issues.Count);
-        var index = 0;
+        List<NotePayload> result = new List<NotePayload>(issues.Count);
+        int index = 0;
         while (index < issues.Count)
         {
             GanttValidationIssue current = issues[index];
-            var lines = new List<string>(capacity: 4);
+            List<string> lines = new List<string>(capacity: 4);
 
             while (index < issues.Count
                    && issues[index].RowNumber == current.RowNumber
@@ -82,7 +82,7 @@ internal static class ValidationReportComposer
                 index++;
             }
 
-            var text = Truncate(BuildNoteText(current.RowNumber, current.Field, lines));
+            string text = Truncate(BuildNoteText(current.RowNumber, current.Field, lines));
             result.Add(new NotePayload(current.RowNumber, current.Field, text));
         }
 
@@ -119,7 +119,7 @@ internal static class ValidationReportComposer
     /// <returns>The user-authored prefix; empty when the note is purely the add-in's.</returns>
     public static string StripOwnedSection(string? text)
     {
-        var marker = FindOwnedSectionStart(text);
+        int marker = FindOwnedSectionStart(text);
         return marker < 0
             ? (string.IsNullOrEmpty(text) ? string.Empty : text.TrimEnd('\r', '\n', ' '))
             : text![..marker].TrimEnd('\r', '\n', ' ');
@@ -149,10 +149,10 @@ internal static class ValidationReportComposer
             return -1;
         }
 
-        var searchFrom = 0;
+        int searchFrom = 0;
         while (searchFrom <= text.Length - NoteSentinelPrefix.Length)
         {
-            var index = text.IndexOf(NoteSentinelPrefix, searchFrom, StringComparison.Ordinal);
+            int index = text.IndexOf(NoteSentinelPrefix, searchFrom, StringComparison.Ordinal);
             if (index < 0)
             {
                 return -1;
@@ -179,13 +179,13 @@ internal static class ValidationReportComposer
     /// <returns><see langword="true"/> when a complete generated-section header is present.</returns>
     private static bool IsGeneratedSectionMarker(string text, int markerStart)
     {
-        var index = markerStart + NoteSentinelPrefix.Length;
+        int index = markerStart + NoteSentinelPrefix.Length;
         if (!TryReadAt(text, ref index, " row "))
         {
             return false;
         }
 
-        var digitsStart = index;
+        int digitsStart = index;
         while (index < text.Length && char.IsAsciiDigit(text[index]))
         {
             index++;
@@ -217,14 +217,14 @@ internal static class ValidationReportComposer
         // whose header wraps onto a following line is an incomplete marker, not
         // a generated section, so the user's text is left untouched rather than
         // truncated at the sentinel.
-        var lineEnd = index;
+        int lineEnd = index;
         while (lineEnd < text.Length && text[lineEnd] is not ('\r' or '\n'))
         {
             lineEnd++;
         }
 
         // Greater than zero, so the column name itself cannot be empty.
-        var closing = text.AsSpan(index, lineEnd - index).IndexOf("':", StringComparison.Ordinal);
+        int closing = text.AsSpan(index, lineEnd - index).IndexOf("':", StringComparison.Ordinal);
         return closing > 0;
     }
 
@@ -255,10 +255,10 @@ internal static class ValidationReportComposer
     /// <returns>The composed note text.</returns>
     private static string BuildNoteText(int rowNumber, string fieldName, List<string> messageLines)
     {
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         _ = sb.Append(NoteSentinelPrefix);
         _ = sb.AppendFormat(CultureInfo.InvariantCulture, " row {0}, column '{1}':", rowNumber, fieldName);
-        foreach (var line in messageLines)
+        foreach (string line in messageLines)
         {
             _ = sb.Append('\n').Append(line);
         }
@@ -299,8 +299,8 @@ internal static class ValidationReportComposer
         }
 
         // Reserve the marker only when the budget can also hold content.
-        var marker = maxLength > TruncationMarker.Length ? TruncationMarker : string.Empty;
-        var budget = maxLength - marker.Length;
+        string marker = maxLength > TruncationMarker.Length ? TruncationMarker : string.Empty;
+        int budget = maxLength - marker.Length;
         // A cut landing between a high and low surrogate would leave invalid
         // UTF-16; back up one unit so the last kept unit is a complete pair.
         if (budget > 0 && char.IsHighSurrogate(text[budget - 1]))

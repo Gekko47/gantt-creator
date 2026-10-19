@@ -71,10 +71,10 @@ public sealed class AddInHost(
         // 12-character suffix can never match the Redactor's long-hex
         // pattern; the timestamp prefix keeps separately generated tokens
         // distinct even within one second boundary.
-        var filled = 0;
+        int filled = 0;
         while (filled < token.Length)
         {
-            var value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
+            int value = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 16);
             token[filled++] = value < 10 ? (char)('0' + value) : (char)('g' + (value - 10));
         }
         return string.Create(
@@ -276,7 +276,7 @@ public sealed class AddInHost(
     /// </summary>
     internal static void LogOpenRecord(IRollingLog log, AddInIdentity identity)
     {
-        for (var attempt = 0; attempt < 2; attempt++)
+        for (int attempt = 0; attempt < 2; attempt++)
         {
             try
             {
@@ -310,8 +310,8 @@ public sealed class AddInHost(
         // A probe failure yields "unknown" for that field so the open
         // record still reports the remaining identifiers; it must never
         // propagate into AutoOpen.
-        var excelVersion = "unknown";
-        var xllFileName = "unknown";
+        string excelVersion = "unknown";
+        string xllFileName = "unknown";
 #pragma warning disable CA1031
         try
         {

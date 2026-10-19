@@ -26,7 +26,7 @@ internal static class CommandErrorTranslator
         ArgumentNullException.ThrowIfNull(exception);
         ArgumentNullException.ThrowIfNull(operationId);
 
-        var category = Categorize(exception);
+        string category = Categorize(exception);
         return string.Create(
             System.Globalization.CultureInfo.InvariantCulture,
             $"""

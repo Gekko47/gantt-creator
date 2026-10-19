@@ -100,9 +100,9 @@ public class ExcelOutlineGroupWriter(
         // row of an active group) re-evaluates the outline and re-expands every
         // collapsed group, which is exactly what a Refresh must not do to a
         // user's collapsed presentation state.
-        var bodyRowCount = GetBodyRowCount(body);
-        var currentLevels = new Dictionary<int, int>(bodyRowCount);
-        for (var rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
+        int bodyRowCount = GetBodyRowCount(body);
+        Dictionary<int, int> currentLevels = new Dictionary<int, int>(bodyRowCount);
+        for (int rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
         {
             Excel.Range? range = GetRowsRange(worksheet, firstWorksheetRow + rowNumber - 1, firstWorksheetRow + rowNumber - 1);
             currentLevels[rowNumber] = range is not null
@@ -125,8 +125,8 @@ public class ExcelOutlineGroupWriter(
         // `RowsToUngroup` too. Their stale level-2 outline therefore survived the
         // Refresh, so the sheet kept a collapse control for a hierarchy that no
         // longer existed, and re-collapsing it hid a top-level row.
-        var ungrouped = 0;
-        foreach ((var first, var last) in ContiguousRanges(RowsToReset(plan, bodyRowCount, currentLevels)))
+        int ungrouped = 0;
+        foreach ((int first, int last) in ContiguousRanges(RowsToReset(plan, bodyRowCount, currentLevels)))
         {
             if (UngroupRange(worksheet, firstWorksheetRow, first, last))
             {
@@ -134,7 +134,7 @@ public class ExcelOutlineGroupWriter(
             }
         }
 
-        var applied = 0;
+        int applied = 0;
         foreach (OutlineGroup group in plan.Groups)
         {
             if (group.ChildRowNumbers.Count > 0
@@ -184,11 +184,11 @@ public class ExcelOutlineGroupWriter(
     internal static IReadOnlyList<(int First, int Last)> ContiguousRanges(IReadOnlyList<int> rows)
     {
         List<(int First, int Last)> ranges = [];
-        var index = 0;
+        int index = 0;
         while (index < rows.Count)
         {
-            var first = rows[index];
-            var last = first;
+            int first = rows[index];
+            int last = first;
             index++;
             while (index < rows.Count && rows[index] == last + 1)
             {
@@ -289,7 +289,7 @@ public class ExcelOutlineGroupWriter(
     {
         worksheet = null;
         table = null;
-        foreach (var entry in sheets)
+        foreach (object? entry in sheets)
         {
             if (entry is not Excel.Worksheet candidate)
             {

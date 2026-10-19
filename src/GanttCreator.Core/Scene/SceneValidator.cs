@@ -128,7 +128,7 @@ public static class SceneValidator
         // reaching the same row twice is one finding however it was worded, and two
         // genuinely different messages for one code would still be a duplicate the
         // user must not see twice.
-        var seen = new HashSet<(SceneOwnerId Owner, string Code)>();
+        HashSet<(SceneOwnerId Owner, string Code)> seen = [];
         foreach (SceneWarning warning in warnings)
         {
             if (warning is null)
@@ -148,7 +148,7 @@ public static class SceneValidator
 
     private static bool IsWellFormedId(string primitiveId)
     {
-        var separator = primitiveId.LastIndexOf(':');
+        int separator = primitiveId.LastIndexOf(':');
         return separator > 0
             && separator < primitiveId.Length - 1
             && primitiveId.Length > 0;

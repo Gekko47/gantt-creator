@@ -104,7 +104,7 @@ public static class LaneMetricsResolver
             return new LaneMetricsResolution(null, LaneMetricsRefusal.NoRows);
         }
 
-        foreach (var height in heights)
+        foreach (double height in heights)
         {
             if (!double.IsFinite(height) || height < 0)
             {
@@ -123,7 +123,7 @@ public static class LaneMetricsResolver
             return new LaneMetricsResolution(null, LaneMetricsRefusal.NoVisibleRows);
         }
 
-        var laneHeightPt = MostCommon(visibleHeights);
+        double laneHeightPt = MostCommon(visibleHeights);
 
         return new LaneMetricsResolution(
             new LaneLayoutMetrics(
@@ -143,15 +143,15 @@ public static class LaneMetricsResolver
     private static double MostCommon(List<double> heights)
     {
         Dictionary<double, int> counts = [];
-        foreach (var height in heights)
+        foreach (double height in heights)
         {
-            _ = counts.TryGetValue(height, out var seen);
+            _ = counts.TryGetValue(height, out int seen);
             counts[height] = seen + 1;
         }
 
-        var best = heights[0];
-        var bestCount = 0;
-        foreach (var height in heights)
+        double best = heights[0];
+        int bestCount = 0;
+        foreach (double height in heights)
         {
             if (counts[height] > bestCount)
             {

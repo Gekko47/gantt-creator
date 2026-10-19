@@ -97,7 +97,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
                     : ColumnPresentationRefusalReason.TargetProtected);
         }
 
-        var restored = 0;
+        int restored = 0;
         Excel.ListColumns columns = GetTableColumns(table);
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
 
@@ -117,7 +117,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         // any mutation, which is the ADR-0008 D4 contract the rest of the adapter
         // already follows.
         List<Excel.ListColumn> resolved = new(schema.Count);
-        for (var index = 0; index < schema.Count; index++)
+        for (int index = 0; index < schema.Count; index++)
         {
             if (!TryFindColumnByName(columns, schema[index].Name, out Excel.ListColumn? live) || live is null)
             {
@@ -128,7 +128,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             resolved.Add(live);
         }
 
-        for (var index = 0; index < schema.Count; index++)
+        for (int index = 0; index < schema.Count; index++)
         {
             GanttTableColumn column = schema[index];
 
@@ -138,7 +138,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             // the assignment. Reading `IsLocked` twice would be correct only while the
             // schema stayed constant across the two reads; one local makes the
             // "already correct means no write" guarantee independent of that.
-            var wantedLocked = column.IsLocked;
+            bool wantedLocked = column.IsLocked;
 
             // `Range.Locked` is declared `object` in this PIA (verified by reflection
             // over the installed Microsoft.Office.Interop.Excel), so it must be
@@ -152,7 +152,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             // value as null, and null must differ from BOTH desired states — otherwise
             // a mixed-lock authoring column reads as already-correct and the adapter
             // reports success over a range it never repaired.
-            var liveLocked = ReadLockedFlag(columnRange);
+            bool? liveLocked = ReadLockedFlag(columnRange);
             if (liveLocked is not { } current || current != wantedLocked)
             {
                 columnRange.Locked = wantedLocked;
@@ -160,7 +160,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
             }
 
             Excel.Range entireColumn = GetEntireColumn(columnRange);
-            var wantedHidden = column.IsHidden;
+            bool wantedHidden = column.IsHidden;
             if (ReadHiddenFlag(entireColumn) != wantedHidden)
             {
                 entireColumn.Hidden = wantedHidden;
@@ -196,8 +196,8 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         string name,
         out Excel.ListColumn? column)
     {
-        var count = columns.Count;
-        for (var index = 1; index <= count; index++)
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListColumn candidate = GetColumnAt(columns, index);
             if (string.Equals(GetColumnName(candidate), name, StringComparison.Ordinal))

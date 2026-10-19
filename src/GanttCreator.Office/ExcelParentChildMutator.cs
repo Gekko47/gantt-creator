@@ -145,13 +145,13 @@ public class ExcelParentChildMutator(
         }
 
         ListRows rows = GetListRows(table);
-        var bodyIndex = ResolveActiveBodyIndex(table, rows);
+        int bodyIndex = ResolveActiveBodyIndex(table, rows);
         if (bodyIndex < 1)
         {
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.SelectionOutsideTable);
         }
 
-        if (!TryReadBody(table, out List<object?[]>? body, out var columnMap)
+        if (!TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
             || body is null || columnMap is null)
         {
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.TableMissing);
@@ -216,7 +216,7 @@ public class ExcelParentChildMutator(
             return outcome;
         }
 
-        if (!TryReadBody(table, out List<object?[]>? body, out var columnMap)
+        if (!TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
             || body is null || columnMap is null)
         {
             return outcome;
@@ -262,8 +262,8 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.PlanRefused(plan.Refusal!.Value, bodyIndex);
         }
 
-        var fromIndex = bodyIndex - 1;
-        var toIndex = plan.MoveToBodyIndex!.Value - 1;
+        int fromIndex = bodyIndex - 1;
+        int toIndex = plan.MoveToBodyIndex!.Value - 1;
         if (toIndex < fromIndex)
         {
             // The planner's move target is the bottom of the sibling run,
@@ -276,8 +276,8 @@ public class ExcelParentChildMutator(
         // The content move, applied to the in-memory body before any COM
         // write: the rows between the selection and the run bottom shift
         // up one slot, and the promoted row's content lands at the bottom.
-        var moved = body[fromIndex];
-        for (var index = fromIndex; index < toIndex; index++)
+        object?[] moved = body[fromIndex];
+        for (int index = fromIndex; index < toIndex; index++)
         {
             body[index] = body[index + 1];
         }
@@ -291,10 +291,10 @@ public class ExcelParentChildMutator(
         // The remaining run resequences densely. The writes are keyed by
         // row identifier, so they resolve against the POST-move positions.
         Dictionary<GanttRowId, int> positions = IndexById(body, columnMap);
-        var outsideCells = new List<(int RowIndex, string ColumnName, object? Value)>();
+        List<(int RowIndex, string ColumnName, object? Value)> outsideCells = [];
         foreach (SiblingOrderWrite write in plan.SiblingOrderWrites)
         {
-            if (!positions.TryGetValue(write.RowId, out var position))
+            if (!positions.TryGetValue(write.RowId, out int position))
             {
                 continue;
             }
@@ -358,8 +358,8 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.PlanRefused(plan.Refusal!.Value, bodyIndex);
         }
 
-        var fromIndex = bodyIndex - 1;
-        var toIndex = plan.MoveToBodyIndex!.Value - 1;
+        int fromIndex = bodyIndex - 1;
+        int toIndex = plan.MoveToBodyIndex!.Value - 1;
         if (toIndex > fromIndex)
         {
             // The planner's move target sits at or above the bottom of the
@@ -372,8 +372,8 @@ public class ExcelParentChildMutator(
         // The content move, applied to the in-memory body before any COM
         // write: the demoted row's content lands beneath the new parent's
         // child run, and the rows between shift down one slot to make room.
-        var moved = body[fromIndex];
-        for (var index = fromIndex; index > toIndex; index--)
+        object?[] moved = body[fromIndex];
+        for (int index = fromIndex; index > toIndex; index--)
         {
             body[index] = body[index - 1];
         }
@@ -382,11 +382,11 @@ public class ExcelParentChildMutator(
 
         // The demoted row joins the new parent, and its existing children
         // move with it so they stay depth 2.
-        var newParentId = plan.NewParentId!.Value;
+        string newParentId = plan.NewParentId!.Value;
         SetCell(body[toIndex], columnMap, "ParentId", newParentId);
         foreach (GanttRowId rehomedId in plan.RehomedChildIds)
         {
-            for (var rowIndex = 0; rowIndex < body.Count; rowIndex++)
+            for (int rowIndex = 0; rowIndex < body.Count; rowIndex++)
             {
                 if (ExcelGanttRowProjection.CellText(body[rowIndex], columnMap, "Id") == rehomedId.Value)
                 {
@@ -399,10 +399,10 @@ public class ExcelParentChildMutator(
         // The planned SiblingOrder writes, keyed by row identifier so they
         // resolve against the POST-move positions.
         Dictionary<GanttRowId, int> positions = IndexById(body, columnMap);
-        var outsideCells = new List<(int RowIndex, string ColumnName, object? Value)>();
+        List<(int RowIndex, string ColumnName, object? Value)> outsideCells = [];
         foreach (SiblingOrderWrite write in plan.SiblingOrderWrites)
         {
-            if (!positions.TryGetValue(write.RowId, out var position))
+            if (!positions.TryGetValue(write.RowId, out int position))
             {
                 continue;
             }
@@ -419,8 +419,8 @@ public class ExcelParentChildMutator(
         // The re-homed children's ParentId cells sit outside the window
         // (they moved with the selection's own rows, which stay put) and
         // are written as single cells.
-        var rehomeCells = new List<(int RowIndex, string ColumnName, object? Value)>();
-        for (var index = 0; index < body.Count; index++)
+        List<(int RowIndex, string ColumnName, object? Value)> rehomeCells = [];
+        for (int index = 0; index < body.Count; index++)
         {
             if (index >= toIndex && index <= fromIndex)
             {
@@ -515,7 +515,7 @@ public class ExcelParentChildMutator(
         // them); it corrects the D9 formula SwapStart + 1, which
         // named the neighbour's last row rather than the moved
         // row whenever the two windows differ in length.
-        var movedToBodyIndex = plan.WindowStart < plan.SwapStart
+        int movedToBodyIndex = plan.WindowStart < plan.SwapStart
             ? plan.SwapStart + plan.SwapLength - plan.WindowLength + 1
             : plan.SwapStart + 1;
 
@@ -524,8 +524,8 @@ public class ExcelParentChildMutator(
         // real planners cannot emit such a plan; refusing is safer than
         // rotating the wrong window (the same discipline as the promote
         // guard above).
-        var swapEnd = plan.SwapStart + plan.SwapLength;
-        var windowEnd = plan.WindowStart + plan.WindowLength;
+        int swapEnd = plan.SwapStart + plan.SwapLength;
+        int windowEnd = plan.WindowStart + plan.WindowLength;
         if (plan.WindowLength <= 0
             || plan.SwapLength <= 0
             || plan.WindowStart < 0
@@ -543,8 +543,8 @@ public class ExcelParentChildMutator(
         // rows of a malformed table between the windows are written back
         // with their own unchanged content.
         BlockSwap(body, plan.WindowStart, plan.WindowLength, plan.SwapStart, plan.SwapLength);
-        var unionStart = Math.Min(plan.WindowStart, plan.SwapStart);
-        var unionEnd = Math.Max(windowEnd, swapEnd) - 1;
+        int unionStart = Math.Min(plan.WindowStart, plan.SwapStart);
+        int unionEnd = Math.Max(windowEnd, swapEnd) - 1;
 
         // R5.4 D13: the row-hidden flags rotate with the content. `Hidden`
         // is a property of the worksheet ROW, not of the content in it, and
@@ -582,7 +582,7 @@ public class ExcelParentChildMutator(
         List<(int RowIndex, string ColumnName, object? Value)> singles = [];
         foreach (SiblingOrderWrite write in plan.SiblingOrderWrites)
         {
-            if (!positions.TryGetValue(write.RowId, out var position))
+            if (!positions.TryGetValue(write.RowId, out int position))
             {
                 continue;
             }
@@ -671,18 +671,18 @@ public class ExcelParentChildMutator(
     {
         worksheet = null;
         table = null;
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is not Worksheet candidate)
             {
                 continue;
             }
 
             ListObjects listObjects = candidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 ListObject located = GetTableAt(listObjects, tableIndex);
                 if (string.Equals(
@@ -712,20 +712,20 @@ public class ExcelParentChildMutator(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -805,10 +805,10 @@ public class ExcelParentChildMutator(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyOffset = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyOffset = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         // The header row (offset 0) and anything at or below the reserved
         // padding row (offset past the body) name no data row.
@@ -841,7 +841,7 @@ public class ExcelParentChildMutator(
         out ParentChildMutationRefusalReason? refusal)
     {
         refusal = null;
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out var failedIndex);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? failedIndex);
         if (events is null)
         {
             refusal = failedIndex == selectedIndex
@@ -893,8 +893,8 @@ public class ExcelParentChildMutator(
         // A blank or unparseable ParentId cell is the top-level run,
         // the same convention the authoritative row reader applies.
         GanttRowId? runParent = plan.InheritedParentId;
-        var fromIndex = bodyIndex - 1;
-        var singles = new List<(int RowIndex, string ColumnName, object? Value)>();
+        int fromIndex = bodyIndex - 1;
+        List<(int RowIndex, string ColumnName, object? Value)> singles = [];
 
         // The scan runs against the pre-delete body so every write
         // addresses the row's current position; the delete then
@@ -904,8 +904,8 @@ public class ExcelParentChildMutator(
         // ignored: the planner is the authority for the dense
         // resequence, exactly as the promote and demote planners
         // emit their runs' writes (R5.3 D4).
-        var order = 0;
-        for (var index = 0; index < body.Count; index++)
+        int order = 0;
+        for (int index = 0; index < body.Count; index++)
         {
             if (index == fromIndex)
             {
@@ -983,7 +983,7 @@ public class ExcelParentChildMutator(
         Excel.Range rows = GetRangeRows(dataBody);
         try
         {
-            for (var index = fromIndex; index <= toIndex; index++)
+            for (int index = fromIndex; index <= toIndex; index++)
             {
                 Excel.Range row = GetRangeAt(rows, index + 1);
                 SetRangeValues(row, ToRowPayload(body[index]));
@@ -994,7 +994,7 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.WriteFailed);
         }
 
-        var cellsWritten = (toIndex - fromIndex + 1) * body[fromIndex].Length;
+        int cellsWritten = (toIndex - fromIndex + 1) * body[fromIndex].Length;
         return ParentChildMutationOutcome.Ok(cellsWritten, bodyIndex);
     }
 
@@ -1024,9 +1024,9 @@ public class ExcelParentChildMutator(
         Excel.Range rows = GetRangeRows(dataBody);
         try
         {
-            foreach ((var rowIndex, var columnName, var value) in writes)
+            foreach ((int rowIndex, string? columnName, object? value) in writes)
             {
-                var tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
+                int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
                 Excel.Range row = GetRangeAt(rows, rowIndex + 1);
                 Excel.Range cell = GetCellAt(row, tableIndex);
                 SetRangeValues(cell, value!);
@@ -1062,18 +1062,18 @@ public class ExcelParentChildMutator(
         int secondStart,
         int secondLength)
     {
-        var lowStart = Math.Min(firstStart, secondStart);
-        var highStart = Math.Max(firstStart, secondStart);
-        var lowLength = firstStart < secondStart ? firstLength : secondLength;
-        var highLength = firstStart < secondStart ? secondLength : firstLength;
+        int lowStart = Math.Min(firstStart, secondStart);
+        int highStart = Math.Max(firstStart, secondStart);
+        int lowLength = firstStart < secondStart ? firstLength : secondLength;
+        int highLength = firstStart < secondStart ? secondLength : firstLength;
 
         List<T> span = body.GetRange(lowStart, highStart - lowStart + highLength);
         List<T> low = span.GetRange(0, lowLength);
-        var secondOffset = highStart - lowStart;
+        int secondOffset = highStart - lowStart;
         List<T> gap = span.GetRange(lowLength, secondOffset - lowLength);
         List<T> high = span.GetRange(secondOffset, highLength);
 
-        var writeIndex = lowStart;
+        int writeIndex = lowStart;
         foreach (T row in high)
         {
             body[writeIndex++] = row;
@@ -1134,8 +1134,8 @@ public class ExcelParentChildMutator(
         List<object?[]> body,
         int[] columnMap)
     {
-        var positions = new Dictionary<GanttRowId, int>();
-        for (var index = 0; index < body.Count; index++)
+        Dictionary<GanttRowId, int> positions = [];
+        for (int index = 0; index < body.Count; index++)
         {
             if (GanttRowId.TryParse(ExcelGanttRowProjection.CellText(body[index], columnMap, "Id"), out GanttRowId? id)
                 && id is not null)
@@ -1163,8 +1163,8 @@ public class ExcelParentChildMutator(
         Justification = "The payload is assigned to a COM property typed as object, so the declared return type must stay object.")]
     private static object ToRowPayload(object?[] row)
     {
-        var payload = new object[1, row.Length];
-        for (var column = 0; column < row.Length; column++)
+        object[,] payload = new object[1, row.Length];
+        for (int column = 0; column < row.Length; column++)
         {
             payload[0, column] = row[column]!;
         }
@@ -1304,7 +1304,7 @@ public class ExcelParentChildMutator(
     internal List<bool> ReadHiddenFlags(Worksheet worksheet, int firstWorksheetRow, int fromIndex, int toIndex)
     {
         List<bool> flags = new(toIndex - fromIndex + 1);
-        for (var index = fromIndex; index <= toIndex; index++)
+        for (int index = fromIndex; index <= toIndex; index++)
         {
             Excel.Range? row = firstWorksheetRow > 0
                 ? GetWorksheetRow(worksheet, firstWorksheetRow + index)
@@ -1348,12 +1348,12 @@ public class ExcelParentChildMutator(
             return ParentChildMutationOutcome.Refused(ParentChildMutationRefusalReason.WriteFailed);
         }
 
-        var written = 0;
+        int written = 0;
         try
         {
-            for (var offset = 0; offset < flags.Count; offset++)
+            for (int offset = 0; offset < flags.Count; offset++)
             {
-                var wanted = flags[offset];
+                bool wanted = flags[offset];
                 Excel.Range? row = GetWorksheetRow(worksheet, firstWorksheetRow + fromIndex + offset);
                 if (row is null || ReadHiddenFlag(row) == wanted)
                 {

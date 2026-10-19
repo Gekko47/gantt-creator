@@ -98,7 +98,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         }
 
         List<PanelColumn> columns = [];
-        foreach (var name in includedColumns)
+        foreach (string name in includedColumns)
         {
             Excel.ListColumn? column = FindColumn(table, name);
             if (column is null)
@@ -106,7 +106,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing);
             }
 
-            var width = ReadColumnWidth(column);
+            double? width = ReadColumnWidth(column);
             if (width is null)
             {
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
@@ -126,7 +126,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         List<double> rowHeights = [];
         if (table.DataBodyRange is { } body)
         {
-            for (var rowIndex = 1; rowIndex <= GetBodyRowCount(body); rowIndex++)
+            for (int rowIndex = 1; rowIndex <= GetBodyRowCount(body); rowIndex++)
             {
                 if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
                 {
@@ -274,10 +274,10 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// <returns>The height, or <see langword="null"/> when the row cannot be verified.</returns>
     private double? ReadVerifiedAnchorHeight(Excel.ListObject table, Excel.Range body)
     {
-        var firstBodyRow = GetRangeRow(body);
-        var rowCount = GetBodyRowCount(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+        int firstBodyRow = GetRangeRow(body);
+        int rowCount = GetBodyRowCount(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 1 : null;
 
         AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
             firstBodyRow,
@@ -321,14 +321,14 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     /// </remarks>
     private double? ReadVerifiedBottomPaddingHeight(Excel.ListObject table, Excel.Range body)
     {
-        var firstBodyRow = GetRangeRow(body);
-        var rowCount = GetBodyRowCount(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
+        int firstBodyRow = GetRangeRow(body);
+        int rowCount = GetBodyRowCount(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0 ? firstBodyRow + rowCount - 1 : 0;
 
         // One past the anchor row, which is itself one past the body. Expressed as
         // anchor + 1 rather than lastBodyRow + 2 so the relationship between the two
         // reserved rows is the visible fact.
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 2 : null;
 
         BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow,
@@ -491,8 +491,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     {
         ArgumentNullException.ThrowIfNull(sheets);
 
-        var sheetCount = GetSheetCount(sheets);
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             Excel._Worksheet? sheet = GetSheetAt(sheets, sheetIndex);
             if (sheet is null)
@@ -506,8 +506,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
                 continue;
             }
 
-            var tableCount = GetListObjectCount(objects);
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = GetListObjectCount(objects);
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 Excel.ListObject? table = GetListObjectAt(objects, tableIndex);
                 if (table is not null &&
@@ -562,8 +562,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             return null;
         }
 
-        var count = GetColumnCount(columns);
-        for (var index = 1; index <= count; index++)
+        int count = GetColumnCount(columns);
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListColumn? column = GetColumnAt(columns, index);
             if (column is not null && string.Equals(column.Name, name, StringComparison.Ordinal))

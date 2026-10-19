@@ -125,7 +125,7 @@ public sealed class GanttStyleRegistry
     public GanttStyleRegistry(IEnumerable<GanttStyleDefinition> styles)
     {
         ArgumentNullException.ThrowIfNull(styles);
-        var map = new Dictionary<string, GanttStyleDefinition>(StringComparer.Ordinal);
+        Dictionary<string, GanttStyleDefinition> map = new Dictionary<string, GanttStyleDefinition>(StringComparer.Ordinal);
         foreach (GanttStyleDefinition style in styles)
         {
             ArgumentNullException.ThrowIfNull(style);

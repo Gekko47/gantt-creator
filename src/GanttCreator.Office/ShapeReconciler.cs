@@ -133,7 +133,7 @@ public static partial class ShapeReconciler
         }
 
         List<string> deletes = [];
-        foreach (var identifier in owned)
+        foreach (string identifier in owned)
         {
             if (!declared.Contains(identifier))
             {
@@ -146,7 +146,7 @@ public static partial class ShapeReconciler
         // the caller's order is what lets the fixed-point pin hold even if a
         // future caller passes a differently-ordered owned list.
         deletes.Sort(StringComparer.Ordinal);
-        foreach (var identifier in deletes)
+        foreach (string identifier in deletes)
         {
             operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Delete, identifier, null));
         }
@@ -208,7 +208,7 @@ public static partial class ShapeReconciler
         IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
         ShapeReconcilePlan plan = Plan(request.Desired, owned);
 
-        var completed = 0;
+        int completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
         {
             ShapeWriteOutcome outcome = operation.Action switch

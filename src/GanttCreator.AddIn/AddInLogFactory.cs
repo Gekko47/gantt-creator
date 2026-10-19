@@ -33,7 +33,7 @@ public static class AddInLogFactory
     /// <returns>A rolling log ready for writes; write failures latch <see cref="IRollingLog.IsFailed"/> and never throw.</returns>
     public static IRollingLog Create()
     {
-        var baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string baseDirectory = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         IRollingLog log = Create(baseDirectory);
         if (!string.IsNullOrWhiteSpace(baseDirectory) && log.IsFailed)
         {
@@ -52,7 +52,7 @@ public static class AddInLogFactory
     /// <returns>A rolling log ready for writes; write failures latch <see cref="IRollingLog.IsFailed"/> and never throw.</returns>
     public static IRollingLog Create(string? baseDirectory)
     {
-        var root = string.IsNullOrWhiteSpace(baseDirectory)
+        string root = string.IsNullOrWhiteSpace(baseDirectory)
             ? Path.GetTempPath()
             : baseDirectory;
         return new RollingLog(Path.Combine(root, _productDirectory, _logSubdirectory), baseName: _baseName);

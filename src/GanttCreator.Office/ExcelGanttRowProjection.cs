@@ -44,10 +44,10 @@ internal static class ExcelGanttRowProjection
         out int? failedIndex)
     {
         failedIndex = null;
-        var events = new List<GanttEvent>(body.Count);
-        for (var index = 0; index < body.Count; index++)
+        List<GanttEvent> events = new List<GanttEvent>(body.Count);
+        for (int index = 0; index < body.Count; index++)
         {
-            var row = body[index];
+            object?[] row = body[index];
             if (!GanttRowId.TryParse(CellText(row, columnMap, "Id"), out GanttRowId? id) || id is null)
             {
                 failedIndex = index;
@@ -57,7 +57,7 @@ internal static class ExcelGanttRowProjection
             _ = EntityTypeCatalog.TryParse(
                 CellText(row, columnMap, "Type"),
                 out GanttEntityType type);
-            var parentText = CellText(row, columnMap, "ParentId");
+            string parentText = CellText(row, columnMap, "ParentId");
             GanttRowId? parentId =
                 GanttRowId.TryParse(parentText, out GanttRowId? parsedParent) && parsedParent is not null
                     ? parsedParent
@@ -96,8 +96,8 @@ internal static class ExcelGanttRowProjection
         int[] columnMap,
         string columnName)
     {
-        var schemaIndex = SchemaIndexOf(columnName);
-        var tableIndex = columnMap[schemaIndex];
+        int schemaIndex = SchemaIndexOf(columnName);
+        int tableIndex = columnMap[schemaIndex];
         return tableIndex < 1 || tableIndex > row.Length
             ? string.Empty
             : row[tableIndex - 1] as string ?? string.Empty;
@@ -114,7 +114,7 @@ internal static class ExcelGanttRowProjection
     /// </exception>
     internal static int SchemaIndexOf(string columnName)
     {
-        for (var index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
+        for (int index = 0; index < GanttTableSchema.Default.Columns.Count; index++)
         {
             if (GanttTableSchema.Default.Columns[index].Name == columnName)
             {

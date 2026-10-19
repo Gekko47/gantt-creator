@@ -39,20 +39,20 @@ internal static class RepairConfigCommand
             return;
         }
 
-        var plan = ConfigIntegrityPlan.Build(check.Findings);
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(check.Findings);
         if (plan.Findings.Count == 0)
         {
             return;
         }
 
-        var confirmCount = plan.ConfirmRequiredFindings.Count;
+        int confirmCount = plan.ConfirmRequiredFindings.Count;
         if (plan.RefusedFindings.Count > 0)
         {
             Present(presenter, BuildSummary(0, 0, plan.RefusedFindings.Count, plan.QuarantinedFindings.Count));
             return;
         }
 
-        var confirmed = confirmCount == 0 || confirm(BuildConfirmation(confirmCount, plan.QuarantinedFindings.Count));
+        bool confirmed = confirmCount == 0 || confirm(BuildConfirmation(confirmCount, plan.QuarantinedFindings.Count));
         ConfigRepairOutcome outcome = repairer.Repair(plan, confirmed);
         if (outcome.Refusal is not null)
         {
@@ -68,7 +68,7 @@ internal static class RepairConfigCommand
 
     private static string BuildConfirmation(int confirmCount, int quarantineCount)
     {
-        var quarantine =
+        string quarantine =
             quarantineCount == 0
                 ? string.Empty
                 : $" {quarantineCount} user style row(s) are quarantined and will not be discarded silently.";

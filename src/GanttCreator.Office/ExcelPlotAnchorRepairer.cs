@@ -37,7 +37,7 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
         try
         {
             Excel.Names names = gantt.Names;
-            var refersTo = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt.Name);
+            string refersTo = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt.Name);
             Excel.Name? existing = FindName(names, GanttWorkbookContract.PlotAnchorDefinedName);
             if (existing is null)
             {
@@ -63,8 +63,8 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
     {
         worksheet = null;
         table = null;
-        var sheetCount = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
@@ -72,8 +72,8 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
             }
 
             Excel.ListObjects objects = candidate.ListObjects;
-            var objectCount = objects.Count;
-            for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+            int objectCount = objects.Count;
+            for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
                 if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
@@ -90,8 +90,8 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)
     {
-        var count = names.Count;
-        for (var index = 1; index <= count; index++)
+        int count = names.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.Name candidate = names.Item(index);
             if (string.Equals(candidate.Name, nameText, StringComparison.OrdinalIgnoreCase))

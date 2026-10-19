@@ -148,7 +148,7 @@ public static class SizePresets
                 failures.Add($"{preset.Key}: height must be finite and positive.");
             }
 
-            var isWider = preset.WidthPt > preset.HeightPt;
+            bool isWider = preset.WidthPt > preset.HeightPt;
             if (preset.Orientation == SizeOrientation.Portrait && isWider)
             {
                 failures.Add($"{preset.Key}: declared portrait but is wider than tall.");

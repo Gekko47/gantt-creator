@@ -157,8 +157,8 @@ public static class CriticalOverlayBuilder
         // extent comes from its own dates alone. The `Try*` forms are used
         // throughout because DateToX throws for an out-of-range date, and a clipped
         // interval must warn rather than throw.
-        var ownLeft = ClampStartToScale(start, timeScale);
-        var ownRight = ClampFinishToScale(finish, timeScale);
+        double ownLeft = ClampStartToScale(start, timeScale);
+        double ownRight = ClampFinishToScale(finish, timeScale);
 
         if (ownRight <= ownLeft + GeometryMath.Epsilon)
         {
@@ -175,7 +175,7 @@ public static class CriticalOverlayBuilder
 
         // Clipping is reported against the PLOT only. The old parent-clip warning
         // had no meaning here: there is no longer a parent edge to be clipped to.
-        var wasClipped = (start < timeScale.PlotStart && ownLeft <= timeScale.PlotLeftPt + GeometryMath.Epsilon)
+        bool wasClipped = (start < timeScale.PlotStart && ownLeft <= timeScale.PlotLeftPt + GeometryMath.Epsilon)
             || (finish > timeScale.PlotFinish && ownRight >= timeScale.PlotRightPt - GeometryMath.Epsilon);
         if (wasClipped)
         {
@@ -198,16 +198,16 @@ public static class CriticalOverlayBuilder
         // slot would have" rather than as `SlotCentreY - (predetermined/2)` so it stays
         // true when the slot is taller than the activity -- the interval then keeps the
         // top edge the activity would have had instead of drifting with the slot.
-        var height = request.PredeterminedHeightPt / 2;
-        var activityTop = request.SlotCentreY - (request.PredeterminedHeightPt / 2);
-        var overlay = new RectD(
+        double height = request.PredeterminedHeightPt / 2;
+        double activityTop = request.SlotCentreY - (request.PredeterminedHeightPt / 2);
+        RectD overlay = new RectD(
             ownLeft,
             activityTop,
             ownRight - ownLeft,
             height
         );
 
-        var primitive = new SceneRect(
+        SceneRect primitive = new SceneRect(
             $"{@event.Id.Value}:critical",
             SceneOwnerId.ForRow(@event.Id),
             ZLayer.CriticalOverlay,
@@ -234,7 +234,7 @@ public static class CriticalOverlayBuilder
     /// <param name="timeScale">The validated time scale.</param>
     /// <returns>The start X, clamped to the plot.</returns>
     private static double ClampStartToScale(DateOnly date, TimeScale timeScale) =>
-        timeScale.TryDateToX(date, out var x)
+        timeScale.TryDateToX(date, out double x)
             ? x
             : date < timeScale.PlotStart ? timeScale.PlotLeftPt : timeScale.PlotRightPt;
 

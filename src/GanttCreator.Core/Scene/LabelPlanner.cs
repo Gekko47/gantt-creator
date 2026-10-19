@@ -300,7 +300,7 @@ public static class LabelPlanner
         {
             return Suppressed();
         }
-        var text = request.Text;
+        string text = request.Text;
         if (!request.Metrics.TryMeasure(text, out TextMeasurement? measured) || measured is null)
         {
             return Refused(LabelRefusal.MissingMetrics);
@@ -309,10 +309,10 @@ public static class LabelPlanner
         _ = measured;
         GanttEvent @event = request.Event;
         IReadOnlyList<LabelOccupant> blocked = occupants ?? [];
-        var isDelay = @event.Type == GanttEntityType.DelayEvent;
+        bool isDelay = @event.Type == GanttEntityType.DelayEvent;
         // §20/ADR-0015 D2: a milestone's Auto order is not the span order, so the
         // cascade is selected from the entity kind rather than assumed.
-        var isMilestone = EntityTypeCatalog.GetDefinition(@event.Type)?.Kind == EntityKind.Milestone;
+        bool isMilestone = EntityTypeCatalog.GetDefinition(@event.Type)?.Kind == EntityKind.Milestone;
 
         LabelPlanCreationOutcome Suppressed()
         {
@@ -326,7 +326,7 @@ public static class LabelPlanner
             // deliberately not re-derived here, because the fallback may hand
             // back a box wider than the original text and re-testing the
             // untruncated string against it would report no truncation at all.
-            var finalText = truncated ? LabelText.Ellipsize(source, bounds.Width, request.Metrics) : source;
+            string finalText = truncated ? LabelText.Ellipsize(source, bounds.Width, request.Metrics) : source;
             IReadOnlyList<SceneWarning> warnings = truncated
                 ?
                 [
@@ -374,7 +374,7 @@ public static class LabelPlanner
         // entity family: §22's precedence puts "explicit row value" above both the
         // style default and Auto, so a delay that names a position is never
         // re-placed by the delay default below.
-        var hasExplicitPosition = request.ResolvedPosition is not (GanttLabelPosition.Auto or GanttLabelPosition.None);
+        bool hasExplicitPosition = request.ResolvedPosition is not (GanttLabelPosition.Auto or GanttLabelPosition.None);
         GanttLabelPosition styleDefault = request.StyleDefaultPosition;
 
         // ADR-0015 D3: the delay event's Inside is a style-level default that is
@@ -400,7 +400,7 @@ public static class LabelPlanner
 
         foreach (GanttLabelPosition position in cascade)
         {
-            if (TryAccept(position, out RectD bounds, out var truncated))
+            if (TryAccept(position, out RectD bounds, out bool truncated))
             {
                 return Placed(text, bounds, position, truncated);
             }
@@ -408,7 +408,7 @@ public static class LabelPlanner
 
         // ADR-0015 D4: no candidate accepted the full text. Measure the free gap
         // at each applicable position and take the widest, truncating to fit.
-        return TryWidestGap(text, cascade, out RectD gapBounds, out GanttLabelPosition gapPosition, out var gapText)
+        return TryWidestGap(text, cascade, out RectD gapBounds, out GanttLabelPosition gapPosition, out string? gapText)
             ? Placed(gapText, gapBounds, gapPosition, true)
             : new LabelPlanCreationOutcome(
             new LabelPlanResult(
@@ -435,7 +435,7 @@ public static class LabelPlanner
                 return false;
             }
 
-            if (!TryGeometry(position, request.ShapeBounds, metrics, blocked, out RectD geometry, out var freeWidth))
+            if (!TryGeometry(position, request.ShapeBounds, metrics, blocked, out RectD geometry, out double freeWidth))
             {
                 return false;
             }
@@ -447,7 +447,7 @@ public static class LabelPlanner
             // available space alone bounds a label. The absolute cap is retired
             // rather than raised, because raising it would leave the identical
             // defect at a larger width.
-            var width = freeWidth;
+            double width = freeWidth;
 
             // A cascade candidate must hold the *full* text. A position that
             // cannot is rejected so the cascade continues, and truncation happens
@@ -468,8 +468,8 @@ public static class LabelPlanner
             // inside the shape's own horizontal extent. Above and Below are no
             // longer positions (ADR-0028), so the three-way anchor rule is the
             // whole rule.
-            var textWidth = Math.Min(measured.WidthPt, width);
-            var left = geometry.X;
+            double textWidth = Math.Min(measured.WidthPt, width);
+            double left = geometry.X;
             if (position == GanttLabelPosition.Left)
             {
                 left = geometry.Right - textWidth;
@@ -478,7 +478,7 @@ public static class LabelPlanner
             {
                 left = geometry.X + ((geometry.Width - textWidth) / 2);
             }
-            var effective = new RectD(left, geometry.Y, textWidth, geometry.Height);
+            RectD effective = new RectD(left, geometry.Y, textWidth, geometry.Height);
 
             // Containment is against the chart bounds, which enclose the plot.
             if (!WithinBounds(effective, metrics.ChartBounds) || Blocked(effective, position))
@@ -501,13 +501,13 @@ public static class LabelPlanner
             widest = default;
             widestPosition = GanttLabelPosition.None;
             widestText = source;
-            var best = -1.0;
-            var bestBounds = default(RectD);
+            double best = -1.0;
+            RectD bestBounds = default;
             GanttLabelPosition bestPosition = GanttLabelPosition.None;
 
             foreach (GanttLabelPosition position in order)
             {
-                if (!TryGeometry(position, request.ShapeBounds, metrics, blocked, out RectD geometry, out var freeWidth))
+                if (!TryGeometry(position, request.ShapeBounds, metrics, blocked, out RectD geometry, out double freeWidth))
                 {
                     continue;
                 }
@@ -516,7 +516,7 @@ public static class LabelPlanner
                 // fallback truncates against the space it actually measured. The
                 // former absolute cap made a long description ellipsise while the
                 // gap beside it was wide enough to hold it whole.
-                var usable = freeWidth;
+                double usable = freeWidth;
 
                 // A gap too small to hold even the ellipsis is not usable: the
                 // ADR requires suppression, not a label drawn over an obstruction.
@@ -533,8 +533,8 @@ public static class LabelPlanner
                 // edge to the gap boundary, every other position by its left edge.
                 // Without this the truncated Left label would sit `freeWidth -
                 // usable` to the left of the boundary the untruncated one uses.
-                var left = position == GanttLabelPosition.Left ? geometry.Right - usable : geometry.X;
-                var candidate = new RectD(left, geometry.Y, usable, geometry.Height);
+                double left = position == GanttLabelPosition.Left ? geometry.Right - usable : geometry.X;
+                RectD candidate = new RectD(left, geometry.Y, usable, geometry.Height);
 
                 // Containment is against the chart bounds, exactly as in TryAccept.
                 // The gap measure itself is blind to the chart edges — Above and
@@ -688,8 +688,8 @@ public static class LabelPlanner
         // still correct: a bar, a milestone, and a critical overlay are each built
         // centred on their own slot, so the shape's centre IS the row's centre, and
         // a stacked event still centres on its own slot rather than the whole lane.
-        var height = metrics.RowHeightPt;
-        var top = ClampInsideChart(
+        double height = metrics.RowHeightPt;
+        double top = ClampInsideChart(
             shape.Top + ((shape.Height - height) / 2),
             height,
             metrics.ChartBounds);
@@ -698,7 +698,7 @@ public static class LabelPlanner
         {
             case GanttLabelPosition.Right:
                 {
-                    var left = shape.Right + metrics.LabelGapPt;
+                    double left = shape.Right + metrics.LabelGapPt;
                     freeWidth = FreeRight(left, metrics.PlotBounds, blocked);
                     bounds = new RectD(left, top, freeWidth, height);
                     break;
@@ -710,7 +710,7 @@ public static class LabelPlanner
                     // runs leftwards from that edge, so the box is anchored at its
                     // right end; TryAccept then shrinks it to the text width while
                     // keeping that anchor.
-                    var right = shape.Left - metrics.LabelGapPt;
+                    double right = shape.Left - metrics.LabelGapPt;
                     freeWidth = FreeLeft(right, metrics.PlotBounds, blocked);
                     bounds = new RectD(right - freeWidth, top, freeWidth, height);
                     break;
@@ -749,7 +749,7 @@ public static class LabelPlanner
     /// <summary>Measures the free space running right from a left edge to the nearest obstruction.</summary>
     private static double FreeRight(double left, RectD plot, IReadOnlyList<LabelOccupant> blocked)
     {
-        var limit = plot.Right;
+        double limit = plot.Right;
         foreach (LabelOccupant occupant in blocked)
         {
             // Only an occupant that starts to the right of the candidate limits
@@ -810,14 +810,14 @@ public static class LabelPlanner
             return top;
         }
 
-        var highest = chart.Bottom - height;
+        double highest = chart.Bottom - height;
         return Math.Clamp(top, chart.Top, highest);
     }
 
     /// <summary>Measures the free space running left from a right edge to the nearest obstruction.</summary>
     private static double FreeLeft(double right, RectD plot, IReadOnlyList<LabelOccupant> blocked)
     {
-        var limit = plot.Left;
+        double limit = plot.Left;
         foreach (LabelOccupant occupant in blocked)
         {
             if (occupant.Bounds.Right < right - GeometryMath.Epsilon)

@@ -198,8 +198,8 @@ internal static class ValidateSheetCommand
     /// <returns>The summary message.</returns>
     internal static string SummaryMessage(IReadOnlyList<GanttValidationIssue> issues, int notesWritten)
     {
-        var errors = 0;
-        var warnings = 0;
+        int errors = 0;
+        int warnings = 0;
         foreach (GanttValidationIssue issue in issues)
         {
             if (issue.Severity == GanttValidationSeverity.Error)

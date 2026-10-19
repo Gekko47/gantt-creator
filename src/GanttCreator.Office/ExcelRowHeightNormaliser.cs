@@ -172,7 +172,7 @@ public class ExcelRowHeightNormaliser(
         // layout rows still land on the same paths, and the zero-body path still
         // normalises them because it never needs a padding row to resolve.
         Excel.Range? body = GetTableBody(table);
-        var rowCount = body is null ? 0 : GetBodyRowCount(body);
+        int rowCount = body is null ? 0 : GetBodyRowCount(body);
 
         int? bottomPaddingRow = null;
         int? anchorRow = null;
@@ -213,7 +213,7 @@ public class ExcelRowHeightNormaliser(
             anchorRow = anchor.Row;
         }
 
-        var written = 0;
+        int written = 0;
         written += NormaliseLayoutRow(
             worksheet,
             GanttSheetLayout.TopPaddingRowIndex,
@@ -269,7 +269,7 @@ public class ExcelRowHeightNormaliser(
         // second outcome for a condition that has no different handling.
         _ = TryGetTypeColumn(table, out Excel.Range? typeColumn);
         List<MeasuredRowHeight> measured = [];
-        for (var index = 1; index <= rowCount; index++)
+        for (int index = 1; index <= rowCount; index++)
         {
             if (GetBodyRowAt(body, index) is not { } row || ToPoints(row.RowHeight) is not { } height)
             {
@@ -291,7 +291,7 @@ public class ExcelRowHeightNormaliser(
                 RowHeightNormalisationRefusalReason.InvalidMeasurement);
         }
 
-        var writtenAfterBody = 0;
+        int writtenAfterBody = 0;
         foreach (RowHeightNormalisation decision in plan.Rows)
         {
             if (decision.TargetHeightPt is not { } target || GetBodyRowAt(body, decision.RowNumber) is not { } targetRow)
@@ -307,7 +307,7 @@ public class ExcelRowHeightNormaliser(
             // read before the write and put back after it, so the
             // height is normalised without touching the collapse
             // presentation.
-            var wasHidden = ReadHidden(targetRow);
+            bool wasHidden = ReadHidden(targetRow);
             targetRow.RowHeight = target;
             if (wasHidden)
             {
@@ -373,15 +373,15 @@ public class ExcelRowHeightNormaliser(
         ArgumentNullException.ThrowIfNull(table);
         ArgumentNullException.ThrowIfNull(body);
 
-        var firstBodyRow = GetRangeRow(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0
+        int firstBodyRow = GetRangeRow(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0
             ? firstBodyRow + rowCount - 1
             : 0;
         // One past the reserved ANCHOR row (ADR-0038 D1). This was `lastBodyRow + 1`
         // until the anchor row was inserted between the body and the padding row;
         // left alone it would resolve the anchor row as the padding row and write the
         // chart's margin height into a 0.25pt anchor.
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 2 : (int?)null;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 2 : null;
 
         return GanttSheetLayout.ResolveBottomPaddingRow(
             firstBodyRow,
@@ -414,11 +414,11 @@ public class ExcelRowHeightNormaliser(
         ArgumentNullException.ThrowIfNull(table);
         ArgumentNullException.ThrowIfNull(body);
 
-        var firstBodyRow = GetRangeRow(body);
-        var lastBodyRow = rowCount > 0 && firstBodyRow > 0
+        int firstBodyRow = GetRangeRow(body);
+        int lastBodyRow = rowCount > 0 && firstBodyRow > 0
             ? firstBodyRow + rowCount - 1
             : 0;
-        var candidate = lastBodyRow > 0 ? lastBodyRow + 1 : (int?)null;
+        int? candidate = lastBodyRow > 0 ? lastBodyRow + 1 : null;
 
         return GanttSheetLayout.ResolveAnchorRow(
             firstBodyRow,
@@ -615,7 +615,7 @@ public class ExcelRowHeightNormaliser(
             return false;
         }
 
-        for (var index = 1; index <= columns.Count; index++)
+        for (int index = 1; index <= columns.Count; index++)
         {
             Excel.ListColumn candidate = ColumnAt(columns, index);
             if (string.Equals(candidate.Name, typeDef.Name, StringComparison.Ordinal))
@@ -688,7 +688,7 @@ public class ExcelRowHeightNormaliser(
     {
         worksheet = null;
         table = null;
-        foreach (var entry in sheets)
+        foreach (object? entry in sheets)
         {
             if (entry is not Excel.Worksheet candidate || candidate.ListObjects is not { } listObjects)
             {

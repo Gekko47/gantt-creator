@@ -466,8 +466,8 @@ public sealed class GanttRefreshOrchestrator(
         // blank title omits the request, so an owned ChartTitle shape is deleted
         // by the reconciler's Owned-minus-Desired difference.
         OfficeShapeRequest? titleRequest = null;
-        string? chartTitle = config.Settings.TryGetValue("ChartTitle", out var title) ? title : null;
-        bool showTitle = !config.Settings.TryGetValue("ShowTitle", out var showText)
+        string? chartTitle = config.Settings.TryGetValue("ChartTitle", out string? title) ? title : null;
+        bool showTitle = !config.Settings.TryGetValue("ShowTitle", out string? showText)
             || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
         if (showTitle && !string.IsNullOrWhiteSpace(chartTitle))
         {
@@ -494,7 +494,7 @@ public sealed class GanttRefreshOrchestrator(
         // Build the complete desired list: scene primitives plus the optional
         // title shape. The reconciler compares Desired against Owned, so an
         // omitted title request deletes an existing owned ChartTitle shape.
-        var desired = new List<OfficeShapeRequest>(translated.Requests);
+        List<OfficeShapeRequest> desired = [.. translated.Requests];
         if (titleRequest is { } req)
         {
             desired.Add(req);
@@ -556,13 +556,13 @@ public sealed class GanttRefreshOrchestrator(
             return events;
         }
 
-        var byRow = new Dictionary<int, string?>(writes.Count);
+        Dictionary<int, string?> byRow = new Dictionary<int, string?>(writes.Count);
         foreach (StyleKeyWrite write in writes)
         {
             byRow[write.RowNumber] = write.NewStyleKey;
         }
 
-        var result = new List<GanttEvent>(events.Count);
+        List<GanttEvent> result = new List<GanttEvent>(events.Count);
         foreach (GanttEvent @event in events)
         {
             if (byRow.TryGetValue(@event.RowNumber, out string? key))

@@ -87,12 +87,12 @@ public sealed class DiagnosticsService
 
         // Build the hyperlink-enabled content. The hyperlink is a file:// URI
         // anchor (<a href="...">) so the TaskDialog renders it as a link.
-        var content = BuildContent(identifiers, LogFilePath);
+        string content = BuildContent(identifiers, LogFilePath);
 
         try
         {
             // Show the dialog.
-            var buttonId = TaskDialogApi.ShowWithHyperlink(
+            int buttonId = TaskDialogApi.ShowWithHyperlink(
                 title: Title,
                 mainInstruction: MainInstruction,
                 content: content,
@@ -159,8 +159,8 @@ public sealed class DiagnosticsService
     /// <returns>The identifier set.</returns>
     public static AddInIdentity GatherIdentifiers()
     {
-        var excelVersion = "unknown";
-        var xllFileName = "unknown";
+        string excelVersion = "unknown";
+        string xllFileName = "unknown";
 
 #pragma warning disable CA1031
         try
@@ -176,7 +176,7 @@ public sealed class DiagnosticsService
 #pragma warning disable CA1031
         try
         {
-            var xllPath = ExcelDnaUtil.XllPath;
+            string xllPath = ExcelDnaUtil.XllPath;
             xllFileName = Path.GetFileName(xllPath);
             if (string.IsNullOrWhiteSpace(xllFileName))
             {
@@ -213,7 +213,7 @@ public sealed class DiagnosticsService
             _ = sb.AppendLine();
             // Render the file:// URI as an anchor so the TaskDialog shows it
             // as a clickable hyperlink (requires TaskDialogPage.EnableLinks).
-            var uri = new Uri(logFilePath).AbsoluteUri;
+            string uri = new Uri(logFilePath).AbsoluteUri;
             _ = sb.AppendLine(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"Log File: <a href=\"{uri}\">Open the log file</a>");
@@ -281,7 +281,7 @@ public sealed class DiagnosticsService
 
         void AddLine(string label, string value)
         {
-            var text = escapeAccessKeys ? EscapeAccessKeys(value) : value;
+            string text = escapeAccessKeys ? EscapeAccessKeys(value) : value;
             _ = sb.AppendLine(label + text);
         }
     }

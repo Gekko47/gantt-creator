@@ -119,7 +119,7 @@ public static class MilestoneMarkerBuilder
         // The `Try*` form is used deliberately: DateToX throws for a date outside
         // the scale, and an out-of-range milestone must produce a warning rather
         // than an exception. The failure sentinel (x = 0) is never inspected.
-        if (!timeScale.TryDateToX(date, out var centreX))
+        if (!timeScale.TryDateToX(date, out double centreX))
         {
             warnings.Add(
                 new SceneWarning(
@@ -134,8 +134,8 @@ public static class MilestoneMarkerBuilder
         // and the slot-band centre Y, with MilestoneSizePt as the tip-to-tip
         // extent on BOTH axes, so the bounds are exact and consistent across
         // renderers.
-        var half = request.MilestoneSizePt / 2;
-        var centreY = request.SlotCentreY;
+        double half = request.MilestoneSizePt / 2;
+        double centreY = request.SlotCentreY;
         PointD[] points =
         [
             new(centreX, centreY - half),
@@ -144,7 +144,7 @@ public static class MilestoneMarkerBuilder
             new(centreX - half, centreY),
         ];
 
-        var polygon = new ScenePolygon(
+        ScenePolygon polygon = new ScenePolygon(
             $"{@event.Id.Value}:marker",
             SceneOwnerId.ForRow(@event.Id),
             ZLayer.Milestone,

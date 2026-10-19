@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace GanttCreator.Core;
 
 /// <summary>
@@ -114,7 +116,7 @@ public static class GanttSheetLayout
         get
         {
             IReadOnlyList<GanttTableColumn> columns = GanttTableSchema.Default.Columns;
-            for (var i = 0; i < columns.Count; i++)
+            for (int i = 0; i < columns.Count; i++)
             {
                 if (string.Equals(columns[i].Name, "Description", StringComparison.Ordinal))
                 {
@@ -299,7 +301,7 @@ public static class GanttSheetLayout
         // the body and the padding. Leaving it would resolve a padding row that is
         // really the anchor row -- a row the add-in would then write the margin height
         // into, which is precisely the defect ADR-0035 D2 exists to prevent.
-        var expected = lastBodyRow + 2;
+        int expected = lastBodyRow + 2;
         if (observedPaddingRow is not { } observed || observed != expected)
         {
             return BottomPaddingResolution.Refused(BottomPaddingRefusalReason.PaddingRowNotContiguous);
@@ -363,7 +365,7 @@ public static class GanttSheetLayout
         // The ONLY row this may name is the one immediately below the body: every
         // insert the add-in performs targets it, so a shape whose bottom anchor does
         // not resolve into it does not stretch.
-        var expected = lastBodyRow + 1;
+        int expected = lastBodyRow + 1;
         if (observedAnchorRow is not { } observed || observed != expected)
         {
             return AnchorRowResolution.Refused(AnchorRowRefusalReason.AnchorRowNotContiguous);
@@ -400,7 +402,7 @@ public static class GanttSheetLayout
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sheetName);
 
-        var escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
+        string escaped = sheetName.Replace("'", "''", StringComparison.Ordinal);
         return string.Create(
             System.Globalization.CultureInfo.InvariantCulture,
             $"='{escaped}'!${ToA1Column(PlotAnchorColumnIndex)}${HeaderRowIndex}");
@@ -447,11 +449,11 @@ public static class GanttSheetLayout
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(columnIndex, 1);
 
-        var builder = new System.Text.StringBuilder();
-        var remaining = columnIndex;
+        StringBuilder builder = new StringBuilder();
+        int remaining = columnIndex;
         while (remaining > 0)
         {
-            var digit = (remaining - 1) % 26;
+            int digit = (remaining - 1) % 26;
             _ = builder.Insert(0, (char)('A' + digit));
             remaining = (remaining - 1) / 26;
         }

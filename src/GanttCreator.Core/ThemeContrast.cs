@@ -31,10 +31,10 @@ public static class ThemeContrast
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(background);
 
-        var textLuminance = Luminance(text);
-        var backgroundLuminance = Luminance(background);
-        var lighter = Math.Max(textLuminance, backgroundLuminance);
-        var darker = Math.Min(textLuminance, backgroundLuminance);
+        double textLuminance = Luminance(text);
+        double backgroundLuminance = Luminance(background);
+        double lighter = Math.Max(textLuminance, backgroundLuminance);
+        double darker = Math.Min(textLuminance, backgroundLuminance);
         return (lighter + 0.05) / (darker + 0.05);
     }
 
@@ -70,31 +70,31 @@ public static class ThemeContrast
 
     private static bool IsRedDominant(ColourHex colour)
     {
-        var red = (byte)(colour.ARGB >> 16);
-        var green = (byte)(colour.ARGB >> 8);
-        var blue = (byte)colour.ARGB;
+        byte red = (byte)(colour.ARGB >> 16);
+        byte green = (byte)(colour.ARGB >> 8);
+        byte blue = (byte)colour.ARGB;
         return red > green && red > blue;
     }
 
     private static bool IsGreenDominant(ColourHex colour)
     {
-        var red = (byte)(colour.ARGB >> 16);
-        var green = (byte)(colour.ARGB >> 8);
-        var blue = (byte)colour.ARGB;
+        byte red = (byte)(colour.ARGB >> 16);
+        byte green = (byte)(colour.ARGB >> 8);
+        byte blue = (byte)colour.ARGB;
         return green > red && green > blue;
     }
 
     private static double Luminance(ColourHex colour)
     {
-        var red = Linearise((byte)(colour.ARGB >> 16));
-        var green = Linearise((byte)(colour.ARGB >> 8));
-        var blue = Linearise((byte)colour.ARGB);
+        double red = Linearise((byte)(colour.ARGB >> 16));
+        double green = Linearise((byte)(colour.ARGB >> 8));
+        double blue = Linearise((byte)colour.ARGB);
         return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
     }
 
     private static double Linearise(byte channel)
     {
-        var value = channel / 255.0;
+        double value = channel / 255.0;
         return value <= 0.03928 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
     }
 }

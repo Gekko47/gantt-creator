@@ -186,7 +186,7 @@ public static class DateLabelBuilder
         // rectangles differing only in X or Y has not clipped anything, and
         // reading that as clipped would divert the label onto the never-suppress
         // fallback for a bar the plot never touched.
-        var clipped = request.VisibleBounds.Width
+        bool clipped = request.VisibleBounds.Width
             < request.FullBounds.Width - GeometryMath.Epsilon;
         List<SceneText> emitted = [];
         List<string> suppressed = [];
@@ -238,9 +238,9 @@ public static class DateLabelBuilder
             explicitPosition
             ?? (role == StartRole ? GanttLabelPosition.Left : GanttLabelPosition.Right);
 
-        var text = GanttDateFormatting.Format(date, request.DateFormat);
+        string text = GanttDateFormatting.Format(date, request.DateFormat);
         GanttEvent @event = request.Event;
-        var owner = SceneOwnerId.ForRow(@event.Id);
+        SceneOwnerId owner = SceneOwnerId.ForRow(@event.Id);
 
         LabelPlanCreationOutcome planned = LabelPlanner.TryPlan(
             new LabelRequest(
@@ -363,15 +363,15 @@ public static class DateLabelBuilder
 
         // One row tall, matching LabelPlanner's box, so the two paths cannot disagree
         // about the height of a date label (owner ruling).
-        var height = request.Metrics.RowHeightPt;
-        var gap = request.Metrics.LabelGapPt;
+        double height = request.Metrics.RowHeightPt;
+        double gap = request.Metrics.LabelGapPt;
         RectD visible = request.VisibleBounds;
         RectD chart = request.Metrics.ChartBounds;
 
         // The §22 candidate geometry, resolved here because this path is reached
         // only after the planner has already declined every candidate.
-        var top = visible.Top + ((visible.Height - height) / 2);
-        var centred = visible.Left + ((visible.Width - measured.WidthPt) / 2);
+        double top = visible.Top + ((visible.Height - height) / 2);
+        double centred = visible.Left + ((visible.Width - measured.WidthPt) / 2);
 
         // Every enum member is listed rather than folded into a default arm, so a
         // position added to GanttLabelPosition later cannot silently acquire this
@@ -467,8 +467,8 @@ public static class DateLabelBuilder
     /// </summary>
     private static RectD Clamp(RectD chart, RectD box)
     {
-        var left = Math.Clamp(box.Left, chart.Left, Math.Max(chart.Left, chart.Right - box.Width));
-        var top = Math.Clamp(box.Top, chart.Top, Math.Max(chart.Top, chart.Bottom - box.Height));
+        double left = Math.Clamp(box.Left, chart.Left, Math.Max(chart.Left, chart.Right - box.Width));
+        double top = Math.Clamp(box.Top, chart.Top, Math.Max(chart.Top, chart.Bottom - box.Height));
         return new RectD(left, top, box.Width, box.Height);
     }
 

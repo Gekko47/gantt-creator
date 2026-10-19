@@ -87,9 +87,9 @@ public sealed record SceneOwnerId
             return [];
         }
 
-        var parts = value.Split(RowsSeparator, StringSplitOptions.None);
+        string[] parts = value.Split(RowsSeparator, StringSplitOptions.None);
         List<GanttRowId> rows = new(parts.Length);
-        foreach (var part in parts)
+        foreach (string part in parts)
         {
             if (GanttRowId.TryParse(part, out GanttRowId? rowId) && rowId is not null)
             {
@@ -181,7 +181,7 @@ public sealed record SceneOwnerId
             return false;
         }
 
-        var parts = value.Split(RowsSeparator, StringSplitOptions.None);
+        string[] parts = value.Split(RowsSeparator, StringSplitOptions.None);
         if (parts.Length < 2)
         {
             return false;
@@ -191,7 +191,7 @@ public sealed record SceneOwnerId
         // genuinely distinct without a second comparison pass. The rows are not
         // stored: Value is the whole state, and OwnedRows decodes on demand.
         List<GanttRowId> rows = new(parts.Length);
-        foreach (var part in parts)
+        foreach (string part in parts)
         {
             if (!GanttRowId.TryParse(part, out GanttRowId? rowId) || rowId is null)
             {

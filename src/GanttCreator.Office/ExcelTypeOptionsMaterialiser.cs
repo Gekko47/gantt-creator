@@ -125,7 +125,7 @@ public class ExcelTypeOptionsMaterialiser(
 
         Excel.Names names = workbook.Names;
         Excel.Name? existingName = FindName(names, GanttWorkbookContract.TypeOptionsDefinedName);
-        var expectedRefersTo = GetRefersTo(config.Name, optionsRange);
+        string expectedRefersTo = GetRefersTo(config.Name, optionsRange);
         bool nameIsCurrent =
             existingName is not null && RefersToMatches(existingName.RefersTo, expectedRefersTo);
 
@@ -206,7 +206,7 @@ public class ExcelTypeOptionsMaterialiser(
                 return false;
             }
 
-            var formula = validation.Formula1;
+            string formula = validation.Formula1;
             return string.Equals(
                 formula?.Trim(),
                 $"={GanttWorkbookContract.TypeOptionsDefinedName}",
@@ -220,7 +220,7 @@ public class ExcelTypeOptionsMaterialiser(
 
     private static string BuildRefersTo(string sheetName, Excel.Range range)
     {
-        var address = range.Address[true, true]
+        string address = range.Address[true, true]
             ?? throw new InvalidOperationException("TypeOptions range has no address.");
         return $"='{sheetName.Replace("'", "''", StringComparison.Ordinal)}'!{address}";
     }
@@ -281,16 +281,16 @@ public class ExcelTypeOptionsMaterialiser(
     /// <returns>The parsed parts, both empty when the target cannot be split.</returns>
     private static NameTarget ParseRefersTo(string refersTo)
     {
-        var text = refersTo.TrimStart('=').Trim();
-        var separator = text.LastIndexOf('!');
+        string text = refersTo.TrimStart('=').Trim();
+        int separator = text.LastIndexOf('!');
         if (separator <= 0 || separator == text.Length - 1)
         {
             return new NameTarget(string.Empty, string.Empty);
         }
 
-        var sheetPart = text[..separator].Trim();
-        var address = text[(separator + 1)..].Trim();
-        var sheet = sheetPart.Length >= 2 && sheetPart[0] == '\'' && sheetPart[^1] == '\''
+        string sheetPart = text[..separator].Trim();
+        string address = text[(separator + 1)..].Trim();
+        string sheet = sheetPart.Length >= 2 && sheetPart[0] == '\'' && sheetPart[^1] == '\''
             ? sheetPart[1..^1].Replace("''", "'", StringComparison.Ordinal)
             : sheetPart;
 
@@ -299,8 +299,8 @@ public class ExcelTypeOptionsMaterialiser(
 
     private static Excel.Name? FindName(Excel.Names names, string nameText)
     {
-        var count = names.Count;
-        for (var index = 1; index <= count; index++)
+        int count = names.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.Name candidate = names.Item(index);
             if (string.Equals(candidate.Name, nameText, StringComparison.OrdinalIgnoreCase))
@@ -327,8 +327,8 @@ public class ExcelTypeOptionsMaterialiser(
 
     private static Excel.Worksheet? FindSheet(Excel.Sheets sheets, string name)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             if (sheets[index] is Excel.Worksheet sheet
                 && string.Equals(sheet.Name, name, StringComparison.Ordinal))
@@ -342,8 +342,8 @@ public class ExcelTypeOptionsMaterialiser(
 
     private static Excel.Worksheet? FindTableSheet(Excel.Sheets sheets, string tableName)
     {
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
             if (sheets[index] is Excel.Worksheet sheet && FindTable(sheet, tableName) is not null)
             {
@@ -357,8 +357,8 @@ public class ExcelTypeOptionsMaterialiser(
     private static Excel.ListObject? FindTable(Excel.Worksheet sheet, string name)
     {
         Excel.ListObjects objects = sheet.ListObjects;
-        var count = objects.Count;
-        for (var index = 1; index <= count; index++)
+        int count = objects.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListObject table = objects[index];
             if (string.Equals(table.Name, name, StringComparison.Ordinal))
@@ -373,8 +373,8 @@ public class ExcelTypeOptionsMaterialiser(
     private static Excel.ListColumn? FindColumn(Excel.ListObject table, string name)
     {
         Excel.ListColumns columns = table.ListColumns;
-        var count = columns.Count;
-        for (var index = 1; index <= count; index++)
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListColumn column = columns[index];
             if (string.Equals(column.Name, name, StringComparison.Ordinal))

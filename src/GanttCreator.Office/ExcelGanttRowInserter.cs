@@ -79,7 +79,7 @@ public class ExcelGanttRowInserter(
 
         Excel.Sheets sheets = workbook.Sheets;
         if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table) || worksheet is null || table is null
-            || !TryBuildColumnMap(table, out var columnMap) || columnMap is null)
+            || !TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
             return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.TableMissing);
         }
@@ -117,7 +117,7 @@ public class ExcelGanttRowInserter(
         // Only the APPEND branch can lose the padding row, because only it depends on
         // the insert below the table having succeeded. A positional insert shifts the
         // sheet by itself, so its padding row is displaced by definition.
-        var paddingRowReserved = true;
+        bool paddingRowReserved = true;
         if (reusableRow is not null)
         {
             // An initialised table whose body is empty can still own one blank row
@@ -128,7 +128,7 @@ public class ExcelGanttRowInserter(
         }
         else
         {
-            var position = GetInsertionPosition(application!, table, rows);
+            int? position = GetInsertionPosition(application!, table, rows);
 
             // BOTH branches insert a genuine WORKSHEET row, because
             // ListRows.Add(position) does NOT shift the sheet. Measured
@@ -148,14 +148,14 @@ public class ExcelGanttRowInserter(
             //
             // This corrects ADR-0035 D3, which asserted the positional branch
             // "already inserts a real worksheet row". It does not.
-            var insideTable = position is not null;
+            bool insideTable = position is not null;
 
             // Inside the table for a positional insert, so the ListObject absorbs the
             // row. One past the table's last row for an append, so the padding row is
             // displaced rather than consumed -- Q4 measured that a row inserted below
             // the table does NOT auto-expand it, which is why the append branch still
             // follows its insert with ListRows.Add().
-            var inserted = insideTable
+            bool inserted = insideTable
                 ? InsertWorksheetRow(
                     table,
                     GetRangeRow(GetTableRange(table)) + position!.Value)
@@ -339,10 +339,10 @@ public class ExcelGanttRowInserter(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyIndex = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyIndex = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         // Outside the body in either direction: not a position the user can name.
         if (bodyIndex < 0 || bodyIndex > rowCount)
@@ -414,7 +414,7 @@ public class ExcelGanttRowInserter(
         // One past the table's last row. Reading it through the range rather than
         // assuming the layout keeps this correct if the table ever adopts at a
         // different row.
-        var lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
+        int lastRow = GetRangeRow(tableRange) + (tableRange.Rows?.Count ?? 0) - 1;
         return InsertWorksheetRow(table, lastRow + 1);
     }
 
@@ -481,7 +481,7 @@ public class ExcelGanttRowInserter(
     {
         Excel.Range tableRange = GetTableRange(table);
         Excel.Range tableRows = GetRangeRows(tableRange);
-        var rowCount = GetRangeRowCount(tableRows);
+        int rowCount = GetRangeRowCount(tableRows);
         if (rowCount <= 1)
         {
             return null;
@@ -503,8 +503,8 @@ public class ExcelGanttRowInserter(
     {
         worksheet = null;
         table = null;
-        var sheetCount = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
@@ -512,8 +512,8 @@ public class ExcelGanttRowInserter(
             }
 
             Excel.ListObjects listObjects = candidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(listObjects, tableIndex);
                 if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
@@ -532,20 +532,20 @@ public class ExcelGanttRowInserter(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         Excel.ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             Excel.ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -607,8 +607,8 @@ public class ExcelGanttRowInserter(
             return values;
         }
 
-        var activeRow = body[position - 2];
-        var belowRow = body[position];
+        object?[] activeRow = body[position - 2];
+        object?[] belowRow = body[position];
 
         GanttRowId? activeId = TryParseId(activeRow, columnMap);
         GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
@@ -688,8 +688,8 @@ public class ExcelGanttRowInserter(
         IReadOnlyList<object?> values,
         GanttRowId parentId)
     {
-        var mutable = new object?[values.Count];
-        for (var index = 0; index < values.Count; index++)
+        object?[] mutable = new object?[values.Count];
+        for (int index = 0; index < values.Count; index++)
         {
             mutable[index] = values[index];
         }
@@ -716,7 +716,7 @@ public class ExcelGanttRowInserter(
         }
 
         List<object?[]> body = ReadBody(table);
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out var _);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? _);
         if (events is null)
         {
             return;
@@ -742,10 +742,10 @@ public class ExcelGanttRowInserter(
         int[] columnMap)
     {
 #pragma warning disable CA1814 // Excel Range.Value2 requires a rectangular SAFEARRAY.
-        var matrix = new object[1, columnMap.Length];
-        for (var schemaIndex = 0; schemaIndex < values.Count; schemaIndex++)
+        object[,] matrix = new object[1, columnMap.Length];
+        for (int schemaIndex = 0; schemaIndex < values.Count; schemaIndex++)
         {
-            var tableIndex = columnMap[schemaIndex];
+            int tableIndex = columnMap[schemaIndex];
             if (tableIndex > 0)
             {
                 matrix[0, tableIndex - 1] = values[schemaIndex] ?? string.Empty;
@@ -778,7 +778,7 @@ public class ExcelGanttRowInserter(
 
     internal virtual int GetRangeRowCount(Excel.Range rows)
     {
-        var count = rows.Count;
+        int count = rows.Count;
         return count;
     }
 

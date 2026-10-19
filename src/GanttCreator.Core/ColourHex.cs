@@ -41,7 +41,7 @@ public sealed class ColourHex : IEquatable<ColourHex>
             return false;
         }
 
-        var value = text.Trim();
+        string value = text.Trim();
         if ((value.Length != 7 && value.Length != 9) ||
             !value.StartsWith(_prefix, StringComparison.Ordinal) ||
             !HasUpperHexDigits(value, 1))
@@ -49,10 +49,10 @@ public sealed class ColourHex : IEquatable<ColourHex>
             return false;
         }
 
-        var red = ReadByte(value, 1);
-        var green = ReadByte(value, 3);
-        var blue = ReadByte(value, 5);
-        var alpha = value.Length == 9 ? ReadByte(value, 7) : byte.MaxValue;
+        byte red = ReadByte(value, 1);
+        byte green = ReadByte(value, 3);
+        byte blue = ReadByte(value, 5);
+        byte alpha = value.Length == 9 ? ReadByte(value, 7) : byte.MaxValue;
         colour = new ColourHex(
             ((uint)alpha << 24) | ((uint)red << 16) | ((uint)green << 8) | blue,
             value.Length == 9);
@@ -87,23 +87,23 @@ public sealed class ColourHex : IEquatable<ColourHex>
     /// <returns>The canonical six- or eight-digit colour text.</returns>
     public override string ToString()
     {
-        var red = (byte)(ARGB >> 16);
-        var green = (byte)(ARGB >> 8);
-        var blue = (byte)ARGB;
+        byte red = (byte)(ARGB >> 16);
+        byte green = (byte)(ARGB >> 8);
+        byte blue = (byte)ARGB;
         if (!HasExplicitAlpha)
         {
             return $"{_prefix}{red:X2}{green:X2}{blue:X2}";
         }
 
-        var alpha = (byte)(ARGB >> 24);
+        byte alpha = (byte)(ARGB >> 24);
         return $"{_prefix}{red:X2}{green:X2}{blue:X2}{alpha:X2}";
     }
 
     private static bool HasUpperHexDigits(string value, int start)
     {
-        for (var index = start; index < value.Length; index++)
+        for (int index = start; index < value.Length; index++)
         {
-            var c = value[index];
+            char c = value[index];
             if (c is not ((>= '0' and <= '9') or (>= 'A' and <= 'F')))
             {
                 return false;

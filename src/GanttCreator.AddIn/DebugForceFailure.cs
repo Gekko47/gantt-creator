@@ -69,7 +69,7 @@ internal static class DebugForceFailure
             return false;
         }
 
-        var requested = Environment.GetEnvironmentVariable(EnvironmentVariableName);
+        string? requested = Environment.GetEnvironmentVariable(EnvironmentVariableName);
         return !string.IsNullOrWhiteSpace(requested)
             && string.Equals(requested, commandName, StringComparison.OrdinalIgnoreCase);
 #else

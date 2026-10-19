@@ -257,7 +257,7 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotStartAuto(bool pressed)
     {
-        var nextAuto = pressed;
+        bool nextAuto = pressed;
         if (nextAuto)
         {
             _state = _state with
@@ -282,7 +282,7 @@ internal class RibbonStateService
             // the derivation, but parsed defensively) persists at once.
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+                string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
                 _state = _state with
                 {
                     PlotStartAuto = false,
@@ -353,7 +353,7 @@ internal class RibbonStateService
     /// <param name="pressed">True when Excel reports the AUTO box checked.</param>
     internal void SetPlotFinishAuto(bool pressed)
     {
-        var nextAuto = pressed;
+        bool nextAuto = pressed;
         if (nextAuto)
         {
             _state = _state with
@@ -370,7 +370,7 @@ internal class RibbonStateService
             // note above for why the stored date is not reused).
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly bound))
             {
-                var seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+                string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
                 _state = _state with
                 {
                     PlotFinishAuto = false,
@@ -441,7 +441,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+        string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
         _state = _state with
         {
             PlotStartAuto = false,
@@ -483,7 +483,7 @@ internal class RibbonStateService
             return;
         }
 
-        var normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+        string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
         _state = _state with
         {
             PlotFinishAuto = false,
@@ -586,7 +586,7 @@ internal class RibbonStateService
             return;
         }
 
-        var customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
+        double customCm = selected == GanttPlotMargin.Custom ? _state.MarginCm : GanttPlotMargins.DefaultCustomCm;
         // Commit first, then re-measure: C# evaluates every `with`
         // initializer against the OLD snapshot, so measuring inside
         // the same expression would read the previous margin and
@@ -621,7 +621,7 @@ internal class RibbonStateService
     /// <param name="customCm">The custom margin, in centimetres.</param>
     internal void SetMarginCm(double customCm)
     {
-        var clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
+        double clamped = Math.Clamp(customCm, GanttPlotMargins.MinimumCustomCm, GanttPlotMargins.MaximumCustomCm);
         if (!double.IsFinite(clamped))
         {
             clamped = GanttPlotMargins.DefaultCustomCm;
@@ -803,11 +803,11 @@ internal class RibbonStateService
             }
 
             PanelCellGrid grid = outcome.Grid;
-            var marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
+            double marginPt = GanttPlotMargins.MarginPt(_state.Margin, _state.MarginCm);
             // Same chrome split the Refresh pipeline uses (ADR-0031 D2): the
             // plot is flush-left, so the left chrome is zero and the R5.2 margin
             // (twice) plus the frame's outer padding rides on the right.
-            var chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
+            double chrome = GanttCatalogues.MetricDefault(_outerPaddingToken);
             return PlotGeometryResolver.MeasurePlotWidth(
                 preset,
                 grid.TotalWidthPt,
@@ -848,8 +848,8 @@ internal class RibbonStateService
     /// </summary>
     private void PersistPlotSettings()
     {
-        var startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
-        var finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        string startMode = _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
+        string finishMode = _state.PlotFinishAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit);
 
         // Validate before persisting so invalid settings never reach the workbook.
         // R5.1: ValidateSettings is wired here to reject bad modes, missing dates,
@@ -862,7 +862,7 @@ internal class RibbonStateService
             FinishDate = _state.PlotFinishDate,
         });
 
-        var values = new Dictionary<string, string>
+        Dictionary<string, string> values = new Dictionary<string, string>
         {
             ["PlotStartMode"] = startMode,
             ["PlotFinishMode"] = finishMode,
@@ -885,7 +885,7 @@ internal class RibbonStateService
         ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(values);
         if (outcome is not null && !outcome.Succeeded)
         {
-            var message = $"Failed to persist plot settings: {outcome.Refusal}";
+            string message = $"Failed to persist plot settings: {outcome.Refusal}";
             CommandBoundary.Instance.Run("PersistPlotSettings", () => throw new InvalidOperationException(message));
         }
     }
@@ -918,18 +918,18 @@ internal class RibbonStateService
             // GanttStyleRegistry) so the dialog shows the user's current theme,
             // not the code-owned defaults. Fall back to the preset values when
             // a preset is not present in the registry.
-            var currentStyles = new List<ThemeStyleEdit>();
-            var currentMetrics = new Dictionary<string, double>();
-            var currentCustomDefs = new List<CustomStyleDef>();
+            List<ThemeStyleEdit> currentStyles = [];
+            Dictionary<string, double> currentMetrics = [];
+            List<CustomStyleDef> currentCustomDefs = [];
 
-            var builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
             {
                 _ = builtInKeys.Add(preset.StyleKey);
 
-                var fill = preset.FillColour;
-                var stroke = preset.StrokeColour;
-                var text = preset.TextColour;
+                string fill = preset.FillColour;
+                string stroke = preset.StrokeColour;
+                string text = preset.TextColour;
 
                 if (outcome.Styles.TryGet(preset.StyleKey, out GanttStyleDefinition? definition)
                     && definition is { HasFormatting: true })
@@ -965,7 +965,7 @@ internal class RibbonStateService
             foreach (GanttMetricToken token in GanttCatalogues.Metrics)
             {
                 if (ThemeEditRequest.EditableMetrics.Contains(token.Name)
-                    && outcome.Metrics.TryGetValue(token.Name, out var parsed)
+                    && outcome.Metrics.TryGetValue(token.Name, out double parsed)
                     && double.IsFinite(parsed))
                 {
                     currentMetrics[token.Name] = parsed;
@@ -976,11 +976,11 @@ internal class RibbonStateService
                 }
             }
 
-            var request = new ThemeEditRequest(currentStyles, currentMetrics, null, currentCustomDefs);
+            ThemeEditRequest request = new ThemeEditRequest(currentStyles, currentMetrics, null, currentCustomDefs);
 
             // Show the WinForms dialog. Virtual so tests can substitute a
             // non-blocking dialog result instead of running a message loop.
-            using var dialog = new ThemeSettingsForm(request);
+            using ThemeSettingsForm dialog = new ThemeSettingsForm(request);
             if (ShowThemeSettingsDialog(dialog) == DialogResult.OK)
             {
                 ThemeEditRequest? validated = dialog.GetValidatedRequest();
@@ -1041,14 +1041,14 @@ internal class RibbonStateService
                 return false;
             }
 
-            var currentTitle = outcome.Settings.TryGetValue("ChartTitle", out var title)
+            string currentTitle = outcome.Settings.TryGetValue("ChartTitle", out string? title)
                 ? title
                 : GanttCatalogues.SettingDefault("ChartTitle") ?? GanttWorkbookContract.DefaultChartTitle;
-            var currentShow = !outcome.Settings.TryGetValue("ShowTitle", out var showText)
+            bool currentShow = !outcome.Settings.TryGetValue("ShowTitle", out string? showText)
                 || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
 
             // Show the WinForms dialog
-            using var dialog = new ChartTitleForm(currentTitle, currentShow);
+            using ChartTitleForm dialog = new ChartTitleForm(currentTitle, currentShow);
             if (dialog.ShowDialog() == DialogResult.OK)
             {
                 ChartTitleEditRequest? validated = dialog.GetValidatedRequest();
@@ -1112,16 +1112,16 @@ internal class RibbonStateService
             if (outcome.Succeeded && outcome.Settings is not null)
             {
                 IReadOnlyDictionary<string, string> settings = outcome.Settings;
-                var startMode = settings.TryGetValue("PlotStartMode", out var startModeVal) ? startModeVal : string.Empty;
-                var finishMode = settings.TryGetValue("PlotFinishMode", out var finishModeVal) ? finishModeVal : string.Empty;
-                var startDate = NormaliseStoredPlotDate(
-                    settings.TryGetValue("PlotStartDate", out var startDateVal) ? startDateVal : string.Empty);
-                var finishDate = NormaliseStoredPlotDate(
-                    settings.TryGetValue("PlotFinishDate", out var finishDateVal) ? finishDateVal : string.Empty);
+                string startMode = settings.TryGetValue("PlotStartMode", out string? startModeVal) ? startModeVal : string.Empty;
+                string finishMode = settings.TryGetValue("PlotFinishMode", out string? finishModeVal) ? finishModeVal : string.Empty;
+                string startDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotStartDate", out string? startDateVal) ? startDateVal : string.Empty);
+                string finishDate = NormaliseStoredPlotDate(
+                    settings.TryGetValue("PlotFinishDate", out string? finishDateVal) ? finishDateVal : string.Empty);
 
-                var startAuto = PlotRangeModes.TryParse(startMode, out PlotRangeMode parsedStart)
+                bool startAuto = PlotRangeModes.TryParse(startMode, out PlotRangeMode parsedStart)
                     && parsedStart == PlotRangeMode.DataRange;
-                var finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
+                bool finishAuto = PlotRangeModes.TryParse(finishMode, out PlotRangeMode parsedFinish)
                     && parsedFinish == PlotRangeMode.DataRange;
 
                 // R5.2 layout settings. Each is parsed through its closed Core
@@ -1130,7 +1130,7 @@ internal class RibbonStateService
                 // a scale renders identically to a freshly initialised one.
                 GanttTimeScale timeScale = ReadTimeScale(settings);
                 GanttPlotMargin margin = ReadMargin(settings);
-                var marginCm = ReadMarginCm(settings);
+                double marginCm = ReadMarginCm(settings);
                 SizePreset? preset = ReadPreset(settings);
                 GanttPeriodLabelFormat periodLabelFormat = ReadPeriodLabelFormat(settings, timeScale);
 
@@ -1183,7 +1183,7 @@ internal class RibbonStateService
     private static GanttPeriodLabelFormat ReadPeriodLabelFormat(
         IReadOnlyDictionary<string, string> settings,
         GanttTimeScale scale) =>
-        settings.TryGetValue("PeriodLabelFormat", out var text)
+        settings.TryGetValue("PeriodLabelFormat", out string? text)
         && GanttChartSettings.TryParsePeriodLabelFormat(text, out GanttPeriodLabelFormat parsed)
         && GanttChartSettings.IsCompatible(scale, parsed)
             ? parsed
@@ -1194,7 +1194,7 @@ internal class RibbonStateService
     /// when the key is absent or names an unknown scale (R5.2).
     /// </summary>
     private static GanttTimeScale ReadTimeScale(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("TimeScale", out var text)
+        settings.TryGetValue("TimeScale", out string? text)
             && GanttChartSettings.TryParseTimeScale(text, out GanttTimeScale scale)
             ? scale
             : GanttTimeScale.Month;
@@ -1205,7 +1205,7 @@ internal class RibbonStateService
     /// (R5.2).
     /// </summary>
     private static GanttPlotMargin ReadMargin(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("Margin", out var text)
+        settings.TryGetValue("Margin", out string? text)
             && GanttPlotMargins.TryParse(text, out GanttPlotMargin margin)
             ? margin
             : GanttPlotMargins.Default;
@@ -1218,8 +1218,8 @@ internal class RibbonStateService
     /// rather than producing a negative or unbounded margin.
     /// </summary>
     private static double ReadMarginCm(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("MarginCm", out var raw)
-            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        settings.TryGetValue("MarginCm", out string? raw)
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             && double.IsFinite(parsed)
             ? parsed
             : GanttPlotMargins.DefaultCustomCm;
@@ -1230,7 +1230,7 @@ internal class RibbonStateService
     /// width and height displays show nothing rather than a guess.
     /// </summary>
     private static SizePreset? ReadPreset(IReadOnlyDictionary<string, string> settings) =>
-        settings.TryGetValue("SizePreset", out var text) ? SizePresets.ByKey(text) : null;
+        settings.TryGetValue("SizePreset", out string? text) ? SizePresets.ByKey(text) : null;
 
     /// <summary>
     /// Derives the effective display dates for both edit boxes (fix plan
@@ -1251,11 +1251,11 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            var explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
-            var explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
+            string explicitStart = _state.PlotStartAuto ? string.Empty : _state.PlotStartDate;
+            string explicitFinish = _state.PlotFinishAuto ? string.Empty : _state.PlotFinishDate;
 
-            var effectiveStart = explicitStart;
-            var effectiveFinish = explicitFinish;
+            string effectiveStart = explicitStart;
+            string effectiveFinish = explicitFinish;
 
             if (_state.PlotStartAuto || _state.PlotFinishAuto)
             {
@@ -1263,7 +1263,7 @@ internal class RibbonStateService
                 if (table is { Succeeded: true } && table.Rows is not null)
                 {
                     GanttValidationOutcome validation = GanttRowValidator.Validate(table.Rows);
-                    var padding = ReadRangePaddingDays(settings);
+                    int padding = ReadRangePaddingDays(settings);
                     PlotRangeOutcome range = PlotRangeResolver.TryResolve(
                         validation.Events,
                         _state.PlotStartAuto ? nameof(PlotRangeMode.DataRange) : nameof(PlotRangeMode.Explicit),
@@ -1357,8 +1357,8 @@ internal class RibbonStateService
     /// <returns>The non-negative padding in days per side.</returns>
     private static int ReadRangePaddingDays(IReadOnlyDictionary<string, string> settings)
     {
-        return settings.TryGetValue("RangePaddingDays", out var text)
-            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+        return settings.TryGetValue("RangePaddingDays", out string? text)
+            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
             && parsed >= 0
             ? parsed
             : 3;
@@ -1398,7 +1398,7 @@ internal class RibbonStateService
         // probe is guarded for the same reason as the source probes —
         // this method never throws, and a COM failure here must not
         // escape that contract.
-        var sheetInitialised = _state.SheetInitialised;
+        bool sheetInitialised = _state.SheetInitialised;
         if (_tableReader is not null)
         {
 #pragma warning disable CA1031
@@ -1515,7 +1515,7 @@ internal class RibbonStateService
             return 0;
         }
 
-        for (var index = 0; index < options.Count; index++)
+        for (int index = 0; index < options.Count; index++)
         {
             if (options[index] == selected)
             {
@@ -1633,7 +1633,7 @@ internal class RibbonStateService
             return 0;
         }
 
-        for (var index = 0; index < options.Count; index++)
+        for (int index = 0; index < options.Count; index++)
         {
             if (string.Equals(options[index], selected, StringComparison.Ordinal))
             {
@@ -1746,7 +1746,7 @@ internal class RibbonStateService
         {
             // Blank (null) resolves to Auto, and Auto is the leading choice.
             GanttLabelPosition selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
-            for (var index = 0; index < placementOptions.Count; index++)
+            for (int index = 0; index < placementOptions.Count; index++)
             {
                 if (placementOptions[index] == selectedPlacement)
                 {
@@ -1764,7 +1764,7 @@ internal class RibbonStateService
 
         // Blank (null) resolves to Auto, and Auto is the leading choice.
         GanttDateLabelPosition selected = _state.SelectedDateLabelPosition ?? GanttDateLabelPosition.Auto;
-        for (var index = 0; index < options.Count; index++)
+        for (int index = 0; index < options.Count; index++)
         {
             if (options[index] == selected)
             {
@@ -1881,8 +1881,8 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            var hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
-            var logAvailable = _logAvailabilitySource?.Invoke() ?? null;
+            bool? hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
+            bool? logAvailable = _logAvailabilitySource?.Invoke() ?? null;
 
             // R5.5 ruling 6: the description-label dropdown is the first selection-gated
             // control, so its context is captured here rather than left at its
@@ -2078,13 +2078,13 @@ internal class RibbonStateService
                 return UnavailableCustomStyleContext(previous);
             }
 
-            var builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+            HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
             {
                 _ = builtInKeys.Add(preset.StyleKey);
             }
 
-            var options = new List<string>();
+            List<string> options = [];
             foreach (string key in catalogues.Styles.StyleKeys)
             {
                 if (!builtInKeys.Contains(key))

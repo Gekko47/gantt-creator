@@ -221,11 +221,11 @@ public static class DelineatorBuilder
         }
 
         List<SceneWarning> warnings = [];
-        var owner = SceneOwnerId.ForRow(@event.Id);
+        SceneOwnerId owner = SceneOwnerId.ForRow(@event.Id);
 
         // The `Try*` form is used deliberately: DateToX throws for a date
         // outside the scale, and an out-of-range delineator must warn, not throw.
-        if (!timeScale.TryDateToX(date, out var x))
+        if (!timeScale.TryDateToX(date, out double x))
         {
             warnings.Add(new SceneWarning(
                 owner,
@@ -260,7 +260,7 @@ public static class DelineatorBuilder
         // THE LABEL CORNERS STILL RESOLVE AGAINST PlotBounds, at both ends. That is
         // why the line's extent is two separate members rather than a widened
         // PlotBounds: extending that box would drag every corner label with it.
-        var line = new SceneLine(
+        SceneLine line = new SceneLine(
             ScenePrimitive.CreateId(owner, "delineator"),
             owner,
             ZLayer.Delineator,
@@ -281,7 +281,7 @@ public static class DelineatorBuilder
         // both skip silently when the predetermined style is absent, so a
         // delineator label is gated on it too rather than falling back to the
         // line's style, which carries no font the measuring seam recognises.
-        var description = @event.Description;
+        string? description = @event.Description;
         SceneText? label = null;
         RectD? labelBounds = null;
         GanttLabelPosition? usedPosition = null;
@@ -289,7 +289,7 @@ public static class DelineatorBuilder
             && !string.IsNullOrEmpty(description)
             && request.LabelStyle is not null)
         {
-            var placed = TryPlaceLabel(
+            bool placed = TryPlaceLabel(
                 request,
                 @event,
                 description,
@@ -324,7 +324,7 @@ public static class DelineatorBuilder
             && request.LabelStyle is not null
             && @event.DateLabelPlacement is not GanttLabelPosition.None)
         {
-            var datePlaced = TryPlaceDateLabel(
+            bool datePlaced = TryPlaceDateLabel(
                 request,
                 @event,
                 date,
@@ -385,8 +385,8 @@ public static class DelineatorBuilder
             // truncation mechanism Core uses — never shrunk, wrapped, or
             // suppressed. Measuring the clipped text is what keeps the
             // box the host draws inside the box the scene measured.
-            var left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
-            var availablePt = left
+            bool left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
+            double availablePt = left
                 ? lineX - request.LabelGapPt - request.ChartBounds.Left
                 : request.ChartBounds.Right - lineX - request.LabelGapPt;
             if (availablePt <= 0)
@@ -394,8 +394,8 @@ public static class DelineatorBuilder
                 continue;
             }
 
-            var labelText = text;
-            var truncated = false;
+            string labelText = text;
+            bool truncated = false;
             if (LabelText.Overflows(text, availablePt, request.LabelMetrics))
             {
                 labelText = LabelText.Ellipsize(text, availablePt, request.LabelMetrics);
@@ -424,7 +424,7 @@ public static class DelineatorBuilder
                 ? GanttTextAlignment.Right
                 : GanttTextAlignment.Left;
 
-            var owner = SceneOwnerId.ForRow(@event.Id);
+            SceneOwnerId owner = SceneOwnerId.ForRow(@event.Id);
             label = new SceneText(
                 ScenePrimitive.CreateId(owner, "delineator-label"),
                 owner,
@@ -499,7 +499,7 @@ public static class DelineatorBuilder
         dateLabel = null;
         dateLabelBounds = null;
 
-        var dateText = GanttDateFormatting.Format(start, request.DateFormat);
+        string dateText = GanttDateFormatting.Format(start, request.DateFormat);
         if (!request.LabelMetrics.TryMeasure(dateText, out TextMeasurement? measurement)
             || measurement is null)
         {
@@ -544,7 +544,7 @@ public static class DelineatorBuilder
                 ? GanttTextAlignment.Right
                 : GanttTextAlignment.Left;
 
-            var owner = SceneOwnerId.ForRow(@event.Id);
+            SceneOwnerId owner = SceneOwnerId.ForRow(@event.Id);
             dateLabel = new SceneText(
                 ScenePrimitive.CreateId(owner, DateLabelBuilder.StartRole),
                 owner,
@@ -605,14 +605,14 @@ public static class DelineatorBuilder
         double labelGapPt,
         double stackOffsetPt)
     {
-        var left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
-        var x = left ? lineX - labelGapPt - measurement.WidthPt : lineX + labelGapPt;
+        bool left = position is GanttLabelPosition.TopLeft or GanttLabelPosition.BottomLeft;
+        double x = left ? lineX - labelGapPt - measurement.WidthPt : lineX + labelGapPt;
 
         // The stack grows away from the edge the label sits against, so a
         // Top-anchored label steps down and a Bottom-anchored label steps up;
         // neither walks out of the plot.
-        var top = position is GanttLabelPosition.TopLeft or GanttLabelPosition.TopRight;
-        var y = top ? plot.Top + stackOffsetPt : plot.Bottom - measurement.HeightPt - stackOffsetPt;
+        bool top = position is GanttLabelPosition.TopLeft or GanttLabelPosition.TopRight;
+        double y = top ? plot.Top + stackOffsetPt : plot.Bottom - measurement.HeightPt - stackOffsetPt;
 
         return new RectD(x, y, measurement.WidthPt, measurement.HeightPt);
     }
@@ -807,7 +807,7 @@ public static class DelineatorLayout
         // label height, which §24's "stacked deterministically with StackGapPt"
         // forbids. A member whose label was suppressed advances nothing, because
         // it occupied no space.
-        var stackOffsetPt = 0.0;
+        double stackOffsetPt = 0.0;
 
         foreach (DelineatorRequest item in ordered)
         {
@@ -826,7 +826,7 @@ public static class DelineatorLayout
             // slot: they sit at different corners of the same row, so both are
             // placed at the same offset and the slot advances once, by the taller
             // of the two placed boxes.
-            var contributesLabel =
+            bool contributesLabel =
                 (item.LabelPosition != GanttLabelPosition.None
                     && !string.IsNullOrEmpty(item.Event?.Description))
                 || (item.ShowDateLabels
@@ -880,7 +880,7 @@ public static class DelineatorLayout
             // by the taller of its two placed boxes: the description and
             // date labels share the slot at different corners, so the
             // space the row occupies is the taller box, not their sum.
-            var placedHeight = 0.0;
+            double placedHeight = 0.0;
             if (result.LabelBounds is { } bounds)
             {
                 placed.Add(bounds);

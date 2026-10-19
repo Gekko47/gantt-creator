@@ -80,10 +80,10 @@ public sealed class FakeTextMetrics : ITextMetrics
             return false;
         }
 
-        var widthPt = 0.0;
-        foreach (var character in text)
+        double widthPt = 0.0;
+        foreach (char character in text)
         {
-            var advancePt = _advancePt(character);
+            double advancePt = _advancePt(character);
             if (!double.IsFinite(advancePt) || advancePt < 0)
             {
                 measurement = null;
@@ -144,9 +144,9 @@ public static class LabelText
             throw new ArgumentOutOfRangeException(nameof(availableWidthPt), availableWidthPt, "Available width must be finite.");
         }
 
-        for (var length = text.Length - 1; length >= 0; length--)
+        for (int length = text.Length - 1; length >= 0; length--)
         {
-            var candidate = FitPrefix(text, length);
+            string candidate = FitPrefix(text, length);
             if (
                 metrics.TryMeasure(candidate, out TextMeasurement? measurement)
                 && measurement is not null

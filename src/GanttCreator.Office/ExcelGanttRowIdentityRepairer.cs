@@ -37,40 +37,40 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
         }
 
         List<object?[]> rows = ExcelValue2Matrix.ReadRows(GetBodyValues(body));
-        var idIndex = FindColumnIndex(table, "Id");
-        var parentIdIndex = FindColumnIndex(table, "ParentId");
+        int idIndex = FindColumnIndex(table, "Id");
+        int parentIdIndex = FindColumnIndex(table, "ParentId");
         if (idIndex < 0)
         {
             return GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.TableMissing);
         }
 
-        var rowCount = rows.Count;
-        var originalIds = new string[rowCount];
-        var canonicalIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
-        var idOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        int rowCount = rows.Count;
+        string[] originalIds = new string[rowCount];
+        Dictionary<string, int> canonicalIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+        Dictionary<string, int> idOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             originalIds[rowIndex] = ToText(rows[rowIndex].ElementAtOrDefault(idIndex)).Trim();
             _ = canonicalIndexes.TryAdd(originalIds[rowIndex], rowIndex);
-            _ = idOccurrences.TryGetValue(originalIds[rowIndex], out var occurrences);
+            _ = idOccurrences.TryGetValue(originalIds[rowIndex], out int occurrences);
             idOccurrences[originalIds[rowIndex]] = occurrences + 1;
         }
 
-        var replacements = new Dictionary<int, GanttRowId>();
-        var used = new HashSet<string>(StringComparer.Ordinal);
-        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        Dictionary<int, GanttRowId> replacements = [];
+        HashSet<string> used = new HashSet<string>(StringComparer.Ordinal);
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            var original = originalIds[rowIndex];
+            string original = originalIds[rowIndex];
             if (GanttRowId.TryParse(original, out _))
             {
                 _ = used.Add(original);
             }
         }
-        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
-            var original = originalIds[rowIndex];
-            var malformed = !GanttRowId.TryParse(original, out _);
-            var duplicate = !canonicalIndexes.TryGetValue(original, out var canonicalIndex) || canonicalIndex != rowIndex;
+            string original = originalIds[rowIndex];
+            bool malformed = !GanttRowId.TryParse(original, out _);
+            bool duplicate = !canonicalIndexes.TryGetValue(original, out int canonicalIndex) || canonicalIndex != rowIndex;
             if (malformed || duplicate)
             {
                 GanttRowId replacement = NewUniqueId(used);
@@ -79,7 +79,7 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
             }
         }
 
-        var repaired = 0;
+        int repaired = 0;
         foreach (KeyValuePair<int, GanttRowId> pair in replacements.OrderBy(pair => pair.Key))
         {
             GetCell(body, pair.Key + 1, idIndex + 1).Value2 = pair.Value.Value;
@@ -88,21 +88,21 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
 
         if (parentIdIndex >= 0)
         {
-            for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+            for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
             {
-                var parentText = ToText(rows[rowIndex].ElementAtOrDefault(parentIdIndex)).Trim();
+                string parentText = ToText(rows[rowIndex].ElementAtOrDefault(parentIdIndex)).Trim();
 
                 // A blank cell is not a reference. A duplicated Id has no single
                 // canonical replacement, so ADR-0011 leaves it unchanged and
                 // GanttRowValidator reports it as ParentAmbiguous instead.
                 if (parentText.Length == 0
-                    || !idOccurrences.TryGetValue(parentText, out var parentOccurrences)
+                    || !idOccurrences.TryGetValue(parentText, out int parentOccurrences)
                     || parentOccurrences > 1)
                 {
                     continue;
                 }
 
-                if (canonicalIndexes.TryGetValue(parentText, out var parentRowIndex)
+                if (canonicalIndexes.TryGetValue(parentText, out int parentRowIndex)
                     && replacements.TryGetValue(parentRowIndex, out GanttRowId? replacement)
                     && replacement is not null)
                 {
@@ -133,8 +133,8 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
     {
         worksheet = null;
         table = null;
-        var sheetCount = sheets.Count;
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = sheets.Count;
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
             {
@@ -142,8 +142,8 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
             }
 
             Excel.ListObjects objects = candidate.ListObjects;
-            var objectCount = objects.Count;
-            for (var objectIndex = 1; objectIndex <= objectCount; objectIndex++)
+            int objectCount = objects.Count;
+            for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
                 if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
@@ -161,8 +161,8 @@ public class ExcelGanttRowIdentityRepairer(object? application, IWorksheetProtec
     private static int FindColumnIndex(Excel.ListObject table, string name)
     {
         Excel.ListColumns columns = table.ListColumns;
-        var count = columns.Count;
-        for (var index = 1; index <= count; index++)
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
         {
             if (string.Equals(columns[index].Name, name, StringComparison.Ordinal))
             {

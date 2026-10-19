@@ -257,7 +257,7 @@ public static class EntityTypeCatalog
             return null;
         }
 
-        var trimmed = displayName.Trim();
+        string trimmed = displayName.Trim();
 
         return trimmed.Length == 0
             ? null

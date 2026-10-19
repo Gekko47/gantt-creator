@@ -79,10 +79,10 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
                 return SelectionFacts.None;
             }
 
-            var selection = GetSelection(application) as Excel.Range;
+            Excel.Range? selection = GetSelection(application) as Excel.Range;
             Excel.Range? active = GetActiveCell(application);
             Excel.Range? range = selection ?? active;
-            return range is null || !TryResolveToBody(table, range, out var bodyIndex, out var rowCount, out var isHeader)
+            return range is null || !TryResolveToBody(table, range, out int? bodyIndex, out int rowCount, out bool isHeader)
                 ? SelectionFacts.None
                 : new SelectionFacts(
                     true,
@@ -109,7 +109,7 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
             return InertSelectionSubscription.Instance;
         }
 
-        var subscription = new SelectionSubscription(events, handler);
+        SelectionSubscription subscription = new SelectionSubscription(events, handler);
         subscription.Attach();
         return subscription;
     }
@@ -156,8 +156,8 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
 #pragma warning disable CA1031
         try
         {
-            var sheetCount = GetSheetCount(sheets);
-            for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+            int sheetCount = GetSheetCount(sheets);
+            for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
             {
                 if (GetSheetAt(sheets, sheetIndex) is not Excel.Worksheet candidate)
                 {
@@ -165,8 +165,8 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
                 }
 
                 Excel.ListObjects listObjects = candidate.ListObjects;
-                var tableCount = listObjects.Count;
-                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     Excel.ListObject located = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
@@ -245,8 +245,8 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
         }
 
         rowCount = GetRowCount(active);
-        var firstWorksheetRow = GetRangeRow(body);
-        var activeWorksheetRow = GetRangeRow(intersection);
+        int firstWorksheetRow = GetRangeRow(body);
+        int activeWorksheetRow = GetRangeRow(intersection);
         if (firstWorksheetRow <= 0 || activeWorksheetRow < firstWorksheetRow)
         {
             return false;

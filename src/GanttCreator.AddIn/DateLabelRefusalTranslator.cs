@@ -25,7 +25,7 @@ internal static class DateLabelRefusalTranslator
             return string.Empty;
         }
 
-        var row = outcome.SelectedRowNumber is int number
+        string row = outcome.SelectedRowNumber is int number
             ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
             : "The selected row ";
 

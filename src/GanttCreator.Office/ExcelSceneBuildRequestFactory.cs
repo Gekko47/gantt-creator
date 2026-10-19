@@ -163,12 +163,12 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // The range is derived from the events themselves, not from a stored date
         // range, so a refreshed chart always covers what it actually draws. A stored
         // range would be a second source of truth that survives the data changing.
-        if (!TryResolveDateRange(events, settings, out DateOnly plotStart, out DateOnly plotFinish, out SceneBuildRequestRefusal? rangeRefusal, out var rangeMessage))
+        if (!TryResolveDateRange(events, settings, out DateOnly plotStart, out DateOnly plotFinish, out SceneBuildRequestRefusal? rangeRefusal, out string? rangeMessage))
         {
             return SceneBuildRequestOutcome.Refused(rangeRefusal!.Value, rangeMessage!);
         }
 
-        if (!TryResolvePreset(settings, out SizePreset? preset, out SceneBuildRequestRefusal? presetRefusal, out var presetMessage))
+        if (!TryResolvePreset(settings, out SizePreset? preset, out SceneBuildRequestRefusal? presetRefusal, out string? presetMessage))
         {
             return SceneBuildRequestOutcome.Refused(presetRefusal!.Value, presetMessage!);
         }
@@ -186,8 +186,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // The grid's own total, not a re-sum of its columns. Re-deriving it here
         // would be a second computation of a figure the grid already publishes, and
         // the two could disagree on what "the panel width" means.
-        var textPanelWidthPt = measuredGrid.TotalWidthPt;
-        var chrome = themedMetrics.GetValueOrDefault(
+        double textPanelWidthPt = measuredGrid.TotalWidthPt;
+        double chrome = themedMetrics.GetValueOrDefault(
             _outerPaddingToken, GanttCatalogues.MetricDefault(_outerPaddingToken));
 
         // ADR-0031 D1/D2: the chart's frame margin is per side. Top and bottom are
@@ -206,7 +206,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // body is now two rows, and ADR-0031 D2's contract is that the chart frame
         // closes at the bottom of that whole strip. Reading the padding row alone
         // would close the frame 0.25pt too high, inside the anchor row.
-        var padding = new ChartPaddingPt(
+        ChartPaddingPt padding = new ChartPaddingPt(
             LeftPt: 0,
             TopPt: measuredGrid.TopPaddingHeightPt,
             RightPt: chrome,
@@ -231,8 +231,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // schedule because A4 landscape is 29 rows tall. The WIDTH budget is
         // untouched, so the plot still refuses a panel too wide to leave a readable
         // plot (R4.7H D4).
-        var topPt = measuredGrid.OriginTopPt;
-        var heightPt = measuredGrid.TotalRowHeightPt;
+        double topPt = measuredGrid.OriginTopPt;
+        double heightPt = measuredGrid.TotalRowHeightPt;
 
         // R5.2: the plot margin, resolved once from the Margin/MarginCm settings and
         // subtracted TWICE from the width budget (owner ruling) so a visible, usable
@@ -241,8 +241,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // the page, leaving the margin as breathing room on that side without opening a
         // gap between the table and the plot. The margin never touches the measured text
         // panel, so it cannot resize a user column (R4.7H D3).
-        var marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
-        var widthChromePt = marginPt * 2;
+        double marginPt = GanttPlotMargins.MarginPt(ReadMargin(settings), ReadMarginCm(settings));
+        double widthChromePt = marginPt * 2;
 
         // The single production call to the plot authority. PlotGeometryResolver owns
         // the subtraction and the bounds; this type supplies the measurements and
@@ -511,16 +511,16 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        var padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
+        int padding = (int)ReadDouble(settings, _rangePaddingKey, 0, fallback: _defaultRangePaddingDays);
         if (padding < 0)
         {
             padding = 0;
         }
 
-        var startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
-        var finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
-        var startDateText = ReadString(settings, _plotStartDateKey);
-        var finishDateText = ReadString(settings, _plotFinishDateKey);
+        string startModeText = ReadString(settings, _plotStartModeKey) ?? nameof(PlotRangeMode.DataRange);
+        string finishModeText = ReadString(settings, _plotFinishModeKey) ?? nameof(PlotRangeMode.DataRange);
+        string? startDateText = ReadString(settings, _plotStartDateKey);
+        string? finishDateText = ReadString(settings, _plotFinishDateKey);
 
         PlotRangeOutcome range = PlotRangeResolver.TryResolve(
             events,
@@ -639,8 +639,8 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// </summary>
     private static string FailingPlotRangeMode(IReadOnlyDictionary<string, string> settings)
     {
-        var startModeText = ReadString(settings, _plotStartModeKey);
-        var finishModeText = ReadString(settings, _plotFinishModeKey);
+        string? startModeText = ReadString(settings, _plotStartModeKey);
+        string? finishModeText = ReadString(settings, _plotFinishModeKey);
         return (startModeText, finishModeText) switch
         {
             (string start, _) when !Enum.TryParse<PlotRangeMode>(start, out _) => start,
@@ -662,7 +662,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         refusal = null;
         message = null;
 
-        var key = ReadString(settings, _sizePresetKey) ?? SizePresets.Default.Key;
+        string key = ReadString(settings, _sizePresetKey) ?? SizePresets.Default.Key;
         preset = SizePresets.ByKey(key);
         if (preset is not null)
         {
@@ -690,7 +690,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         scale = GanttTimeScale.Month;
         periodFormat = GanttPeriodLabelFormat.MMM;
 
-        var scaleText = ReadString(settings, "TimeScale");
+        string? scaleText = ReadString(settings, "TimeScale");
 
         // IDE0046 would fold these two into one condition, and it is right that it
         // can: `A is not null && !B` is `A is null || B`. It is left unfolded because
@@ -702,7 +702,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             return false;
         }
 
-        var formatText = ReadString(settings, "PeriodLabelFormat");
+        string? formatText = ReadString(settings, "PeriodLabelFormat");
         if (formatText is not null && !GanttChartSettings.TryParsePeriodLabelFormat(formatText, out periodFormat))
         {
             return false;
@@ -722,7 +722,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
         // lookup always missed and every chart fell back to DdMMyyyy — the approved
         // setting was unreachable in production while its test injected the key
         // directly and passed.
-        var text = ReadString(settings, _dateFormatKey);
+        string? text = ReadString(settings, _dateFormatKey);
 
         // Same reason as TryParseScale: the short-circuit is the point.
 #pragma warning disable IDE0046
@@ -745,23 +745,23 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             : "The plot area could not be resolved: " + outcome.Refusal + ".";
 
     private static string? ReadString(IReadOnlyDictionary<string, string> settings, string key) =>
-        settings.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+        settings.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
     private static double ReadDouble(
         IReadOnlyDictionary<string, string> settings,
         string key,
         double minimum,
         double fallback) =>
-        settings.TryGetValue(key, out var raw)
-        && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        settings.TryGetValue(key, out string? raw)
+        && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
         && double.IsFinite(parsed)
         && parsed >= minimum
             ? parsed
             : fallback;
 
     private static bool ReadBool(IReadOnlyDictionary<string, string> settings, string key, bool fallback) =>
-        settings.TryGetValue(key, out var raw)
-        && bool.TryParse(raw, out var parsed)
+        settings.TryGetValue(key, out string? raw)
+        && bool.TryParse(raw, out bool parsed)
             ? parsed
             : fallback;
 

@@ -159,7 +159,7 @@ public sealed record ThemeEditRequest(
         // Create/Rename/Update must be well-formed. Rename/Delete targets are
         // checked for existence at write time (the Office writer holds the
         // registry). Update keeps its key, so it can never collide with itself.
-        var seenCustomKeys = new HashSet<string>(StringComparer.Ordinal);
+        HashSet<string> seenCustomKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (CustomStyleEdit edit in request.CustomStyleEdits ?? [])
         {
             if (string.IsNullOrWhiteSpace(edit.StyleKey))
@@ -169,7 +169,7 @@ public sealed record ThemeEditRequest(
                 return false;
             }
 
-            var key = edit.StyleKey.Trim();
+            string key = edit.StyleKey.Trim();
             if (IsBuiltInPreset(key))
             {
                 refusal = ThemeEditRefusal.InvalidCustomStyle;
@@ -197,7 +197,7 @@ public sealed record ThemeEditRequest(
 
                 if (edit.Operation == CustomStyleOperation.Rename)
                 {
-                    var newKey = edit.NewStyleKey;
+                    string? newKey = edit.NewStyleKey;
                     if (string.IsNullOrWhiteSpace(newKey))
                     {
                         refusal = ThemeEditRefusal.InvalidCustomStyle;
@@ -221,7 +221,7 @@ public sealed record ThemeEditRequest(
             }
         }
 
-        foreach (var pair in request.MetricEdits)
+        foreach (KeyValuePair<string, double> pair in request.MetricEdits)
         {
             GanttMetricToken? token = FindMetric(pair.Key);
             if (token is null || !EditableMetrics.Contains(pair.Key))
@@ -252,7 +252,7 @@ public sealed record ThemeEditRequest(
     public static IReadOnlyList<string> ContrastWarnings(ThemeEditRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var warnings = new List<string>();
+        List<string> warnings = [];
         foreach (ThemeStyleEdit edit in request.StyleEdits)
         {
             if (edit.FillColour.Length == 0 || edit.TextColour.Length == 0)

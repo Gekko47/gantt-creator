@@ -53,10 +53,10 @@ public static class GanttRowValidator
     {
         ArgumentNullException.ThrowIfNull(rows);
 
-        var issues = new List<GanttValidationIssue>();
-        var perRow = new ValidatedRow?[rows.Count];
+        List<GanttValidationIssue> issues = [];
+        ValidatedRow?[] perRow = new ValidatedRow?[rows.Count];
 
-        for (var i = 0; i < rows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
             perRow[i] = ValidateFields(rows[i], issues, styleRegistry);
         }
@@ -64,9 +64,9 @@ public static class GanttRowValidator
         // Index first-canonical IDs: the first row carrying well-formed text wins,
         // even when that row has other blocking errors. Later rows with the same
         // trimmed text are duplicates.
-        var canonicalById = new Dictionary<string, int>(StringComparer.Ordinal);
-        var duplicateIds = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < rows.Count; i++)
+        Dictionary<string, int> canonicalById = new Dictionary<string, int>(StringComparer.Ordinal);
+        HashSet<string> duplicateIds = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
             if (parsed?.Id is null)
@@ -74,7 +74,7 @@ public static class GanttRowValidator
                 continue;
             }
 
-            var key = parsed.Id.Value;
+            string key = parsed.Id.Value;
             if (!canonicalById.ContainsKey(key))
             {
                 canonicalById[key] = i;
@@ -107,8 +107,8 @@ public static class GanttRowValidator
         // decided before the parent's blocking finding existed.
         PropagateBlockedParents(rows, perRow, canonicalById, duplicateIds, issues);
 
-        var events = new List<GanttEvent>();
-        for (var i = 0; i < rows.Count; i++)
+        List<GanttEvent> events = [];
+        for (int i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
             if (parsed is not null && !parsed.HasBlockingError)
@@ -201,8 +201,8 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues,
         GanttStyleRegistry? styleRegistry)
     {
-        var rowNumber = row.RowNumber;
-        var hasError = false;
+        int rowNumber = row.RowNumber;
+        bool hasError = false;
 
         void Add(string field, string code, GanttValidationSeverity severity, string message)
         {
@@ -213,8 +213,8 @@ public static class GanttRowValidator
             }
         }
 
-        var idBlocked = ClassifyCellState("Id", row.IdCell.State, relevant: true, Add);
-        var typeBlocked = ClassifyCellState("Type", row.TypeCell.State, relevant: true, Add);
+        bool idBlocked = ClassifyCellState("Id", row.IdCell.State, relevant: true, Add);
+        bool typeBlocked = ClassifyCellState("Type", row.TypeCell.State, relevant: true, Add);
 
         // Id: required, well-formed. Duplicate detection is cross-row.
         GanttRowId? id = null;
@@ -264,11 +264,11 @@ public static class GanttRowValidator
         // `LaneOrdering.LaneKey` already returns a row-scoped key when it is null.
         // A SUPPLIED value is still validated, so this is optional rather than
         // unvalidated.
-        var isSplitterOrSpacer = type is GanttEntityType.Splitter or GanttEntityType.Spacer;
-        var isDelineator = type == GanttEntityType.Delineator;
-        var laneRelevant = !isSplitterOrSpacer && !isDelineator;
-        var startRelevant = definition?.DateMode != EntityDateMode.None;
-        var finishRelevant = definition?.DateMode == EntityDateMode.StartFinish;
+        bool isSplitterOrSpacer = type is GanttEntityType.Splitter or GanttEntityType.Spacer;
+        bool isDelineator = type == GanttEntityType.Delineator;
+        bool laneRelevant = !isSplitterOrSpacer && !isDelineator;
+        bool startRelevant = definition?.DateMode != EntityDateMode.None;
+        bool finishRelevant = definition?.DateMode == EntityDateMode.StartFinish;
         // R4.7A D9: ParentId is authoritative for general hierarchy, not only for
         // Critical Interval, so relevance is driven by the child-capability matrix
         // rather than by a hard-coded `isCriticalInterval`. `definition is not null`
@@ -277,25 +277,25 @@ public static class GanttRowValidator
         // matrix does not classify as child-capable -- Splitter, Spacer, Delineator --
         // still fall through to NotUsedByType below, so nothing becomes silently
         // permitted.
-        var parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
-        var styleRelevant = true;
-        var labelRelevant = true;
-        var dateLabelRelevant = true;
-        var fillRelevant = true;
-        var strokeRelevant = true;
+        bool parentRelevant = definition is not null && EntityHierarchyCatalog.ParentIdIsRelevant(parsedType);
+        bool styleRelevant = true;
+        bool labelRelevant = true;
+        bool dateLabelRelevant = true;
+        bool fillRelevant = true;
+        bool strokeRelevant = true;
         const bool visibleRelevant = true;
         const bool sortOrderRelevant = true;
 
-        var laneBlocked = ClassifyCellState("LaneId", row.LaneIdCell.State, laneRelevant, Add);
-        var stackBlocked = ClassifyCellState("StackIndex", row.StackIndexCell.State, laneRelevant, Add);
-        var startBlocked = ClassifyCellState("Start", row.StartCell.State, startRelevant, Add);
-        var finishBlocked = ClassifyCellState("Finish", row.FinishCell.State, finishRelevant, Add);
-        var parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
-        var styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
-        var labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
-        var dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, dateLabelRelevant, Add);
-        var fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
-        var strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
+        bool laneBlocked = ClassifyCellState("LaneId", row.LaneIdCell.State, laneRelevant, Add);
+        bool stackBlocked = ClassifyCellState("StackIndex", row.StackIndexCell.State, laneRelevant, Add);
+        bool startBlocked = ClassifyCellState("Start", row.StartCell.State, startRelevant, Add);
+        bool finishBlocked = ClassifyCellState("Finish", row.FinishCell.State, finishRelevant, Add);
+        bool parentBlocked = ClassifyCellState("ParentId", row.ParentIdCell.State, parentRelevant, Add);
+        bool styleBlocked = ClassifyCellState("StyleKey", row.StyleKeyCell.State, styleRelevant, Add);
+        bool labelBlocked = ClassifyCellState("LabelPosition", row.LabelPositionCell.State, labelRelevant, Add);
+        bool dateLabelBlocked = ClassifyCellState("DateLabelPosition", row.DateLabelPositionCell.State, dateLabelRelevant, Add);
+        bool fillBlocked = ClassifyCellState("FillColour", row.FillColourCell.State, fillRelevant, Add);
+        bool strokeBlocked = ClassifyCellState("StrokeColour", row.StrokeColourCell.State, strokeRelevant, Add);
         _ = ClassifyCellState("Visible", row.VisibleCell.State, visibleRelevant, Add);
         _ = ClassifyCellState("SortOrder", row.SortOrderCell.State, sortOrderRelevant, Add);
 
@@ -503,7 +503,7 @@ public static class GanttRowValidator
         // ParentUnknown error. `parentRelevant` is the same flag ClassifyCellState
         // used above, so the two decisions cannot disagree.
         GanttRowId? parentId = null;
-        var parentText = row.ParentId;
+        string? parentText = row.ParentId;
         if (!parentBlocked && parentRelevant)
         {
             // Optional for every child-capable type: blank means top-level, which
@@ -541,7 +541,7 @@ public static class GanttRowValidator
         // StyleKey: a type whose catalogue row requires one (Custom Activity,
         // Custom Milestone) demands it; a supplied key must resolve when the
         // caller supplies the validated style registry.
-        var styleKey = row.StyleKey;
+        string? styleKey = row.StyleKey;
         GanttStyleDefinition? styleDefinition = null;
         if (!styleBlocked && definition is { RequiresStyleKey: true } && styleKey is null)
         {
@@ -669,10 +669,10 @@ public static class GanttRowValidator
         // Colours: format plus type capability, or the selected Custom style's
         // capability. A Custom row with an unresolved style remains blocked by
         // StyleKeyUnknown and receives no colour-capability finding.
-        var fill = fillBlocked
+        string? fill = fillBlocked
             ? null
             : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, styleRegistry is not null, Add);
-        var stroke = strokeBlocked
+        string? stroke = strokeBlocked
             ? null
             : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, styleRegistry is not null, Add);
 
@@ -680,7 +680,7 @@ public static class GanttRowValidator
         int? sortOrder = null;
         if (row.SortOrder is not null)
         {
-            if (!int.TryParse(row.SortOrder, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSort) || parsedSort < 0)
+            if (!int.TryParse(row.SortOrder, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedSort) || parsedSort < 0)
             {
                 Add(
                     "SortOrder",
@@ -701,9 +701,9 @@ public static class GanttRowValidator
         }
 
         GanttRowId? laneForEvent = (isSplitterOrSpacer || isDelineator) ? null : laneId;
-        var stackForEvent = (isSplitterOrSpacer || isDelineator) ? null : stackIndex;
+        int? stackForEvent = (isSplitterOrSpacer || isDelineator) ? null : stackIndex;
 
-        var @event = new GanttEvent(
+        GanttEvent @event = new GanttEvent(
             rowNumber,
             id,
             laneForEvent,
@@ -741,7 +741,7 @@ public static class GanttRowValidator
             return null;
         }
 
-        var field = isFill ? "FillColour" : "StrokeColour";
+        string field = isFill ? "FillColour" : "StrokeColour";
         if (!IsHexColour(text))
         {
             add(field, GanttValidationCodes.BadColourFormat, GanttValidationSeverity.Error, $"{field} '{text}' must be '#RRGGBB'.");
@@ -764,7 +764,7 @@ public static class GanttRowValidator
         EntityColourCapability capability = definition.RequiresStyleKey
             ? styleDefinition?.ColourCapability ?? EntityColourCapability.None
             : definition.ColourCapability;
-        var allowed = isFill
+        bool allowed = isFill
             ? capability.HasFlag(EntityColourCapability.Fill)
             : capability.HasFlag(EntityColourCapability.Stroke) || capability.HasFlag(EntityColourCapability.Hatch);
         if (!allowed)
@@ -788,10 +788,10 @@ public static class GanttRowValidator
             return false;
         }
 
-        for (var i = 1; i < text.Length; i++)
+        for (int i = 1; i < text.Length; i++)
         {
-            var c = text[i];
-            var isHex = c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
+            char c = text[i];
+            bool isHex = c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F');
             if (!isHex)
             {
                 return false;
@@ -812,7 +812,7 @@ public static class GanttRowValidator
         HashSet<int> cycleRows = CheckParentCycles(rows, perRow, canonicalById, duplicateIds, issues);
 
         // Resolve each Critical Interval ParentId against the same batch.
-        for (var i = 0; i < rows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
             if (parsed is null
@@ -827,7 +827,7 @@ public static class GanttRowValidator
                 continue;
             }
 
-            var key = parsed.Event.ParentId.Value;
+            string key = parsed.Event.ParentId.Value;
             if (duplicateIds.Contains(key))
             {
                 issues.Add(
@@ -843,7 +843,7 @@ public static class GanttRowValidator
                 continue;
             }
 
-            if (!canonicalById.TryGetValue(key, out var parentIndex))
+            if (!canonicalById.TryGetValue(key, out int parentIndex))
             {
                 issues.Add(
                     new GanttValidationIssue(
@@ -947,8 +947,8 @@ public static class GanttRowValidator
         // Rows that already carry a blocking error were decided by the field
         // pass, the cycle pass, or the direct parent pass; re-reporting them
         // here would duplicate that finding.
-        var decided = new HashSet<int>();
-        for (var i = 0; i < rows.Count; i++)
+        HashSet<int> decided = [];
+        for (int i = 0; i < rows.Count; i++)
         {
             if (perRow[i] is { HasBlockingError: true }
                 && EntityHierarchyCatalog.MayBeChild(perRow[i]!.Type ?? GanttEntityType.Spacer))
@@ -957,11 +957,11 @@ public static class GanttRowValidator
             }
         }
 
-        var changed = true;
+        bool changed = true;
         while (changed)
         {
             changed = false;
-            for (var i = 0; i < rows.Count; i++)
+            for (int i = 0; i < rows.Count; i++)
             {
                 if (
                     decided.Contains(i)
@@ -973,7 +973,7 @@ public static class GanttRowValidator
                     }
                     || !EntityHierarchyCatalog.MayBeChild(rowType)
                     || duplicateIds.Contains(parentId.Value)
-                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex)
+                    || !canonicalById.TryGetValue(parentId.Value, out int parentIndex)
                     || perRow[parentIndex] is not { HasBlockingError: true }
                 )
                 {
@@ -1027,9 +1027,9 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues
     )
     {
-        var childrenByParent = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        Dictionary<string, List<int>> childrenByParent = new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
-        for (var i = 0; i < rows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
             ValidatedRow? parsed = perRow[i];
             if (parsed is null
@@ -1037,7 +1037,7 @@ public static class GanttRowValidator
                 || !EntityHierarchyCatalog.MayBeChild(parsed.Type ?? GanttEntityType.Spacer)
                 || parsed.Event?.ParentId is not { } parentId
                 || duplicateIds.Contains(parentId.Value)
-                || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                || !canonicalById.TryGetValue(parentId.Value, out int parentIndex))
             {
                 continue;
             }
@@ -1100,10 +1100,10 @@ public static class GanttRowValidator
             }
         }
 
-        foreach ((var parentId, List<int> children) in childrenByParent.OrderBy(static p => p.Key, StringComparer.Ordinal))
+        foreach ((string? parentId, List<int> children) in childrenByParent.OrderBy(static p => p.Key, StringComparer.Ordinal))
         {
             if (children.Count <= EntityHierarchyCatalog.MaxChildrenPerParent
-                || !canonicalById.TryGetValue(parentId, out var parentRowIndex))
+                || !canonicalById.TryGetValue(parentId, out int parentRowIndex))
             {
                 continue;
             }
@@ -1139,11 +1139,11 @@ public static class GanttRowValidator
         List<GanttValidationIssue> issues
     )
     {
-        var cycleRows = new HashSet<int>();
-        var path = new List<int>();
-        var pathIndexByRow = new Dictionary<int, int>();
+        HashSet<int> cycleRows = [];
+        List<int> path = [];
+        Dictionary<int, int> pathIndexByRow = [];
 
-        for (var start = 0; start < rows.Count; start++)
+        for (int start = 0; start < rows.Count; start++)
         {
             if (!IsUsableChildCapableRow(start, perRow, canonicalById))
             {
@@ -1152,12 +1152,12 @@ public static class GanttRowValidator
 
             path.Clear();
             pathIndexByRow.Clear();
-            var current = start;
+            int current = start;
             while (current >= 0 && IsUsableChildCapableRow(current, perRow, canonicalById))
             {
-                if (pathIndexByRow.TryGetValue(current, out var cycleStart))
+                if (pathIndexByRow.TryGetValue(current, out int cycleStart))
                 {
-                    for (var index = cycleStart; index < path.Count; index++)
+                    for (int index = cycleStart; index < path.Count; index++)
                     {
                         _ = cycleRows.Add(path[index]);
                     }
@@ -1170,7 +1170,7 @@ public static class GanttRowValidator
                 ValidatedRow? node = perRow[current];
                 if (node?.Event?.ParentId is not { } parentId
                     || duplicateIds.Contains(parentId.Value)
-                    || !canonicalById.TryGetValue(parentId.Value, out var parentIndex))
+                    || !canonicalById.TryGetValue(parentId.Value, out int parentIndex))
                 {
                     break;
                 }
@@ -1179,7 +1179,7 @@ public static class GanttRowValidator
             }
         }
 
-        foreach (var rowIndex in cycleRows.OrderBy(index => rows[index].RowNumber))
+        foreach (int rowIndex in cycleRows.OrderBy(index => rows[index].RowNumber))
         {
             issues.Add(
                 new GanttValidationIssue(
@@ -1224,7 +1224,7 @@ public static class GanttRowValidator
         return row is { Event: not null, HasBlockingError: false, Type: { } rowType }
             && EntityHierarchyCatalog.MayBeChild(rowType)
             && row.Id is not null
-            && canonicalById.TryGetValue(row.Id.Value, out var canonicalIndex)
+            && canonicalById.TryGetValue(row.Id.Value, out int canonicalIndex)
             && canonicalIndex == rowIndex;
     }
 }

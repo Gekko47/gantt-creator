@@ -134,9 +134,9 @@ public sealed record PanelCellGrid
         // OriginTopPt plus the heights of every row above n, which is the row's
         // absolute worksheet top edge; a zero-height row therefore contributes no
         // space and the rows below it share its top (ADR-0034).
-        var tops = new double[rowHeightsPt.Count];
-        var running = originTopPt;
-        for (var index = 0; index < rowHeightsPt.Count; index++)
+        double[] tops = new double[rowHeightsPt.Count];
+        double running = originTopPt;
+        for (int index = 0; index < rowHeightsPt.Count; index++)
         {
             tops[index] = running;
             running += rowHeightsPt[index];
@@ -292,7 +292,7 @@ public sealed record PanelCellGrid
         get
         {
             double total = 0;
-            foreach (var height in RowHeightsPt)
+            foreach (double height in RowHeightsPt)
             {
                 total += height;
             }
@@ -403,7 +403,7 @@ public sealed record PanelCellGrid
             return Refused(PanelCellGridRefusal.NonPositiveHeaderHeight);
         }
 
-        foreach (var rowHeight in rowHeightsPt)
+        foreach (double rowHeight in rowHeightsPt)
         {
             // Zero is legal: it is what the host reports for a hidden row, whose space
             // the rows below share. Only a negative height is refused (ADR-0034).
@@ -440,7 +440,7 @@ public sealed record PanelCellGrid
         }
 
         HashSet<string> present = new(columns.Select(column => column.Name), StringComparer.Ordinal);
-        foreach (var required in requiredColumns ?? [])
+        foreach (string required in requiredColumns ?? [])
         {
             if (string.IsNullOrWhiteSpace(required) || !present.Contains(required))
             {

@@ -62,8 +62,8 @@ public class ExcelDateLabelPositionMutator(
         DateLabelMutationOutcome? refusal = RunGuards(
             out ListObject? table,
             out List<object?[]>? body,
-            out var columnMap,
-            out var bodyIndex);
+            out int[]? columnMap,
+            out int bodyIndex);
         return refusal ?? ApplySetDateLabelPosition(table!, body!, columnMap!, bodyIndex, position);
     }
 
@@ -85,8 +85,8 @@ public class ExcelDateLabelPositionMutator(
         DateLabelMutationOutcome? refusal = RunGuards(
             out ListObject? table,
             out List<object?[]>? body,
-            out var columnMap,
-            out var bodyIndex);
+            out int[]? columnMap,
+            out int bodyIndex);
         return refusal ?? ApplySetDateLabelPlacement(table!, body!, columnMap!, bodyIndex, placement);
     }
 
@@ -133,7 +133,7 @@ public class ExcelDateLabelPositionMutator(
         }
 
         ListRows rows = GetListRows(foundTable);
-        var resolvedIndex = ResolveActiveBodyIndex(foundTable, rows);
+        int resolvedIndex = ResolveActiveBodyIndex(foundTable, rows);
         if (resolvedIndex == 0)
         {
             return DateLabelMutationOutcome.Refused(DateLabelMutationRefusalReason.SelectionOutsideTable);
@@ -167,7 +167,7 @@ public class ExcelDateLabelPositionMutator(
         int bodyIndex,
         GanttDateLabelPosition? position)
     {
-        var selectedIndex = bodyIndex - 1;
+        int selectedIndex = bodyIndex - 1;
         if (selectedIndex < 0 || selectedIndex >= body.Count)
         {
             return DateLabelMutationOutcome.Refused(
@@ -182,7 +182,7 @@ public class ExcelDateLabelPositionMutator(
                 DateLabelMutationRefusalReason.SelectionUnknown, bodyIndex);
         }
 
-        var typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
+        string typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
         if (!EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
         {
             return DateLabelMutationOutcome.Refused(
@@ -225,7 +225,7 @@ public class ExcelDateLabelPositionMutator(
         int bodyIndex,
         GanttLabelPosition? placement)
     {
-        var selectedIndex = bodyIndex - 1;
+        int selectedIndex = bodyIndex - 1;
         if (selectedIndex < 0 || selectedIndex >= body.Count)
         {
             return DateLabelMutationOutcome.Refused(
@@ -240,7 +240,7 @@ public class ExcelDateLabelPositionMutator(
                 DateLabelMutationRefusalReason.SelectionUnknown, bodyIndex);
         }
 
-        var typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
+        string typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
         if (!EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
         {
             return DateLabelMutationOutcome.Refused(
@@ -274,18 +274,18 @@ public class ExcelDateLabelPositionMutator(
     {
         worksheet = null;
         table = null;
-        var sheetCount = GetSheetCount(sheets);
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
-            var candidate = GetSheetAt(sheets, sheetIndex);
+            object candidate = GetSheetAt(sheets, sheetIndex);
             if (candidate is not Worksheet worksheetCandidate)
             {
                 continue;
             }
 
             ListObjects listObjects = worksheetCandidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 ListObject located = GetTableAt(listObjects, tableIndex);
                 if (string.Equals(
@@ -311,20 +311,20 @@ public class ExcelDateLabelPositionMutator(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -387,10 +387,10 @@ public class ExcelDateLabelPositionMutator(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyOffset = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyOffset = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         return bodyOffset < 1 || bodyOffset > rowCount ? 0 : bodyOffset;
     }
@@ -411,7 +411,7 @@ public class ExcelDateLabelPositionMutator(
     {
         try
         {
-            var tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
+            int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
             // A pre-R5.14 workbook has no DateLabelPosition column. The
             // column is optional so the table still reads, but there is no
             // cell to write: refuse with the typed TableMissing refusal --

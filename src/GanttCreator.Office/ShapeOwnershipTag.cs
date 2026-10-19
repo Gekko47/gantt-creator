@@ -107,8 +107,8 @@ public static class ShapeOwnershipTag
         // Ordinal, never the ambient culture: the same identifier must produce
         // the same tag on every host, or the reconciliation key would be
         // machine-dependent.
-        var utf8 = Encoding.UTF8.GetBytes(primitiveId);
-        var digest = SHA256.HashData(utf8);
+        byte[] utf8 = Encoding.UTF8.GetBytes(primitiveId);
+        byte[] digest = SHA256.HashData(utf8);
 
         return string.Create(
             CultureInfo.InvariantCulture,
@@ -145,9 +145,9 @@ public static class ShapeOwnershipTag
             return false;
         }
 
-        foreach (var character in hash)
+        foreach (char character in hash)
         {
-            var isHexDigit =
+            bool isHexDigit =
                 character is (>= '0' and <= '9')
                 or (>= 'A' and <= 'F')
                 or (>= 'a' and <= 'f');

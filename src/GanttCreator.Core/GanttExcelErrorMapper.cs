@@ -13,7 +13,7 @@ public static class GanttExcelErrorMapper
     /// <returns><see langword="true"/> when the payload is an Excel error integer.</returns>
     public static bool TryMap(int value2, out GanttExcelErrorCode code)
     {
-        var rawCode = unchecked(value2 - _errorBase) + 2000;
+        int rawCode = unchecked(value2 - _errorBase) + 2000;
         if (rawCode is >= _firstKnownCode and <= _lastKnownCode && Enum.IsDefined(typeof(GanttExcelErrorCode), rawCode))
         {
             code = (GanttExcelErrorCode)rawCode;

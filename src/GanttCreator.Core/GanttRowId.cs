@@ -48,7 +48,7 @@ public sealed class GanttRowId : IEquatable<GanttRowId>
     /// <returns>A new identifier that is distinct from every previously generated one.</returns>
     public static GanttRowId New()
     {
-        var token = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        string token = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         return new GanttRowId(Prefix + token);
     }
 
@@ -84,7 +84,7 @@ public sealed class GanttRowId : IEquatable<GanttRowId>
             return false;
         }
 
-        var trimmed = text.Trim();
+        string trimmed = text.Trim();
         if (trimmed.Length != TextLength)
         {
             return false;
@@ -95,9 +95,9 @@ public sealed class GanttRowId : IEquatable<GanttRowId>
             return false;
         }
 
-        for (var i = Prefix.Length; i < trimmed.Length; i++)
+        for (int i = Prefix.Length; i < trimmed.Length; i++)
         {
-            var c = trimmed[i];
+            char c = trimmed[i];
             if (c is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
             {
                 return false;

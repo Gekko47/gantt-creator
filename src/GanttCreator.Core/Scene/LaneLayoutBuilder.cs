@@ -78,7 +78,7 @@ public static class LaneLayoutBuilder
     /// </remarks>
     private static string StableLaneWarningSuffix(string laneKey)
     {
-        var digest = System.Security.Cryptography.SHA256.HashData(
+        byte[] digest = System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(laneKey));
 
         // Formatted as lowercase hex directly rather than via
@@ -90,7 +90,7 @@ public static class LaneLayoutBuilder
         return string.Create(32, digest, static (span, bytes) =>
         {
             const string Digits = "0123456789abcdef";
-            for (var i = 0; i < 16; i++)
+            for (int i = 0; i < 16; i++)
             {
                 span[i * 2] = Digits[bytes[i] >> 4];
                 span[(i * 2) + 1] = Digits[bytes[i] & 0x0F];
@@ -179,12 +179,12 @@ public static class LaneLayoutBuilder
         List<LaneGeometry> lanes = [];
         List<SceneWarning> warnings = [];
         double laneTop = 0;
-        var laneOrder = 0;
+        int laneOrder = 0;
         foreach (IGrouping<string, LaneEventInput> group in ordered.GroupBy(LaneOrdering.LaneKey))
         {
             LaneEventInput[] laneInputs = [.. group];
-            var isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
-            var isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
+            bool isSplitter = laneInputs[0].Event.Type == GanttEntityType.Splitter;
+            bool isSpacer = laneInputs[0].Event.Type == GanttEntityType.Spacer;
 
             // ADR-0034 D1: when this lane has a measured worksheet row, that row IS the
             // lane's vertical geometry. Landing lane Tops on their own rows is what
@@ -194,8 +194,8 @@ public static class LaneLayoutBuilder
             LaneRowAnchor? anchor = null;
             _ = rowAnchors?.TryGet(group.Key, out anchor);
 
-            var anchoredTop = anchor?.TopOffsetPt ?? laneTop;
-            var laneHeightPt = anchor?.HeightPt ?? metrics.LaneHeightPt;
+            double anchoredTop = anchor?.TopOffsetPt ?? laneTop;
+            double laneHeightPt = anchor?.HeightPt ?? metrics.LaneHeightPt;
 
             LaneGeometry? lane =
                 isSplitter || isSpacer
@@ -243,7 +243,7 @@ public static class LaneLayoutBuilder
         // The height is a parameter, not a token read: an anchored structural row
         // takes its measured row height so the lane equals the row it sits in
         // (ADR-0026 D3), while an unanchored one keeps its own Splitter/Spacer token.
-        var height = heightPt;
+        double height = heightPt;
         GanttRowId[] eventIds = [.. inputs.Select(input => input.Event.Id)];
         SlotGeometry slot = new(0, 0, laneTop, laneTop + (height / 2), laneTop + height, height, eventIds);
         return new LaneGeometry(laneKey, laneOrder, laneTop, height, [slot], eventIds, isSplitter, isSpacer);
@@ -291,8 +291,8 @@ public static class LaneLayoutBuilder
         // Two passes, because the owner is not guaranteed to precede the child in
         // row order: an authoring UI may place a child above its parent. Owners are
         // therefore indexed first, and only then do children look one up.
-        var effectiveById = new Dictionary<GanttRowId, int>();
-        var ownIndex = 0;
+        Dictionary<GanttRowId, int> effectiveById = [];
+        int ownIndex = 0;
 
         foreach (LaneEventInput input in rowOrdered)
         {
@@ -318,7 +318,7 @@ public static class LaneLayoutBuilder
             // caller instead of being reported. The owner may legitimately be absent
             // when a caller lays out a subset of the table.
             if (input.RenderLaneOwner is { } owner
-                && effectiveById.TryGetValue(owner.Id, out var ownerIndex))
+                && effectiveById.TryGetValue(owner.Id, out int ownerIndex))
             {
                 effectiveById[input.Event.Id] = ownerIndex;
             }
@@ -336,7 +336,7 @@ public static class LaneLayoutBuilder
         {
             // A supplied compatibility stack value is authoritative and is used as-is:
             // the caller assigned it, so no lookup is needed or wanted.
-            var effective = input.EffectiveStackIndex ?? effectiveById[input.Event.Id];
+            int effective = input.EffectiveStackIndex ?? effectiveById[input.Event.Id];
             if (!effectiveSlots.TryGetValue(effective, out List<LaneEventInput>? slotEvents))
             {
                 slotEvents = [];
@@ -354,7 +354,7 @@ public static class LaneLayoutBuilder
         // capped. A lane that grows disagrees with the Excel row it is meant to
         // sit in, and a projected child must not be able to grow the lane its
         // parent owns. LaneHeightPt is now the height, not a minimum.
-        var contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
+        double contentHeight = metrics.LanePaddingTopPt + metrics.LanePaddingBottomPt;
         contentHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
         contentHeight += effectiveValues.Sum(value => effectiveSlots[value].Max(input => input.ResolvedHeightPt));
 
@@ -386,7 +386,7 @@ public static class LaneLayoutBuilder
             );
         }
 
-        var laneHeight = laneHeightPt;
+        double laneHeight = laneHeightPt;
 
         // ADR-0034 D2: the content block is centred in the lane, and both paddings are
         // real insets. The block was packed from `laneTop + LanePaddingTopPt`, so a
@@ -399,22 +399,22 @@ public static class LaneLayoutBuilder
         // and half of it goes above the block, which makes a single-slot row's shape
         // centre the row's own centre exactly, and leaves a full-height block (whose
         // free space is zero) exactly where it was.
-        var blockHeight = 0d;
-        foreach (var value in effectiveValues)
+        double blockHeight = 0d;
+        foreach (int value in effectiveValues)
         {
             blockHeight += effectiveSlots[value].Max(input => input.ResolvedHeightPt);
         }
 
         blockHeight += Math.Max(0, effectiveValues.Length - 1) * metrics.StackGapPt;
-        var freePt = Math.Max(0d, laneHeight - metrics.LanePaddingTopPt - metrics.LanePaddingBottomPt - blockHeight);
+        double freePt = Math.Max(0d, laneHeight - metrics.LanePaddingTopPt - metrics.LanePaddingBottomPt - blockHeight);
 
-        var slots = new List<SlotGeometry>();
-        var slotTop = laneTop + metrics.LanePaddingTopPt + (freePt / 2);
-        for (var visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)
+        List<SlotGeometry> slots = [];
+        double slotTop = laneTop + metrics.LanePaddingTopPt + (freePt / 2);
+        for (int visualIndex = 0; visualIndex < effectiveValues.Length; visualIndex++)
         {
-            var effective = effectiveValues[visualIndex];
+            int effective = effectiveValues[visualIndex];
             List<LaneEventInput> slotEvents = effectiveSlots[effective];
-            var height = slotEvents.Max(input => input.ResolvedHeightPt);
+            double height = slotEvents.Max(input => input.ResolvedHeightPt);
             GanttRowId[] eventIds =
             [
                 .. slotEvents
@@ -458,9 +458,9 @@ public static class LaneLayoutBuilder
     /// </remarks>
     private static void AddAmbiguityWarning(List<LaneEventInput> slotEvents, List<SceneWarning> warnings)
     {
-        for (var firstIndex = 0; firstIndex < slotEvents.Count; firstIndex++)
+        for (int firstIndex = 0; firstIndex < slotEvents.Count; firstIndex++)
         {
-            for (var secondIndex = firstIndex + 1; secondIndex < slotEvents.Count; secondIndex++)
+            for (int secondIndex = firstIndex + 1; secondIndex < slotEvents.Count; secondIndex++)
             {
                 if (IsProjectionPair(slotEvents[firstIndex], slotEvents[secondIndex]))
                 {
@@ -523,7 +523,7 @@ public static class LaneLayoutBuilder
         // Siblings under one parent: both name a real owner and they agree.
         // Non-null on BOTH sides is required, so two unrelated top-level events
         // (neither projected, both null) do not take this branch.
-        var shareOneOwner = firstParent is not null && firstParent == secondParent;
+        bool shareOneOwner = firstParent is not null && firstParent == secondParent;
 
         return shareOneOwner
             || (firstParent == second.Event.Id)

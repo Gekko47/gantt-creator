@@ -69,7 +69,7 @@ public sealed record GanttScene
             return new SceneCreationOutcome(null, SceneCreationRefusal.DuplicatePrimitiveId);
         }
 
-        var ids = primitiveList.Select(primitive => primitive.PrimitiveId).ToHashSet(StringComparer.Ordinal);
+        HashSet<string> ids = primitiveList.Select(primitive => primitive.PrimitiveId).ToHashSet(StringComparer.Ordinal);
         if (primitiveList.OfType<SceneGroup>().Any(group => group.ChildPrimitiveIds.Any(id => !ids.Contains(id))))
         {
             return new SceneCreationOutcome(null, SceneCreationRefusal.UnresolvedGroupChild);
@@ -105,7 +105,7 @@ public sealed record GanttScene
     /// <returns><see langword="true"/> when a cycle exists.</returns>
     private static bool HasGroupCycle(IEnumerable<ScenePrimitive> primitives)
     {
-        var groups = primitives
+        Dictionary<string, SceneGroup> groups = primitives
             .OfType<SceneGroup>()
             .ToDictionary(group => group.PrimitiveId, StringComparer.Ordinal);
         if (groups.Count == 0)
@@ -113,9 +113,9 @@ public sealed record GanttScene
             return false;
         }
 
-        var onPath = new HashSet<string>(StringComparer.Ordinal);
-        var done = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var start in groups.Keys)
+        HashSet<string> onPath = new HashSet<string>(StringComparer.Ordinal);
+        HashSet<string> done = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string start in groups.Keys)
         {
             if (done.Contains(start))
             {
@@ -124,13 +124,13 @@ public sealed record GanttScene
 
             // Each stack entry is a group and the index of the child to visit
             // next, so a group is only marked done once all its children are.
-            var path = new Stack<(SceneGroup Group, int NextChild)>();
+            Stack<(SceneGroup Group, int NextChild)> path = new Stack<(SceneGroup Group, int NextChild)>();
             path.Push((groups[start], 0));
             _ = onPath.Add(start);
 
             while (path.Count > 0)
             {
-                (SceneGroup group, var nextChild) = path.Pop();
+                (SceneGroup group, int nextChild) = path.Pop();
                 if (nextChild >= group.ChildPrimitiveIds.Count)
                 {
                     _ = onPath.Remove(group.PrimitiveId);
@@ -139,7 +139,7 @@ public sealed record GanttScene
                 }
 
                 path.Push((group, nextChild + 1));
-                var childId = group.ChildPrimitiveIds[nextChild];
+                string childId = group.ChildPrimitiveIds[nextChild];
                 if (!groups.TryGetValue(childId, out SceneGroup? child))
                 {
                     continue;

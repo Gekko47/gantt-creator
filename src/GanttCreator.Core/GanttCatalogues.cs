@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace GanttCreator.Core;
 
@@ -459,9 +460,9 @@ public static class GanttCatalogues
             "Splitter" => GanttLabelPosition.DataPanelLeft,
             _ => GanttLabelPosition.Auto,
         };
-        var outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);
-        var height = heightToken is null ? 0 : ResolveMetric(heightToken);
-        var milestone = milestoneToken is null ? 0 : ResolveMetric(milestoneToken);
+        double outline = outlineToken is null ? 0 : ResolveMetric(outlineToken);
+        double height = heightToken is null ? 0 : ResolveMetric(heightToken);
+        double milestone = milestoneToken is null ? 0 : ResolveMetric(milestoneToken);
         return new GanttStylePreset(
             styleKey,
             displayName,
@@ -590,9 +591,9 @@ public static class GanttCatalogues
     /// </exception>
     public static double TypographyDefault(string tokenName)
     {
-        var value = TypographyDefaultText(tokenName);
-        var parsedOk =
-            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+        string value = TypographyDefaultText(tokenName);
+        bool parsedOk =
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
             && double.IsFinite(parsed)
             && parsed > 0;
 
@@ -673,7 +674,7 @@ public static class GanttCatalogues
     /// <returns>The 64-character lowercase hexadecimal digest.</returns>
     public static string ComputeCatalogueHash()
     {
-        var builder = new System.Text.StringBuilder();
+        StringBuilder builder = new StringBuilder();
         AppendLine(builder, $"schema|{GanttSchemaVersion.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture)}");
         AppendTableHeader(builder, TypesTableName, TypesHeaders);
         foreach (GanttTypeCatalogueRow row in TypeRows)
@@ -730,15 +731,15 @@ public static class GanttCatalogues
             AppendLine(builder, Join(setting.Key, setting.DefaultValue));
         }
 
-        var digest = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(builder.ToString()));
+        byte[] digest = System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(builder.ToString()));
         return Convert.ToHexStringLower(digest);
     }
 
-    private static void AppendTableHeader(System.Text.StringBuilder builder, string tableName, string[] headers) =>
+    private static void AppendTableHeader(StringBuilder builder, string tableName, string[] headers) =>
         AppendLine(builder, $"{tableName}|{string.Join(",", headers)}");
 
-    private static void AppendLine(System.Text.StringBuilder builder, string line)
+    private static void AppendLine(StringBuilder builder, string line)
     {
         _ = builder.Append(line);
         _ = builder.Append('\n');

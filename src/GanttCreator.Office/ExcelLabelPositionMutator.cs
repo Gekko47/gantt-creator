@@ -78,10 +78,10 @@ public class ExcelLabelPositionMutator(
         }
 
         ListRows rows = GetListRows(table);
-        var bodyIndex = ResolveActiveBodyIndex(table, rows);
+        int bodyIndex = ResolveActiveBodyIndex(table, rows);
         return bodyIndex == 0
             ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.SelectionOutsideTable)
-            : !TryReadBody(table, out List<object?[]>? body, out var columnMap)
+            : !TryReadBody(table, out List<object?[]>? body, out int[]? columnMap)
                 || body is null || columnMap is null
                 ? LabelPositionMutationOutcome.Refused(LabelPositionMutationRefusalReason.TableMissing)
                 : ApplySetLabelPosition(table, body, columnMap, bodyIndex, position);
@@ -105,7 +105,7 @@ public class ExcelLabelPositionMutator(
         int bodyIndex,
         GanttLabelPosition? position)
     {
-        var selectedIndex = bodyIndex - 1;
+        int selectedIndex = bodyIndex - 1;
         if (selectedIndex < 0 || selectedIndex >= body.Count)
         {
             return LabelPositionMutationOutcome.Refused(
@@ -120,7 +120,7 @@ public class ExcelLabelPositionMutator(
                 LabelPositionMutationRefusalReason.SelectionUnknown, bodyIndex);
         }
 
-        var typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
+        string typeText = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "Type");
         if (!EntityTypeCatalog.TryParse(typeText, out GanttEntityType type))
         {
             return LabelPositionMutationOutcome.Refused(
@@ -179,8 +179,8 @@ public class ExcelLabelPositionMutator(
         worksheet = null;
         table = null;
 
-        var sheetCount = GetSheetCount(sheets);
-        for (var sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
+        int sheetCount = GetSheetCount(sheets);
+        for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
         {
             if (GetSheetAt(sheets, sheetIndex) is not Worksheet candidate)
             {
@@ -188,8 +188,8 @@ public class ExcelLabelPositionMutator(
             }
 
             ListObjects listObjects = candidate.ListObjects;
-            var tableCount = listObjects.Count;
-            for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+            int tableCount = listObjects.Count;
+            for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 ListObject located = GetTableAt(listObjects, tableIndex);
                 if (string.Equals(
@@ -215,20 +215,20 @@ public class ExcelLabelPositionMutator(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -291,10 +291,10 @@ public class ExcelLabelPositionMutator(
         }
 
         Excel.Range tableRange = GetTableRange(table);
-        var tableFirstRow = GetRangeRow(tableRange);
-        var activeRow = GetRangeRow(activeCell);
-        var bodyOffset = activeRow - tableFirstRow;
-        var rowCount = GetListRowCount(rows);
+        int tableFirstRow = GetRangeRow(tableRange);
+        int activeRow = GetRangeRow(activeCell);
+        int bodyOffset = activeRow - tableFirstRow;
+        int rowCount = GetListRowCount(rows);
 
         return bodyOffset < 1 || bodyOffset > rowCount ? 0 : bodyOffset;
     }
@@ -315,7 +315,7 @@ public class ExcelLabelPositionMutator(
     {
         try
         {
-            var tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
+            int tableIndex = columnMap[ExcelGanttRowProjection.SchemaIndexOf(columnName)];
             ListRow row = GetListRowAt(GetListRows(table), rowIndex + 1);
             Excel.Range cell = GetCellAt(GetListRowRange(row), tableIndex);
             SetRangeValues(cell, value);

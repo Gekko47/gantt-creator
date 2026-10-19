@@ -35,7 +35,7 @@ internal static class InitialiseSheetCommand
     /// </summary>
     internal static void RunForExcel()
     {
-        var application = ExcelDna.Integration.ExcelDnaUtil.Application;
+        object application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
         // Inject the SESSION catalogue writer so its host-rejection evidence
         // log (wired by AddInHost) reaches the writer this command actually

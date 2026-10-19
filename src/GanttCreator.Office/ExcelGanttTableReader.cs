@@ -68,7 +68,7 @@ public class ExcelGanttTableReader(
             return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
         }
 
-        if (!TryBuildColumnMap(table, out var columnMap) || columnMap is null)
+        if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
             return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
         }
@@ -79,7 +79,7 @@ public class ExcelGanttTableReader(
             return GanttTableReadOutcome.Ok([]);
         }
 
-        var raw = GetBodyValues(body);
+        object? raw = GetBodyValues(body);
         List<GanttRowDto> rows = ConvertBody(raw, columnMap, dateSystem);
         return GanttTableReadOutcome.Ok(rows);
     }
@@ -94,15 +94,15 @@ public class ExcelGanttTableReader(
     private bool TryFindTable(Sheets sheets, out ListObject? table)
     {
         table = null;
-        var count = sheets.Count;
-        for (var index = 1; index <= count; index++)
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
         {
-            var sheet = GetSheetAt(sheets, index);
+            object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet)
             {
                 ListObjects listObjects = worksheet.ListObjects;
-                var tableCount = listObjects.Count;
-                for (var tableIndex = 1; tableIndex <= tableCount; tableIndex++)
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject candidate = GetTableAt(listObjects, tableIndex);
                     if (string.Equals(
@@ -131,20 +131,20 @@ public class ExcelGanttTableReader(
     {
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var map = new int[schema.Count];
-        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        int[] map = new int[schema.Count];
+        Dictionary<string, int> byName = new Dictionary<string, int>(StringComparer.Ordinal);
         ListColumns columns = table.ListColumns;
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn column = GetColumnAt(columns, index);
             byName[column.Name] = index;
         }
 
-        for (var schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
+        for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
         {
             GanttTableColumn expected = schema[schemaIndex];
-            if (!byName.TryGetValue(expected.Name, out var tableIndex))
+            if (!byName.TryGetValue(expected.Name, out int tableIndex))
             {
                 if (expected.IsRequired)
                 {
@@ -177,14 +177,14 @@ public class ExcelGanttTableReader(
     private List<GanttRowDto> ConvertBody(object? raw, int[] columnMap, ExcelDateSystemKind dateSystem)
     {
         List<object?[]> matrixRows = ExcelValue2Matrix.ReadRows(raw);
-        var rows = new List<GanttRowDto>(matrixRows.Count);
-        for (var rowIndex = 0; rowIndex < matrixRows.Count; rowIndex++)
+        List<GanttRowDto> rows = new List<GanttRowDto>(matrixRows.Count);
+        for (int rowIndex = 0; rowIndex < matrixRows.Count; rowIndex++)
         {
-            var matrix = matrixRows[rowIndex];
-            var cells = new object?[columnMap.Length];
-            for (var schemaIndex = 0; schemaIndex < columnMap.Length; schemaIndex++)
+            object?[] matrix = matrixRows[rowIndex];
+            object?[] cells = new object?[columnMap.Length];
+            for (int schemaIndex = 0; schemaIndex < columnMap.Length; schemaIndex++)
             {
-                var tableIndex = columnMap[schemaIndex];
+                int tableIndex = columnMap[schemaIndex];
                 cells[schemaIndex] = tableIndex < 1 || tableIndex > matrix.Length ? null : CoerceCell(matrix[tableIndex - 1]);
             }
 
@@ -214,16 +214,16 @@ public class ExcelGanttTableReader(
     private GanttRowDto ConvertRow(int rowNumber, object?[] cells, ExcelDateSystemKind dateSystem)
     {
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
-        var byName = new Dictionary<string, object?>(StringComparer.Ordinal);
-        for (var index = 0; index < schema.Count; index++)
+        Dictionary<string, object?> byName = new Dictionary<string, object?>(StringComparer.Ordinal);
+        for (int index = 0; index < schema.Count; index++)
         {
             byName[schema[index].Name] = cells[index];
         }
 
         _ = _dateSystemConverter.TryConvertDate(byName["Start"], dateSystem, out DateOnly? start);
         _ = _dateSystemConverter.TryConvertDate(byName["Finish"], dateSystem, out DateOnly? finish);
-        _ = ExcelCellConverter.TryConvertStackIndex(byName["StackIndex"], out var stackIndex);
-        _ = ExcelCellConverter.TryConvertVisible(byName["Visible"], out var visible);
+        _ = ExcelCellConverter.TryConvertStackIndex(byName["StackIndex"], out int? stackIndex);
+        _ = ExcelCellConverter.TryConvertVisible(byName["Visible"], out bool? visible);
 
         return new GanttRowDto(
             rowNumber,
@@ -236,7 +236,7 @@ public class ExcelGanttTableReader(
             ToDateCell(byName["Finish"], finish),
             ToTextCell(byName["Duration"]),
             ToTextCell(byName["ParentId"]),
-            ToIntCell(byName["SiblingOrder"], ExcelCellConverter.TryConvertStackIndex(byName["SiblingOrder"], out var siblingOrder) ? siblingOrder : null),
+            ToIntCell(byName["SiblingOrder"], ExcelCellConverter.TryConvertStackIndex(byName["SiblingOrder"], out int? siblingOrder) ? siblingOrder : null),
             ToTextCell(byName["StyleKey"]),
             ToTextCell(byName["LabelPosition"]),
             ToTextCell(byName["DateLabelPosition"]),

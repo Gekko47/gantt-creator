@@ -511,7 +511,7 @@ public static class SceneBuilder
             // Every type is listed explicitly, per the repo's exhaustive-switch
             // convention, so a type added later cannot silently take the 0 default.
             ResolvedEventStyle? heightSource = resolved;
-            var heightPt = @event.Type switch
+            double heightPt = @event.Type switch
             {
                 GanttEntityType.Splitter => laneMetrics.SplitterHeightPt,
                 GanttEntityType.Spacer => laneMetrics.SpacerHeightPt,
@@ -632,7 +632,7 @@ public static class SceneBuilder
             // Lane-relative to chart-relative, applied once per placement. The zero
             // width fallback below must use the same centre, or a parentless overlay
             // would clip against a band the bar never had.
-            var slotCentreY = placement.SlotCentreY + plotBounds.Top;
+            double slotCentreY = placement.SlotCentreY + plotBounds.Top;
             SpanBarCreationOutcome bar = SpanBarBuilder.TryBuild(
                 new SpanBarRequest(
                     @event,
@@ -808,7 +808,7 @@ public static class SceneBuilder
         // Initialise, so a drawn title band is not merely redundant - it is drawn
         // over the year band and collides with it. The export profiles keep the band,
         // which is why this is a profile check rather than removing the entity.
-        var showTitle =
+        bool showTitle =
             request.Profile != SceneCompositionProfile.LiveExcel
             && !string.IsNullOrWhiteSpace(request.Title);
 
@@ -1022,7 +1022,7 @@ public static class SceneBuilder
                 request.ChartAnchorRowHeightPt,
                 request.MajorBoundaryPt)
             : null;
-        var lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
+        double lineTopPt = PlotSpanGeometry.LiftTopIntoHeader(
             plotBounds,
             request.PlotBandHeaderOverlapPt).Y;
         // Grouping is by (date, resolved style), and the members inside a group are
@@ -1232,9 +1232,9 @@ public static class SceneBuilder
             // all, so both flags clear and the builder plans an empty
             // set -- it succeeds with no primitives rather than
             // refusing, so a None row emits no date-label warning.
-            var none = @event.DateLabelPosition == GanttDateLabelPosition.None;
-            var showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
-            var showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
+            bool none = @event.DateLabelPosition == GanttDateLabelPosition.None;
+            bool showStart = !none && @event.DateLabelPosition != GanttDateLabelPosition.Finish;
+            bool showFinish = !none && @event.DateLabelPosition != GanttDateLabelPosition.Start;
             DateLabelOutcome dates = DateLabelBuilder.TryBuild(
                 new DateLabelRequest(
                     @event,
@@ -1289,12 +1289,12 @@ public static class SceneBuilder
     /// </remarks>
     private static RectD EnclosingBounds(IReadOnlyList<PointD> points)
     {
-        var left = points[0].X;
-        var top = points[0].Y;
-        var right = left;
-        var bottom = top;
+        double left = points[0].X;
+        double top = points[0].Y;
+        double right = left;
+        double bottom = top;
 
-        for (var i = 1; i < points.Count; i++)
+        for (int i = 1; i < points.Count; i++)
         {
             PointD point = points[i];
             left = Math.Min(left, point.X);
@@ -1318,9 +1318,9 @@ public static class SceneBuilder
         // `skipped` is tracked separately from `relevant`: when the *first* occupant
         // is filtered out there is nothing to copy yet, so a null `relevant` alone
         // would mean "keep everything" and silently return the unfiltered list.
-        var skipped = false;
+        bool skipped = false;
         List<LabelOccupant>? relevant = null;
-        for (var i = 0; i < occupants.Count; i++)
+        for (int i = 0; i < occupants.Count; i++)
         {
             LabelOccupant occupant = occupants[i];
             if (occupant.Bounds.Bottom <= band.Top + GeometryMath.Epsilon
@@ -1377,9 +1377,9 @@ public static class SceneBuilder
             return visible;
         }
 
-        var left = timeScale.PlotLeftPt
+        double left = timeScale.PlotLeftPt
             + ((start.DayNumber - timeScale.PlotStart.DayNumber) * timeScale.DayWidth);
-        var width = (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth;
+        double width = (finish.DayNumber - start.DayNumber + 1) * timeScale.DayWidth;
 
         return new RectD(left, visible.Y, Math.Max(0, width), visible.Height);
     }
@@ -1407,9 +1407,9 @@ public static class SceneBuilder
         // The resolved height comes from the catalogue definition rather than the
         // style key alone: a capability-only definition has no formatting, and
         // using it would contribute a zero-height lane that silently hides content.
-        var hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
+        bool hasDefinition = registry.TryGet(style.StyleKey, out GanttStyleDefinition? definition)
             && definition is { HasFormatting: true };
-        var heightPt = hasDefinition ? definition!.ActivityHeightPt : 0;
+        double heightPt = hasDefinition ? definition!.ActivityHeightPt : 0;
 
         // The hatch pattern and the standard outline width are resolved style
         // tokens, not renderer choices: the guide requires a renderer's output to
@@ -1484,7 +1484,7 @@ public static class SceneBuilder
         List<ScenePrimitive> primitives,
         List<SceneWarning> warnings)
     {
-        var byId = laneParticipants.ToDictionary(@event => @event.Id);
+        Dictionary<GanttRowId, GanttEvent> byId = laneParticipants.ToDictionary(@event => @event.Id);
 
         foreach (LaneGeometry lane in laneLayout.Lanes)
         {

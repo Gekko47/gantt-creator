@@ -38,7 +38,7 @@ public sealed class WidthOnlyMetrics(ITextWidthMeasurer measurer) : ITextMetrics
     /// <inheritdoc />
     public bool TryMeasure(string text, out TextMeasurement? measurement)
     {
-        if (_measurer.TryMeasure(text, out var widthPt))
+        if (_measurer.TryMeasure(text, out double widthPt))
         {
             measurement = new TextMeasurement(widthPt, 0);
             return true;
@@ -257,7 +257,7 @@ public static class FrameBandsBuilder
             return;
         }
 
-        for (var index = 1; index < sequence.Periods.Count; index += 2)
+        for (int index = 1; index < sequence.Periods.Count; index += 2)
         {
             BandInterval period = sequence.Periods[index];
             primitives.Add(
@@ -314,10 +314,10 @@ public static class FrameBandsBuilder
         BandSequence sequence,
         ChartFrameGeometry geometry)
     {
-        for (var index = 0; index < sequence.Years.Count; index++)
+        for (int index = 0; index < sequence.Years.Count; index++)
         {
             BandInterval year = sequence.Years[index];
-            var id = $"chart:year:{year.Start.Year}";
+            string id = $"chart:year:{year.Start.Year}";
             RectD bounds = new(year.Left, geometry.YearBounds.Y, year.Width, geometry.YearBounds.Height);
             primitives.Add(
                 new SceneRect(id, SceneOwnerId.Chart, ZLayer.Frame, bounds, request.Theme.YearHeader)
@@ -345,10 +345,10 @@ public static class FrameBandsBuilder
             }
         }
 
-        for (var index = 0; index < sequence.Periods.Count; index++)
+        for (int index = 0; index < sequence.Periods.Count; index++)
         {
             BandInterval period = sequence.Periods[index];
-            var id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+            string id = $"chart:period:{period.Start.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
             RectD bounds = new(
                 period.Left,
                 geometry.PeriodBounds.Y,
@@ -386,8 +386,8 @@ public static class FrameBandsBuilder
             return;
         }
 
-        var text = request.ChartTitle;
-        if (textMeasurer.TryMeasure(text, out var width) && width > title.Width)
+        string text = request.ChartTitle;
+        if (textMeasurer.TryMeasure(text, out double width) && width > title.Width)
         {
             warnings.Add(new SceneWarning(SceneOwnerId.Chart, _titleOverflowCode, "Chart title was truncated with an ellipsis."));
             text = Ellipsize(text, title.Width, textMeasurer);
@@ -416,7 +416,7 @@ public static class FrameBandsBuilder
         {
             if (period.Right < request.PlotBounds.Right - GeometryMath.Epsilon)
             {
-                var major = request.ShowMajorGrid && period.Finish.Month == 12;
+                bool major = request.ShowMajorGrid && period.Finish.Month == 12;
                 if (request.ShowMinorGrid || major)
                 {
                     AddGridLine(lines, period.Right, major);
@@ -426,7 +426,7 @@ public static class FrameBandsBuilder
 
         foreach (KeyValuePair<double, bool> line in lines.OrderBy(pair => pair.Key))
         {
-            var key = line.Key.ToString("R", CultureInfo.InvariantCulture);
+            string key = line.Key.ToString("R", CultureInfo.InvariantCulture);
             primitives.Add(
                 new SceneLine(
                     line.Key == request.PlotBounds.Left || line.Key == request.PlotBounds.Right
@@ -475,7 +475,7 @@ public static class FrameBandsBuilder
             return;
         }
 
-        var closingPt = PlotSpanGeometry.ClosingLineBottomPt(
+        double closingPt = PlotSpanGeometry.ClosingLineBottomPt(
             request.PlotBounds.Bottom,
             request.ChartAnchorRowHeightPt,
             request.MajorBoundaryPt);
@@ -494,7 +494,7 @@ public static class FrameBandsBuilder
 
     private static void AddGridLine(Dictionary<double, bool> lines, double x, bool major)
     {
-        if (lines.TryGetValue(x, out var existingMajor))
+        if (lines.TryGetValue(x, out bool existingMajor))
         {
             lines[x] = existingMajor || major;
         }
@@ -601,16 +601,16 @@ public static class FrameBandsBuilder
     /// labels truncate by one implementation and one marker.
     /// </summary>
     private static string Ellipsize(string text, double availableWidth, ITextWidthMeasurer measurer) =>
-        measurer.TryMeasure(text, out var width) && width <= availableWidth
+        measurer.TryMeasure(text, out double width) && width <= availableWidth
             ? text
             : LabelText.Ellipsize(text, availableWidth, new WidthOnlyMetrics(measurer));
 
     private static RectD Union(params RectD[] rectangles)
     {
-        var left = rectangles.Min(rectangle => rectangle.Left);
-        var top = rectangles.Min(rectangle => rectangle.Top);
-        var right = rectangles.Max(rectangle => rectangle.Right);
-        var bottom = rectangles.Max(rectangle => rectangle.Bottom);
+        double left = rectangles.Min(rectangle => rectangle.Left);
+        double top = rectangles.Min(rectangle => rectangle.Top);
+        double right = rectangles.Max(rectangle => rectangle.Right);
+        double bottom = rectangles.Max(rectangle => rectangle.Bottom);
         return new RectD(left, top, right - left, bottom - top);
     }
 
@@ -699,7 +699,7 @@ public static class PlotSpanGeometry
         ArgumentOutOfRangeException.ThrowIfNegative(anchorRowHeightPt);
         ArgumentOutOfRangeException.ThrowIfNegative(majorBoundaryPt);
 
-        var extensionPt = BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
+        double extensionPt = BottomExtensionPt(anchorRowHeightPt, majorBoundaryPt);
         return extensionPt == 0
             ? plot
             : new RectD(plot.X, plot.Y, plot.Width, plot.Height + extensionPt);

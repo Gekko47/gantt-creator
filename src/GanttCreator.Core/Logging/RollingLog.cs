@@ -149,7 +149,7 @@ public sealed class RollingLog : IRollingLog
     /// <param name="args">Format arguments.</param>
     public void Write(string format, params object?[] args)
     {
-        var message = format;
+        string message = format;
         try
         {
             if (args is { Length: > 0 })
@@ -186,10 +186,10 @@ public sealed class RollingLog : IRollingLog
                 return;
             }
 
-            var redacted = _redactor.Redact(message) ?? string.Empty;
+            string redacted = _redactor.Redact(message) ?? string.Empty;
             DateTimeOffset now = _timeProvider.GetUtcNow();
-            var line = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:yyyy-MM-ddTHH:mm:ss.fffZ} {1}{2}", now, redacted, Environment.NewLine);
-            var bytes = System.Text.Encoding.UTF8.GetByteCount(line);
+            string line = string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:yyyy-MM-ddTHH:mm:ss.fffZ} {1}{2}", now, redacted, Environment.NewLine);
+            int bytes = System.Text.Encoding.UTF8.GetByteCount(line);
 
             RotateIfNeeded(bytes);
             if (_failed)
@@ -269,13 +269,13 @@ public sealed class RollingLog : IRollingLog
             _currentWriter?.Dispose();
             _currentWriter = null;
 
-            var activeLogPath = Path.Combine(_logDirectory, $"{_baseName}.log");
+            string activeLogPath = Path.Combine(_logDirectory, $"{_baseName}.log");
 
             // If the active log already exists, open in append mode and only rotate if it exceeds the limit.
             // This preserves existing log content when reopening a log with the same base name.
             if (File.Exists(activeLogPath) && _currentFileSize == 0)
             {
-                var fileInfo = new FileInfo(activeLogPath);
+                FileInfo fileInfo = new FileInfo(activeLogPath);
                 if (fileInfo.Length == 0)
                 {
                     // The active file exists on disk but is empty. An oversized single
@@ -290,7 +290,7 @@ public sealed class RollingLog : IRollingLog
                     // for) is silently discarded. Regression Facts:
                     // RollingLogTests.Second_concurrent_writer… and
                     // OfficeFixtureTests.TryReadLog_reads_the_log_while_a_writer…
-                    var emptyStream = new FileStream(activeLogPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+                    FileStream emptyStream = new FileStream(activeLogPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
                     _currentWriter = new StreamWriter(emptyStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                     _currentFileSize = 0;
                     return;
@@ -298,7 +298,7 @@ public sealed class RollingLog : IRollingLog
                 if (fileInfo.Length + incomingBytes <= _maxFileSizeBytes)
                 {
                     // File exists and has room - open in append mode
-                    var appendStream = new FileStream(activeLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    FileStream appendStream = new FileStream(activeLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
                     // UTF-8 without a BOM so the reopened file stays byte-exact with
                     // the tracked _currentFileSize; Encoding.UTF8 would emit a preamble.
                     _currentWriter = new StreamWriter(appendStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -318,8 +318,8 @@ public sealed class RollingLog : IRollingLog
 
             // After rotation we'll have (rotatedFiles.Count + 1) rotated files plus the active .log,
             // so delete from the top when rotatedFiles.Count + 2 exceeds the cap.
-            var toDelete = rotatedFiles.Count + 2 - _maxFileCount;
-            for (var i = 0; i < toDelete && i < rotatedFiles.Count; i++)
+            int toDelete = rotatedFiles.Count + 2 - _maxFileCount;
+            for (int i = 0; i < toDelete && i < rotatedFiles.Count; i++)
             {
                 DeleteFile(rotatedFiles[i]);
             }
@@ -333,12 +333,12 @@ public sealed class RollingLog : IRollingLog
 
             // Shift existing numeric rotations in descending order (.N -> .N+1, ..., .1 -> .2).
             // Descending order ensures we never overwrite a file that hasn't been moved yet.
-            foreach (var file in rotatedFiles)
+            foreach (string file in rotatedFiles)
             {
                 // Helper output is guaranteed to carry a rotation index.
-                _ = TryGetRotationIndex(file, _baseName, out var currentRotation);
-                var newRotation = currentRotation + 1;
-                var newPath = Path.Combine(_logDirectory, $"{_baseName}.{newRotation}.log");
+                _ = TryGetRotationIndex(file, _baseName, out int currentRotation);
+                int newRotation = currentRotation + 1;
+                string newPath = Path.Combine(_logDirectory, $"{_baseName}.{newRotation}.log");
                 File.Move(file, newPath);
             }
 
@@ -357,8 +357,8 @@ public sealed class RollingLog : IRollingLog
             }
 
             // Create new active log file
-            var newActivePath = Path.Combine(_logDirectory, $"{_baseName}.log");
-            var fileStream = new FileStream(newActivePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            string newActivePath = Path.Combine(_logDirectory, $"{_baseName}.log");
+            FileStream fileStream = new FileStream(newActivePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
             // UTF-8 without a BOM so the created file's size equals the tracked
             // Encoding.UTF8 byte count and rotation remains byte-exact.
             _currentWriter = new StreamWriter(fileStream, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -379,7 +379,7 @@ public sealed class RollingLog : IRollingLog
     private List<string> GetRotatedFilesOldestFirst()
     {
         return [.. Directory.GetFiles(_logDirectory, $"{_baseName}*.log")
-            .Select(f => (Path: f, Index: TryGetRotationIndex(f, _baseName, out var i) ? i : (int?)null))
+            .Select(f => (Path: f, Index: TryGetRotationIndex(f, _baseName, out int i) ? i : (int?)null))
             .Where(x => x.Index is not null)
             .OrderByDescending(x => x.Index!.Value)
             .Select(x => x.Path)];
@@ -388,7 +388,7 @@ public sealed class RollingLog : IRollingLog
     private static bool TryGetRotationIndex(string path, string baseName, out int index)
     {
         index = 0;
-        var fileName = Path.GetFileName(path);
+        string fileName = Path.GetFileName(path);
         const string suffix = ".log";
 
         // Strip the suffix FIRST, then the "{baseName}." prefix. For the
@@ -400,14 +400,14 @@ public sealed class RollingLog : IRollingLog
             return false;
         }
 
-        var stem = fileName[..^suffix.Length];
-        var prefix = $"{baseName}.";
+        string stem = fileName[..^suffix.Length];
+        string prefix = $"{baseName}.";
         if (!stem.StartsWith(prefix, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var middle = stem[prefix.Length..];
+        string middle = stem[prefix.Length..];
         if (middle.Length == 0)
         {
             // The active {baseName}.log itself; never a rotated file.
@@ -417,7 +417,7 @@ public sealed class RollingLog : IRollingLog
         // ASCII digits only: rejects signs, separators, and culture-specific
         // digit shapes; the subsequent parse is then culture-safe. Overflowing
         // values fail the parse and the file is left untouched (safe direction).
-        foreach (var c in middle)
+        foreach (char c in middle)
         {
             if (c is < '0' or > '9')
             {

@@ -294,26 +294,26 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             return false;
         }
 
-        var left = points.Min(point => point.X);
-        var right = points.Max(point => point.X);
-        var top = points.Min(point => point.Y);
-        var bottom = points.Max(point => point.Y);
-        var centreX = (left + right) / 2d;
-        var centreY = (top + bottom) / 2d;
+        double left = points.Min(point => point.X);
+        double right = points.Max(point => point.X);
+        double top = points.Min(point => point.Y);
+        double bottom = points.Max(point => point.Y);
+        double centreX = (left + right) / 2d;
+        double centreY = (top + bottom) / 2d;
 
         // One vertex per side midpoint, and nothing else. This single rule
         // rejects a rotated square, a rectangle, and any off-centre vertex,
         // because none of those puts all four points on those four spots.
-        var onLeft = 0;
-        var onRight = 0;
-        var onTop = 0;
-        var onBottom = 0;
+        int onLeft = 0;
+        int onRight = 0;
+        int onTop = 0;
+        int onBottom = 0;
         foreach (PointD point in points)
         {
-            var atLeft = Near(point.X, left) && Near(point.Y, centreY);
-            var atRight = Near(point.X, right) && Near(point.Y, centreY);
-            var atTop = Near(point.Y, top) && Near(point.X, centreX);
-            var atBottom = Near(point.Y, bottom) && Near(point.X, centreX);
+            bool atLeft = Near(point.X, left) && Near(point.Y, centreY);
+            bool atRight = Near(point.X, right) && Near(point.Y, centreY);
+            bool atTop = Near(point.Y, top) && Near(point.X, centreX);
+            bool atBottom = Near(point.Y, bottom) && Near(point.X, centreX);
 
             if (atLeft)
             {

@@ -41,7 +41,7 @@ internal static class DebugForceRibbonState
     internal static RibbonState Apply(RibbonState state)
     {
 #if DEBUG
-        var requested = Environment.GetEnvironmentVariable(EnvironmentVariableName);
+        string? requested = Environment.GetEnvironmentVariable(EnvironmentVariableName);
         if (string.IsNullOrWhiteSpace(requested))
         {
             return state;

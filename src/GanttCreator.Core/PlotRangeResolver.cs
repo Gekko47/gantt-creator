@@ -110,7 +110,7 @@ public static class PlotRangeResolver
             return false;
         }
 
-        var trimmed = text.Trim();
+        string trimmed = text.Trim();
 
         // A bare Excel serial first: the ribbon edit box echoes the coerced
         // numeric form back on getText (e.g. 46118, or 46118.0 from an
@@ -119,7 +119,7 @@ public static class PlotRangeResolver
         // 1900-epoch converter so the ribbon and the table reader cannot
         // disagree on what a serial means. The fractional time-of-day, when
         // present, is truncated to the calendar date by FromOADate.
-        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial)
+        if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out double serial)
             && ExcelDateSystemConverter.Instance.TryConvertDate(
                 serial, ExcelDateSystemKind.Windows1900, out DateOnly? serialDate)
             && serialDate is { } serialDay
@@ -199,8 +199,8 @@ public static class PlotRangeResolver
         dataStart = default;
         dataFinish = default;
 
-        var starts = new List<DateOnly>();
-        var finishes = new List<DateOnly>();
+        List<DateOnly> starts = [];
+        List<DateOnly> finishes = [];
         foreach (GanttEvent @event in events)
         {
             if (@event.Start is { } start)
@@ -220,7 +220,7 @@ public static class PlotRangeResolver
             return false;
         }
 
-        var padding = Math.Max(0, paddingDays);
+        int padding = Math.Max(0, paddingDays);
         DateOnly earliest = starts.Min();
         DateOnly latest = starts.Max();
         if (finishes.Count > 0 && finishes.Max() > latest)
@@ -275,7 +275,7 @@ public static class PlotRangeResolver
                 throw new ArgumentException("Explicit mode requires a start date.", nameof(settings));
             }
 
-            if (!TryParsePlotDate(settings.StartDate, out var parsed))
+            if (!TryParsePlotDate(settings.StartDate, out DateOnly parsed))
             {
                 throw new ArgumentException($"Unparsable start date: {settings.StartDate}", nameof(settings));
             }
@@ -289,7 +289,7 @@ public static class PlotRangeResolver
                 throw new ArgumentException("Explicit mode requires a finish date.", nameof(settings));
             }
 
-            if (!TryParsePlotDate(settings.FinishDate, out var parsed))
+            if (!TryParsePlotDate(settings.FinishDate, out DateOnly parsed))
             {
                 throw new ArgumentException($"Unparsable finish date: {settings.FinishDate}", nameof(settings));
             }

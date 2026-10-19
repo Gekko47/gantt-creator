@@ -22,7 +22,7 @@ public static class ActivitySubtypePriority
     /// <param name="type">The activity subtype.</param>
     /// <returns>The documented layer-40 priority; non-activity values sort last.</returns>
     public static int For(GanttEntityType? type) =>
-        type is not null && _priorities.TryGetValue(type.Value, out var priority)
+        type is not null && _priorities.TryGetValue(type.Value, out int priority)
             ? priority
             : int.MaxValue;
 }

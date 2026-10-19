@@ -132,7 +132,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var original = read();
+        bool original = read();
         if (!original)
         {
             return; // Already off: nothing to suppress or restore.
@@ -168,7 +168,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var current = GetStatusBarText();
+        object? current = GetStatusBarText();
         if (string.Equals(current as string, text, StringComparison.Ordinal))
         {
             return;
@@ -216,7 +216,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
             return;
         }
 
-        var selection = GetSelection();
+        object? selection = GetSelection();
         if (selection is null)
         {
             return;
@@ -282,7 +282,7 @@ public class ExcelApplicationStateScope(object? application, Action<string>? tec
 
         // Reverse order: the last setting changed is the first one put back, which
         // matches the COM ownership rule of releasing in reverse acquisition order.
-        for (var index = _restores.Count - 1; index >= 0; index--)
+        for (int index = _restores.Count - 1; index >= 0; index--)
         {
             Restore(_restores[index], "an Excel application setting");
         }

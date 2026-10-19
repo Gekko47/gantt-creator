@@ -49,7 +49,7 @@ internal static class TaskDialogApi
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(openLinkAction);
 
-        var page = new TaskDialogPage
+        TaskDialogPage page = new TaskDialogPage
         {
             Caption = title,
             Heading = mainInstruction,

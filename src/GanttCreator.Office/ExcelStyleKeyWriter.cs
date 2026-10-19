@@ -56,7 +56,7 @@ public class ExcelStyleKeyWriter(
             return StyleKeyWriteOutcome.Refused(StyleKeyWriteRefusalReason.TableMissing);
         }
 
-        var raw = GetRangeValues(column);
+        object? raw = GetRangeValues(column);
         List<object?[]> current = raw is Array
             ? ExcelValue2Matrix.ReadRows(raw)
             : [RawValueRow(raw)];
@@ -65,15 +65,15 @@ public class ExcelStyleKeyWriter(
             return StyleKeyWriteOutcome.Refused(StyleKeyWriteRefusalReason.WriteFailed);
         }
 
-        var merged = new object?[current.Count];
-        for (var index = 0; index < current.Count; index++)
+        object?[] merged = new object?[current.Count];
+        for (int index = 0; index < current.Count; index++)
         {
             merged[index] = current[index].Length > 0 ? current[index][0] : null;
         }
 
         foreach (StyleKeyWrite write in plan.Writes)
         {
-            var target = write.RowNumber - 1;
+            int target = write.RowNumber - 1;
             if (target < 0 || target >= merged.Length)
             {
                 return StyleKeyWriteOutcome.Refused(StyleKeyWriteRefusalReason.WriteFailed);
@@ -119,8 +119,8 @@ public class ExcelStyleKeyWriter(
         Justification = "The payload is assigned to a COM property typed as object, so the declared return type must stay object.")]
     private static object ToTwoDimensional(object?[] values)
     {
-        var payload = new object[values.Length, 1];
-        for (var row = 0; row < values.Length; row++)
+        object[,] payload = new object[values.Length, 1];
+        for (int row = 0; row < values.Length; row++)
         {
             payload[row, 0] = values[row]!;
         }
@@ -148,8 +148,8 @@ public class ExcelStyleKeyWriter(
             return false;
         }
 
-        var columnCount = columns.Count;
-        for (var index = 1; index <= columnCount; index++)
+        int columnCount = columns.Count;
+        for (int index = 1; index <= columnCount; index++)
         {
             ListColumn candidate = GetColumnAt(columns, index);
             if (string.Equals(candidate.Name, "StyleKey", StringComparison.Ordinal))
@@ -192,7 +192,7 @@ public class ExcelStyleKeyWriter(
     {
         worksheet = null;
         table = null;
-        foreach (var entry in sheets)
+        foreach (object? entry in sheets)
         {
             if (entry is not Worksheet candidate)
             {

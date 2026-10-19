@@ -326,12 +326,12 @@ public static class HierarchyMutations
         // The move target is the bottom of the run: the highest body index
         // among the siblings, which is the promoted row's own index when it
         // is already last.
-        var moveTo = siblings.Count == 0
+        int moveTo = siblings.Count == 0
             ? target.RowNumber
             : siblings[^1].RowNumber;
 
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent sibling in siblings)
         {
             if (sibling.Id == selectedId)
@@ -448,7 +448,7 @@ public static class HierarchyMutations
             // The selection's content moves to sit directly beneath the new
             // parent's existing child run, so the demotion stays one
             // contiguous outline group: the run's last child's row plus one.
-            var moveTo = candidate.RowNumber + 1;
+            int moveTo = candidate.RowNumber + 1;
             foreach (GanttEvent child in rows
                 .Where(row => row.ParentId == candidate.Id)
                 .OrderBy(static row => row.RowNumber))
@@ -461,7 +461,7 @@ public static class HierarchyMutations
 
             // The demoted row plus its re-homed children all join the run, so
             // capacity counts them together against the seven-child maximum.
-            var joining = 1 + rehomed.Count;
+            int joining = 1 + rehomed.Count;
             if (childCountByParent.GetValueOrDefault(candidate.Id) + joining > EntityHierarchyCatalog.MaxChildrenPerParent)
             {
                 // No parent further up can take this landing either: the
@@ -471,7 +471,7 @@ public static class HierarchyMutations
                 return DemotePlan.Refused(ParentChildRefusalReason.ParentUnavailable);
             }
 
-            var order = childCountByParent.GetValueOrDefault(candidate.Id);
+            int order = childCountByParent.GetValueOrDefault(candidate.Id);
             List<SiblingOrderWrite> writes = [new(target.Id, order)];
             foreach (GanttEvent child in rehomed)
             {
@@ -517,8 +517,8 @@ public static class HierarchyMutations
         ArgumentNullException.ThrowIfNull(selectedId);
 
         List<GanttEvent> ordered = [.. rows.OrderBy(static row => row.RowNumber)];
-        var index = -1;
-        for (var position = 0; position < ordered.Count; position++)
+        int index = -1;
+        for (int position = 0; position < ordered.Count; position++)
         {
             if (ordered[position].Id == selectedId)
             {
@@ -553,7 +553,7 @@ public static class HierarchyMutations
                 windowLength++;
             }
 
-            var neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
+            int neighbour = FindAdjacentTopLevel(ordered, windowStart, windowLength, moveUp);
             if (neighbour < 0)
             {
                 return MovePlan.NoChange(selectedId);
@@ -561,8 +561,8 @@ public static class HierarchyMutations
 
             swapStart = neighbour;
             swapLength = 1;
-            var next = neighbour + 1;
-            var limit = moveUp ? windowStart : ordered.Count;
+            int next = neighbour + 1;
+            int limit = moveUp ? windowStart : ordered.Count;
             while (next < limit && ordered[next].ParentId == ordered[neighbour].Id)
             {
                 swapLength++;
@@ -580,7 +580,7 @@ public static class HierarchyMutations
             // Anything else (its parent, another parent's child, a
             // top-level row, the body edge) is the run boundary: the
             // selection is already at the top or bottom of its set.
-            var neighbour = moveUp ? index - 1 : index + 1;
+            int neighbour = moveUp ? index - 1 : index + 1;
             if (neighbour < 0
                 || neighbour >= ordered.Count
                 || ordered[neighbour].ParentId != target.ParentId)
@@ -602,7 +602,7 @@ public static class HierarchyMutations
         List<GanttEvent> post = [.. ordered];
         BlockSwap(post, windowStart, windowLength, swapStart, swapLength);
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in post)
         {
             if (row.ParentId != affectedRun)
@@ -635,7 +635,7 @@ public static class HierarchyMutations
     {
         if (moveUp)
         {
-            for (var position = windowStart - 1; position >= 0; position--)
+            for (int position = windowStart - 1; position >= 0; position--)
             {
                 if (ordered[position].ParentId is null)
                 {
@@ -646,7 +646,7 @@ public static class HierarchyMutations
             return -1;
         }
 
-        for (var position = windowStart + windowLength; position < ordered.Count; position++)
+        for (int position = windowStart + windowLength; position < ordered.Count; position++)
         {
             if (ordered[position].ParentId is null)
             {
@@ -675,18 +675,18 @@ public static class HierarchyMutations
         int secondStart,
         int secondLength)
     {
-        var lowStart = Math.Min(firstStart, secondStart);
-        var highStart = Math.Max(firstStart, secondStart);
-        var lowLength = firstStart < secondStart ? firstLength : secondLength;
-        var highLength = firstStart < secondStart ? secondLength : firstLength;
+        int lowStart = Math.Min(firstStart, secondStart);
+        int highStart = Math.Max(firstStart, secondStart);
+        int lowLength = firstStart < secondStart ? firstLength : secondLength;
+        int highLength = firstStart < secondStart ? secondLength : firstLength;
 
         List<GanttEvent> span = list.GetRange(lowStart, highStart - lowStart + highLength);
         List<GanttEvent> low = span.GetRange(0, lowLength);
-        var secondOffset = highStart - lowStart;
+        int secondOffset = highStart - lowStart;
         List<GanttEvent> gap = span.GetRange(lowLength, secondOffset - lowLength);
         List<GanttEvent> high = span.GetRange(secondOffset, highLength);
 
-        var writeIndex = lowStart;
+        int writeIndex = lowStart;
         foreach (GanttEvent row in high)
         {
             list[writeIndex++] = row;
@@ -752,7 +752,7 @@ public static class HierarchyMutations
         int joinedRowNumber)
     {
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in rows
             .Where(row => row.ParentId is null && row.RowNumber < joinedRowNumber)
             .OrderBy(static row => row.RowNumber))
@@ -785,7 +785,7 @@ public static class HierarchyMutations
         GanttRowId leavingId)
     {
         List<SiblingOrderWrite> writes = [];
-        var order = 0;
+        int order = 0;
         foreach (GanttEvent row in rows
             .Where(static row => row.ParentId is null)
             .OrderBy(static row => row.RowNumber))

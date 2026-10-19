@@ -300,8 +300,8 @@ public class ExcelShapeWriter(
         }
 
         List<string> owned = [];
-        var count = GetShapeCount(shapes);
-        for (var index = 1; index <= count; index++)
+        int count = GetShapeCount(shapes);
+        for (int index = 1; index <= count; index++)
         {
             Excel.Shape? shape = GetShapeAt(shapes, index);
             if (shape is null)
@@ -309,7 +309,7 @@ public class ExcelShapeWriter(
                 continue;
             }
 
-            var name = shape.Name;
+            string name = shape.Name;
             if (!string.IsNullOrWhiteSpace(name) && CarriesOwnershipTagFor(shape, name))
             {
                 owned.Add(name);
@@ -363,9 +363,9 @@ public class ExcelShapeWriter(
         // in the list leaves the whole scene untouched, which is the atomicity the
         // existence check above already provides.
         List<Excel.Shape> resolved = new(backToFront.Count);
-        for (var index = 0; index < backToFront.Count; index++)
+        for (int index = 0; index < backToFront.Count; index++)
         {
-            var primitiveId = backToFront[index];
+            string primitiveId = backToFront[index];
             Excel.Shape? shape = FindShapeByName(shapes, primitiveId);
             if (shape is null || !CarriesOwnershipTagFor(shape, primitiveId))
             {
@@ -388,7 +388,7 @@ public class ExcelShapeWriter(
         // order was. Forward order would produce its exact reverse. This is still
         // the single deterministic pass R4.5 D2 requires: no BringToFront, and no
         // per-shape call outside this method.
-        for (var index = resolved.Count - 1; index >= 0; index--)
+        for (int index = resolved.Count - 1; index >= 0; index--)
         {
             resolved[index].ZOrder(MsoZOrderCmd.msoSendToBack);
         }
@@ -738,8 +738,8 @@ public class ExcelShapeWriter(
                 // the host's own bounding box cannot represent it.
                 PointD from = geometry.From!.Value;
                 PointD to = geometry.To!.Value;
-                var left = Math.Min(from.X, to.X);
-                var top = Math.Min(from.Y, to.Y);
+                double left = Math.Min(from.X, to.X);
+                double top = Math.Min(from.Y, to.Y);
                 shape.Left = GeometryMath.SnapToDisplayPrecision(left);
                 shape.Top = GeometryMath.SnapToDisplayPrecision(top);
                 shape.Width = GeometryMath.SnapToDisplayPrecision(Math.Abs(to.X - from.X));
@@ -779,8 +779,8 @@ public class ExcelShapeWriter(
     {
         ArgumentNullException.ThrowIfNull(sheets);
 
-        var count = GetSheetCount(sheets);
-        for (var index = 1; index <= count; index++)
+        int count = GetSheetCount(sheets);
+        for (int index = 1; index <= count; index++)
         {
             Excel._Worksheet? sheet = GetSheetAt(sheets, index);
             if (sheet is not null && HasGanttTable(sheet))
@@ -820,8 +820,8 @@ public class ExcelShapeWriter(
             return false;
         }
 
-        var count = GetListObjectCount(objects);
-        for (var index = 1; index <= count; index++)
+        int count = GetListObjectCount(objects);
+        for (int index = 1; index <= count; index++)
         {
             Excel.ListObject? table = GetListObjectAt(objects, index);
             if (table is not null && string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
@@ -878,8 +878,8 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        var count = GetShapeCount(shapes);
-        for (var index = 1; index <= count; index++)
+        int count = GetShapeCount(shapes);
+        for (int index = 1; index <= count; index++)
         {
             Excel.Shape? shape = GetShapeAt(shapes, index);
             if (shape is not null && string.Equals(shape.Name, name, StringComparison.Ordinal))

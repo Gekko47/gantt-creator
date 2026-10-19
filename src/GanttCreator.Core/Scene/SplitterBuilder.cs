@@ -159,8 +159,8 @@ public static class SplitterBuilder
             return Refused(SplitterRefusal.InvalidGeometry);
         }
 
-        var owner = SceneOwnerId.ForRow(request.Event.Id);
-        var bounds = new RectD(
+        SceneOwnerId owner = SceneOwnerId.ForRow(request.Event.Id);
+        RectD bounds = new RectD(
             request.PanelLeftPt,
             lane.Top,
             request.PlotBounds.Right - request.PanelLeftPt,
@@ -239,7 +239,7 @@ public static class SplitterBuilder
             return GanttLabelPosition.None;
         }
 
-        var text = request.Event.Description;
+        string? text = request.Event.Description;
         if (string.IsNullOrWhiteSpace(text)
             || !request.LabelMetrics.TryMeasure(text, out TextMeasurement? measured)
             || measured is null)
@@ -247,8 +247,8 @@ public static class SplitterBuilder
             return GanttLabelPosition.None;
         }
 
-        var height = measured.HeightPt;
-        var top = bounds.Y + ((bounds.Height - height) / 2);
+        double height = measured.HeightPt;
+        double top = bounds.Y + ((bounds.Height - height) / 2);
 
         // `Both` deliberately emits two scene text entities with distinct
         // role-derived IDs, so a reconciling renderer can update one without
@@ -263,7 +263,7 @@ public static class SplitterBuilder
         // primitive is the same class of defect this repository treats as a bug.
         if (request.LabelPosition is GanttLabelPosition.DataPanelLeft or GanttLabelPosition.Both)
         {
-            var width = Math.Min(measured.WidthPt, request.PlotBounds.Left - bounds.X);
+            double width = Math.Min(measured.WidthPt, request.PlotBounds.Left - bounds.X);
             if (width > 0)
             {
                 primitives.Add(
@@ -282,7 +282,7 @@ public static class SplitterBuilder
 
         if (request.LabelPosition is GanttLabelPosition.PlotCentre or GanttLabelPosition.Both)
         {
-            var width = Math.Min(measured.WidthPt, request.PlotBounds.Width);
+            double width = Math.Min(measured.WidthPt, request.PlotBounds.Width);
             if (width <= 0)
             {
                 return primitives.Count > 0 ? request.LabelPosition : GanttLabelPosition.None;

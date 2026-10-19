@@ -259,7 +259,7 @@ internal sealed partial class ThemeSettingsForm : Form
         CreateCustomStylesTab();
 
         // Bottom buttons + warning label
-        var bottomPanel = new Panel
+        Panel bottomPanel = new Panel
         {
             Dock = DockStyle.Bottom,
             Height = 60,
@@ -270,7 +270,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _warningLabel.Font = new Font(Font.FontFamily, 8.25f, FontStyle.Regular);
         bottomPanel.Controls.Add(_warningLabel);
 
-        var buttonPanel = new FlowLayoutPanel
+        FlowLayoutPanel buttonPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             FlowDirection = FlowDirection.RightToLeft,
@@ -291,13 +291,13 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void CreateColoursTab()
     {
-        var tab = new TabPage("Colours")
+        TabPage tab = new TabPage("Colours")
         {
             Padding = new Padding(8),
         };
         _tabControl.TabPages.Add(tab);
 
-        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
         int y = 8;
@@ -310,7 +310,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 continue;
             }
 
-            var group = new GroupBox
+            GroupBox group = new GroupBox
             {
                 Text = preset.DisplayName,
                 Location = new Point(8, y),
@@ -350,7 +350,7 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private void AddColourRow(Control parent, string key, string label, string initialValue, int top)
     {
-        var lbl = new Label
+        Label lbl = new Label
         {
             Text = label,
             Location = new Point(12, top + 3),
@@ -359,7 +359,7 @@ internal sealed partial class ThemeSettingsForm : Form
         };
         parent.Controls.Add(lbl);
 
-        var txt = new TextBox
+        TextBox txt = new TextBox
         {
             Name = key,
             Location = new Point(70, top),
@@ -372,7 +372,7 @@ internal sealed partial class ThemeSettingsForm : Form
         parent.Controls.Add(txt);
         _colorTextBoxes[key] = txt;
 
-        var btn = new Button
+        Button btn = new Button
         {
             Text = "\u2026",
             Location = new Point(176, top - 1),
@@ -383,7 +383,7 @@ internal sealed partial class ThemeSettingsForm : Form
         parent.Controls.Add(btn);
         _colorPickerButtons[key] = btn;
 
-        var swatch = new Panel
+        Panel swatch = new Panel
         {
             Location = new Point(210, top),
             Size = new Size(24, 22),
@@ -397,17 +397,17 @@ internal sealed partial class ThemeSettingsForm : Form
     private void ColorPickerButton_Click(object? sender, EventArgs e)
     {
         if (sender is Button btn && btn.Tag is string key &&
-            _colorTextBoxes.TryGetValue(key, out var txt))
+            _colorTextBoxes.TryGetValue(key, out TextBox? txt))
         {
             if (ColourHex.TryParse(txt.Text, out ColourHex? initial))
             {
-                _colorDialog.Color = System.Drawing.Color.FromArgb((int)initial!.ARGB);
+                _colorDialog.Color = Color.FromArgb((int)initial!.ARGB);
             }
 
             if (_colorDialog.ShowDialog(this) == DialogResult.OK)
             {
-                var color = _colorDialog.Color;
-                var hex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+                Color color = _colorDialog.Color;
+                string hex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
                 txt.Text = hex;
                 UpdateSwatch(key, color);
             }
@@ -426,7 +426,7 @@ internal sealed partial class ThemeSettingsForm : Form
         if (ColourHex.TryParse(text, out _))
         {
             txt.BackColor = SystemColors.Window;
-            UpdateSwatch(txt.Name, System.Drawing.ColorTranslator.FromHtml(text));
+            UpdateSwatch(txt.Name, ColorTranslator.FromHtml(text));
         }
         else
         {
@@ -448,20 +448,20 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private static Color ParseColourOrDefault(string value)
     {
-        return ColourHex.TryParse(value, out var c) && c is not null
-            ? System.Drawing.Color.FromArgb((int)c.ARGB)
+        return ColourHex.TryParse(value, out ColourHex? c) && c is not null
+            ? Color.FromArgb((int)c.ARGB)
             : SystemColors.Control;
     }
 
     private void CreateHeightsTab()
     {
-        var tab = new TabPage("Heights & sizes")
+        TabPage tab = new TabPage("Heights & sizes")
         {
             Padding = new Padding(8),
         };
         _tabControl.TabPages.Add(tab);
 
-        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
         int y = 8;
@@ -477,13 +477,13 @@ internal sealed partial class ThemeSettingsForm : Form
 
         foreach (string key in metricKeys)
         {
-            var token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
+            GanttMetricToken? token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
             if (token == null)
             {
                 continue;
             }
 
-            var group = new GroupBox
+            GroupBox group = new GroupBox
             {
                 Text = key,
                 Location = new Point(8, y),
@@ -492,7 +492,7 @@ internal sealed partial class ThemeSettingsForm : Form
             };
             panel.Controls.Add(group);
 
-            var lbl = new Label
+            Label lbl = new Label
             {
                 Text = $"Range: {token.Minimum} – {token.Maximum} pt",
                 Location = new Point(12, 24),
@@ -500,7 +500,7 @@ internal sealed partial class ThemeSettingsForm : Form
             };
             group.Controls.Add(lbl);
 
-            var nud = new NumericUpDown
+            NumericUpDown nud = new NumericUpDown
             {
                 Name = key,
                 Location = new Point(12, 46),
@@ -520,13 +520,13 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void CreateGridTab()
     {
-        var tab = new TabPage("Grid & bands")
+        TabPage tab = new TabPage("Grid & bands")
         {
             Padding = new Padding(8),
         };
         _tabControl.TabPages.Add(tab);
 
-        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
         int y = 8;
@@ -541,13 +541,13 @@ internal sealed partial class ThemeSettingsForm : Form
 
         foreach (string key in metricKeys)
         {
-            var token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
+            GanttMetricToken? token = GanttCatalogues.Metrics.FirstOrDefault(t => t.Name == key);
             if (token == null)
             {
                 continue;
             }
 
-            var group = new GroupBox
+            GroupBox group = new GroupBox
             {
                 Text = key,
                 Location = new Point(8, y),
@@ -556,7 +556,7 @@ internal sealed partial class ThemeSettingsForm : Form
             };
             panel.Controls.Add(group);
 
-            var lbl = new Label
+            Label lbl = new Label
             {
                 Text = $"Range: {token.Minimum} – {token.Maximum} pt",
                 Location = new Point(12, 24),
@@ -564,7 +564,7 @@ internal sealed partial class ThemeSettingsForm : Form
             };
             group.Controls.Add(lbl);
 
-            var nud = new NumericUpDown
+            NumericUpDown nud = new NumericUpDown
             {
                 Name = key,
                 Location = new Point(12, 46),
@@ -585,13 +585,13 @@ internal sealed partial class ThemeSettingsForm : Form
     private void CreateCustomStylesTab()
     {
 #pragma warning disable CA1303 // Literal strings are UI labels in a WinForms dialog; localization is out of scope for R5.6a.
-        var tab = new TabPage("Custom styles")
+        TabPage tab = new TabPage("Custom styles")
         {
             Padding = new Padding(8),
         };
         _tabControl.TabPages.Add(tab);
 
-        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
         // Left: list of existing custom styles
@@ -612,7 +612,7 @@ internal sealed partial class ThemeSettingsForm : Form
         // Right: edit panel for the selected custom style
         _customStyleEditGroup.Location = new Point(240, 8);
 
-        var keyLbl = new Label
+        Label keyLbl = new Label
         {
             Text = _customStyleKeyLabel,
             Location = new Point(16, 28),
@@ -620,7 +620,7 @@ internal sealed partial class ThemeSettingsForm : Form
         };
         _customStyleKeyText.Location = new Point(84, 24);
 
-        var fillLbl = new Label
+        Label fillLbl = new Label
         {
             Text = _customStyleFillLabel,
             Location = new Point(16, 64),
@@ -632,7 +632,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _customFillColorButton.Click += CustomFillColorButton_Click;
         _customStyleFillText.TextChanged += CustomStyleColourTextChanged;
 
-        var strokeLbl = new Label
+        Label strokeLbl = new Label
         {
             Text = _customStyleStrokeLabel,
             Location = new Point(16, 96),
@@ -644,7 +644,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStrokeColorButton.Click += CustomStrokeColorButton_Click;
         _customStyleStrokeText.TextChanged += CustomStyleColourTextChanged;
 
-        var textLbl = new Label
+        Label textLbl = new Label
         {
             Text = _customStyleTextLabel,
             Location = new Point(16, 128),
@@ -660,7 +660,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _customNewButton.Click += CustomNewButton_Click;
 
         // Delete only applies to a selected style; it lives inside the edit group.
-        var buttonPanel = new FlowLayoutPanel
+        FlowLayoutPanel buttonPanel = new FlowLayoutPanel
         {
             Location = new Point(16, 172),
             Size = new Size(280, 30),
@@ -687,13 +687,13 @@ internal sealed partial class ThemeSettingsForm : Form
         panel.Controls.Add(_customStyleEditGroup);
 
         // Always-visible new-style row: key entry + New button.
-        var customNewRow = new FlowLayoutPanel
+        FlowLayoutPanel customNewRow = new FlowLayoutPanel
         {
             Location = new Point(8, 296),
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
         };
-        var newKeyLabel = new Label
+        Label newKeyLabel = new Label
         {
             Text = "New key:",
             AutoSize = true,
@@ -710,12 +710,12 @@ internal sealed partial class ThemeSettingsForm : Form
     private void CustomStyleList_SelectedIndexChanged(object? sender, EventArgs e)
     {
         _selectedCustomStyleKey = _customStyleList.SelectedItem as string;
-        var hasSelection = _selectedCustomStyleKey is not null;
+        bool hasSelection = _selectedCustomStyleKey is not null;
         _customDeleteButton.Enabled = hasSelection;
         _customStyleEditGroup.Enabled = hasSelection;
 
         if (hasSelection && _selectedCustomStyleKey is { } key &&
-            _customStyleEdits.TryGetValue(key, out var colours))
+            _customStyleEdits.TryGetValue(key, out CustomStyleState? colours))
         {
             _customStyleKeyText.Text = _selectedCustomStyleKey;
             _customStyleFillText.Text = colours.Fill;
@@ -797,7 +797,7 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
-        var confirm = MessageBox.Show(
+        DialogResult confirm = MessageBox.Show(
             $"Delete custom style '{key}'?",
             "Delete custom style",
             MessageBoxButtons.YesNo,
@@ -816,7 +816,7 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void UpdateCustomStyleListHint()
     {
-        var empty = _customStyleList.Items.Count == 0;
+        bool empty = _customStyleList.Items.Count == 0;
         _customStyleListHint.Visible = empty;
         _customStyleList.Visible = !empty;
         _customStyleListLabel.Visible = !empty;
@@ -828,14 +828,14 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void PickCustomColour(TextBox textBox, Panel swatch)
     {
-        _colorDialog.Color = ColourHex.TryParse(textBox.Text, out var initial)
-            ? System.Drawing.Color.FromArgb((int)initial!.ARGB)
+        _colorDialog.Color = ColourHex.TryParse(textBox.Text, out ColourHex? initial)
+            ? Color.FromArgb((int)initial!.ARGB)
             : SystemColors.Control;
 
         if (_colorDialog.ShowDialog(this) == DialogResult.OK)
         {
-            var color = _colorDialog.Color;
-            var hex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+            Color color = _colorDialog.Color;
+            string hex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
             textBox.Text = hex;
             swatch.BackColor = color;
         }
@@ -857,17 +857,17 @@ internal sealed partial class ThemeSettingsForm : Form
     private void PopulateFromRequest(ThemeEditRequest request)
     {
         // Colours
-        foreach (var edit in request.StyleEdits)
+        foreach (ThemeStyleEdit edit in request.StyleEdits)
         {
-            if (_colorTextBoxes.TryGetValue($"fill_{edit.StyleKey}", out var fillTxt))
+            if (_colorTextBoxes.TryGetValue($"fill_{edit.StyleKey}", out TextBox? fillTxt))
             {
                 fillTxt.Text = edit.FillColour;
             }
-            if (_colorTextBoxes.TryGetValue($"stroke_{edit.StyleKey}", out var strokeTxt))
+            if (_colorTextBoxes.TryGetValue($"stroke_{edit.StyleKey}", out TextBox? strokeTxt))
             {
                 strokeTxt.Text = edit.StrokeColour;
             }
-            if (_colorTextBoxes.TryGetValue($"text_{edit.StyleKey}", out var textTxt))
+            if (_colorTextBoxes.TryGetValue($"text_{edit.StyleKey}", out TextBox? textTxt))
             {
                 textTxt.Text = edit.TextColour;
             }
@@ -879,9 +879,9 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         // Metrics
-        foreach (var kvp in request.MetricEdits)
+        foreach (KeyValuePair<string, double> kvp in request.MetricEdits)
         {
-            if (_metricNumericUpDowns.TryGetValue(kvp.Key, out var nud))
+            if (_metricNumericUpDowns.TryGetValue(kvp.Key, out NumericUpDown? nud))
             {
                 nud.Value = (decimal)kvp.Value;
             }
@@ -900,7 +900,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private void OkButton_Click(object? sender, EventArgs e)
     {
         // Validate all colour text boxes
-        foreach (var kvp in _colorTextBoxes)
+        foreach (KeyValuePair<string, TextBox> kvp in _colorTextBoxes)
         {
             if (!string.IsNullOrEmpty(kvp.Value.Text) && !ColourHex.TryParse(kvp.Value.Text, out _))
             {
@@ -946,7 +946,7 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         Dictionary<string, double> metricEdits = [];
-        foreach (var kvp in _metricNumericUpDowns)
+        foreach (KeyValuePair<string, NumericUpDown> kvp in _metricNumericUpDowns)
         {
             metricEdits[kvp.Key] = (double)kvp.Value.Value;
         }
@@ -955,9 +955,9 @@ internal sealed partial class ThemeSettingsForm : Form
         List<ThemeStyleEdit> styleEdits = [];
         foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
-            string fill = _colorTextBoxes.TryGetValue($"fill_{preset.StyleKey}", out var ft) ? ft.Text : "";
-            string stroke = _colorTextBoxes.TryGetValue($"stroke_{preset.StyleKey}", out var st) ? st.Text : "";
-            string text = _colorTextBoxes.TryGetValue($"text_{preset.StyleKey}", out var tt) ? tt.Text : "";
+            string fill = _colorTextBoxes.TryGetValue($"fill_{preset.StyleKey}", out TextBox? ft) ? ft.Text : "";
+            string stroke = _colorTextBoxes.TryGetValue($"stroke_{preset.StyleKey}", out TextBox? st) ? st.Text : "";
+            string text = _colorTextBoxes.TryGetValue($"text_{preset.StyleKey}", out TextBox? tt) ? tt.Text : "";
 
             if (fill.Length > 0 || stroke.Length > 0 || text.Length > 0)
             {
@@ -965,11 +965,11 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        var customStyleEdits = new List<CustomStyleEdit>();
-        var originalKeys = new HashSet<string>(_originalCustomDefs.Select(d => d.StyleKey), StringComparer.Ordinal);
+        List<CustomStyleEdit> customStyleEdits = [];
+        HashSet<string> originalKeys = new HashSet<string>(_originalCustomDefs.Select(d => d.StyleKey), StringComparer.Ordinal);
 
         // Deletes: original custom styles no longer in _customStyleEdits
-        foreach (var original in _originalCustomDefs)
+        foreach (CustomStyleDef original in _originalCustomDefs)
         {
             if (!_customStyleEdits.ContainsKey(original.StyleKey))
             {
@@ -978,11 +978,11 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         // Creates and updates: current custom styles
-        foreach (var kvp in _customStyleEdits)
+        foreach (KeyValuePair<string, CustomStyleState> kvp in _customStyleEdits)
         {
-            var key = kvp.Key;
-            var state = kvp.Value;
-            var original = _originalCustomDefs.FirstOrDefault(d => d.StyleKey == key);
+            string key = kvp.Key;
+            CustomStyleState state = kvp.Value;
+            CustomStyleDef? original = _originalCustomDefs.FirstOrDefault(d => d.StyleKey == key);
             if (original is null)
             {
                 customStyleEdits.Add(new CustomStyleEdit(
@@ -1011,7 +1011,7 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        var request = new ThemeEditRequest(styleEdits, metricEdits, customStyleEdits);
+        ThemeEditRequest request = new ThemeEditRequest(styleEdits, metricEdits, customStyleEdits);
 
         if (!ThemeEditRequest.TryValidate(request, out _, out string? msg))
         {
@@ -1021,7 +1021,7 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
-        var warnings = ThemeEditRequest.ContrastWarnings(request);
+        IReadOnlyList<string> warnings = ThemeEditRequest.ContrastWarnings(request);
         if (warnings.Count > 0)
         {
             _warningLabel.Text = string.Join("; ", warnings);
@@ -1040,7 +1040,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private void ResetButton_Click(object? sender, EventArgs e)
     {
         // Resetting overwrites every custom theme entry, so confirm first.
-        var confirm = MessageBox.Show(
+        DialogResult confirm = MessageBox.Show(
             "Reset all theme colours and metric defaults to the built-in values? This overwrites all custom entries.",
             "Reset theme to default",
             MessageBoxButtons.YesNo,
@@ -1052,13 +1052,13 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         // Empty colour boxes mean "use the preset default".
-        foreach (var txt in _colorTextBoxes.Values)
+        foreach (TextBox txt in _colorTextBoxes.Values)
         {
             txt.Text = string.Empty;
         }
 
         // Reset every editable metric to its catalogue default.
-        foreach (var kvp in _metricNumericUpDowns)
+        foreach (KeyValuePair<string, NumericUpDown> kvp in _metricNumericUpDowns)
         {
             GanttMetricToken? token = GanttCatalogues.Metrics
                 .FirstOrDefault(t => string.Equals(t.Name, kvp.Key, StringComparison.Ordinal));

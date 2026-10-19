@@ -118,7 +118,7 @@ internal static class ParentChildRefusalTranslator
         int? selectedRowNumber,
         bool isPromote)
     {
-        var row = selectedRowNumber is int number
+        string row = selectedRowNumber is int number
             ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
             : "The selected row ";
 
@@ -181,7 +181,7 @@ internal static class ParentChildRefusalTranslator
         // A move plan cannot reach here through either planner; the branch
         // exists so a future refusal reason still produces a message that
         // names the verb rather than a blank dialog.
-        var row = selectedRowNumber is int number
+        string row = selectedRowNumber is int number
             ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
             : "The selected row ";
 
@@ -205,7 +205,7 @@ internal static class ParentChildRefusalTranslator
         int? selectedRowNumber)
     {
         _ = planRefusal;
-        var row = selectedRowNumber is int number
+        string row = selectedRowNumber is int number
             ? string.Create(CultureInfo.InvariantCulture, $"Row {number} ")
             : "The selected row ";
 
