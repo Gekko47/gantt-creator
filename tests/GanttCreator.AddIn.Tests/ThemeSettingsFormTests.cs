@@ -1298,6 +1298,143 @@ public class ThemeSettingsFormTests
     }
 
     /// <summary>
+    /// R5.6d WI-C: the default-position combo offered every label position,
+    /// so the user could choose a default the style does not permit - a pair
+    /// the writer refuses. The combo now offers exactly the permitted ones,
+    /// and unchecking the current default moves it to a permitted position.
+    /// </summary>
+    [Fact]
+    public void The_default_label_combo_offers_only_the_permitted_positions()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [],
+                new Dictionary<string, double>(),
+                null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+                LayOutTab(form, tab);
+
+                var list = FindAll(tab, c => c is CheckedListBox)
+                    .Cast<CheckedListBox>()
+                    .Single();
+                var combo = GetField<ComboBox>(form, "_customDefaultLabelCombo");
+
+                // Select the saved style so the editor holds a real style.
+                var styleList = RequireListBox(tab);
+                styleList.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // The combo starts as the style's own permitted set - never
+                // the whole vocabulary.
+                var wholeVocabulary = Enum.GetValues<GanttLabelPosition>().Length;
+                Assert.True(
+                    combo.Items.Count < wholeVocabulary,
+                    $"The default combo offered all {wholeVocabulary} positions.");
+
+                // Untick every permitted position, then tick exactly two. The
+                // handler is the one the host raises when the user clicks.
+                for (int index = 0; index < list.Items.Count; index++)
+                {
+                    if (list.GetItemChecked(index))
+                    {
+                        InvokeAllowedLabelItemCheck(form, index, CheckState.Unchecked);
+                        list.SetItemChecked(index, false);
+                    }
+                }
+
+                var permitted = new List<GanttLabelPosition> { GanttLabelPosition.Left, GanttLabelPosition.Right };
+                foreach (int index in Enumerable.Range(0, list.Items.Count))
+                {
+                    bool isChecked = list.Items[index] is ThemeSettingsForm.LabelPositionItem item
+                        && permitted.Contains(item.Position);
+                    if (isChecked)
+                    {
+                        InvokeAllowedLabelItemCheck(form, index, CheckState.Checked);
+                        list.SetItemChecked(index, true);
+                    }
+                }
+
+                // The combo offers the permitted positions and nothing else,
+                // and the default it holds is one of them.
+                var offered = combo.Items.Cast<ThemeSettingsForm.LabelPositionItem>()
+                    .Select(item => item.Position)
+                    .ToList();
+                Assert.Equal(permitted, offered);
+                ThemeSettingsForm.LabelPositionItem? chosen =
+                    combo.SelectedItem as ThemeSettingsForm.LabelPositionItem;
+                Assert.NotNull(chosen);
+                Assert.Contains(chosen!.Position, permitted);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// R5.6d WI-C: the writer refuses a style that permits no label
+    /// position, so the dialog refuses it too rather than after the write.
+    /// </summary>
+    [Fact]
+    public void Ok_AStyleThatPermitsNoLabelPositionIsRefusedInTheDialog()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [],
+                new Dictionary<string, double>(),
+                null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+                LayOutTab(form, tab);
+
+                var list = FindAll(tab, c => c is CheckedListBox)
+                    .Cast<CheckedListBox>()
+                    .Single();
+
+                var styleList = RequireListBox(tab);
+                styleList.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // Untick every permitted position.
+                for (int index = 0; index < list.Items.Count; index++)
+                {
+                    if (list.GetItemChecked(index))
+                    {
+                        InvokeAllowedLabelItemCheck(form, index, CheckState.Unchecked);
+                        list.SetItemChecked(index, false);
+                    }
+                }
+
+                InvokeClick(form, "OkButton_Click");
+
+                // The dialog stays open and produces no request.
+                Assert.Null(form.GetValidatedRequest());
+                Assert.True(form.DialogResult == DialogResult.None);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
     /// Regression: the permitted-label list showed four of its eleven
     /// positions behind a scroll bar, and the property groups below it were
     /// pushed past the foot of the panel. The list now shows every position,
@@ -1564,5 +1701,25 @@ public class ThemeSettingsFormTests
         var m = typeof(ThemeSettingsForm).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"Method '{methodName}' not found on ThemeSettingsForm.");
         m.Invoke(form, new object?[] { null, EventArgs.Empty });
+    }
+
+    /// <summary>
+    /// Invokes the permitted-label list's check handler for one item, the
+    /// way the host does when the user clicks a tick box. The list's
+    /// <c>ItemCheck</c> event fires before the check state changes, so the
+    /// handler is given the item's index and the state it is moving to.
+    /// </summary>
+    /// <param name="form">The form under test.</param>
+    /// <param name="index">The item's zero-based index.</param>
+    /// <param name="newValue">The state the item is moving to.</param>
+    private static void InvokeAllowedLabelItemCheck(ThemeSettingsForm form, int index, CheckState newValue)
+    {
+        var handler = typeof(ThemeSettingsForm).GetMethod(
+            "CustomStyleAllowedLabelItemCheck",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("CustomStyleAllowedLabelItemCheck not found.");
+
+        var args = new ItemCheckEventArgs(index, newValue, CheckState.Unchecked);
+        handler.Invoke(form, new object?[] { null, args });
     }
 }

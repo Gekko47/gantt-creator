@@ -1764,9 +1764,17 @@ internal sealed partial class ThemeSettingsForm : Form
 
         foreach (GanttLabelPosition position in Enum.GetValues<GanttLabelPosition>())
         {
-            _ = _customDefaultLabelCombo.Items.Add(new LabelPositionItem(position, DescribeLabelPosition(position)));
             _ = _customAllowedLabelList.Items.Add(new LabelPositionItem(position, DescribeLabelPosition(position)));
         }
+
+        // The default-position combo is NOT populated here: it offers exactly
+        // the positions the style PERMITS, so it is rebuilt from the checked
+        // items of the permitted-label list (R5.6d WI-C). The writer's rule
+        // is that the default must be one of the permitted positions, so a
+        // combo that offered every position would let the user choose a pair
+        // the workbook cannot store.
+        _ = _customDefaultLabelCombo.Items.Add(
+            new LabelPositionItem(GanttLabelPosition.Auto, DescribeLabelPosition(GanttLabelPosition.Auto)));
 
         foreach (GanttStrokeDash dash in Enum.GetValues<GanttStrokeDash>())
         {
@@ -1827,7 +1835,7 @@ internal sealed partial class ThemeSettingsForm : Form
     /// </summary>
     /// <param name="Position">The position value.</param>
     /// <param name="Label">The display name.</param>
-    private sealed record LabelPositionItem(GanttLabelPosition Position, string Label)
+    internal sealed record LabelPositionItem(GanttLabelPosition Position, string Label)
     {
         /// <inheritdoc />
         public override string ToString() => Label;
@@ -1955,9 +1963,6 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStrokeDashCombo.SelectedItem =
             _customStrokeDashCombo.Items.Cast<StrokeDashItem>()
                 .FirstOrDefault(item => item.Dash == state.StrokeDash);
-        _customDefaultLabelCombo.SelectedItem =
-            _customDefaultLabelCombo.Items.Cast<LabelPositionItem>()
-                .FirstOrDefault(item => item.Position == state.DefaultLabelPosition);
 
         for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
         {
@@ -1965,6 +1970,15 @@ internal sealed partial class ThemeSettingsForm : Form
                 && state.AllowedLabelPositions.Contains(item.Position);
             _customAllowedLabelList.SetItemChecked(index, isChecked);
         }
+
+        // The default combo offers exactly the permitted positions, so it is
+        // rebuilt from the list before the stored default is selected (R5.6d
+        // WI-C). A stored default that the style does not permit falls back
+        // to a permitted one, because the workbook cannot store the pair.
+        RebuildDefaultLabelCombo(CheckedAllowedLabelPositions());
+        _customDefaultLabelCombo.SelectedItem =
+            _customDefaultLabelCombo.Items.Cast<LabelPositionItem>()
+                .FirstOrDefault(item => item.Position == state.DefaultLabelPosition);
 
         _customOutlineWidthNumeric.Value = ClampToNumericRange(state.StandardOutlinePt, _customOutlineWidthNumeric);
         _customActivityHeightNumeric.Value = ClampToNumericRange(state.ActivityHeightPt, _customActivityHeightNumeric);
@@ -2210,6 +2224,62 @@ internal sealed partial class ThemeSettingsForm : Form
     }
 
     /// <summary>
+    /// Rebuilds the default-position combo so it offers exactly the positions
+    /// the style permits.
+    /// </summary>
+    /// <remarks>
+    /// R5.6d WI-C: the writer's rule is that the default label position must
+    /// be one of the permitted positions, and the reader enforces it. A combo
+    /// that offered every position let the user choose a pair the workbook
+    /// cannot store, which the write then refused. A default that is no
+    /// longer permitted moves to the first position that is, so the edit
+    /// never carries an inconsistent pair.
+    /// </remarks>
+    /// <param name="permitted">The permitted positions.</param>
+    private void RebuildDefaultLabelCombo(HashSet<GanttLabelPosition> permitted)
+    {
+        GanttLabelPosition? current = _customDefaultLabelCombo.SelectedItem is LabelPositionItem selected
+            ? selected.Position
+            : null;
+
+        _customDefaultLabelCombo.Items.Clear();
+        foreach (GanttLabelPosition position in Enum.GetValues<GanttLabelPosition>())
+        {
+            if (permitted.Contains(position))
+            {
+                _ = _customDefaultLabelCombo.Items.Add(
+                    new LabelPositionItem(position, DescribeLabelPosition(position)));
+            }
+        }
+
+        List<LabelPositionItem> items = [.. _customDefaultLabelCombo.Items.Cast<LabelPositionItem>()];
+        LabelPositionItem? chosen =
+            items.FirstOrDefault(item => current is { } position && item.Position == position)
+            ?? items.FirstOrDefault();
+        _customDefaultLabelCombo.SelectedItem = chosen;
+    }
+
+    /// <summary>
+    /// Returns the permitted label positions the user has ticked in the
+    /// permitted-label list.
+    /// </summary>
+    /// <returns>The permitted positions.</returns>
+    private HashSet<GanttLabelPosition> CheckedAllowedLabelPositions()
+    {
+        HashSet<GanttLabelPosition> selected = [];
+        for (int index = 0; index < _customAllowedLabelList.Items.Count; index++)
+        {
+            if (_customAllowedLabelList.GetItemChecked(index)
+                && _customAllowedLabelList.Items[index] is LabelPositionItem item)
+            {
+                _ = selected.Add(item.Position);
+            }
+        }
+
+        return selected;
+    }
+
+    /// <summary>
     /// Handles a check/uncheck in the permitted-label list. The list's
     /// <c>ItemCheck</c> event fires <em>before</em> the check state changes, so
     /// the new set is computed from the event's own index and new value rather
@@ -2234,6 +2304,21 @@ internal sealed partial class ThemeSettingsForm : Form
             {
                 _ = selected.Add(item.Position);
             }
+        }
+
+        // The default follows the permitted set (R5.6d WI-C), so the combo is
+        // rebuilt FIRST and the state is then written from the corrected
+        // combo. The rebuild's own change event is suppressed, because the
+        // list's check state has not changed yet at this point.
+        bool wasSuppressed = _suppressCustomStyleSync;
+        _suppressCustomStyleSync = true;
+        try
+        {
+            RebuildDefaultLabelCombo(selected);
+        }
+        finally
+        {
+            _suppressCustomStyleSync = wasSuppressed;
         }
 
         _customStyleEdits[_selectedCustomStyleKey] = new CustomStyleState(
@@ -2488,6 +2573,25 @@ internal sealed partial class ThemeSettingsForm : Form
                 _warningLabel.Visible = true;
                 _tabControl.SelectedTab = _tabControl.TabPages[1];
                 _ = kvp.Value.Focus();
+                DialogResult = DialogResult.None;
+                return;
+            }
+        }
+
+        // A custom style must permit at least one label position, and its
+        // default must be one of them: the writer refuses that pair, so it is
+        // refused here with the list focused rather than after the write
+        // (R5.6d WI-C).
+        foreach (KeyValuePair<string, CustomStyleState> edit in _customStyleEdits)
+        {
+            if (edit.Value.AllowedLabelPositions.Count == 0)
+            {
+                _warningLabel.Text = "Custom style '" + edit.Key
+                    + "' must permit at least one label position.";
+                _warningLabel.Visible = true;
+                _tabControl.SelectedTab = _tabControl.TabPages[2];
+                _customStyleEditGroup.Enabled = true;
+                _ = _customAllowedLabelList.Focus();
                 DialogResult = DialogResult.None;
                 return;
             }
