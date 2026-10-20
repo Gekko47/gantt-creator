@@ -496,6 +496,14 @@ internal sealed partial class ThemeSettingsForm : Form
         _entityStyleTitleLabel.Height = 26;
         _entityStyleTitleLabel.Font = new Font(Font, FontStyle.Bold);
         _entityStyleTitleLabel.TextAlign = ContentAlignment.MiddleLeft;
+
+        // This is the ONLY title the detail panel carries. It opens on the
+        // empty-state hint in the muted colour and turns into the selected
+        // style's name once a row is chosen; an earlier revision added a second,
+        // grey hint label on top of it, so the empty state showed the hint twice
+        // and kept showing it after a style was selected.
+        _entityStyleTitleLabel.Text = "Select a style to see its properties.";
+        _entityStyleTitleLabel.ForeColor = SystemColors.GrayText;
         _entityStyleDetailPanel.Controls.Add(_entityStyleTitleLabel);
 
         FlowLayoutPanel body = new()
@@ -521,7 +529,7 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityFillGroup()
     {
-        GroupBox group = new() { Text = "Fill", Width = 380, AutoSize = true };
+        GroupBox group = new() { Text = "Fill", AutoSize = true, MinimumSize = new Size(380, 0) };
         TableLayoutPanel table = NewEntityPropertyTable();
         group.Controls.Add(table);
 
@@ -563,13 +571,21 @@ internal sealed partial class ThemeSettingsForm : Form
     /// Creates the four-column table every entity property group uses:
     /// label, value, picker button, swatch.
     /// </summary>
+    /// <remarks>
+    /// The table must NOT dock inside its group box: an <c>AutoSize</c> group
+    /// resolves its preferred size by measuring its children, and a docked
+    /// child is laid out from the parent's size instead — which measures as
+    /// empty. The group then collapses to its border alone (a 6px sliver) and
+    /// every property in it becomes unreadable. Undocked, the table reports its
+    /// own preferred size and the group grows around it.
+    /// </remarks>
     private static TableLayoutPanel NewEntityPropertyTable()
     {
         TableLayoutPanel table = new()
         {
             ColumnCount = 4,
             AutoSize = true,
-            Dock = DockStyle.Top,
+            Dock = DockStyle.None,
         };
         _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
@@ -584,7 +600,7 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityOutlineGroup()
     {
-        GroupBox group = new() { Text = "Outline", Width = 380, AutoSize = true };
+        GroupBox group = new() { Text = "Outline", AutoSize = true, MinimumSize = new Size(380, 0) };
         TableLayoutPanel table = NewEntityPropertyTable();
         group.Controls.Add(table);
 
@@ -639,7 +655,7 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityLabelGroup()
     {
-        GroupBox group = new() { Text = "Label", Width = 380, AutoSize = true };
+        GroupBox group = new() { Text = "Label", AutoSize = true, MinimumSize = new Size(380, 0) };
         TableLayoutPanel table = NewEntityPropertyTable();
         group.Controls.Add(table);
 
@@ -685,12 +701,12 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntitySizeGroup()
     {
-        GroupBox group = new() { Text = "Size", Width = 380, AutoSize = true };
+        GroupBox group = new() { Text = "Size", AutoSize = true, MinimumSize = new Size(380, 0) };
         TableLayoutPanel table = new()
         {
             ColumnCount = 2,
             AutoSize = true,
-            Dock = DockStyle.Top,
+            Dock = DockStyle.None,
         };
         _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -737,6 +753,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             _selectedEntityStyleKey = null;
             _entityStyleTitleLabel.Text = "Select a style to see its properties.";
+            _entityStyleTitleLabel.ForeColor = SystemColors.GrayText;
             return;
         }
 
@@ -761,6 +778,7 @@ internal sealed partial class ThemeSettingsForm : Form
         _selectedEntityStyleKey = styleKey;
         GanttStylePreset preset = GanttCatalogues.GetPreset(styleKey);
         _entityStyleTitleLabel.Text = preset.DisplayName;
+        _entityStyleTitleLabel.ForeColor = SystemColors.ControlText;
         EntityStyleColours colours = _entityStyleColours.TryGetValue(styleKey, out EntityStyleColours? known)
             ? known
             : new EntityStyleColours(preset.FillColour, preset.StrokeColour, preset.TextColour);
@@ -883,6 +901,46 @@ internal sealed partial class ThemeSettingsForm : Form
     }
 
     /// <summary>
+    /// Places the master column at its intended width as soon as the split is
+    /// wide enough to hold it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="SplitContainer.SplitterDistance"/> cannot be assigned in the
+    /// object initializer: the split is still at its 150x100 design size there,
+    /// so 240 and 250 are both clamped to 121, and
+    /// <see cref="SplitContainer.FixedPanel"/> set to
+    /// <see cref="FixedPanel.Panel1"/> then freezes that crushed column for the
+    /// life of the dialog.
+    /// </para>
+    /// <para>
+    /// <see cref="SplitContainer.Panel1MinSize"/> does not repair it either —
+    /// the control only honours the minimum when the splitter moves, and it
+    /// never moves on its own. The first layout in which the split is wide
+    /// enough is therefore the moment to place the column. The handler removes
+    /// itself once it has done so: dragging resizes neither the split nor its
+    /// panels, so the user keeps the column wherever they leave it.
+    /// </para>
+    /// </remarks>
+    /// <param name="split">The master/detail split.</param>
+    /// <param name="masterWidth">The intended master column width.</param>
+    private static void PlaceMasterColumn(SplitContainer split, int masterWidth)
+    {
+        void Place(object? sender, EventArgs e)
+        {
+            if (split.Width - split.SplitterWidth - split.Panel2MinSize < masterWidth)
+            {
+                return;
+            }
+
+            split.SizeChanged -= Place;
+            split.SplitterDistance = masterWidth;
+        }
+
+        split.SizeChanged += Place;
+    }
+
+    /// <summary>
     /// The entity styles tab: a master–detail view. The left list holds the
     /// built-in styles grouped by their family, and the right panel holds
     /// every property of the selected style.
@@ -901,10 +959,21 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
-            SplitterDistance = 250,
+
+            // Panel1MinSize is the floor the user may drag the master column
+            // down to. It cannot place the column on its own — the split only
+            // honours a minimum when the splitter moves, and it never moves by
+            // itself — so PlaceMasterColumn below is what opens it.
+            //
+            // SplitterDistance must NOT be set here: the initializer runs while
+            // the split is still at its 150x100 design size, so 250 clamps down
+            // to 121 and FixedPanel.Panel1 then freezes that crushed width for
+            // the life of the dialog.
+            Panel1MinSize = 250,
             FixedPanel = FixedPanel.Panel1,
         };
         tab.Controls.Add(split);
+        PlaceMasterColumn(split, 250);
 
         // The master: one list, grouped by family. The group heading comes
         // from the code-owned family authority, so a style can never appear
@@ -914,6 +983,13 @@ internal sealed partial class ThemeSettingsForm : Form
         _entityStyleList.HideSelection = false;
         _entityStyleList.HeaderStyle = ColumnHeaderStyle.None;
         _entityStyleList.Dock = DockStyle.Fill;
+
+        // A Details-view ListView paints no rows unless it has a column, so the
+        // family headings alone read as an empty list. The header is suppressed
+        // (HeaderStyle.None above), and the column is sized from the master
+        // column's minimum width — SplitterDistance is not usable here, because
+        // it is still the value clamped while the split was 150px wide.
+        _ = _entityStyleList.Columns.Add(string.Empty, Math.Max(120, split.Panel1MinSize - 30));
         _entityStyleList.SelectedIndexChanged += EntityStyleList_SelectedIndexChanged;
         split.Panel1.Controls.Add(_entityStyleList);
 
@@ -924,16 +1000,6 @@ internal sealed partial class ThemeSettingsForm : Form
         split.Panel2.Controls.Add(_entityStyleDetailPanel);
 
         BuildEntityStyleDetailPanel();
-
-        Label title = new()
-        {
-            Text = "Select a style to see its properties.",
-            Dock = DockStyle.Top,
-            Height = 24,
-            ForeColor = SystemColors.GrayText,
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        _entityStyleDetailPanel.Controls.Add(title);
 
         foreach (GanttEntityFamily family in GanttStyleFamilies.OrderedFamilies)
         {
@@ -1274,10 +1340,17 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
-            SplitterDistance = 240,
+
+            // See CreateColoursTab: SplitterDistance cannot be assigned here
+            // (the split is still 150px wide, so 240 clamps to 121 and
+            // FixedPanel keeps it there). This only floors the user's drag;
+            // PlaceMasterColumn is what opens the column for the list and the
+            // New row at the bottom of it.
+            Panel1MinSize = 240,
             FixedPanel = FixedPanel.Panel1,
         };
         tab.Controls.Add(split);
+        PlaceMasterColumn(split, 240);
 
         // --- The master: the list of user-created styles. ---
         Panel master = new Panel
@@ -1319,23 +1392,33 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleListGroup.Controls.Add(listLayout);
         master.Controls.Add(_customStyleListGroup);
 
-        // The New-style row. The key box and the button share a flow panel, so
-        // they cannot overlap and the button is always reachable: creating the
-        // FIRST custom style is not gated behind a selection.
-        FlowLayoutPanel newRow = new FlowLayoutPanel
+        // The New-style row. The key box and the button sit in a two-column
+        // table: the key box is the flexible column and the button owns an
+        // autosized one, so the button can never be pushed past the master
+        // column's edge. A FlowLayoutPanel could not make that guarantee — it
+        // laid the button out at x=138 and clipped it at the column's 113px.
+        TableLayoutPanel newRow = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            FlowDirection = FlowDirection.LeftToRight,
+            ColumnCount = 2,
+            RowCount = 1,
             AutoSize = true,
-            WrapContents = false,
             Padding = new Padding(0, 8, 0, 0),
         };
-        _customNewKeyText.Width = 130;
+        _ = newRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _ = newRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _ = newRow.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        // Anchored rather than docked: a Docked child measures as empty to an
+        // AutoSize row (the same collapse the property groups hit), whereas the
+        // anchor stretches the box across its cell while still reporting its
+        // own 22px height for the row to grow around.
+        _customNewKeyText.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         _customNewKeyText.Margin = new Padding(0, 0, 8, 0);
-        newRow.Controls.Add(_customNewKeyText);
+        newRow.Controls.Add(_customNewKeyText, 0, 0);
         _customNewButton.Click += CustomNewButton_Click;
         _customNewButton.Margin = new Padding(0);
-        newRow.Controls.Add(_customNewButton);
+        newRow.Controls.Add(_customNewButton, 1, 0);
         master.Controls.Add(newRow);
 
         // --- The detail: the selected style's properties. ---
@@ -1381,8 +1464,8 @@ internal sealed partial class ThemeSettingsForm : Form
         GroupBox fillGroup = new GroupBox
         {
             Text = "Fill",
-            Width = 420,
             AutoSize = true,
+            MinimumSize = new Size(420, 0),
             Margin = new Padding(0, 0, 0, 8),
         };
         TableLayoutPanel fillTable = NewEntityPropertyTable();
@@ -1394,8 +1477,8 @@ internal sealed partial class ThemeSettingsForm : Form
         GroupBox outlineGroup = new GroupBox
         {
             Text = "Outline",
-            Width = 420,
             AutoSize = true,
+            MinimumSize = new Size(420, 0),
             Margin = new Padding(0, 0, 0, 8),
         };
         TableLayoutPanel outlineTable = NewEntityPropertyTable();
@@ -1408,8 +1491,8 @@ internal sealed partial class ThemeSettingsForm : Form
         GroupBox labelGroup = new GroupBox
         {
             Text = "Label",
-            Width = 420,
             AutoSize = true,
+            MinimumSize = new Size(420, 0),
             Margin = new Padding(0, 0, 0, 8),
         };
         TableLayoutPanel labelTable = NewEntityPropertyTable();
@@ -1422,8 +1505,8 @@ internal sealed partial class ThemeSettingsForm : Form
         GroupBox sizeGroup = new GroupBox
         {
             Text = "Size",
-            Width = 420,
             AutoSize = true,
+            MinimumSize = new Size(420, 0),
             Margin = new Padding(0, 0, 0, 8),
         };
         TableLayoutPanel sizeTable = NewEntityPropertyTable();

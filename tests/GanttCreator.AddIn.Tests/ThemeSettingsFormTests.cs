@@ -23,6 +23,13 @@ namespace GanttCreator.AddIn.Tests;
 /// </summary>
 public class ThemeSettingsFormTests
 {
+    /// <summary>
+    /// The property groups every detail panel holds, in panel order. Hoisted so
+    /// the bounds tests share one list rather than re-allocating a constant
+    /// array per call.
+    /// </summary>
+    private static readonly string[] s_detailGroupTexts = ["Fill", "Outline", "Label", "Size"];
+
     [Fact]
     public void ChartTab_OffersOneRowPerChartChromeRole()
     {
@@ -935,6 +942,171 @@ public class ThemeSettingsFormTests
         });
     }
 
+    /// <summary>
+    /// Regression: the Entity styles master list drew only its family headings
+    /// and no rows. A <see cref="ListView"/> in <see cref="View.Details"/> draws
+    /// items only when a column exists, so an item-less column list is invisible
+    /// even though the items are populated.
+    /// </summary>
+    [Fact]
+    public void EntityList_ShowsGroupedStyleRows()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+                var list = RequireEntityStyleList(tab);
+
+                Assert.Single(list.Columns);
+                Assert.NotEmpty(list.Items);
+                Assert.NotEmpty(list.Groups);
+                Assert.All(list.Groups.Cast<ListViewGroup>(), group => Assert.NotEmpty(group.Items));
+
+                // The rows are the code-owned presets, not a filtered subset
+                // that happens to lose whole families.
+                var shown = list.Items.Cast<ListViewItem>().Select(item => (string)item.Tag!).ToArray();
+                Assert.Contains("AsBuiltMilestone", shown, StringComparer.Ordinal);
+                Assert.Contains("DefaultDelineator", shown, StringComparer.Ordinal);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: the four detail groups collapsed to a few pixels of width,
+    /// so the selected style's properties were unreadable slivers.
+    /// </summary>
+    [Theory]
+    [InlineData("Fill")]
+    [InlineData("Outline")]
+    [InlineData("Label")]
+    [InlineData("Size")]
+    public void EntityDetail_GroupsKeepUsableBounds(string groupText)
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+                SelectEntityStyle(tab, "AsBuiltMilestone");
+                tab.PerformLayout();
+
+                var group = RequireGroupBox(tab, groupText);
+                Assert.True(
+                    group.Width > 300,
+                    $"Entity '{groupText}' group collapsed to {group.Width}px wide.");
+                Assert.True(
+                    group.Height > 40,
+                    $"Entity '{groupText}' group collapsed to {group.Height}px tall.");
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: the Custom styles tab's New row was clipped to a strip with
+    /// no visible button, and the edit groups collapsed the same way the Entity
+    /// groups did.
+    /// </summary>
+    [Fact]
+    public void CustomTab_NewRowAndEditGroupsAreUsable()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+                LayOutTab(form, tab);
+
+                var newButton = RequireButton(tab, "New custom style");
+
+                // The form is never shown in a unit test, so every descendant
+                // reports Visible false — including a button that renders
+                // perfectly. Clipping is therefore asserted from geometry: the
+                // button must land inside the master column rather than being
+                // painted past its edge.
+                var master = newButton.Parent?.Parent
+                    ?? throw new InvalidOperationException("New button's master container not found.");
+                Assert.True(
+                    newButton.Height >= 20,
+                    $"New button collapsed to {newButton.Height}px tall.");
+                Assert.True(
+                    newButton.Left >= 0,
+                    $"New button starts at {newButton.Left}px, left of its master.");
+                Assert.True(
+                    newButton.Right <= master.ClientSize.Width,
+                    $"New button ends at {newButton.Right}px but its master is {master.ClientSize.Width}px wide.");
+
+                foreach (var groupText in s_detailGroupTexts)
+                {
+                    var group = RequireGroupBox(tab, groupText);
+                    Assert.True(
+                        group.Width > 300,
+                        $"Custom '{groupText}' group collapsed to {group.Width}px wide.");
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: the detail panel carried two title labels — a bold one that
+    /// took the style's name and a grey one that was built later and never
+    /// updated — so the empty state showed the hint twice and the hint stayed
+    /// on screen after a style was selected.
+    /// </summary>
+    [Fact]
+    public void EntityDetail_CarriesExactlyOneTitleThatFollowsTheSelection()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+
+                Assert.Single(FindAll(
+                    tab,
+                    control => control is Label label
+                        && label.Text.StartsWith("Select a style", StringComparison.Ordinal)));
+
+                SelectEntityStyle(tab, "AsBuiltMilestone");
+
+                var title = FindAll(tab, control => control is Label label && label.Text == "As-Built Milestone");
+                Assert.Single(title);
+                Assert.Empty(FindAll(
+                    tab,
+                    control => control is Label label
+                        && label.Text.StartsWith("Select a style", StringComparison.Ordinal)));
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)
@@ -982,6 +1154,43 @@ public class ThemeSettingsFormTests
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("ShowEntityStyleForTesting not found.");
         seam.Invoke(form, new object[] { styleKey });
+    }
+
+    /// <summary>
+    /// Forces real layout on a tab page so bounds assertions measure the dialog
+    /// the user actually sees.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Control.CreateControl"/> only creates a handle for a control
+    /// that will be visible, and a never-shown form never is, so the
+    /// <see cref="TabControl"/> stays handle-less. A handle-less TabControl
+    /// sizes nothing: the page sits at its 200x100 design size, the
+    /// <see cref="SplitContainer"/> inside it at 184x84, and every width read
+    /// from that tree describes a dialog that does not exist. Touching
+    /// <see cref="Control.Handle"/> creates the hidden window outright, the
+    /// native tab control then sizes the page, and the layout passes below
+    /// propagate the form's 900x640 client area all the way down.
+    /// </para>
+    /// <para>
+    /// All three handles are required — forcing only the form's handle leaves
+    /// the tab control at 900x580 with an unsized page.
+    /// </para>
+    /// </remarks>
+    /// <param name="form">The dialog under test.</param>
+    /// <param name="page">The tab page to activate and lay out.</param>
+    private static void LayOutTab(Form form, TabPage page)
+    {
+        _ = form.Handle;
+
+        var tabControl = Assert.IsType<TabControl>(Find(form, c => c is TabControl));
+        _ = tabControl.Handle;
+
+        tabControl.SelectedTab = page;
+
+        form.PerformLayout();
+        tabControl.PerformLayout();
+        page.PerformLayout();
     }
 
     private static TabPage GetTab(Form form, string title)
