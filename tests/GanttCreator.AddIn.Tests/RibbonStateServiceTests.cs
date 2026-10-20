@@ -1138,8 +1138,16 @@ public sealed class RibbonStateServiceTests : IDisposable
             .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
         service.SetCatalogueWriter(writer.Object);
 
+        // The failure is presented through a modal dialog, which would block
+        // on a message box with nobody to dismiss it, so the test could never
+        // reach its own assertion. The presenter is a seam for exactly this.
+        List<string> presented = [];
+        service.SetErrorPresenter(presented.Add);
+
         Assert.False(service.ShowThemeSettingsDialog());
         writer.Verify(w => w.WriteTheme(It.IsAny<ThemeEditRequest>()), Times.Once);
+        Assert.Single(presented);
+        Assert.Contains("HostRejected", presented[0], StringComparison.Ordinal);
     }
 
     [Fact]

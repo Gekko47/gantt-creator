@@ -132,6 +132,23 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// The presenter for a user-facing failure. It is a seam rather than a
+    /// direct call to <see cref="CommandErrorDialog.Show"/> because that
+    /// dialog is modal: a test that drives a refused write would block on a
+    /// message box with nobody to dismiss it, so the test could never reach
+    /// its own assertion. Every other command in this assembly takes the same
+    /// seam (see <see cref="RefreshSheetCommand.Run"/>).
+    /// </summary>
+    private Action<string> _errorPresenter = CommandErrorDialog.Show;
+
+    /// <summary>
+    /// Injects the presenter used for a user-facing failure.
+    /// </summary>
+    /// <param name="presenter">The presenter; a null presenter restores the default dialog.</param>
+    internal void SetErrorPresenter(Action<string>? presenter) =>
+        _errorPresenter = presenter ?? CommandErrorDialog.Show;
+
+    /// <summary>
     /// Injects the catalogue writer that persists plot-range settings to the
     /// workbook configuration sheet. A null writer leaves the persist step
     /// as a no-op, so the in-memory state is still correct and the next
@@ -1030,7 +1047,7 @@ internal class RibbonStateService
                     }
                     else if (writeOutcome is not null)
                     {
-                        CommandErrorDialog.Show(
+                        _errorPresenter(
                             $"Failed to write theme settings: {writeOutcome.Refusal}");
                     }
                 }
@@ -1099,7 +1116,7 @@ internal class RibbonStateService
                     }
                     else if (writeOutcome is not null)
                     {
-                        CommandErrorDialog.Show(
+                        _errorPresenter(
                             $"Failed to write chart title: {writeOutcome.Refusal}");
                     }
                 }
