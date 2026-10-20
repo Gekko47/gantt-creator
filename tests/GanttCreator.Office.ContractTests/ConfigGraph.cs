@@ -44,6 +44,11 @@ internal static class ConfigGraph
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) =>
             Fake.ColumnAt(columns, index);
 
+        internal override void ApplyTextFormat(Excel.ListColumn column)
+        {
+            Fake.TextFormattedColumns.Add(column.Name);
+        }
+
         internal override void ClearContents(Excel.Range range)
         {
             Fake.ClearedRanges.Add(range);

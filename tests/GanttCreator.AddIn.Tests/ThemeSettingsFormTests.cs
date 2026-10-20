@@ -322,6 +322,46 @@ public class ThemeSettingsFormTests
     }
 
     [Fact]
+    public void Ok_AnEightDigitChartColourIsRefusedBecauseTheWriterWouldRefuseIt()
+    {
+        // R5.6d: the dialog's own check used the lenient ColourHex rule, which
+        // also accepts the eight-digit #RRGGBBAA form. The writer and the
+        // reader require exactly uppercase #RRGGBB, so the dialog accepted a
+        // value the write then refused - which is how the chart-appearance
+        // editors ended up reporting errors in the sheet.
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [],
+                new Dictionary<string, double>(),
+                ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["ChartBackgroundColour"] = "#F0F0F0",
+                }));
+            try
+            {
+                form.CreateControl();
+                var chartTab = GetTab(form, "Chart");
+                var appearance = RequireGroupBox(chartTab, "Chart appearance");
+                var textBox = appearance.Controls
+                    .OfType<TextBox>()
+                    .Single(box => box.Name == "ChartBackgroundColour");
+
+                textBox.Text = "#F0F0F0FF";
+                InvokeClick(form, "OkButton_Click");
+
+                // The dialog stays open and produces no request.
+                Assert.Null(form.GetValidatedRequest());
+                Assert.True(form.DialogResult == DialogResult.None);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
     public void Ok_ColourChangeOnSavedCustomStyle_EmitsUpdateNotRename()
     {
         RunOnStaThread(() =>

@@ -1187,16 +1187,20 @@ public class ExcelConfigCatalogueWriter(
             try
             {
                 ListColumns? listColumns = table.ListColumns;
-                if (listColumns is not null && listColumns.Count >= 3)
+
+                // The settings table has TWO columns (SettingKey, SettingValue),
+                // so the Value column is the second one. The guard used to
+                // require three columns, so the formatting never ran and Excel
+                // coerced every free-text value by locale - the plot dates
+                // became serials, and the chart-appearance editors, which are
+                // the only path that rewrites the settings table, were the
+                // ones that surfaced it as errors in the sheet.
+                if (listColumns is not null && listColumns.Count >= 2)
                 {
-                    ListColumn? valueColumn = listColumns[2];
+                    ListColumn? valueColumn = GetColumnAt(listColumns, 2);
                     if (valueColumn is not null)
                     {
-                        Excel.Range bodyRange = valueColumn.DataBodyRange;
-                        if (bodyRange is { } br)
-                        {
-                            br.NumberFormat = "@";
-                        }
+                        ApplyTextFormat(valueColumn);
                     }
                 }
             }
@@ -1209,6 +1213,21 @@ public class ExcelConfigCatalogueWriter(
         }
 
         return extent;
+    }
+
+    /// <summary>
+    /// Formats a list column's body as Text so free-text values survive
+    /// Excel's locale coercion. Test seam over the COM
+    /// <c>Range.NumberFormat</c> assignment.
+    /// </summary>
+    /// <param name="column">The column to format.</param>
+    internal virtual void ApplyTextFormat(ListColumn column)
+    {
+        Excel.Range? bodyRange = column.DataBodyRange;
+        if (bodyRange is { } br)
+        {
+            br.NumberFormat = "@";
+        }
     }
 
     /// <summary>

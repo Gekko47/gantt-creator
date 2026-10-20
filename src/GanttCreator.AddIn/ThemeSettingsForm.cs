@@ -1184,9 +1184,9 @@ internal sealed partial class ThemeSettingsForm : Form
             (_colorTextBoxes.TryGetValue(key, out TextBox? txt)
                 || _chromeColourTextBoxes.TryGetValue(key, out txt)))
         {
-            if (ColourHex.TryParse(txt.Text, out ColourHex? initial))
+            if (TryParseStoredColour(txt.Text, out Color initial))
             {
-                _colorDialog.Color = Color.FromArgb((int)initial!.ARGB);
+                _colorDialog.Color = initial;
             }
 
             if (_colorDialog.ShowDialog(this) == DialogResult.OK)
@@ -1208,15 +1208,42 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
-        if (ColourHex.TryParse(text, out _))
+        if (TryParseStoredColour(text, out Color colour))
         {
             txt.BackColor = SystemColors.Window;
-            UpdateSwatch(txt.Name, ColorTranslator.FromHtml(text));
+            UpdateSwatch(txt.Name, colour);
         }
         else
         {
             txt.BackColor = Color.FromArgb(255, 230, 230);
         }
+    }
+
+    /// <summary>
+    /// Parses a colour the way the workbook stores it: exactly uppercase
+    /// <c>#RRGGBB</c>.
+    /// </summary>
+    /// <remarks>
+    /// The lenient <see cref="ColourHex"/> rule also accepts the eight-digit
+    /// <c>#RRGGBBAA</c> form, which the writer and the reader reject - so the
+    /// dialog accepted a value that the write then refused, and the swatch
+    /// painted it with <c>ColorTranslator.FromHtml</c>, which reads eight
+    /// digits as ARGB and so showed a different colour from the one typed.
+    /// This is the one rule the writer, the reader and the dialog share.
+    /// </remarks>
+    /// <param name="text">The colour text.</param>
+    /// <param name="colour">The parsed colour, or the control colour.</param>
+    /// <returns>True when the text is a storable colour.</returns>
+    private static bool TryParseStoredColour(string? text, out Color colour)
+    {
+        colour = SystemColors.Control;
+        if (text is null || !GanttColourToken.IsValidHex(text))
+        {
+            return false;
+        }
+
+        colour = ColorTranslator.FromHtml(text);
+        return true;
     }
 
     private void UpdateSwatch(string key, Color color)
@@ -1240,8 +1267,8 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private static Color ParseColourOrDefault(string value)
     {
-        return ColourHex.TryParse(value, out ColourHex? c) && c is not null
-            ? Color.FromArgb((int)c.ARGB)
+        return TryParseStoredColour(value, out Color colour)
+            ? colour
             : SystemColors.Control;
     }
 
@@ -2142,8 +2169,8 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void PickCustomColour(TextBox textBox, Panel swatch)
     {
-        _colorDialog.Color = ColourHex.TryParse(textBox.Text, out ColourHex? initial)
-            ? Color.FromArgb((int)initial!.ARGB)
+        _colorDialog.Color = TryParseStoredColour(textBox.Text, out Color initial)
+            ? initial
             : SystemColors.Control;
 
         if (_colorDialog.ShowDialog(this) == DialogResult.OK)
@@ -2394,10 +2421,14 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void OkButton_Click(object? sender, EventArgs e)
     {
-        // Validate all colour text boxes
+        // Validate all colour text boxes. Surrounding whitespace is trimmed
+        // first: the strict rule is exactly seven characters, so a stray
+        // space would otherwise be refused where the user meant the colour
+        // they typed - and the trimmed value is what the workbook stores.
         foreach (KeyValuePair<string, TextBox> kvp in _colorTextBoxes)
         {
-            if (!string.IsNullOrEmpty(kvp.Value.Text) && !ColourHex.TryParse(kvp.Value.Text, out _))
+            kvp.Value.Text = kvp.Value.Text.Trim();
+            if (!string.IsNullOrEmpty(kvp.Value.Text) && !TryParseStoredColour(kvp.Value.Text, out _))
             {
                 _warningLabel.Text = $"Invalid colour '{kvp.Value.Text}' for {kvp.Key}. Use uppercase #RRGGBB.";
                 _warningLabel.Visible = true;
@@ -2409,7 +2440,10 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         // Validate custom style colours
-        if (!string.IsNullOrEmpty(_customStyleFillText.Text) && !ColourHex.TryParse(_customStyleFillText.Text, out _))
+        _customStyleFillText.Text = _customStyleFillText.Text.Trim();
+        _customStyleStrokeText.Text = _customStyleStrokeText.Text.Trim();
+        _customStyleTextText.Text = _customStyleTextText.Text.Trim();
+        if (!string.IsNullOrEmpty(_customStyleFillText.Text) && !TryParseStoredColour(_customStyleFillText.Text, out _))
         {
             _warningLabel.Text = "Invalid custom style fill colour '" + _customStyleFillText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
@@ -2419,7 +2453,7 @@ internal sealed partial class ThemeSettingsForm : Form
             DialogResult = DialogResult.None;
             return;
         }
-        if (!string.IsNullOrEmpty(_customStyleStrokeText.Text) && !ColourHex.TryParse(_customStyleStrokeText.Text, out _))
+        if (!string.IsNullOrEmpty(_customStyleStrokeText.Text) && !TryParseStoredColour(_customStyleStrokeText.Text, out _))
         {
             _warningLabel.Text = "Invalid custom style stroke colour '" + _customStyleStrokeText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
@@ -2429,7 +2463,7 @@ internal sealed partial class ThemeSettingsForm : Form
             DialogResult = DialogResult.None;
             return;
         }
-        if (!string.IsNullOrEmpty(_customStyleTextText.Text) && !ColourHex.TryParse(_customStyleTextText.Text, out _))
+        if (!string.IsNullOrEmpty(_customStyleTextText.Text) && !TryParseStoredColour(_customStyleTextText.Text, out _))
         {
             _warningLabel.Text = "Invalid custom style text colour '" + _customStyleTextText.Text + "'. Use uppercase #RRGGBB.";
             _warningLabel.Visible = true;
@@ -2445,7 +2479,8 @@ internal sealed partial class ThemeSettingsForm : Form
         // rather than finding a silent substitution in the rendered chart.
         foreach (KeyValuePair<string, TextBox> kvp in _chromeColourTextBoxes)
         {
-            if (!string.IsNullOrEmpty(kvp.Value.Text) && !ColourHex.TryParse(kvp.Value.Text, out _))
+            kvp.Value.Text = kvp.Value.Text.Trim();
+            if (!string.IsNullOrEmpty(kvp.Value.Text) && !TryParseStoredColour(kvp.Value.Text, out _))
             {
                 _warningLabel.Text = "Invalid chart colour '" + kvp.Value.Text + "' for "
                     + GanttChartChrome.DisplayLabelFor(ChromeRoleFor(kvp.Key))

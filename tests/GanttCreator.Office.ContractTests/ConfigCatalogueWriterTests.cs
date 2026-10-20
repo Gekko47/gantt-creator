@@ -66,6 +66,22 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void Write_formats_the_settings_value_column_as_text_and_no_other_column()
+    {
+        // R5.6d: the settings table has TWO columns (SettingKey, SettingValue),
+        // so the Value column is the second one. The guard used to require
+        // three columns, so the formatting never ran: Excel coerced the
+        // free-text settings (the plot dates) by locale and the chart
+        // -appearance editors - the only path that rewrites the settings
+        // table - surfaced it as errors in the sheet.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        string formatted = Assert.Single(fake.TextFormattedColumns);
+        Assert.Equal("SettingValue", formatted);
+    }
+
+    [Fact]
     public void Write_materialises_the_types_from_the_code_owned_catalogue_only()
     {
         var fake = new ConfigSheetFake();
