@@ -15,6 +15,24 @@ namespace GanttCreator.Office.ContractTests;
 public class ConfigCatalogueReaderTests
 {
     [Fact]
+    public void Read_refuses_a_malformed_chart_chrome_colour()
+    {
+        // R5.6a: a chart-chrome colour is refused rather than substituted, so
+        // the chart never renders a colour the workbook did not ask for.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int index = settings.Body.ToList().FindIndex(
+            row => (string?)row[0] == "ChartBackgroundColour");
+        settings.Body[index][1] = "not-a-colour";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.BadColourFormat), outcome);
+    }
+
+    [Fact]
     public void Read_refuses_when_the_milestone_size_column_drifts()
     {
         // Regression: the tblGanttStyles numeric columns are not contiguous

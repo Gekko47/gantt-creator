@@ -628,6 +628,17 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 return ConfigReadRefusalReason.ValueOutOfRange;
             }
 
+            // A chart-chrome colour must be an uppercase #RRGGBB. A malformed
+            // one is refused rather than substituted, so the chart never
+            // silently renders a colour the workbook did not ask for: the
+            // entity guide's rule is that a colour is never replaced behind
+            // the user's back.
+            if (GanttChartChrome.IsColourSettingKey(expected.Key)
+                && !GanttColourToken.IsValidHex(value))
+            {
+                return ConfigReadRefusalReason.BadColourFormat;
+            }
+
             if (expected.Key == "ChartTitle" && string.IsNullOrWhiteSpace(value))
             {
                 return ConfigReadRefusalReason.ValueOutOfRange;

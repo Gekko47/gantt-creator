@@ -9,6 +9,58 @@ namespace GanttCreator.Core.Tests;
 public sealed class ThemeEditRequestTests
 {
     [Fact]
+    public void A_valid_chart_chrome_colour_is_accepted()
+    {
+        // The positive control for the chrome-colour validator: a key the
+        // catalogue defines, carrying an uppercase #RRGGBB, is accepted.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+            });
+
+        Assert.True(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Null(refusal);
+        Assert.Null(message);
+    }
+
+    [Fact]
+    public void An_unknown_chart_chrome_colour_key_is_refused()
+    {
+        // A key the catalogue does not define is refused: the writer would
+        // otherwise write a row no reader could interpret.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["NotAChartColour"] = "#F0F0F0",
+            });
+
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.UnknownStyleKey, refusal);
+    }
+
+    [Fact]
+    public void A_malformed_chart_chrome_colour_is_refused()
+    {
+        // A malformed colour is refused rather than substituted, so the chart
+        // never renders a colour the workbook did not ask for.
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "not-a-colour",
+            });
+
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out _));
+        Assert.Equal(ThemeEditRefusal.BadColourFormat, refusal);
+    }
+
+    [Fact]
     public void Empty_request_is_valid_with_no_warnings()
     {
         var request = new ThemeEditRequest([], new Dictionary<string, double>());

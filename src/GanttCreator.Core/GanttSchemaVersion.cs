@@ -171,6 +171,23 @@ public static class GanttSchemaVersion
     /// (ADR-0029 D6, no migration).
     /// </para>
     /// <para>
+    /// <b>Version 20 is R5.6a's chart-chrome colours.</b> The
+    /// <c>tblGanttSettings</c> key set gains six chart-chrome colour keys
+    /// (<c>ChartBackgroundColour</c>, <c>AlternateBandColour</c>,
+    /// <c>MinorGridColour</c>, <c>MajorGridColour</c>,
+    /// <c>YearHeaderColour</c>, and <c>PeriodHeaderColour</c>), so a
+    /// version-19 workbook's settings table lacks six rows the running add-in
+    /// reads and its stored catalogue hash no longer matches. The colours are
+    /// the chart's own frame — the background, the alternating bands, the
+    /// grid, and the header bands — rather than any entity's style, and each
+    /// default is the approved colour-token value, so the catalogue and the
+    /// token table cannot disagree. The table's extent grew from 19 keys to
+    /// 25, so the config table's anchor moved from A92 to A98 to keep a blank
+    /// row between the two (the 2026-10-09 defect). There is no migration
+    /// (ADR-0029 D6): a version-19 workbook reports a mismatch and the remedy
+    /// is Initialise.
+    /// </para>
+    /// <para>
     /// <b>Version 19 is R5.6a's stroke dash type.</b> The
     /// <c>tblGanttStyles</c> column schema gains the engine-owned
     /// <c>StrokeDash</c> column (the style's line dash pattern:
@@ -183,5 +200,5 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 19;
+    public const int CurrentSchemaVersion = 20;
 }

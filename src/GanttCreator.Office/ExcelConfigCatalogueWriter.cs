@@ -291,6 +291,20 @@ public class ExcelConfigCatalogueWriter(
                 BuildThemedMetricRows(request),
                 written);
 
+            // The chart-chrome colours are settings, so they are written to
+            // the settings table alongside the themed styles and metrics.
+            // The write is a whole-table rewrite, so the unedited settings
+            // are preserved from the sheet rather than regenerated: the
+            // chart title and the scale the user set must survive a colour
+            // change.
+            _ = WriteOrReplaceTable(
+                config,
+                GanttCatalogues.SettingsAnchor,
+                GanttCatalogues.SettingsTableName,
+                GanttCatalogues.SettingsHeaders,
+                BuildThemedSettingRows(request, preservation),
+                written);
+
             // Recompute and persist the catalogue hash so the next Read()
             // validates against the updated Styles and Metrics content.
             _ = WriteOrReplaceTable(
@@ -524,7 +538,12 @@ public class ExcelConfigCatalogueWriter(
     /// <returns>One snapshot per themed table, in write order.</returns>
     private List<TableSnapshot> CaptureThemedPriorState(Worksheet config)
     {
-        string[] themed = [GanttCatalogues.StylesTableName, GanttCatalogues.MetricsTableName];
+        string[] themed =
+        [
+            GanttCatalogues.StylesTableName,
+            GanttCatalogues.MetricsTableName,
+            GanttCatalogues.SettingsTableName,
+        ];
         List<TableSnapshot> snapshots = new List<TableSnapshot>(themed.Length);
         foreach (string tableName in themed)
         {
@@ -819,6 +838,41 @@ public class ExcelConfigCatalogueWriter(
     {
         string text = ToText(cell);
         return text.Length > 0 ? text : fallback;
+    }
+
+    /// <summary>
+    /// Builds the themed setting rows: every catalogue setting, with the edited
+    /// chart-chrome colour where the request carries one and the preserved
+    /// workbook value otherwise.
+    /// </summary>
+    /// <param name="request">The validated theme edit.</param>
+    /// <param name="preservation">The captured user content to preserve.</param>
+    /// <returns>The settings payload rows.</returns>
+    /// <remarks>
+    /// The chart title, the time scale, the margins, and every other setting
+    /// the user configured are preserved from the sheet, not regenerated from
+    /// the catalogue: a colour change must not silently reset the rest of the
+    /// workbook's configuration.
+    /// </remarks>
+    private static List<object?[]> BuildThemedSettingRows(
+        ThemeEditRequest request,
+        CataloguePreservation preservation)
+    {
+        List<object?[]> rows = [];
+        foreach (GanttSettingDefinition setting in GanttCatalogues.Settings)
+        {
+            string? edited = null;
+            _ = request.ChromeColourEdits?.TryGetValue(setting.Key, out edited);
+
+            string value = edited
+                ?? (preservation.Settings.TryGetValue(setting.Key, out string? preserved)
+                    ? preserved
+                    : setting.DefaultValue);
+
+            rows.Add([setting.Key, value]);
+        }
+
+        return rows;
     }
 
     /// <summary>

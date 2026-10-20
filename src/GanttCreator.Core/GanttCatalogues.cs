@@ -50,18 +50,20 @@ public static class GanttCatalogues
 
     /// <summary>
     /// The anchor cell of <see cref="ConfigTableName"/> (ADR-0007 D7).
-    /// A92 rather than the original A90: the catalogue writer writes each
+    /// A98 rather than the original A90: the catalogue writer writes each
     /// table's cell values BEFORE creating the ListObject (so a refused add
     /// leaves clearable cells), and values written directly adjacent to an
     /// existing table are claimed by Excel's table auto-expand before the
     /// add runs — the add is then refused with "A table can't overlap
     /// another table". R5.2's 19th setting closed the last buffer row
     /// (tblGanttSettings reached row 89, making A90 adjacent) and every
-    /// live Initialise began failing (defect 2026-10-09). The blank-row
-    /// invariant test ties every anchor to the catalogue sizes, so future
-    /// growth fails there first.
+    /// live Initialise began failing (defect 2026-10-09). R5.6a's six
+    /// chart-chrome colour settings grew it again, to 25 keys reaching row
+    /// 95, so the anchor moved to A98. The blank-row invariant test ties
+    /// every anchor to the catalogue sizes, so future growth fails there
+    /// first.
     /// </summary>
-    public const string ConfigAnchor = "A92";
+    public const string ConfigAnchor = "A98";
 
     /// <summary>The <see cref="ConfigTableName"/> row key for the schema version.</summary>
     public const string ConfigSchemaVersionKey = "SchemaVersion";
@@ -326,6 +328,21 @@ public static class GanttCatalogues
         // `MarginCm` as a finite centimetre value in the permitted band.
         new("Margin", nameof(GanttPlotMargin.Normal)),
         new("MarginCm", GanttPlotMargins.DefaultCustomCm.ToString("R", CultureInfo.InvariantCulture)),
+
+        // Schema version 20 (R5.6a). The chart-chrome colours: the frame the
+        // entities sit on, rather than any entity's own style. They are
+        // settings rather than style rows because they belong to the chart as
+        // a whole, and the workbook owns them the same way it owns the chart
+        // title and the banding and grid switches above.
+        //
+        // Each default is the approved colour-token value, so the catalogue
+        // and the token table cannot disagree; a test pins that equality.
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.Background), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.AlternateBand), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.AlternateBand)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MinorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MajorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.YearHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.YearHeader)),
+        new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.PeriodHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader)),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

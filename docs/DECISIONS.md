@@ -47,6 +47,7 @@
 | ADR-0041 | Period-label visibility is measured-fit, so MM shows where MMM does not | Accepted | 2026-10-10 | [`adr/0041-period-label-measured-fit.md`](adr/0041-period-label-measured-fit.md) |
 | ADR-0043 | The live chart title is an owned textbox shape, not a reserved-row cell | Proposed (owner approved direction 2026-10-17) | 2026-10-17 | [`adr/0043-live-title-textbox.md`](adr/0043-live-title-textbox.md) |
 | ADR-0044 | A named style carries a stroke dash pattern, in a new appended column | Proposed (owner approved direction 2026-10-19) | 2026-10-19 | [`adr/0044-style-stroke-dash.md`](adr/0044-style-stroke-dash.md) |
+| ADR-0045 | The chart chrome colours are persisted, editable settings | Proposed (owner approved direction 2026-10-19) | 2026-10-19 | [`adr/0045-chart-chrome-colours.md`](adr/0045-chart-chrome-colours.md) |
 
 **ADR-0041 amends ADR-0040's D2 to make period-label visibility measured-fit.** ADR-0040 let the user choose `MM` or `MMM`, but both forms were gated by the same fixed `MinimumHeaderLabelWidthPt` floor, so `MM` showed on identical intervals to `MMM` — cosmetic, not functional. ADR-0041 replaces that floor **for the period band** with a measured-fit test (show iff the interval is at least as wide as the label measures), so `MM` — measuring shorter — survives on narrower intervals. The band stays uniform: the format is still one verbatim, user-chosen form, only the show/hide decision varies, and this is measured-fit, not ADR-0039's rejected per-interval ladder. The year band keeps the floor; measurement failure falls back to it.
 

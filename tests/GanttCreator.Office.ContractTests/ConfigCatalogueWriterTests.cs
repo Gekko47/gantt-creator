@@ -663,6 +663,62 @@ public class ConfigCatalogueWriterTests
     }
 
     [Fact]
+    public void WriteTheme_writes_the_chart_chrome_colours_to_the_settings_table()
+    {
+        // R5.6a: the chart-chrome colours are settings, so the theme write
+        // persists them beside the themed styles and metrics.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+                ["AlternateBandColour"] = "#E0E0E0",
+            });
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal("#F0F0F0", SettingValue(settings, "ChartBackgroundColour"));
+        Assert.Equal("#E0E0E0", SettingValue(settings, "AlternateBandColour"));
+    }
+
+    [Fact]
+    public void WriteTheme_preserves_the_settings_the_chrome_edit_does_not_carry()
+    {
+        // The chart title and the time scale belong to the workbook, not to
+        // the colour edit, so a colour change must not reset them.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+        ConfigSheetFake.TableFake settings = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        int titleIndex = settings.Body.ToList().FindIndex(
+            row => (string?)row[0] == "ChartTitle");
+        settings.Body[titleIndex][1] = "My Report";
+
+        var request = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+            });
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake written = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.SettingsTableName);
+        Assert.Equal("My Report", SettingValue(written, "ChartTitle"));
+        Assert.Equal("#F0F0F0", SettingValue(written, "ChartBackgroundColour"));
+    }
+
+    [Fact]
     public void WriteTheme_update_preserves_the_fields_the_edit_does_not_carry()
     {
         // R5.6a F2: an update that changes one colour must not reset the
@@ -777,6 +833,25 @@ public class ConfigCatalogueWriterTests
             bool flag => flag ? "TRUE" : "FALSE",
             _ => Convert.ToString(cell, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
         };
+
+    /// <summary>
+    /// Reads one setting's value from a settings-table row set, by key.
+    /// </summary>
+    /// <param name="settings">The settings table.</param>
+    /// <param name="key">The setting key.</param>
+    /// <returns>The stored value, or null when the key is absent.</returns>
+    private static string? SettingValue(ConfigSheetFake.TableFake settings, string key)
+    {
+        foreach (object?[] row in settings.Body)
+        {
+            if ((string?)row[0] == key)
+            {
+                return (string?)row[1];
+            }
+        }
+
+        return null;
+    }
 
     private static double CellDouble(object? cell) =>
         cell switch

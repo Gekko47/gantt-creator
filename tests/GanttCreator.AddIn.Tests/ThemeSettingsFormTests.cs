@@ -24,6 +24,72 @@ namespace GanttCreator.AddIn.Tests;
 public class ThemeSettingsFormTests
 {
     [Fact]
+    public void ChartTab_OffersOneRowPerChartChromeRole()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+
+                var chartTab = GetTab(form, "Chart");
+                var appearance = RequireGroupBox(chartTab, "Chart appearance");
+
+                var textBoxes = appearance.Controls.OfType<TextBox>().ToArray();
+                Assert.Equal(GanttChartChrome.Roles.Count, textBoxes.Length);
+
+                // Every role's row shows the approved default, and the rows are
+                // the roles the contract names.
+                foreach (var role in GanttChartChrome.Roles)
+                {
+                    var textBox = textBoxes.Single(
+                        box => box.Name == GanttChartChrome.SettingKeyFor(role));
+                    Assert.Equal(GanttChartChrome.DefaultHexFor(role), textBox.Text);
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void ChartTab_AStoredChromeColourIsShownAndCarriedIntoTheRequest()
+    {
+        RunOnStaThread(() =>
+        {
+            var request = new ThemeEditRequest(
+                [],
+                new Dictionary<string, double>(),
+                ChromeColourEdits: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["ChartBackgroundColour"] = "#F0F0F0",
+                });
+            var form = new ThemeSettingsForm(request);
+            try
+            {
+                form.CreateControl();
+
+                var chartTab = GetTab(form, "Chart");
+                var appearance = RequireGroupBox(chartTab, "Chart appearance");
+                var textBox = appearance.Controls
+                    .OfType<TextBox>()
+                    .Single(box => box.Name == "ChartBackgroundColour");
+
+                // The dialog shows the workbook's colour, not the catalogue
+                // default, so the user sees what the chart actually renders.
+                Assert.Equal("#F0F0F0", textBox.Text);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
     public void EmptyState_NewButtonAlwaysEnabledEditGroupDisabled()
     {
         RunOnStaThread(() =>

@@ -1010,6 +1010,90 @@ public class ExcelSceneBuildRequestFactoryTests
     /// </para>
     /// </remarks>
     [Fact]
+    public void The_chart_chrome_colours_come_from_the_workbook_settings()
+    {
+        // R5.6a: the chart's frame, bands, grid, and headers are the user's to
+        // change, so the scene request must carry the stored colour rather
+        // than a literal.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>
+            {
+                ["ChartBackgroundColour"] = "#F0F0F0",
+                ["AlternateBandColour"] = "#E0E0E0",
+                ["MinorGridColour"] = "#D0D0D0",
+                ["MajorGridColour"] = "#C0C0C0",
+                ["YearHeaderColour"] = "#B0B0B0",
+                ["PeriodHeaderColour"] = "#A0A0A0",
+            },
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal("#F0F0F0", theme.Background.FillColour?.ToString());
+        Assert.Equal("#E0E0E0", theme.AlternateBand.FillColour?.ToString());
+        Assert.Equal("#D0D0D0", theme.MinorGrid.StrokeColour?.ToString());
+        Assert.Equal("#C0C0C0", theme.MajorGrid.StrokeColour?.ToString());
+        Assert.Equal("#B0B0B0", theme.YearHeader.FillColour?.ToString());
+        Assert.Equal("#A0A0A0", theme.PeriodHeader.FillColour?.ToString());
+    }
+
+    [Fact]
+    public void The_chart_chrome_colours_fall_back_to_the_approved_token_values()
+    {
+        // A workbook whose settings carry no chrome colour renders the
+        // approved token values, not a literal: the token table is the single
+        // authority for what the chart looks like by default.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.Background),
+            theme.Background.FillColour?.ToString());
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
+            theme.MinorGrid.StrokeColour?.ToString());
+    }
+
+    [Fact]
+    public void The_grid_line_widths_come_from_the_themed_metrics()
+    {
+        // The "Grid line width" and "Major boundary width" controls named
+        // metrics that nothing consumed: the widths were literals in the
+        // frame theme. They now reach the render.
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(),
+            new Dictionary<string, double>
+            {
+                ["GridLinePt"] = 1.25,
+                ["MajorBoundaryPt"] = 2.5,
+            });
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(1.25, theme.MinorGrid.OutlineWidthPt);
+        Assert.Equal(2.5, theme.MajorGrid.OutlineWidthPt);
+    }
+
+    [Fact]
     public void Every_emitted_metric_equals_the_catalogue_default()
     {
         ExcelSceneBuildRequestFactory factory = new(Metrics());

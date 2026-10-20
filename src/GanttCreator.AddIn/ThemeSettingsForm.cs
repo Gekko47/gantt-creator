@@ -88,6 +88,13 @@ internal sealed partial class ThemeSettingsForm : Form
     };
 
     private readonly Dictionary<string, TextBox> _colorTextBoxes = [];
+
+    /// <summary>
+    /// The chart-chrome colour text boxes, keyed by the setting key the colour
+    /// is stored under. They live on the Chart tab, because the colours belong
+    /// to the chart as a whole rather than to any entity's style.
+    /// </summary>
+    private readonly Dictionary<string, TextBox> _chromeColourTextBoxes = [];
     private readonly Dictionary<string, Button> _colorPickerButtons = [];
     private readonly Dictionary<string, NumericUpDown> _metricNumericUpDowns = [];
     private readonly Dictionary<string, Label> _metricLabels = [];
@@ -538,7 +545,8 @@ internal sealed partial class ThemeSettingsForm : Form
     private void ColorPickerButton_Click(object? sender, EventArgs e)
     {
         if (sender is Button btn && btn.Tag is string key &&
-            _colorTextBoxes.TryGetValue(key, out TextBox? txt))
+            (_colorTextBoxes.TryGetValue(key, out TextBox? txt)
+                || _chromeColourTextBoxes.TryGetValue(key, out txt)))
         {
             if (ColourHex.TryParse(txt.Text, out ColourHex? initial))
             {
@@ -616,7 +624,8 @@ internal sealed partial class ThemeSettingsForm : Form
         y = AddMetricGroup(panel, "Rows and lanes", y, "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt");
         y = AddMetricGroup(panel, "Entity defaults", y, "ActivityHeightPt", "MilestoneSizePt", "StandardOutlinePt", "DelineatorLinePt");
         y = AddMetricGroup(panel, "Grid", y, "GridLinePt", "MajorBoundaryPt");
-        _ = AddMetricGroup(panel, "Hatch spacing", y, "HatchPitchPt", "HatchLinePt");
+        y = AddMetricGroup(panel, "Hatch spacing", y, "HatchPitchPt", "HatchLinePt");
+        y = AddChromeColourGroup(panel, y);
 
         Label note = new()
         {
@@ -693,6 +702,105 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         return top + group.Height + 10;
+    }
+
+    /// <summary>
+    /// Adds the chart-chrome colour group: the colours of the chart frame the
+    /// entities sit on.
+    /// </summary>
+    /// <param name="panel">The tab's panel.</param>
+    /// <param name="top">The group's top offset.</param>
+    /// <returns>The next free top offset.</returns>
+    /// <remarks>
+    /// The group is object-first like the rest of the dialog: each row is one
+    /// chrome role with its own colour, rather than a column of colours with
+    /// no object named. The roles are the entity guide's own chart-chrome
+    /// tokens, so the label the user reads is the token the contract names.
+    /// </remarks>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private int AddChromeColourGroup(Panel panel, int top)
+    {
+        const int RowHeight = 28;
+        GroupBox group = new()
+        {
+            Text = "Chart appearance",
+            Location = new Point(8, top),
+            Size = new Size(660, (GanttChartChrome.Roles.Count * RowHeight) + 20),
+        };
+        panel.Controls.Add(group);
+
+        int innerY = 24;
+        foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+        {
+            string key = GanttChartChrome.SettingKeyFor(role);
+            string label = GanttChartChrome.DisplayLabelFor(role);
+
+            Label lbl = new()
+            {
+                Text = label,
+                Location = new Point(12, innerY + 3),
+                Size = new Size(120, 20),
+                TextAlign = ContentAlignment.MiddleLeft,
+            };
+            group.Controls.Add(lbl);
+
+            TextBox txt = new()
+            {
+                Name = key,
+                Location = new Point(140, innerY),
+                Size = new Size(100, 22),
+                Text = GanttChartChrome.DefaultHexFor(role),
+                CharacterCasing = CharacterCasing.Upper,
+                MaxLength = 9,
+            };
+            txt.Leave += (_, _) => ValidateColourTextBox(txt);
+            group.Controls.Add(txt);
+            _chromeColourTextBoxes[key] = txt;
+
+            Button picker = new()
+            {
+                Text = "\u2026",
+                Location = new Point(246, innerY - 1),
+                Size = new Size(26, 24),
+                Tag = key,
+            };
+            picker.Click += ColorPickerButton_Click;
+            group.Controls.Add(picker);
+
+            Panel swatch = new()
+            {
+                Location = new Point(280, innerY),
+                Size = new Size(24, 22),
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = ParseColourOrDefault(txt.Text),
+                Tag = key,
+            };
+            group.Controls.Add(swatch);
+
+            innerY += RowHeight;
+        }
+
+        return top + group.Height + 10;
+    }
+
+    /// <summary>
+    /// Finds the chrome role a setting key names.
+    /// </summary>
+    /// <param name="settingKey">The setting key.</param>
+    /// <returns>The chrome role.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the key names no role.</exception>
+    private static GanttChartChromeRole ChromeRoleFor(string settingKey)
+    {
+        foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+        {
+            if (string.Equals(GanttChartChrome.SettingKeyFor(role), settingKey, StringComparison.Ordinal))
+            {
+                return role;
+            }
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(settingKey), settingKey, "The key names no chart chrome role.");
     }
 
     /// <summary>
@@ -1528,6 +1636,19 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
+        // The chart-chrome colours: the workbook's current values, so the
+        // dialog shows what the chart actually renders rather than the
+        // catalogue default.
+        foreach (KeyValuePair<string, string> pair in request.ChromeColourEdits
+            ?? new Dictionary<string, string>(StringComparer.Ordinal))
+        {
+            if (_chromeColourTextBoxes.TryGetValue(pair.Key, out TextBox? txt))
+            {
+                txt.Text = pair.Value;
+                UpdateSwatch(pair.Key, ParseColourOrDefault(pair.Value));
+            }
+        }
+
         // Custom styles: load saved styles into the edit dictionary and list so
         // they are visible on the tab and are not spuriously deleted on OK.
         // The whole property set is loaded, not just the colours: an editor
@@ -1597,6 +1718,24 @@ internal sealed partial class ThemeSettingsForm : Form
             _ = _customStyleTextText.Focus();
             DialogResult = DialogResult.None;
             return;
+        }
+
+        // Validate the chart-chrome colours. A malformed one is refused with
+        // the offending row focused, so the user fixes the colour they typed
+        // rather than finding a silent substitution in the rendered chart.
+        foreach (KeyValuePair<string, TextBox> kvp in _chromeColourTextBoxes)
+        {
+            if (!string.IsNullOrEmpty(kvp.Value.Text) && !ColourHex.TryParse(kvp.Value.Text, out _))
+            {
+                _warningLabel.Text = "Invalid chart colour '" + kvp.Value.Text + "' for "
+                    + GanttChartChrome.DisplayLabelFor(ChromeRoleFor(kvp.Key))
+                    + ". Use uppercase #RRGGBB.";
+                _warningLabel.Visible = true;
+                _tabControl.SelectedTab = _tabControl.TabPages[1];
+                _ = kvp.Value.Focus();
+                DialogResult = DialogResult.None;
+                return;
+            }
         }
 
         Dictionary<string, double> metricEdits = [];
@@ -1687,7 +1826,25 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        ThemeEditRequest request = new ThemeEditRequest(styleEdits, metricEdits, customStyleEdits);
+        // The chart-chrome colours the user set. A colour left at the
+        // catalogue default is still carried: the setting's stored value is
+        // the workbook's own, and the writer preserves it either way.
+        Dictionary<string, string> chromeColourEdits = [];
+        foreach (KeyValuePair<string, TextBox> kvp in _chromeColourTextBoxes)
+        {
+            string text = kvp.Value.Text.Trim();
+            if (text.Length > 0)
+            {
+                chromeColourEdits[kvp.Key] = text;
+            }
+        }
+
+        ThemeEditRequest request = new ThemeEditRequest(
+            styleEdits,
+            metricEdits,
+            customStyleEdits,
+            null,
+            chromeColourEdits);
 
         if (!ThemeEditRequest.TryValidate(request, out _, out string? msg))
         {

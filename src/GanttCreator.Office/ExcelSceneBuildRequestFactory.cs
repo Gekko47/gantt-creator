@@ -344,7 +344,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             Registry = registry,
             Metrics = metrics,
             LaneMetrics = laneMetrics,
-            FrameTheme = FrameTheme(),
+            FrameTheme = FrameTheme(settings, themedMetrics),
             Preset = preset,
             Grid = measuredGrid,
             PlotBounds = geometry.Geometry!.PlotBounds,
@@ -471,21 +471,91 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
     /// member.
     /// </summary>
     /// <remarks>
-    /// A single, neutral theme. The style-token resolution that will make these
-    /// user-configurable is R5.6a's work; what matters here is that the scene builder
-    /// refuses a null member rather than defaulting one, so a missing theme is a
-    /// typed refusal at composition time instead of an unstyled chart.
+    /// <para>
+    /// The colours come from the workbook's chart-chrome settings, so the chart's
+    /// frame, bands, grid, and headers are the user's to change (R5.6a). The
+    /// widths come from the themed grid metrics, so the "Grid line width" and
+    /// "Major boundary width" controls reach the render: they previously named
+    /// metrics that nothing consumed, because the widths were literals here.
+    /// </para>
+    /// <para>
+    /// A malformed stored colour falls back to the approved token value rather
+    /// than throwing: the reader refuses a malformed colour before the scene is
+    /// built, so this path is only reached by a caller that bypassed the
+    /// reader, and an unstyled chart is worse than the approved default. The
+    /// scene builder still refuses a null member rather than defaulting one, so
+    /// a missing theme is a typed refusal at composition time instead of an
+    /// unstyled chart.
+    /// </para>
     /// </remarks>
+    /// <param name="settings">The workbook's settings map.</param>
+    /// <param name="themedMetrics">The workbook's themed metric values.</param>
     /// <returns>The frame theme.</returns>
-    private static FrameBandsTheme FrameTheme() =>
-        new(
-            Background: new SceneStyle("Background", fillColour: ColourHex.Parse("#FFFFFF")),
-            AlternateBand: new SceneStyle("AlternateBand", fillColour: ColourHex.Parse("#F5F5F5")),
-            MinorGrid: new SceneStyle("MinorGrid", strokeColour: ColourHex.Parse("#E0E0E0"), outlineWidthPt: 0.5),
-            MajorGrid: new SceneStyle("MajorGrid", strokeColour: ColourHex.Parse("#BFBFBF"), outlineWidthPt: 1),
-            YearHeader: new SceneStyle("YearHeader", fillColour: ColourHex.Parse("#D9D9D9"), textColour: ColourHex.Parse("#000000"), fontSizePt: 10, bold: true),
-            PeriodHeader: new SceneStyle("PeriodHeader", fillColour: ColourHex.Parse("#E6E6E6"), textColour: ColourHex.Parse("#000000"), fontSizePt: 9),
-            Title: new SceneStyle("Title", textColour: ColourHex.Parse("#000000"), fontSizePt: 12, bold: true));
+    private static FrameBandsTheme FrameTheme(
+        IReadOnlyDictionary<string, string> settings,
+        IReadOnlyDictionary<string, double> themedMetrics)
+    {
+        double minorGridWidth = themedMetrics.GetValueOrDefault(
+            _gridLineToken, GanttCatalogues.MetricDefault(_gridLineToken));
+        double majorGridWidth = themedMetrics.GetValueOrDefault(
+            _majorBoundaryToken, GanttCatalogues.MetricDefault(_majorBoundaryToken));
+
+        return new(
+            Background: new SceneStyle(
+                "Background",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.Background)),
+            AlternateBand: new SceneStyle(
+                "AlternateBand",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.AlternateBand)),
+            MinorGrid: new SceneStyle(
+                "MinorGrid",
+                strokeColour: ChromeColour(settings, GanttChartChromeRole.MinorGrid),
+                outlineWidthPt: minorGridWidth),
+            MajorGrid: new SceneStyle(
+                "MajorGrid",
+                strokeColour: ChromeColour(settings, GanttChartChromeRole.MajorGrid),
+                outlineWidthPt: majorGridWidth),
+            YearHeader: new SceneStyle(
+                "YearHeader",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.YearHeader),
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 10,
+                bold: true),
+            PeriodHeader: new SceneStyle(
+                "PeriodHeader",
+                fillColour: ChromeColour(settings, GanttChartChromeRole.PeriodHeader),
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 9),
+            Title: new SceneStyle(
+                "Title",
+                textColour: ColourHex.Parse("#000000"),
+                fontSizePt: 12,
+                bold: true));
+    }
+
+    /// <summary>
+    /// Reads one chart-chrome colour from the workbook's settings, falling back
+    /// to the approved token value when the key is absent or malformed.
+    /// </summary>
+    /// <param name="settings">The workbook's settings map.</param>
+    /// <param name="role">The chrome role.</param>
+    /// <returns>The resolved colour.</returns>
+    private static ColourHex ChromeColour(
+        IReadOnlyDictionary<string, string> settings,
+        GanttChartChromeRole role)
+    {
+        string key = GanttChartChrome.SettingKeyFor(role);
+#pragma warning disable IDE0046 // The short-circuit is the point: the value is only read when the key is present.
+        if (settings.TryGetValue(key, out string? stored)
+            && ColourHex.TryParse(stored, out ColourHex? parsed)
+            && parsed is not null)
+        {
+            return parsed;
+        }
+#pragma warning restore IDE0046
+
+        return ColourHex.Parse(GanttChartChrome.DefaultHexFor(role));
+    }
 
     /// <summary>
     /// The columns this factory measures, for the caller to pass to

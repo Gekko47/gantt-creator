@@ -150,7 +150,8 @@ public sealed record ThemeEditRequest(
     IReadOnlyList<ThemeStyleEdit> StyleEdits,
     IReadOnlyDictionary<string, double> MetricEdits,
     IReadOnlyList<CustomStyleEdit>? CustomStyleEdits = null,
-    IReadOnlyList<CustomStyleDef>? CustomStyleDefs = null)
+    IReadOnlyList<CustomStyleDef>? CustomStyleDefs = null,
+    IReadOnlyDictionary<string, string>? ChromeColourEdits = null)
 {
     /// <summary>The metric tokens editable by the R5.6 dialog (work-item scope).</summary>
     public static readonly IReadOnlySet<string> EditableMetrics =
@@ -327,6 +328,28 @@ public sealed record ThemeEditRequest(
                         return false;
                     }
                 }
+            }
+        }
+
+        // The chart-chrome colours: the key must be one the catalogue defines
+        // and the value an uppercase #RRGGBB. The reader refuses a malformed
+        // colour rather than substituting one, so the write path must not
+        // accept one either.
+        foreach (KeyValuePair<string, string> pair in request.ChromeColourEdits
+            ?? new Dictionary<string, string>(StringComparer.Ordinal))
+        {
+            if (!GanttChartChrome.IsColourSettingKey(pair.Key))
+            {
+                refusal = ThemeEditRefusal.UnknownStyleKey;
+                message = $"'{pair.Key}' is not a chart-chrome colour setting.";
+                return false;
+            }
+
+            if (!GanttColourToken.IsValidHex(pair.Value))
+            {
+                refusal = ThemeEditRefusal.BadColourFormat;
+                message = $"Chart colour '{pair.Key}' must be uppercase #RRGGBB.";
+                return false;
             }
         }
 

@@ -309,9 +309,53 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_19_approved_keys()
+    public void Every_chart_chrome_colour_default_equals_its_approved_token_value()
     {
-        Assert.Equal(19, GanttCatalogues.Settings.Count);
+        // The single-authority pin for R5.6a's chart-chrome colours. The
+        // setting's default and the colour token's value are two places the
+        // same colour could be written; this test fails the moment they
+        // disagree, so a token edited without its setting (or the reverse)
+        // cannot ship.
+        foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+        {
+            string key = GanttChartChrome.SettingKeyFor(role);
+            GanttSettingDefinition setting = GanttCatalogues.Settings.Single(
+                candidate => candidate.Key == key);
+
+            Assert.Equal(
+                GanttChartChrome.DefaultHexFor(role),
+                setting.DefaultValue);
+            Assert.Equal(
+                GanttChartChrome.DefaultHexFor(role),
+                GanttCatalogues.Colours
+                    .Single(token => token.Name == GanttChartChrome.TokenNameFor(role))
+                    .HexValue);
+        }
+    }
+
+    [Fact]
+    public void Every_chart_chrome_colour_key_is_a_distinct_setting()
+    {
+        // Two roles sharing a key would make one colour unreachable and let
+        // an edit to one silently rewrite the other.
+        var keys = GanttChartChrome.Roles
+            .Select(GanttChartChrome.SettingKeyFor)
+            .ToArray();
+
+        Assert.Equal(keys.Length, keys.Distinct(StringComparer.Ordinal).Count());
+        foreach (string key in keys)
+        {
+            Assert.Contains(GanttCatalogues.Settings, setting => setting.Key == key);
+            Assert.True(GanttChartChrome.IsColourSettingKey(key));
+        }
+    }
+
+    [Fact]
+    public void Settings_contains_exactly_the_25_approved_keys()
+    {
+        // R5.6a added the six chart-chrome colour keys (schema version 20),
+        // taking 19 to 25.
+        Assert.Equal(25, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -339,6 +383,12 @@ public class GanttConfigCatalogueTests
         "RangePaddingDays",
         "Margin",
         "MarginCm",
+        "ChartBackgroundColour",
+        "AlternateBandColour",
+        "MinorGridColour",
+        "MajorGridColour",
+        "YearHeaderColour",
+        "PeriodHeaderColour",
     ];
 
     [Fact]
@@ -878,7 +928,7 @@ public class GanttConfigCatalogueTests
     /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "42023d1d9b47e00247d8362266bd9e1b8dcd69afca6eac1af8b054499d9061ce";
+        "58bb394300fcc8f3be4dead3be88622a02ceb85143906dfdbbbd8532462c108d";
 
     [Fact]
     public void The_first_release_catalogue_hash_is_pinned() =>

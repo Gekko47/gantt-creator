@@ -985,7 +985,24 @@ internal class RibbonStateService
                 }
             }
 
-            ThemeEditRequest request = new ThemeEditRequest(currentStyles, currentMetrics, null, currentCustomDefs);
+            // The chart-chrome colours: the workbook's current values, so the
+            // dialog opens showing what the chart actually renders.
+            Dictionary<string, string> currentChromeColours = [];
+            foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+            {
+                string key = GanttChartChrome.SettingKeyFor(role);
+                currentChromeColours[key] = outcome.Settings.TryGetValue(key, out string? stored)
+                    && GanttColourToken.IsValidHex(stored)
+                    ? stored
+                    : GanttChartChrome.DefaultHexFor(role);
+            }
+
+            ThemeEditRequest request = new ThemeEditRequest(
+                currentStyles,
+                currentMetrics,
+                null,
+                currentCustomDefs,
+                currentChromeColours);
 
             // Show the WinForms dialog. Virtual so tests can substitute a
             // non-blocking dialog result instead of running a message loop.
