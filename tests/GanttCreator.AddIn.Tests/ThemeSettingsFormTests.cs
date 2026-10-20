@@ -1107,6 +1107,178 @@ public class ThemeSettingsFormTests
         });
     }
 
+    /// <summary>
+    /// Regression: the property groups were 380px wide inside a 606px detail
+    /// panel, so every group left a wide empty strip on the right and the
+    /// properties looked stranded in the corner. The groups now fill the
+    /// panel's width.
+    /// </summary>
+    [Fact]
+    public void Entity_detail_groups_fill_the_detail_panel_width()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+                SelectEntityStyle(tab, "AsPlannedActivity");
+                tab.PerformLayout();
+
+                var body = FindAll(tab, c => c is TableLayoutPanel t && t.ColumnCount == 1 && t.RowCount == 4)
+                    .Cast<TableLayoutPanel>()
+                    .Single();
+
+                foreach (string caption in s_detailGroupTexts)
+                {
+                    var group = RequireGroupBox(tab, caption);
+                    Assert.True(
+                        group.Width >= body.ClientSize.Width - 2,
+                        $"Entity '{caption}' group is {group.Width}px wide in a {body.ClientSize.Width}px panel.");
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: a property row that held a taller control than its label —
+    /// a numeric up-down — was laid out past the row's height and clipped by
+    /// the group box. Every property row now sizes itself to its content.
+    /// </summary>
+    [Fact]
+    public void Every_property_row_is_taller_than_the_control_it_holds()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+                SelectEntityStyle(tab, "AsPlannedActivity");
+                tab.PerformLayout();
+
+                foreach (string caption in s_detailGroupTexts)
+                {
+                    var group = RequireGroupBox(tab, caption);
+                    var table = FindAll(group, c => c is TableLayoutPanel)
+                        .Cast<TableLayoutPanel>()
+                        .Single();
+
+                    // A control's bounds are relative to the table, so the
+                    // row's own top has to be added before comparing the
+                    // control's foot with the row's foot.
+                    int[] rowHeights = table.GetRowHeights();
+                    foreach (Control value in table.Controls)
+                    {
+                        int row = table.GetRow(value);
+                        if (row < 0 || row >= rowHeights.Length)
+                        {
+                            continue;
+                        }
+
+                        int rowTop = rowHeights.Take(row).Sum();
+                        Assert.True(
+                            value.Bottom <= rowTop + rowHeights[row] + 1,
+                            $"Entity '{caption}' row {row} clips '{value.Name}' ({value.Bottom}px in a {rowHeights[row]}px row at {rowTop}px).");
+                    }
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: the permitted-label list showed four of its eleven
+    /// positions behind a scroll bar, and the property groups below it were
+    /// pushed past the foot of the panel. The list now shows every position,
+    /// and the groups scroll in their own pane with the Delete row pinned
+    /// below them.
+    /// </summary>
+    [Fact]
+    public void The_permitted_label_list_shows_every_position_and_the_delete_row_stays_visible()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+                LayOutTab(form, tab);
+
+                var list = FindAll(tab, c => c is CheckedListBox)
+                    .Cast<CheckedListBox>()
+                    .Single();
+
+                Assert.True(
+                    list.Height >= (list.ItemHeight * list.Items.Count),
+                    $"The permitted-label list shows {list.Height}px of its {list.ItemHeight * list.Items.Count}px of positions.");
+
+                // The Delete row is pinned below the scrolling properties, so
+                // it is always inside the panel even when the groups above it
+                // are taller than the panel.
+                var deleteButton = RequireButton(tab, "Delete");
+                var panel = deleteButton.Parent?.Parent
+                    ?? throw new InvalidOperationException("Delete button's container not found.");
+                Assert.True(
+                    deleteButton.Bottom <= panel.ClientSize.Height + 1,
+                    $"The Delete button ends at {deleteButton.Bottom}px in a {panel.ClientSize.Height}px panel.");
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Regression: the entity styles tab showed the built-in style's label
+    /// position as an empty value, so the row read as if the property were
+    /// missing rather than fixed by the style.
+    /// </summary>
+    [Fact]
+    public void The_entity_label_position_is_shown_as_a_read_only_value()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+                LayOutTab(form, tab);
+                SelectEntityStyle(tab, "AsPlannedActivity");
+                tab.PerformLayout();
+
+                var position = FindAll(
+                    tab,
+                    c => c is Label label && label.ForeColor == SystemColors.GrayText
+                        && !string.IsNullOrEmpty(label.Text)
+                        && label.Text != "Solid")
+                    .Cast<Label>()
+                    .FirstOrDefault(label => label.Bounds.Left > 300);
+
+                Assert.NotNull(position);
+                Assert.False(string.IsNullOrWhiteSpace(position!.Text));
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)

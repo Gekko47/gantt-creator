@@ -178,6 +178,18 @@ internal sealed partial class ThemeSettingsForm : Form
     private const string _customStyleKeyLabel = "Style key:";
     private const string _customStyleEmptyHint = "No custom styles defined yet. Enter a key and click New custom style.";
 
+    /// <summary>
+    /// The width of the label column in every property group. The groups are
+    /// as wide as their container, so the label column is what keeps the
+    /// labels of one style aligned with the labels of the next.
+    /// </summary>
+    private const int _propertyLabelColumnWidth = 130;
+
+    /// <summary>
+    /// The vertical gap between the property groups in a detail panel.
+    /// </summary>
+    private const int _propertyGroupGap = 10;
+
     private readonly ListBox _customStyleList = new()
     {
         Size = new Size(200, 180),
@@ -313,8 +325,8 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly CheckedListBox _customAllowedLabelList = new()
     {
         CheckOnClick = true,
-        IntegralHeight = false,
-        Size = new Size(140, 74),
+        IntegralHeight = true,
+        Size = new Size(140, 96),
     };
     private readonly GroupBox _customStyleListGroup = new()
     {
@@ -504,22 +516,38 @@ internal sealed partial class ThemeSettingsForm : Form
         // and kept showing it after a style was selected.
         _entityStyleTitleLabel.Text = "Select a style to see its properties.";
         _entityStyleTitleLabel.ForeColor = SystemColors.GrayText;
-        _entityStyleDetailPanel.Controls.Add(_entityStyleTitleLabel);
 
-        FlowLayoutPanel body = new()
+        // The groups are stacked in a table rather than a flow panel: a flow
+        // panel gives every child its own preferred width, so the groups were
+        // 380px wide inside a 606px panel and left a wide empty strip on the
+        // right. A table's single percent-width column gives every group the
+        // panel's full width, and each group still hugs its own content.
+        TableLayoutPanel body = new()
         {
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
+            ColumnCount = 1,
+            RowCount = 4,
             AutoScroll = true,
-            WrapContents = false,
-            Padding = new Padding(4, 4, 4, 4),
         };
-        _entityStyleDetailPanel.Controls.Add(body);
+        _ = body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        for (int row = 0; row < 4; row++)
+        {
+            _ = body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
 
-        body.Controls.Add(BuildEntityFillGroup());
-        body.Controls.Add(BuildEntityOutlineGroup());
-        body.Controls.Add(BuildEntityLabelGroup());
-        body.Controls.Add(BuildEntitySizeGroup());
+        // The body is added BEFORE the title even though the title belongs at
+        // the top of the panel: docked controls are laid out in REVERSE
+        // z-order, so the last docked control added claims its strip first. In
+        // the other order the Fill body consumed the entire panel and the Top
+        // title was laid out over it at the same origin (both measured {8,8}),
+        // leaving the panel's background to paint over the title text.
+        _entityStyleDetailPanel.Controls.Add(body);
+        _entityStyleDetailPanel.Controls.Add(_entityStyleTitleLabel);
+
+        body.Controls.Add(BuildEntityFillGroup(), 0, 0);
+        body.Controls.Add(BuildEntityOutlineGroup(), 0, 1);
+        body.Controls.Add(BuildEntityLabelGroup(), 0, 2);
+        body.Controls.Add(BuildEntitySizeGroup(), 0, 3);
     }
 
     /// <summary>
@@ -529,8 +557,8 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityFillGroup()
     {
-        GroupBox group = new() { Text = "Fill", AutoSize = true, MinimumSize = new Size(380, 0) };
-        TableLayoutPanel table = NewEntityPropertyTable();
+        GroupBox group = NewPropertyGroup("Fill");
+        TableLayoutPanel table = NewPropertyTable();
         group.Controls.Add(table);
 
         _entityFillText.Name = "entityFill";
@@ -549,16 +577,11 @@ internal sealed partial class ThemeSettingsForm : Form
         _entityFillSwatch.BorderStyle = BorderStyle.FixedSingle;
         _entityFillSwatch.Tag = "entityFill";
 
-        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
-        table.Controls.Add(_entityFillText, 1, 0);
-        table.Controls.Add(_entityFillPicker, 2, 0);
-        table.Controls.Add(_entityFillSwatch, 3, 0);
+        AddClusterRow(table, "Colour", 0, _entityFillText, _entityFillPicker, _entityFillSwatch);
 
         _entityPatternLabel.AutoSize = true;
         _entityPatternLabel.ForeColor = SystemColors.GrayText;
-        table.Controls.Add(new Label { Text = "Pattern", AutoSize = true }, 0, 1);
-        table.Controls.Add(_entityPatternLabel, 1, 1);
-        table.SetColumnSpan(_entityPatternLabel, 3);
+        AddPropertyRow(table, "Pattern", _entityPatternLabel, 1);
 
         _colorTextBoxes["entityFill"] = _entityFillText;
         _colorPickerButtons["entityFill"] = _entityFillPicker;
@@ -568,30 +591,158 @@ internal sealed partial class ThemeSettingsForm : Form
     }
 
     /// <summary>
-    /// Creates the four-column table every entity property group uses:
-    /// label, value, picker button, swatch.
+    /// Creates a property group: a titled box that spans its container's width
+    /// and hugs the height of the properties it holds.
+    /// </summary>
+    /// <param name="caption">The group's caption.</param>
+    /// <returns>The new group.</returns>
+    /// <remarks>
+    /// The group is docked <c>Top</c> rather than left to its own preferred
+    /// size, so it fills the width of the detail panel and every group in the
+    /// panel is the same width. Its height still comes from its content, so
+    /// the box hugs the rows it holds.
+    /// </remarks>
+    private static GroupBox NewPropertyGroup(string caption) => new()
+    {
+        Text = caption,
+        AutoSize = true,
+        Dock = DockStyle.Top,
+        Margin = new Padding(0, 0, 0, _propertyGroupGap),
+    };
+
+    /// <summary>
+    /// Creates the two-column table every property group uses: a fixed label
+    /// column and a value column that takes the rest of the width.
     /// </summary>
     /// <remarks>
-    /// The table must NOT dock inside its group box: an <c>AutoSize</c> group
-    /// resolves its preferred size by measuring its children, and a docked
-    /// child is laid out from the parent's size instead — which measures as
-    /// empty. The group then collapses to its border alone (a 6px sliver) and
-    /// every property in it becomes unreadable. Undocked, the table reports its
-    /// own preferred size and the group grows around it.
+    /// <para>
+    /// The table DOES fill its group box. A group is measured by the table's
+    /// preferred size, and a table docked with <c>Dock.Top</c> measures empty —
+    /// the group then collapses to its border alone (a 6px sliver) and every
+    /// property in it becomes unreadable. Docked with <c>Dock.Fill</c> the
+    /// table keeps reporting its content height, so the group grows around it
+    /// while the table still spans the group's width.
+    /// </para>
+    /// <para>
+    /// The table's <c>AutoSizeMode</c> must additionally be
+    /// <c>GrowAndShrink</c>, not the default <c>GrowOnly</c>.
+    /// A GrowOnly control "will not shrink smaller than the value specified by
+    /// its Size", and a <see cref="TableLayoutPanel"/> starts at the default
+    /// 200x100 — so with the default mode every table under 100px of content
+    /// sat at exactly 100px with its LAST implicit row stretched to absorb the
+    /// slack. GrowAndShrink ignores the current Size and hugs the content at
+    /// any DPI.
+    /// </para>
     /// </remarks>
-    private static TableLayoutPanel NewEntityPropertyTable()
+    private static TableLayoutPanel NewPropertyTable()
     {
         TableLayoutPanel table = new()
         {
-            ColumnCount = 4,
+            ColumnCount = 2,
             AutoSize = true,
-            Dock = DockStyle.None,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
         };
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, _propertyLabelColumnWidth));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         return table;
+    }
+
+    /// <summary>
+    /// Adds a labelled property row whose value is a single control.
+    /// </summary>
+    /// <param name="table">The group's property table.</param>
+    /// <param name="label">The property label.</param>
+    /// <param name="value">The value control.</param>
+    /// <param name="row">The row the control sits in.</param>
+    private static void AddPropertyRow(
+        TableLayoutPanel table,
+        string label,
+        Control value,
+        int row)
+    {
+        EnsureAutoSizeRow(table, row);
+
+        table.Controls.Add(new Label
+        {
+            Text = label,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+        }, 0, row);
+
+        // The value is anchored to the right of the value column, so every
+        // property in the group lines up on the same right-hand edge — the
+        // rhythm the Chart tab's metric rows already use.
+        //
+        // The value carries no margin: a taller control than the row's label
+        // — a numeric up-down — would otherwise be laid out past the row's
+        // height and clipped by the group box.
+        value.Margin = new Padding(0);
+        value.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        table.Controls.Add(value, 1, row);
+    }
+
+    /// <summary>
+    /// Ensures the row at the given index sizes itself to its content.
+    /// </summary>
+    /// <param name="table">The group's property table.</param>
+    /// <param name="row">The row index.</param>
+    /// <remarks>
+    /// A row that is not explicitly auto-sized keeps the height of the first
+    /// control laid out in it, so a taller control in a later row — a numeric
+    /// up-down beside a label — was clipped by the row above it. Every row is
+    /// given an auto-size style so it grows to whatever it holds.
+    /// </remarks>
+    private static void EnsureAutoSizeRow(TableLayoutPanel table, int row)
+    {
+        while (table.RowStyles.Count <= row)
+        {
+            _ = table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
+
+        table.RowStyles[row] = new RowStyle(SizeType.AutoSize);
+    }
+
+    /// <summary>
+    /// Adds a labelled property row whose value is a cluster of controls, such
+    /// as a colour's text box, picker button and swatch.
+    /// </summary>
+    /// <param name="table">The group's property table.</param>
+    /// <param name="label">The property label.</param>
+    /// <param name="controls">The value controls, in display order.</param>
+    /// <param name="row">The row the cluster sits in.</param>
+    private static void AddClusterRow(
+        TableLayoutPanel table,
+        string label,
+        int row,
+        params Control[] controls)
+    {
+        EnsureAutoSizeRow(table, row);
+
+        table.Controls.Add(new Label
+        {
+            Text = label,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+        }, 0, row);
+
+        FlowLayoutPanel cluster = new()
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Margin = new Padding(0),
+        };
+
+        foreach (Control control in controls)
+        {
+            control.Margin = new Padding(0, 0, 4, 0);
+            cluster.Controls.Add(control);
+        }
+
+        table.Controls.Add(cluster, 1, row);
     }
     /// <summary>
     /// The Outline group: the outline colour, its width, and its line type.
@@ -600,8 +751,8 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityOutlineGroup()
     {
-        GroupBox group = new() { Text = "Outline", AutoSize = true, MinimumSize = new Size(380, 0) };
-        TableLayoutPanel table = NewEntityPropertyTable();
+        GroupBox group = NewPropertyGroup("Outline");
+        TableLayoutPanel table = NewPropertyTable();
         group.Controls.Add(table);
 
         _entityStrokeText.Name = "entityStroke";
@@ -620,26 +771,23 @@ internal sealed partial class ThemeSettingsForm : Form
         _entityStrokeSwatch.BorderStyle = BorderStyle.FixedSingle;
         _entityStrokeSwatch.Tag = "entityStroke";
 
-        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
-        table.Controls.Add(_entityStrokeText, 1, 0);
-        table.Controls.Add(_entityStrokePicker, 2, 0);
-        table.Controls.Add(_entityStrokeSwatch, 3, 0);
+        AddClusterRow(table, "Colour", 0, _entityStrokeText, _entityStrokePicker, _entityStrokeSwatch);
 
         _entityOutlineWidthLabel.AutoSize = true;
         _entityOutlineWidthLabel.ForeColor = SystemColors.GrayText;
-        table.Controls.Add(new Label { Text = "Width", AutoSize = true }, 0, 1);
-        table.Controls.Add(_entityOutlineWidthLabel, 1, 1);
-        table.SetColumnSpan(_entityOutlineWidthLabel, 3);
+        AddPropertyRow(table, "Width", _entityOutlineWidthLabel, 1);
 
         _entityDashLabel.AutoSize = true;
         _entityDashLabel.ForeColor = SystemColors.GrayText;
         _entityDashCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _entityDashCombo.Width = 140;
 
-        table.Controls.Add(new Label { Text = "Line type", AutoSize = true }, 0, 2);
-        table.Controls.Add(_entityDashCombo, 1, 2);
-        table.Controls.Add(_entityDashLabel, 2, 2);
-        table.SetColumnSpan(_entityDashLabel, 2);
+        // The combo is shown for the delineator, whose line type the user may
+        // change; the label carries the code-owned line type of every other
+        // built-in style. Only one of the two is ever visible, so they share
+        // a cluster: a hidden control takes no space in a flow panel, and the
+        // visible one keeps the row's right-hand edge.
+        AddClusterRow(table, "Line type", 2, _entityDashCombo, _entityDashLabel);
 
         _colorTextBoxes["entityStroke"] = _entityStrokeText;
         _colorPickerButtons["entityStroke"] = _entityStrokePicker;
@@ -655,8 +803,8 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntityLabelGroup()
     {
-        GroupBox group = new() { Text = "Label", AutoSize = true, MinimumSize = new Size(380, 0) };
-        TableLayoutPanel table = NewEntityPropertyTable();
+        GroupBox group = NewPropertyGroup("Label");
+        TableLayoutPanel table = NewPropertyTable();
         group.Controls.Add(table);
 
         _entityTextText.Name = "entityText";
@@ -675,16 +823,11 @@ internal sealed partial class ThemeSettingsForm : Form
         _entityTextSwatch.BorderStyle = BorderStyle.FixedSingle;
         _entityTextSwatch.Tag = "entityText";
 
-        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
-        table.Controls.Add(_entityTextText, 1, 0);
-        table.Controls.Add(_entityTextPicker, 2, 0);
-        table.Controls.Add(_entityTextSwatch, 3, 0);
+        AddClusterRow(table, "Colour", 0, _entityTextText, _entityTextPicker, _entityTextSwatch);
 
         _entityLabelPositionLabel.AutoSize = true;
         _entityLabelPositionLabel.ForeColor = SystemColors.GrayText;
-        table.Controls.Add(new Label { Text = "Position", AutoSize = true }, 0, 1);
-        table.Controls.Add(_entityLabelPositionLabel, 1, 1);
-        table.SetColumnSpan(_entityLabelPositionLabel, 3);
+        AddPropertyRow(table, "Position", _entityLabelPositionLabel, 1);
 
         _colorTextBoxes["entityText"] = _entityTextText;
         _colorPickerButtons["entityText"] = _entityTextPicker;
@@ -701,21 +844,13 @@ internal sealed partial class ThemeSettingsForm : Form
         Justification = "Dialog UI strings are not localized in this release.")]
     private GroupBox BuildEntitySizeGroup()
     {
-        GroupBox group = new() { Text = "Size", AutoSize = true, MinimumSize = new Size(380, 0) };
-        TableLayoutPanel table = new()
-        {
-            ColumnCount = 2,
-            AutoSize = true,
-            Dock = DockStyle.None,
-        };
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        GroupBox group = NewPropertyGroup("Size");
+        TableLayoutPanel table = NewPropertyTable();
         group.Controls.Add(table);
 
         _entitySizeLabel.AutoSize = true;
         _entitySizeLabel.ForeColor = SystemColors.GrayText;
-        table.Controls.Add(new Label { Text = "Entity", AutoSize = true }, 0, 0);
-        table.Controls.Add(_entitySizeLabel, 1, 0);
+        AddPropertyRow(table, "Entity", _entitySizeLabel, 0);
 
         // The delineator's line width is the one built-in size the user may
         // change: it is the chart-wide DelineatorLinePt metric, which no
@@ -732,9 +867,8 @@ internal sealed partial class ThemeSettingsForm : Form
         _metricNumericUpDowns["DelineatorLinePt"] = _entityLineWidthNumeric;
 
         _entityLineWidthLabel.AutoSize = true;
-        table.Controls.Add(_entityLineWidthLabel, 0, 1);
-        table.Controls.Add(_entityLineWidthNumeric, 1, 1);
         _entityLineWidthLabel.Text = "Line width";
+        AddPropertyRow(table, "Line width", _entityLineWidthNumeric, 1);
 
         return group;
     }
@@ -791,6 +925,7 @@ internal sealed partial class ThemeSettingsForm : Form
         UpdateSwatch("entityText", ParseColourOrDefault(colours.Text));
 
         _entityPatternLabel.Text = DescribeHatchPattern(preset.HatchPattern);
+        _entityLabelPositionLabel.Text = DescribeLabelPosition(preset.DefaultLabelPosition);
 
         // The general dash, the outline width, and the bar height are
         // code-owned for a built-in style: the reader exact-matches those
@@ -986,10 +1121,12 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // A Details-view ListView paints no rows unless it has a column, so the
         // family headings alone read as an empty list. The header is suppressed
-        // (HeaderStyle.None above), and the column is sized from the master
-        // column's minimum width — SplitterDistance is not usable here, because
-        // it is still the value clamped while the split was 150px wide.
-        _ = _entityStyleList.Columns.Add(string.Empty, Math.Max(120, split.Panel1MinSize - 30));
+        // (HeaderStyle.None above). The width is -2 — "fill the list's client
+        // width" — so every row and its FullRowSelect highlight span the whole
+        // master column at any splitter position or DPI; the earlier computed
+        // pixel width (Panel1MinSize - 30) left a dead strip on the right and
+        // could not follow a user drag of the splitter.
+        _ = _entityStyleList.Columns.Add(string.Empty, -2);
         _entityStyleList.SelectedIndexChanged += EntityStyleList_SelectedIndexChanged;
         split.Panel1.Controls.Add(_entityStyleList);
 
@@ -1427,112 +1564,109 @@ internal sealed partial class ThemeSettingsForm : Form
         _customStyleEditGroup.Padding = new Padding(8);
         split.Panel2.Controls.Add(_customStyleEditGroup);
 
-        FlowLayoutPanel detail = new FlowLayoutPanel
+        // The property groups are stacked in a table rather than a flow panel:
+        // a flow panel gives every child its own preferred width, so the groups
+        // were 420px wide inside a 616px panel and left a wide empty strip on
+        // the right. A table's single percent-width column gives every group
+        // the panel's full width, and each group still hugs its own content.
+        //
+        // The table is two rows: the properties scroll, and the Delete row is
+        // pinned below them so it can never be pushed out of sight by the
+        // groups above it.
+        TableLayoutPanel detail = new()
         {
             Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            AutoScroll = true,
-            WrapContents = false,
-            Padding = new Padding(4, 4, 4, 4),
+            ColumnCount = 1,
+            RowCount = 2,
         };
+        _ = detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _ = detail.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        _ = detail.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _customStyleEditGroup.Controls.Add(detail);
+
+        TableLayoutPanel properties = new()
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            AutoScroll = true,
+        };
+        _ = properties.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        for (int row = 0; row < 5; row++)
+        {
+            _ = properties.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
 
         // The style key, read-only: it names the row, and a rename is a
         // delete plus a create, so the key is not edited in place.
-        TableLayoutPanel keyRow = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            ColumnCount = 2,
-            Margin = new Padding(0, 0, 0, 8),
-        };
-        _ = keyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        _ = keyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        Label keyLbl = new Label
-        {
-            Text = _customStyleKeyLabel,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-        };
-        keyRow.Controls.Add(keyLbl, 0, 0);
+        TableLayoutPanel keyRow = NewPropertyTable();
+        keyRow.Dock = DockStyle.Top;
         _customStyleKeyText.ReadOnly = true;
-        _customStyleKeyText.Dock = DockStyle.Fill;
-        keyRow.Controls.Add(_customStyleKeyText, 1, 0);
-        detail.Controls.Add(keyRow);
+        AddPropertyRow(keyRow, _customStyleKeyLabel, _customStyleKeyText, 0);
+        properties.Controls.Add(keyRow, 0, 0);
 
         // The property groups, one per concern: Fill, Outline, Label, Size.
-        GroupBox fillGroup = new GroupBox
-        {
-            Text = "Fill",
-            AutoSize = true,
-            MinimumSize = new Size(420, 0),
-            Margin = new Padding(0, 0, 0, 8),
-        };
-        TableLayoutPanel fillTable = NewEntityPropertyTable();
+        TableLayoutPanel fillTable = NewPropertyTable();
         AddCustomColourRow(fillTable, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 0);
         AddCustomPropertyRow(fillTable, "Pattern", _customHatchPatternCombo, 1);
+        GroupBox fillGroup = NewPropertyGroup("Fill");
         fillGroup.Controls.Add(fillTable);
-        detail.Controls.Add(fillGroup);
+        properties.Controls.Add(fillGroup, 0, 1);
 
-        GroupBox outlineGroup = new GroupBox
-        {
-            Text = "Outline",
-            AutoSize = true,
-            MinimumSize = new Size(420, 0),
-            Margin = new Padding(0, 0, 0, 8),
-        };
-        TableLayoutPanel outlineTable = NewEntityPropertyTable();
+        TableLayoutPanel outlineTable = NewPropertyTable();
         AddCustomColourRow(outlineTable, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 0);
         AddCustomPropertyRow(outlineTable, "Width", _customOutlineWidthNumeric, 1);
         AddCustomPropertyRow(outlineTable, "Line style", _customStrokeDashCombo, 2);
+        GroupBox outlineGroup = NewPropertyGroup("Outline");
         outlineGroup.Controls.Add(outlineTable);
-        detail.Controls.Add(outlineGroup);
+        properties.Controls.Add(outlineGroup, 0, 2);
 
-        GroupBox labelGroup = new GroupBox
-        {
-            Text = "Label",
-            AutoSize = true,
-            MinimumSize = new Size(420, 0),
-            Margin = new Padding(0, 0, 0, 8),
-        };
-        TableLayoutPanel labelTable = NewEntityPropertyTable();
+        TableLayoutPanel labelTable = NewPropertyTable();
         AddCustomColourRow(labelTable, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 0);
         AddCustomPropertyRow(labelTable, "Default", _customDefaultLabelCombo, 1);
         AddCustomPropertyRow(labelTable, "Allowed", _customAllowedLabelList, 2);
+        GroupBox labelGroup = NewPropertyGroup("Label");
         labelGroup.Controls.Add(labelTable);
-        detail.Controls.Add(labelGroup);
+        properties.Controls.Add(labelGroup, 0, 3);
 
-        GroupBox sizeGroup = new GroupBox
-        {
-            Text = "Size",
-            AutoSize = true,
-            MinimumSize = new Size(420, 0),
-            Margin = new Padding(0, 0, 0, 8),
-        };
-        TableLayoutPanel sizeTable = NewEntityPropertyTable();
+        TableLayoutPanel sizeTable = NewPropertyTable();
         AddCustomPropertyRow(sizeTable, "Bar height", _customActivityHeightNumeric, 0);
         AddCustomPropertyRow(sizeTable, "Milestone size", _customMilestoneSizeNumeric, 1);
         _customMilestoneSizeNumeric.Minimum = 0;
         _customMilestoneSizeNumeric.AccessibleDescription =
             "Zero uses the chart's milestone size.";
+        GroupBox sizeGroup = NewPropertyGroup("Size");
         sizeGroup.Controls.Add(sizeTable);
-        detail.Controls.Add(sizeGroup);
+        properties.Controls.Add(sizeGroup, 0, 4);
+
+        detail.Controls.Add(properties, 0, 0);
 
         // Delete only applies to a selected style, so it gets its own row at
         // the foot of the property panel rather than sitting over a group.
         FlowLayoutPanel deleteRow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             FlowDirection = FlowDirection.LeftToRight,
             AutoSize = true,
             WrapContents = false,
+            Margin = new Padding(0),
         };
         _customDeleteButton.Click += CustomDeleteButton_Click;
         _customDeleteButton.Margin = new Padding(0);
         deleteRow.Controls.Add(_customDeleteButton);
-        detail.Controls.Add(deleteRow);
+        detail.Controls.Add(deleteRow, 0, 1);
 
         PopulateCustomStyleVocabularies();
+
+        // The permitted-label list's window is font-relative rather than a
+        // fixed pixel height, so it always shows the same whole number of
+        // positions and never a sliver of a twelfth. It is sized to hold every
+        // position in the vocabulary, so the list never has to be scrolled to
+        // reach a position. With IntegralHeight on, the control snaps the
+        // requested height down to whole items.
+        _customAllowedLabelList.Height =
+            (_customAllowedLabelList.ItemHeight * _customAllowedLabelList.Items.Count) + 6;
+
         UpdateCustomStyleListHint();
 #pragma warning restore CA1303
     }
@@ -1555,20 +1689,14 @@ internal sealed partial class ThemeSettingsForm : Form
         Panel swatch,
         int row)
     {
-        table.Controls.Add(new Label
-        {
-            Text = label,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-        }, 0, row);
-
         textBox.TextChanged += CustomStyleColourTextChanged;
-        table.Controls.Add(textBox, 1, row);
-
         pickerButton.Click += CustomFillColorButton_Click;
-        table.Controls.Add(pickerButton, 2, row);
 
-        table.Controls.Add(swatch, 3, row);
+        // The three colour controls travel together in one right-anchored
+        // cluster, so the swatch can never drift away from the colour it
+        // shows — which is what made the swatch look like it belonged to a
+        // different property.
+        AddClusterRow(table, label, row, textBox, pickerButton, swatch);
     }
 
     /// <summary>
@@ -1582,18 +1710,7 @@ internal sealed partial class ThemeSettingsForm : Form
         TableLayoutPanel table,
         string label,
         Control control,
-        int row)
-    {
-        table.Controls.Add(new Label
-        {
-            Text = label,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-        }, 0, row);
-
-        table.SetColumnSpan(control, 3);
-        table.Controls.Add(control, 1, row);
-    }
+        int row) => AddPropertyRow(table, label, control, row);
 
     /// <summary>
     /// Populates the closed vocabularies the custom-style editor offers: the
