@@ -151,6 +151,21 @@ public sealed class ThemeEditRequestTests
     }
 
     [Fact]
+    public void A_line_type_on_a_code_owned_style_is_refused()
+    {
+        // Only the delineator's line type is user-editable. Every other
+        // built-in style's dash is code-owned, and the reader exact-matches
+        // that column, so an edit carrying one would be discarded rather than
+        // kept: the request must refuse it rather than pretend it applies.
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit("AsPlannedActivity", "#FF0000", "#C00000", "#FFFFFF", GanttStrokeDash.Dash)],
+            new Dictionary<string, double>());
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+        Assert.Contains("fixed by the built-in style", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Non_editable_metric_is_refused()
     {
         var request = new ThemeEditRequest(

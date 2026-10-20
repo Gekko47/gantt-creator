@@ -63,6 +63,76 @@ public class ConfigCatalogueReaderTests
     }
 
     [Fact]
+    public void Read_accepts_an_edited_delineator_line_type_as_a_theme_edit()
+    {
+        // The delineator's line type is a user-editable property of its style
+        // (R5.6c D1), so Read() must accept a dash that differs from the
+        // code-owned preset and project it into the definition.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int delineatorRow = IndexOfStyleRow(fake, "DefaultDelineator");
+        fake.Tables[1].Body[delineatorRow][14] = "Dash";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.Styles.TryGet("DefaultDelineator", out GanttStyleDefinition? definition));
+        Assert.Equal(GanttStrokeDash.Dash, definition!.StrokeDash);
+    }
+
+    [Fact]
+    public void Read_refuses_when_the_delineator_line_type_is_not_a_defined_type()
+    {
+        // A dash the reader cannot parse is a refusal, not a silent fallback
+        // to the preset: the renderer would then draw a line type the
+        // workbook never agreed to.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int delineatorRow = IndexOfStyleRow(fake, "DefaultDelineator");
+        fake.Tables[1].Body[delineatorRow][14] = "Squiggle";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    [Fact]
+    public void Read_refuses_when_a_code_owned_line_type_drifts()
+    {
+        // Every other built-in style's dash is code-owned: the reader still
+        // compares that column exactly against the preset, so a hand-edited
+        // value is catalogue drift.
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int activityRow = IndexOfStyleRow(fake, "AsPlannedActivity");
+        fake.Tables[1].Body[activityRow][14] = "Dash";
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    /// <summary>
+    /// Returns the index of a built-in style's row in the written styles
+    /// table.
+    /// </summary>
+    private static int IndexOfStyleRow(ConfigSheetFake fake, string styleKey)
+    {
+        for (int index = 0; index < fake.Tables[1].Body.Count; index++)
+        {
+            if (fake.Tables[1].Body[index][0]?.ToString() == styleKey)
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException($"Style '{styleKey}' not found in the styles table.");
+    }
+
+    [Fact]
     public void Read_refuses_when_a_style_colour_is_lowercase_hex()
     {
         // Case sensitivity of the #RRGGBB contract: "#ff0000" has the right

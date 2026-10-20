@@ -237,11 +237,25 @@ public sealed record ThemeEditRequest(
             // refuses the whole catalogue rather than skipping the row. A null
             // dash means the edit does not carry one, so the code-owned
             // preset's dash is kept.
-            if (edit.StrokeDash is { } dash && !Enum.IsDefined(dash))
+            if (edit.StrokeDash is { } dash)
             {
-                refusal = ThemeEditRefusal.InvalidCustomStyle;
-                message = $"Style '{edit.StyleKey}' line type is not a defined line type.";
-                return false;
+                if (!Enum.IsDefined(dash))
+                {
+                    refusal = ThemeEditRefusal.InvalidCustomStyle;
+                    message = $"Style '{edit.StyleKey}' line type is not a defined line type.";
+                    return false;
+                }
+
+                // Only the delineator's line type is user-editable. Every
+                // other built-in style's dash is code-owned, and the reader
+                // exact-matches that column, so an edit carrying one would be
+                // discarded rather than kept.
+                if (!GanttStyleDashPolicy.IsUserEditable(edit.StyleKey))
+                {
+                    refusal = ThemeEditRefusal.InvalidCustomStyle;
+                    message = $"Style '{edit.StyleKey}' line type is fixed by the built-in style.";
+                    return false;
+                }
             }
         }
 

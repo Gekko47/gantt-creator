@@ -652,7 +652,9 @@ public class ExcelConfigCatalogueWriter(
                             .Select(position => position.ToString())
                             .OrderBy(name => name, StringComparer.Ordinal)),
                     preset.ColourCapability.ToString(),
-                    preset.StrokeDash.ToString(),
+                    (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey)
+                        ? edit.StrokeDash ?? preset.StrokeDash
+                        : preset.StrokeDash).ToString(),
                 ]);
             }
             else

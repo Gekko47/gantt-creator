@@ -486,17 +486,22 @@ public class ThemeSettingsFormTests
                     .Select(group => group.Text)
                     .ToList();
 
-                // Rows and lanes, grid, milestones, and the delineator are
-                // different objects on the chart. The bar height and the
-                // outline width are gone because the scene resolves them from
-                // the STYLE row, and the hatch spacing is gone because the
-                // host's pattern cannot express it.
+                // Rows and lanes, grid, and milestones are different objects
+                // on the chart. The bar height and the outline width are gone
+                // because the scene resolves them from the STYLE row, and the
+                // hatch spacing is gone because the host's pattern cannot
+                // express it.
                 Assert.Contains("Rows and lanes", groups);
                 Assert.Contains("Grid", groups);
                 Assert.Contains("Milestones", groups);
-                Assert.Contains("Delineator", groups);
                 Assert.DoesNotContain("Entity defaults", groups);
                 Assert.DoesNotContain("Hatch spacing", groups);
+
+                // The delineator's line width is NOT a chart-wide knob: it
+                // belongs to the delineator, so it lives on the Entity styles
+                // tab beside the delineator's other properties. The value has
+                // one home.
+                Assert.DoesNotContain("Delineator", groups);
             }
             finally
             {
@@ -743,6 +748,193 @@ public class ThemeSettingsFormTests
         });
     }
 
+
+    [Fact]
+    public void The_delineator_line_width_is_edited_on_the_entity_tab()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "DefaultDelineator");
+
+                var width = GetField<NumericUpDown>(form, "_entityLineWidthNumeric");
+                width.Value = 2.5m;
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                Assert.Equal(2.5, request.MetricEdits["DelineatorLinePt"], 3);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_chart_tab_no_longer_offers_the_delineator_width()
+    {
+        // The delineator's line width belongs to the delineator, so it lives on
+        // the Entity styles tab beside the delineator's other properties. The
+        // chart tab keeps the chart-wide knobs only, so the value has one home.
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var chartTab = GetTab(form, "Chart");
+
+                Assert.Null(Find(chartTab, c => c is GroupBox g && g.Text == "Delineator"));
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_dialog_opens_on_the_workbooks_line_type_for_the_delineator()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [new ThemeStyleEdit("DefaultDelineator", "#000000", "#000000", "#000000", GanttStrokeDash.Dash)],
+                new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "DefaultDelineator");
+
+                var dash = FindAll(tab, c => c is ComboBox)
+                    .Cast<ComboBox>()
+                    .First(combo => combo.Items.Cast<object>().Any(item => item.ToString() == "Dash"));
+                Assert.Equal("Dash", dash.SelectedItem?.ToString());
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void Reset_restores_the_code_owned_preset_colours()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [new ThemeStyleEdit("AsPlannedActivity", "#FF0000", "#00FF00", "#0000FF")],
+                new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "AsPlannedActivity");
+                Assert.Equal("#FF0000", GetField<TextBox>(form, "_entityFillText").Text);
+
+                // The reset logic is behind the confirmation dialog, so the
+                // restore itself is invoked directly.
+                InvokePrivate(form, "ApplyCodeOwnedDefaults");
+
+                Assert.Equal(
+                    GanttCatalogues.GetPreset("AsPlannedActivity").FillColour,
+                    GetField<TextBox>(form, "_entityFillText").Text);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void No_control_on_the_custom_styles_tab_overflows_its_group()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                // No control may extend past the bounds of the group that
+                // holds it. The earlier revision placed them absolutely, so
+                // the permitted-label list ran past its group and the Delete
+                // button was clipped by the foot of the panel.
+                foreach (GroupBox group in FindAll(tab, c => c is GroupBox).Cast<GroupBox>())
+                {
+                    foreach (Control child in group.Controls)
+                    {
+                        Assert.True(
+                            child.Right <= group.ClientSize.Width + 1
+                                && child.Bottom <= group.ClientSize.Height + 1,
+                            $"'{child.Name}' overflows group '{group.Text}'.");
+                    }
+                }
+
+                // The New-style row holds the key box and the button side by
+                // side in a flow panel, so they cannot overlap. The earlier
+                // revision placed them at fixed coordinates and the button
+                // sat on top of the key box.
+                var newButton = RequireButton(tab, "New custom style");
+                var keyBox = RequireKeyTextBox(tab);
+                Assert.True(
+                    newButton.Left >= keyBox.Right || keyBox.Left >= newButton.Right,
+                    "The New custom style button overlaps the key box.");
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_custom_styles_tab_fits_its_tab_without_a_horizontal_scroll_bar()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                // The tab is laid out by a split container, so it never needs a
+                // horizontal scroll bar: the list is on the left and the
+                // properties on the right, and the widest property group fits
+                // beside the list in the dialog's client area.
+                var split = Assert.IsType<SplitContainer>(Find(tab, c => c is SplitContainer));
+                int widestGroup = FindAll(tab, c => c is GroupBox)
+                    .Cast<GroupBox>()
+                    .Select(group => group.Width)
+                    .DefaultIfEmpty(0)
+                    .Max();
+
+                Assert.True(
+                    split.SplitterDistance + widestGroup + 40 <= form.ClientSize.Width,
+                    $"The tab needs {split.SplitterDistance + widestGroup}pt but the dialog is {form.ClientSize.Width}pt.");
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)
@@ -874,6 +1066,17 @@ public class ThemeSettingsFormTests
         var f = typeof(ThemeSettingsForm).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"Field '{name}' not found on ThemeSettingsForm.");
         return (TField)f.GetValue(form)!;
+    }
+
+    /// <summary>
+    /// Invokes a private method on the form.
+    /// </summary>
+    private static void InvokePrivate(ThemeSettingsForm form, string methodName)
+    {
+        var method = typeof(ThemeSettingsForm).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Method '{methodName}' not found on ThemeSettingsForm.");
+        object?[] args = method.GetParameters().Length == 0 ? [] : [null, EventArgs.Empty];
+        method.Invoke(form, args);
     }
 
     private static void InvokeClick(ThemeSettingsForm form, string methodName)

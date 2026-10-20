@@ -121,3 +121,35 @@ public static class GanttStyleFamilies
         _ => throw new ArgumentOutOfRangeException(nameof(family), family, "The family is not defined."),
     };
 }
+
+/// <summary>
+/// Which built-in styles' stroke dash the user may change.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The delineator is the one built-in entity drawn as a <i>line</i> rather
+/// than a filled shape, so its line type is a property the user is expected
+/// to choose. Every other built-in style's dash is code-owned: the reader
+/// exact-matches that column against the preset, so an edited value could
+/// not be kept, and offering a control for it would promise a change the
+/// workbook would silently discard.
+/// </para>
+/// <para>
+/// This is the single authority for that rule. The reader, the writer, and
+/// the request validator all consult it, so the three cannot disagree about
+/// which dashes are editable.
+/// </para>
+/// </remarks>
+public static class GanttStyleDashPolicy
+{
+    /// <summary>
+    /// Returns whether the stroke dash of a built-in style is user-editable.
+    /// </summary>
+    /// <param name="styleKey">The built-in style key.</param>
+    /// <returns>True when the dash may be edited.</returns>
+    public static bool IsUserEditable(string styleKey)
+    {
+        ArgumentNullException.ThrowIfNull(styleKey);
+        return string.Equals(styleKey, "DefaultDelineator", StringComparison.Ordinal);
+    }
+}

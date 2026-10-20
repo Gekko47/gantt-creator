@@ -307,12 +307,19 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             // 3, 7 are checked for valid hex). Only text cells that cannot
             // be edited — StyleKey (col 0), DisplayName (col 1), HatchPattern
             // (col 4) — are compared exactly against the preset.
+            //
+            // Column 14 (StrokeDash) is projected rather than exact-matched
+            // for the one built-in style whose dash the user may change: the
+            // delineator's line type, so `WriteTheme` writes the chosen dash
+            // there. Every other built-in style's dash is code-owned and is
+            // still compared exactly against the preset. A row carrying a
+            // dash the reader cannot parse is a refusal, not a silent
+            // fallback to the preset.
             (int column, string expected)[] textCells =
             [
                 (0, preset.StyleKey),
                 (1, preset.DisplayName),
                 (4, preset.HatchPattern.ToString()),
-                (14, preset.StrokeDash.ToString()),
             ];
             foreach ((int column, string expected) in textCells)
             {
@@ -320,6 +327,25 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 {
                     return ConfigReadRefusalReason.CatalogueMismatch;
                 }
+            }
+
+            GanttStrokeDash rowDash = preset.StrokeDash;
+            if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey))
+            {
+                if (!Enum.TryParse(
+                    ToText(rows[index][14]),
+                    ignoreCase: false,
+                    out GanttStrokeDash parsedDash)
+                    || !Enum.IsDefined(parsedDash))
+                {
+                    return ConfigReadRefusalReason.CatalogueMismatch;
+                }
+
+                rowDash = parsedDash;
+            }
+            else if (!CellMatches(rows[index][14], preset.StrokeDash.ToString()))
+            {
+                return ConfigReadRefusalReason.CatalogueMismatch;
             }
 
             double[] expectedNumbers =
@@ -386,9 +412,22 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
             // Columns 2 (FillColour), 3 (StrokeColour), and 7 (TextColour) are
             // editable colour cells: WriteTheme writes user-edited colours
             // there, so Read() must project them from the row rather than from
-            // the code-owned preset defaults. Columns 0, 1, 4, 11, 12, 13 are
+            // the code-owned preset defaults. Column 14 (StrokeDash) is
+            // projected for the one style whose dash the user may change: the
+            // delineator's line type. Columns 0, 1, 4, 11, 12, 13 are
             // exact-matched against the preset above, so using preset.* for
             // those is safe.
+            GanttStrokeDash rowDash = preset.StrokeDash;
+            if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey)
+                && Enum.TryParse(
+                    ToText(rows[index][14]),
+                    ignoreCase: false,
+                    out GanttStrokeDash parsedDash)
+                && Enum.IsDefined(parsedDash))
+            {
+                rowDash = parsedDash;
+            }
+
             definitions.Add(new GanttStyleDefinition(
                 preset.StyleKey,
                 preset.AllowedLabelPositions,
@@ -404,7 +443,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 preset.ActivityHeightPt,
                 preset.MilestoneSizePt,
                 DisplayName: null,
-                StrokeDash: preset.StrokeDash));
+                StrokeDash: rowDash));
         }
 
         for (int index = GanttCatalogues.StylePresets.Count; index < rows.Count; index++)

@@ -68,6 +68,27 @@ public sealed class SceneBuilderTests
             height,
             8);
 
+    /// <summary>
+    /// A user-authored style with its own milestone size. A user style is
+    /// one the workbook's own rows carry, so it is not a code-owned preset:
+    /// its milestone size is an override of the chart-wide metric.
+    /// </summary>
+    private static GanttStyleDefinition UserStyle(string key, double milestoneSizePt) =>
+        new(
+            key,
+            new HashSet<GanttLabelPosition> { GanttLabelPosition.Auto },
+            EntityColourCapability.Fill | EntityColourCapability.Stroke,
+            GanttLabelPosition.Inside,
+            "#92D050",
+            "#404040",
+            "#000000",
+            GanttHatchPattern.None,
+            0,
+            0,
+            0.5,
+            8,
+            milestoneSizePt);
+
     private static readonly IReadOnlyList<GanttStyleDefinition> SharedStyles =
     [
         Style("AsPlannedActivity", 8),
@@ -328,7 +349,9 @@ public sealed class SceneBuilderTests
             type,
             $"Row {row}",
             start ?? new DateOnly(2024, 1, 5),
-            finish ?? (type is GanttEntityType.AsPlannedMilestone ? null : new DateOnly(2024, 1, 10)),
+            finish ?? (type is GanttEntityType.AsPlannedMilestone or GanttEntityType.CustomMilestone
+                ? null
+                : new DateOnly(2024, 1, 10)),
             parentId,
             styleKey,
             null,
@@ -343,6 +366,111 @@ public sealed class SceneBuilderTests
             DateLabelPosition = dateLabelPosition,
         };
 
+
+    [Fact]
+    public void A_custom_milestone_row_renders_a_diamond()
+    {
+        // A Custom Milestone row is a milestone row, so it must reach the
+        // milestone marker builder. It was missing from that pass, so a
+        // custom milestone rendered no diamond at all.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 0)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Contains(outcome.Result!.Scene.Primitives, p => p.ZLayer == ZLayer.Milestone);
+    }
+
+    [Fact]
+    public void A_user_authored_style_milestone_size_overrides_the_chart_metric()
+    {
+        // The style's own size wins when it is greater than zero, so a custom
+        // style can carry its own diamond size.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 16)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(16, DiamondSpan(outcome.Result!), 3);
+    }
+
+    [Fact]
+    public void A_zero_style_milestone_size_uses_the_chart_metric()
+    {
+        // Zero means "use the chart's milestone size", so the chart-wide knob
+        // stays live for a style that does not set its own.
+        GanttStyleRegistry registry = new([UserStyle("MyMilestone", 0)]);
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            MilestoneRequest(
+                Event(1, GanttEntityType.CustomMilestone, styleKey: "MyMilestone"),
+                registry));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(8, DiamondSpan(outcome.Result!), 3);
+    }
+
+    [Fact]
+    public void A_built_in_milestone_always_uses_the_chart_metric()
+    {
+        // A built-in style's row carries the catalogue's token default, not a
+        // live value, so honouring it would shadow the chart-wide knob.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1, GanttEntityType.AsPlannedMilestone)));
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Equal(8, DiamondSpan(outcome.Result!), 3);
+    }
+
+    /// <summary>
+    /// Builds a request whose registry is the one supplied, so a test can
+    /// resolve a user-authored style.
+    /// </summary>
+    private static SceneBuildRequest MilestoneRequest(
+        GanttEvent milestone,
+        GanttStyleRegistry registry)
+    {
+        SceneBuildRequest request = Request(milestone);
+        return new SceneBuildRequest
+        {
+            Events = request.Events,
+            Registry = registry,
+            Grid = request.Grid,
+            PlotBounds = request.PlotBounds,
+            Metrics = request.Metrics,
+            LaneMetrics = request.LaneMetrics,
+            FrameTheme = request.FrameTheme,
+            PlotStart = request.PlotStart,
+            PlotFinish = request.PlotFinish,
+            GridLinePt = request.GridLinePt,
+            MajorBoundaryPt = request.MajorBoundaryPt,
+            MilestoneSizePt = request.MilestoneSizePt,
+            TitleBandHeightPt = request.TitleBandHeightPt,
+            YearBandHeightPt = request.YearBandHeightPt,
+            PeriodBandHeightPt = request.PeriodBandHeightPt,
+            DelineatorLinePt = request.DelineatorLinePt,
+            DelineatorStackGapPt = request.DelineatorStackGapPt,
+            LabelGapPt = request.LabelGapPt,
+            RowHeightPt = request.RowHeightPt,
+            ChartPadding = request.ChartPadding,
+            MinimumHeaderLabelWidthPt = request.MinimumHeaderLabelWidthPt,
+        };
+    }
+
+    /// <summary>
+    /// Returns the tip-to-tip span of the scene's milestone diamond.
+    /// </summary>
+    private static double DiamondSpan(SceneBuildResult result)
+    {
+        ScenePolygon diamond = Assert.IsType<ScenePolygon>(
+            Assert.Single(
+                result.Scene.Primitives,
+                primitive => primitive.ZLayer == ZLayer.Milestone));
+        return diamond.Points.Max(point => point.X) - diamond.Points.Min(point => point.X);
+    }
 
     [Fact]
     public void A_valid_request_builds_a_scene_with_the_frame_and_the_bar()

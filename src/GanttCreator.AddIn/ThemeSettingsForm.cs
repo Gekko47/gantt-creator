@@ -146,6 +146,7 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly Label _entitySizeLabel = new();
     private readonly Label _entityLabelPositionLabel = new();
     private readonly NumericUpDown _entityLineWidthNumeric = new();
+    private readonly Label _entityLineWidthLabel = new();
 
     /// <summary>
     /// The pending colour values for each built-in style the user has edited
@@ -154,6 +155,20 @@ internal sealed partial class ThemeSettingsForm : Form
     /// live here rather than in a text box.
     /// </summary>
     private readonly Dictionary<string, EntityStyleColours> _entityStyleColours = [];
+
+    /// <summary>
+    /// The pending line type for each built-in style, keyed by the style key.
+    /// <para>
+    /// Only the delineator's line type is user-editable, but the value lives
+    /// in a map rather than in the combo alone for the same reason the
+    /// colours do: the master-detail view shows one style at a time, so a
+    /// value the user chose must survive a move to another style and back.
+    /// It also carries the workbook's current value in, so the dialog opens
+    /// on the line type the chart actually draws rather than the code-owned
+    /// default.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, GanttStrokeDash> _entityStyleDashes = [];
 
     /// <summary>
     /// The style key whose properties the detail panel is currently showing.
@@ -396,6 +411,7 @@ internal sealed partial class ThemeSettingsForm : Form
             _entitySizeLabel.Dispose();
             _entityLabelPositionLabel.Dispose();
             _entityLineWidthNumeric.Dispose();
+            _entityLineWidthLabel.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -421,9 +437,14 @@ internal sealed partial class ThemeSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(720, 560);
-        MinimumSize = new Size(720, 560);
+
+        // The client area is wide enough for the master-detail view: a list
+        // on the left and the selected object's properties on the right, with
+        // no tab needing a horizontal scroll bar.
+        ClientSize = new Size(900, 640);
+        MinimumSize = new Size(900, 640);
         AutoScaleMode = AutoScaleMode.Dpi;
+        Font = SystemFonts.MessageBoxFont;
 
         Controls.Add(_tabControl);
 
@@ -440,7 +461,8 @@ internal sealed partial class ThemeSettingsForm : Form
         };
         Controls.Add(bottomPanel);
 
-        _warningLabel.Font = new Font(Font.FontFamily, 8.25f, FontStyle.Regular);
+        // The warning label uses the dialog's font, so it reads at the same
+        // size as everything else rather than as a smaller footnote.
         bottomPanel.Controls.Add(_warningLabel);
 
         FlowLayoutPanel buttonPanel = new FlowLayoutPanel
@@ -681,15 +703,22 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // The delineator's line width is the one built-in size the user may
         // change: it is the chart-wide DelineatorLinePt metric, which no
-        // other entity reads.
-        _entityLineWidthNumeric.Minimum = 0;
-        _entityLineWidthNumeric.Maximum = 20;
+        // other entity reads. It is registered in the metric map under that
+        // token name, so the request carries the value the user chose and
+        // the dialog opens on the workbook's current width.
+        _entityLineWidthNumeric.Minimum = (decimal)GanttCatalogues
+            .Metrics.First(token => token.Name == "DelineatorLinePt").Minimum;
+        _entityLineWidthNumeric.Maximum = (decimal)GanttCatalogues
+            .Metrics.First(token => token.Name == "DelineatorLinePt").Maximum;
         _entityLineWidthNumeric.DecimalPlaces = 2;
         _entityLineWidthNumeric.Increment = 0.25m;
         _entityLineWidthNumeric.Width = 80;
+        _metricNumericUpDowns["DelineatorLinePt"] = _entityLineWidthNumeric;
 
-        table.Controls.Add(new Label { Text = "Line width", AutoSize = true }, 0, 1);
+        _entityLineWidthLabel.AutoSize = true;
+        table.Controls.Add(_entityLineWidthLabel, 0, 1);
         table.Controls.Add(_entityLineWidthNumeric, 1, 1);
+        _entityLineWidthLabel.Text = "Line width";
 
         return group;
     }
@@ -749,14 +778,14 @@ internal sealed partial class ThemeSettingsForm : Form
         // code-owned for a built-in style: the reader exact-matches those
         // columns, so an editable control would offer a change the workbook
         // could not keep. The delineator's line type is the exception.
-        bool isDelineator = string.Equals(styleKey, "DefaultDelineator", StringComparison.Ordinal);
+        bool isDelineator = GanttStyleDashPolicy.IsUserEditable(styleKey);
         _entityDashCombo.Visible = isDelineator;
         _entityDashLabel.Visible = !isDelineator;
         _entityDashLabel.Text = DescribeStrokeDash(preset.StrokeDash);
         if (isDelineator)
         {
             PopulateDashVocabulary(_entityDashCombo);
-            SelectDash(_entityDashCombo, preset.StrokeDash);
+            SelectDash(_entityDashCombo, PendingDash(styleKey, preset.StrokeDash));
         }
 
         _entityOutlineWidthLabel.Text = preset.StandardOutlinePt > 0
@@ -765,10 +794,24 @@ internal sealed partial class ThemeSettingsForm : Form
 
         _entitySizeLabel.Text = DescribeEntitySize(preset);
 
-        // The delineator's line width is the only size the user may change.
+        // The delineator's line width is the one size the user may change. It
+        // is the chart-wide DelineatorLinePt metric, so it is carried in the
+        // metric map: the reader projects it and the writer round-trips it
+        // like any other metric.
         _entityLineWidthNumeric.Enabled = isDelineator;
         _entityLineWidthNumeric.Visible = isDelineator;
+        _entityLineWidthLabel.Visible = isDelineator;
     }
+
+    /// <summary>
+    /// Returns the pending line type for a style, falling back to the
+    /// code-owned preset's dash when the user has not chosen one.
+    /// </summary>
+    /// <param name="styleKey">The built-in style key.</param>
+    /// <param name="fallback">The code-owned dash to use when none is pending.</param>
+    /// <returns>The pending dash, or the fallback.</returns>
+    private GanttStrokeDash PendingDash(string styleKey, GanttStrokeDash fallback) =>
+        _entityStyleDashes.TryGetValue(styleKey, out GanttStrokeDash pending) ? pending : fallback;
 
     /// <summary>
     /// Describes an entity's size, which is a bar height for a span and a
@@ -795,6 +838,15 @@ internal sealed partial class ThemeSettingsForm : Form
             _entityFillText.Text,
             _entityStrokeText.Text,
             _entityTextText.Text);
+
+        // The line type is captured with the colours: the master-detail view
+        // shows one style at a time, so a value the user chose must survive a
+        // move to another style and back.
+        if (GanttStyleDashPolicy.IsUserEditable(styleKey)
+            && SelectedEntityDash() is { } dash)
+        {
+            _entityStyleDashes[styleKey] = dash;
+        }
     }
 
     /// <summary>
@@ -1002,12 +1054,13 @@ internal sealed partial class ThemeSettingsForm : Form
         // scene resolves from the STYLE row rather than from these metrics, so
         // the controls promised a change the chart never rendered; and "Hatch
         // spacing" carried the pitch and the line width, which the host's
-        // MsoPatternType cannot express at all.
+        // MsoPatternType cannot express at all. The Delineator's own line
+        // width is on the Entity styles tab, beside the delineator's other
+        // properties: it belongs to that object, not to the chart.
         int y = 8;
         y = AddMetricGroup(panel, "Rows and lanes", y, "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt");
         y = AddMetricGroup(panel, "Grid", y, "GridLinePt", "MajorBoundaryPt");
         y = AddMetricGroup(panel, "Milestones", y, "MilestoneSizePt");
-        y = AddMetricGroup(panel, "Delineator", y, "DelineatorLinePt");
         _ = AddChromeColourGroup(panel, y);
     }
 
@@ -1207,207 +1260,256 @@ internal sealed partial class ThemeSettingsForm : Form
         };
         _tabControl.TabPages.Add(tab);
 
-        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        tab.Controls.Add(panel);
+        // The master-detail shape the Entity styles tab uses, so the two read
+        // as one dialog: the list of user-created styles on the left, the
+        // selected style's properties on the right.
+        //
+        // Every position comes from a layout container, not from a hard-coded
+        // coordinate. The previous revision placed the controls absolutely
+        // inside a scrolling panel, so the New button overlapped the key box,
+        // the permitted-label list ran past its group, the Delete button was
+        // clipped, and the content was wider than the tab, which produced a
+        // horizontal scroll bar.
+        SplitContainer split = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            SplitterDistance = 240,
+            FixedPanel = FixedPanel.Panel1,
+        };
+        tab.Controls.Add(split);
 
-        // Left: the list of user-created styles. The list is the master; the
-        // property panel on the right edits the selected object.
-        _customStyleListGroup.Location = new Point(8, 8);
-        _customStyleListGroup.Size = new Size(210, 300);
-        _customStyleListLabel.Location = new Point(16, 24);
-        _customStyleList.Location = new Point(16, 48);
-        _customStyleList.Size = new Size(178, 240);
+        // --- The master: the list of user-created styles. ---
+        Panel master = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(0, 0, 8, 0),
+        };
+        split.Panel1.Controls.Add(master);
 
+        _customStyleListGroup.Dock = DockStyle.Fill;
+        _customStyleListGroup.Text = "Custom styles";
+        _customStyleListGroup.Padding = new Padding(8, 4, 8, 4);
+
+        TableLayoutPanel listLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+        };
+        _ = listLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _ = listLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _ = listLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        _ = listLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        _customStyleListLabel.AutoSize = true;
+        listLayout.Controls.Add(_customStyleListLabel, 0, 0);
+
+        _customStyleList.Dock = DockStyle.Fill;
+        _customStyleList.IntegralHeight = false;
         _customStyleList.SelectedIndexChanged += CustomStyleList_SelectedIndexChanged;
-        _customStyleListGroup.Controls.Add(_customStyleListLabel);
-        _customStyleListGroup.Controls.Add(_customStyleList);
-        panel.Controls.Add(_customStyleListGroup);
+        listLayout.Controls.Add(_customStyleList, 0, 1);
 
-        // Empty-state hint (full width so the instruction stays readable).
+        // The empty-state hint sits under the list and wraps to the column
+        // width, so the instruction is never clipped.
         _customStyleListHint.AutoSize = true;
-        _customStyleListHint.Location = new Point(8, 316);
-        panel.Controls.Add(_customStyleListHint);
+        _customStyleListHint.MaximumSize = new Size(200, 0);
+        listLayout.Controls.Add(_customStyleListHint, 0, 2);
 
-        // New-style entry is always available: it is not gated behind a
-        // selection, so the first custom style can always be created.
+        _customStyleListGroup.Controls.Add(listLayout);
+        master.Controls.Add(_customStyleListGroup);
+
+        // The New-style row. The key box and the button share a flow panel, so
+        // they cannot overlap and the button is always reachable: creating the
+        // FIRST custom style is not gated behind a selection.
+        FlowLayoutPanel newRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 0, 0),
+        };
+        _customNewKeyText.Width = 130;
+        _customNewKeyText.Margin = new Padding(0, 0, 8, 0);
+        newRow.Controls.Add(_customNewKeyText);
         _customNewButton.Click += CustomNewButton_Click;
-        _customNewButton.Location = new Point(16, 344);
-        panel.Controls.Add(_customNewButton);
-        _customNewKeyText.Location = new Point(112, 342);
-        panel.Controls.Add(_customNewKeyText);
+        _customNewButton.Margin = new Padding(0);
+        newRow.Controls.Add(_customNewButton);
+        master.Controls.Add(newRow);
 
-        // Right: the property panel for the selected style, grouped by concern
-        // (Fill / Outline / Label / Size) rather than by table column.
-        _customStyleEditGroup.Location = new Point(230, 8);
-        _customStyleEditGroup.Size = new Size(470, 470);
+        // --- The detail: the selected style's properties. ---
+        _customStyleEditGroup.Dock = DockStyle.Fill;
+        _customStyleEditGroup.Text = "Edit selected style";
+        _customStyleEditGroup.Padding = new Padding(8);
+        split.Panel2.Controls.Add(_customStyleEditGroup);
 
+        FlowLayoutPanel detail = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            AutoScroll = true,
+            WrapContents = false,
+            Padding = new Padding(4, 4, 4, 4),
+        };
+        _customStyleEditGroup.Controls.Add(detail);
+
+        // The style key, read-only: it names the row, and a rename is a
+        // delete plus a create, so the key is not edited in place.
+        TableLayoutPanel keyRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Margin = new Padding(0, 0, 0, 8),
+        };
+        _ = keyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        _ = keyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         Label keyLbl = new Label
         {
             Text = _customStyleKeyLabel,
-            Location = new Point(16, 26),
-            Size = new Size(70, 20),
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
         };
-        _customStyleKeyText.Location = new Point(92, 22);
+        keyRow.Controls.Add(keyLbl, 0, 0);
         _customStyleKeyText.ReadOnly = true;
+        _customStyleKeyText.Dock = DockStyle.Fill;
+        keyRow.Controls.Add(_customStyleKeyText, 1, 0);
+        detail.Controls.Add(keyRow);
 
+        // The property groups, one per concern: Fill, Outline, Label, Size.
         GroupBox fillGroup = new GroupBox
         {
             Text = "Fill",
-            Location = new Point(12, 52),
-            Size = new Size(446, 78),
+            Width = 420,
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
         };
-        AddCustomColourRow(fillGroup, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 22);
-        Label patternLbl = new Label
-        {
-            Text = "Pattern",
-            Location = new Point(16, 52),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        fillGroup.Controls.Add(patternLbl);
-        _customHatchPatternCombo.Location = new Point(92, 48);
-        fillGroup.Controls.Add(_customHatchPatternCombo);
-        _customStyleEditGroup.Controls.Add(fillGroup);
+        TableLayoutPanel fillTable = NewEntityPropertyTable();
+        AddCustomColourRow(fillTable, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 0);
+        AddCustomPropertyRow(fillTable, "Pattern", _customHatchPatternCombo, 1);
+        fillGroup.Controls.Add(fillTable);
+        detail.Controls.Add(fillGroup);
 
         GroupBox outlineGroup = new GroupBox
         {
             Text = "Outline",
-            Location = new Point(12, 138),
-            Size = new Size(446, 106),
+            Width = 420,
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
         };
-        AddCustomColourRow(outlineGroup, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 22);
-        Label widthLbl = new Label
-        {
-            Text = "Width",
-            Location = new Point(16, 52),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        outlineGroup.Controls.Add(widthLbl);
-        _customOutlineWidthNumeric.Location = new Point(92, 48);
-        outlineGroup.Controls.Add(_customOutlineWidthNumeric);
-        Label dashLbl = new Label
-        {
-            Text = "Line style",
-            Location = new Point(16, 80),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        outlineGroup.Controls.Add(dashLbl);
-        _customStrokeDashCombo.Location = new Point(92, 76);
-        outlineGroup.Controls.Add(_customStrokeDashCombo);
-        _customStyleEditGroup.Controls.Add(outlineGroup);
+        TableLayoutPanel outlineTable = NewEntityPropertyTable();
+        AddCustomColourRow(outlineTable, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 0);
+        AddCustomPropertyRow(outlineTable, "Width", _customOutlineWidthNumeric, 1);
+        AddCustomPropertyRow(outlineTable, "Line style", _customStrokeDashCombo, 2);
+        outlineGroup.Controls.Add(outlineTable);
+        detail.Controls.Add(outlineGroup);
 
         GroupBox labelGroup = new GroupBox
         {
             Text = "Label",
-            Location = new Point(12, 252),
-            Size = new Size(446, 118),
+            Width = 420,
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
         };
-        AddCustomColourRow(labelGroup, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 22);
-        Label defaultLbl = new Label
-        {
-            Text = "Default",
-            Location = new Point(16, 52),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        labelGroup.Controls.Add(defaultLbl);
-        _customDefaultLabelCombo.Location = new Point(92, 48);
-        labelGroup.Controls.Add(_customDefaultLabelCombo);
-        Label allowedLbl = new Label
-        {
-            Text = "Allowed",
-            Location = new Point(16, 80),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        labelGroup.Controls.Add(allowedLbl);
-        _customAllowedLabelList.Location = new Point(92, 74);
-        labelGroup.Controls.Add(_customAllowedLabelList);
-        _customStyleEditGroup.Controls.Add(labelGroup);
+        TableLayoutPanel labelTable = NewEntityPropertyTable();
+        AddCustomColourRow(labelTable, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 0);
+        AddCustomPropertyRow(labelTable, "Default", _customDefaultLabelCombo, 1);
+        AddCustomPropertyRow(labelTable, "Allowed", _customAllowedLabelList, 2);
+        labelGroup.Controls.Add(labelTable);
+        detail.Controls.Add(labelGroup);
 
         GroupBox sizeGroup = new GroupBox
         {
             Text = "Size",
-            Location = new Point(12, 378),
-            Size = new Size(446, 78),
+            Width = 420,
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
         };
-        Label barLbl = new Label
-        {
-            Text = "Bar height",
-            Location = new Point(16, 22),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        sizeGroup.Controls.Add(barLbl);
-        _customActivityHeightNumeric.Location = new Point(92, 18);
-        sizeGroup.Controls.Add(_customActivityHeightNumeric);
-        Label milestoneLbl = new Label
-        {
-            Text = "Milestone",
-            Location = new Point(16, 52),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        sizeGroup.Controls.Add(milestoneLbl);
-        _customMilestoneSizeNumeric.Location = new Point(92, 48);
-        sizeGroup.Controls.Add(_customMilestoneSizeNumeric);
-        _customStyleEditGroup.Controls.Add(sizeGroup);
+        TableLayoutPanel sizeTable = NewEntityPropertyTable();
+        AddCustomPropertyRow(sizeTable, "Bar height", _customActivityHeightNumeric, 0);
+        AddCustomPropertyRow(sizeTable, "Milestone size", _customMilestoneSizeNumeric, 1);
+        _customMilestoneSizeNumeric.Minimum = 0;
+        _customMilestoneSizeNumeric.AccessibleDescription =
+            "Zero uses the chart's milestone size.";
+        sizeGroup.Controls.Add(sizeTable);
+        detail.Controls.Add(sizeGroup);
 
-        // Delete only applies to a selected style; it lives inside the edit group.
+        // Delete only applies to a selected style, so it gets its own row at
+        // the foot of the property panel rather than sitting over a group.
+        FlowLayoutPanel deleteRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            WrapContents = false,
+        };
         _customDeleteButton.Click += CustomDeleteButton_Click;
-        _customDeleteButton.Location = new Point(16, 466);
-        _customStyleEditGroup.Controls.Add(_customDeleteButton);
-
-        _customStyleEditGroup.Controls.Add(keyLbl);
-        _customStyleEditGroup.Controls.Add(_customStyleKeyText);
+        _customDeleteButton.Margin = new Padding(0);
+        deleteRow.Controls.Add(_customDeleteButton);
+        detail.Controls.Add(deleteRow);
 
         PopulateCustomStyleVocabularies();
-        panel.Controls.Add(_customStyleEditGroup);
-
         UpdateCustomStyleListHint();
 #pragma warning restore CA1303
     }
 
     /// <summary>
     /// Adds a labelled colour row (hex text box, picker button, swatch) to a
-    /// property group.
+    /// property group's table.
     /// </summary>
-    /// <param name="parent">The group to add the row to.</param>
+    /// <param name="table">The group's property table.</param>
     /// <param name="label">The property label.</param>
     /// <param name="textBox">The hex text box.</param>
     /// <param name="pickerButton">The colour picker button.</param>
     /// <param name="swatch">The colour swatch.</param>
-    /// <param name="top">The row's top offset inside the group.</param>
+    /// <param name="row">The row the control sits in.</param>
     private void AddCustomColourRow(
-        Control parent,
+        TableLayoutPanel table,
         string label,
         TextBox textBox,
         Button pickerButton,
         Panel swatch,
-        int top)
+        int row)
     {
-        Label lbl = new Label
+        table.Controls.Add(new Label
         {
             Text = label,
-            Location = new Point(16, top + 3),
-            Size = new Size(70, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        parent.Controls.Add(lbl);
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+        }, 0, row);
 
-        textBox.Location = new Point(92, top);
         textBox.TextChanged += CustomStyleColourTextChanged;
+        table.Controls.Add(textBox, 1, row);
 
-        pickerButton.Location = new Point(200, top - 1);
         pickerButton.Click += CustomFillColorButton_Click;
+        table.Controls.Add(pickerButton, 2, row);
 
-        swatch.Location = new Point(232, top);
+        table.Controls.Add(swatch, 3, row);
+    }
 
-        parent.Controls.Add(textBox);
-        parent.Controls.Add(pickerButton);
-        parent.Controls.Add(swatch);
+    /// <summary>
+    /// Adds a labelled row holding a single property control.
+    /// </summary>
+    /// <param name="table">The group's property table.</param>
+    /// <param name="label">The property label.</param>
+    /// <param name="control">The property control.</param>
+    /// <param name="row">The row the control sits in.</param>
+    private static void AddCustomPropertyRow(
+        TableLayoutPanel table,
+        string label,
+        Control control,
+        int row)
+    {
+        table.Controls.Add(new Label
+        {
+            Text = label,
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+        }, 0, row);
+
+        table.SetColumnSpan(control, 3);
+        table.Controls.Add(control, 1, row);
     }
 
     /// <summary>
@@ -1725,7 +1827,10 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // The new style starts from the As-Planned tokens so it renders as a
         // visible entity rather than a degenerate one, and it permits the
-        // label positions a span or a milestone both accept.
+        // label positions a span or a milestone both accept. The milestone
+        // size starts at ZERO, which means "use the chart's milestone size":
+        // it is an override, not a second source of truth, so the chart-wide
+        // knob stays live for a style that does not set it.
         _customStyleEdits[newKey] = new CustomStyleState(
             "#FFFFFF",
             "#000000",
@@ -1733,7 +1838,7 @@ internal sealed partial class ThemeSettingsForm : Form
             GanttHatchPattern.None,
             GanttCatalogues.MetricDefault("StandardOutlinePt"),
             GanttCatalogues.MetricDefault("ActivityHeightPt"),
-            GanttCatalogues.MetricDefault("MilestoneSizePt"),
+            0,
             GanttLabelPosition.Auto,
             new HashSet<GanttLabelPosition>
             {
@@ -2004,6 +2109,22 @@ internal sealed partial class ThemeSettingsForm : Form
                 edit.TextColour);
         }
 
+        // The line types. Only the delineator's is user-editable, so only that
+        // one carries a value; every other built-in style's dash is
+        // code-owned and the reader exact-matches it against the preset.
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            _entityStyleDashes[preset.StyleKey] = preset.StrokeDash;
+        }
+
+        foreach (ThemeStyleEdit edit in request.StyleEdits)
+        {
+            if (edit.StrokeDash is { } dash && GanttStyleDashPolicy.IsUserEditable(edit.StyleKey))
+            {
+                _entityStyleDashes[edit.StyleKey] = dash;
+            }
+        }
+
         if (_selectedEntityStyleKey is { } selectedKey
             && _entityStyleColours.TryGetValue(selectedKey, out EntityStyleColours? selected))
         {
@@ -2155,8 +2276,8 @@ internal sealed partial class ThemeSettingsForm : Form
                 // the reader projects from the row rather than exact-matching
                 // it against the preset. Every other built-in style keeps its
                 // code-owned dash.
-                GanttStrokeDash? dash = string.Equals(preset.StyleKey, "DefaultDelineator", StringComparison.Ordinal)
-                    ? SelectedEntityDash()
+                GanttStrokeDash? dash = GanttStyleDashPolicy.IsUserEditable(preset.StyleKey)
+                    ? PendingDash(preset.StyleKey, preset.StrokeDash)
                     : null;
 
                 styleEdits.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text, dash));
@@ -2289,10 +2410,41 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
-        // Empty colour boxes mean "use the preset default".
-        foreach (TextBox txt in _colorTextBoxes.Values)
+        ApplyCodeOwnedDefaults();
+    }
+
+    /// <summary>
+    /// Restores every code-owned default the dialog can edit: the built-in
+    /// styles' colours and line types, the chart-chrome colours, and the
+    /// chart-wide metrics. Runs on the STA thread; never throws.
+    /// </summary>
+    /// <remarks>
+    /// The reset must put the PRESET back, not blank the colour: an empty
+    /// colour means "no fill" to the writer, so the earlier behaviour removed
+    /// the colour instead of restoring it.
+    /// </remarks>
+    private void ApplyCodeOwnedDefaults()
+    {
+        // Restore the code-owned preset values for every built-in style.
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
-            txt.Text = string.Empty;
+            _entityStyleColours[preset.StyleKey] = new EntityStyleColours(
+                preset.FillColour,
+                preset.StrokeColour,
+                preset.TextColour);
+            _entityStyleDashes[preset.StyleKey] = preset.StrokeDash;
+        }
+
+        // The chart-chrome colours go back to the catalogue defaults too, so
+        // a reset really does return the chart to the shipped look.
+        foreach (GanttChartChromeRole role in GanttChartChrome.Roles)
+        {
+            string key = GanttChartChrome.SettingKeyFor(role);
+            if (_chromeColourTextBoxes.TryGetValue(key, out TextBox? chromeText))
+            {
+                chromeText.Text = GanttChartChrome.DefaultHexFor(role);
+                UpdateSwatch(key, ParseColourOrDefault(chromeText.Text));
+            }
         }
 
         // Reset every editable metric to its catalogue default.
@@ -2306,25 +2458,11 @@ internal sealed partial class ThemeSettingsForm : Form
             }
         }
 
-        // Refresh swatches to the unset/default look.
-        Color defaultSwatch = SystemColors.Control;
-        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        // The detail panel shows one style at a time, so it is refreshed from
+        // the restored values.
+        if (_selectedEntityStyleKey is { } selectedKey)
         {
-            if (preset.ColourCapability.HasFlag(EntityColourCapability.Fill) ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                UpdateSwatch($"fill_{preset.StyleKey}", defaultSwatch);
-            }
-            if (preset.ColourCapability.HasFlag(EntityColourCapability.Stroke) ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                UpdateSwatch($"stroke_{preset.StyleKey}", defaultSwatch);
-            }
-            if (preset.TextColour.Length > 0 ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                UpdateSwatch($"text_{preset.StyleKey}", defaultSwatch);
-            }
+            ShowEntityStyle(selectedKey);
         }
 
         _warningLabel.Visible = false;

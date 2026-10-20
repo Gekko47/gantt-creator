@@ -930,6 +930,7 @@ internal class RibbonStateService
                 string fill = preset.FillColour;
                 string stroke = preset.StrokeColour;
                 string text = preset.TextColour;
+                GanttStrokeDash? dash = null;
 
                 if (outcome.Styles.TryGet(preset.StyleKey, out GanttStyleDefinition? definition)
                     && definition is { HasFormatting: true })
@@ -937,9 +938,18 @@ internal class RibbonStateService
                     fill = definition.FillColour ?? preset.FillColour;
                     stroke = definition.StrokeColour ?? preset.StrokeColour;
                     text = definition.TextColour ?? preset.TextColour;
+
+                    // The delineator's line type is the one built-in dash the
+                    // user may change, so the reader projects it from the row
+                    // rather than exact-matching it. The dialog must open on
+                    // the line type the chart actually draws.
+                    if (GanttStyleDashPolicy.IsUserEditable(preset.StyleKey))
+                    {
+                        dash = definition.StrokeDash ?? preset.StrokeDash;
+                    }
                 }
 
-                currentStyles.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text));
+                currentStyles.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text, dash));
             }
 
             // Custom styles are registry entries that are not built-in presets.

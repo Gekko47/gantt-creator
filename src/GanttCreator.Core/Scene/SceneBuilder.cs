@@ -540,7 +540,7 @@ public static class SceneBuilder
                 _ => 0,
             };
 
-            styles[@event.Id] = new ResolvedEventStyle(style, heightPt);
+            styles[@event.Id] = new ResolvedEventStyle(style, heightPt, resolved?.MilestoneSizePt ?? 0);
             _ = laneOwnerByEntity.TryGetValue(@event.Id, out GanttEvent? laneOwner);
             laneInputs.Add(new LaneEventInput(@event, heightPt, RenderLaneOwner: laneOwner));
         }
@@ -601,7 +601,17 @@ public static class SceneBuilder
     /// <summary>One event's resolved scene style and its resolved height.</summary>
     /// <param name="Style">The resolved scene style.</param>
     /// <param name="HeightPt">The resolved activity height from the catalogue.</param>
-    private sealed record ResolvedEventStyle(SceneStyle Style, double HeightPt);
+    /// <param name="MilestoneSizePt">
+    /// The resolved milestone diamond size from the style, or zero when the
+    /// chart-wide metric applies.
+    /// </param>
+    /// <remarks>
+    /// The milestone size is the one size a <i>user-authored</i> style may
+    /// override: the chart-wide metric is the default, and a style the user
+    /// created may name its own diamond size. A built-in style always follows
+    /// the chart metric, so the chart knob stays live for it.
+    /// </remarks>
+    private sealed record ResolvedEventStyle(SceneStyle Style, double HeightPt, double MilestoneSizePt);
 
     private static void BuildSpans(
         LaneEventLayoutResult placements,
@@ -736,19 +746,31 @@ public static class SceneBuilder
                 continue;
             }
 
+            // Every milestone type is drawn here, including the named custom
+            // milestone: a Custom Milestone row is a milestone row, so it must
+            // reach the same marker builder as the four built-in kinds. It was
+            // missing from this list, so a custom milestone rendered no
+            // diamond at all.
             if (@event.Type is not (GanttEntityType.AsPlannedMilestone
                 or GanttEntityType.AsBuiltMilestone
                 or GanttEntityType.BaselineMilestone
-                or GanttEntityType.CriticalMilestone))
+                or GanttEntityType.CriticalMilestone
+                or GanttEntityType.CustomMilestone))
             {
                 continue;
             }
+
+            // The diamond size: the style's own size when a user-authored
+            // style names one, and the chart-wide metric otherwise.
+            double milestoneSizePt = resolved.MilestoneSizePt > 0
+                ? resolved.MilestoneSizePt
+                : request.MilestoneSizePt;
 
             MilestoneMarkerCreationOutcome marker = MilestoneMarkerBuilder.TryBuild(
                 new MilestoneMarkerRequest(
                     @event,
                     resolved.Style,
-                    request.MilestoneSizePt,
+                    milestoneSizePt,
                     // The same single lane-relative to chart-relative conversion the
                     // span pass applies, so a marker and a bar on one row cannot
                     // disagree about where that row is.
@@ -1434,6 +1456,20 @@ public static class SceneBuilder
         // drops can never be drawn. All three come from the same resolved
         // definition as the height, and stay at their defaults for a
         // capability-only definition that supplied no formatting.
+        // The milestone diamond size. The chart-wide MilestoneSizePt metric is
+        // the default, and a USER-AUTHORED style may override it with its own
+        // size; zero means "use the chart-wide size". A built-in style always
+        // follows the chart metric, so the chart knob stays live for it: the
+        // built-in rows carry the catalogue's token default, not a live
+        // value, so honouring them here would shadow the metric.
+        double milestoneSizePt = 0;
+        if (hasDefinition
+            && definition!.MilestoneSizePt > 0
+            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _))
+        {
+            milestoneSizePt = definition.MilestoneSizePt;
+        }
+
         resolved = new ResolvedEventStyle(
             new SceneStyle(
                 style.StyleKey,
@@ -1447,7 +1483,8 @@ public static class SceneBuilder
                 strokeDash: hasDefinition
                     ? definition!.StrokeDash ?? GanttStrokeDash.Solid
                     : preset?.StrokeDash ?? GanttStrokeDash.Solid),
-            heightPt);
+            heightPt,
+            milestoneSizePt);
         return true;
     }
 
