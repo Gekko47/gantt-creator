@@ -26,11 +26,16 @@ public enum ThemeEditRefusal
 /// <param name="FillColour">The edited fill <c>#RRGGBB</c>, or empty.</param>
 /// <param name="StrokeColour">The edited stroke <c>#RRGGBB</c>, or empty.</param>
 /// <param name="TextColour">The edited label text <c>#RRGGBB</c>, or empty when the preset default should be used.</param>
+/// <param name="StrokeDash">
+/// The edited stroke dash pattern, or <see langword="null"/> when this edit
+/// does not carry one and the code-owned preset's dash must be kept.
+/// </param>
 public sealed record ThemeStyleEdit(
     string StyleKey,
     string FillColour,
     string StrokeColour,
-    string TextColour);
+    string TextColour,
+    GanttStrokeDash? StrokeDash = null);
 
 /// <summary>The operation a custom style edit performs.</summary>
 public enum CustomStyleOperation
@@ -153,14 +158,39 @@ public sealed record ThemeEditRequest(
     IReadOnlyList<CustomStyleDef>? CustomStyleDefs = null,
     IReadOnlyDictionary<string, string>? ChromeColourEdits = null)
 {
-    /// <summary>The metric tokens editable by the R5.6 dialog (work-item scope).</summary>
+    /// <summary>
+    /// The metric tokens editable by the R5.6 dialog (work-item scope).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The set is the metrics the dialog offers <b>and</b> the renderer honours.
+    /// Four tokens are deliberately absent:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <description>
+    /// <c>ActivityHeightPt</c> and <c>StandardOutlinePt</c> are <b>inert</b>
+    /// here: the scene resolves the bar height and the outline width from the
+    /// <i>style row</i> (which the reader exact-matches for a built-in), not
+    /// from these metric rows. Offering them would promise a change the
+    /// chart never renders.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <description>
+    /// <c>HatchPitchPt</c> and <c>HatchLinePt</c> cannot be honoured by the
+    /// host: <c>MsoPatternType</c> has no member controlling either, as the
+    /// R4.6 Step-0 probe confirmed. A control for them would be a lie.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// </remarks>
     public static readonly IReadOnlySet<string> EditableMetrics =
         new HashSet<string>(StringComparer.Ordinal)
         {
-            "ActivityHeightPt", "MilestoneSizePt", "StandardOutlinePt",
+            "MilestoneSizePt",
             "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt",
             "GridLinePt", "MajorBoundaryPt", "DelineatorLinePt",
-            "HatchPitchPt", "HatchLinePt",
         };
 
     /// <summary>
@@ -199,6 +229,18 @@ public sealed record ThemeEditRequest(
             {
                 refusal = ThemeEditRefusal.BadColourFormat;
                 message = $"Style '{edit.StyleKey}' colour must be empty or uppercase #RRGGBB.";
+                return false;
+            }
+
+            // The stroke dash is a closed enum: an undefined member would
+            // serialise to a name the reader cannot parse, and the reader
+            // refuses the whole catalogue rather than skipping the row. A null
+            // dash means the edit does not carry one, so the code-owned
+            // preset's dash is kept.
+            if (edit.StrokeDash is { } dash && !Enum.IsDefined(dash))
+            {
+                refusal = ThemeEditRefusal.InvalidCustomStyle;
+                message = $"Style '{edit.StyleKey}' line type is not a defined line type.";
                 return false;
             }
         }

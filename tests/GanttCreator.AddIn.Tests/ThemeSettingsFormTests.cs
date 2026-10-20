@@ -486,12 +486,17 @@ public class ThemeSettingsFormTests
                     .Select(group => group.Text)
                     .ToList();
 
-                // Rows and lanes, entity defaults, and grid are different
-                // objects on the chart; the hatch spacing is a property of the
-                // fill pattern rather than of the chart's geometry.
+                // Rows and lanes, grid, milestones, and the delineator are
+                // different objects on the chart. The bar height and the
+                // outline width are gone because the scene resolves them from
+                // the STYLE row, and the hatch spacing is gone because the
+                // host's pattern cannot express it.
                 Assert.Contains("Rows and lanes", groups);
-                Assert.Contains("Entity defaults", groups);
                 Assert.Contains("Grid", groups);
+                Assert.Contains("Milestones", groups);
+                Assert.Contains("Delineator", groups);
+                Assert.DoesNotContain("Entity defaults", groups);
+                Assert.DoesNotContain("Hatch spacing", groups);
             }
             finally
             {
@@ -511,15 +516,66 @@ public class ThemeSettingsFormTests
                 form.CreateControl();
                 var tab = GetTab(form, "Entity styles");
 
-                var familyLabels = FindAll(tab, c => c is Label)
-                    .Cast<Label>()
-                    .Select(label => label.Text)
-                    .ToList();
+                var list = RequireEntityStyleList(tab);
+                var headings = list.Groups.Cast<ListViewGroup>().Select(group => group.Header).ToList();
 
-                Assert.Contains("Activities", familyLabels);
-                Assert.Contains("Milestones", familyLabels);
-                Assert.Contains("Procurement", familyLabels);
-                Assert.Contains("Chart elements", familyLabels);
+                // One heading per family, and no family twice: the heading is
+                // now a property of the catalogue rather than of the order the
+                // dialog happens to render the styles in.
+                Assert.Equal(headings.Count, headings.Distinct(StringComparer.Ordinal).Count());
+                Assert.Contains("Activities", headings);
+                Assert.Contains("Milestones", headings);
+                Assert.Contains("Procurement", headings);
+                Assert.Contains("Chart elements", headings);
+                Assert.DoesNotContain("Custom types", headings);
+
+                // Every built-in style that carries a colour appears exactly
+                // once, under the family its catalogue entry names.
+                var styleKeys = list.Items.Cast<ListViewItem>()
+                    .Select(item => (string)item.Tag!)
+                    .ToList();
+                Assert.Equal(styleKeys.Count, styleKeys.Distinct(StringComparer.Ordinal).Count());
+
+                foreach (var item in list.Items.Cast<ListViewItem>())
+                {
+                    var styleKey = (string)item.Tag!;
+                    Assert.Equal(
+                        GanttStyleFamilies.DisplayNameFor(GanttStyleFamilies.For(styleKey)),
+                        item.Group!.Header);
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void The_swatch_shows_the_workbook_colour_not_the_code_default()
+    {
+        RunOnStaThread(() =>
+        {
+            // The workbook's colour for As-Planned Activity differs from the
+            // code-owned preset, so the swatch must show the workbook's.
+            var request = new ThemeEditRequest(
+                [new ThemeStyleEdit("AsPlannedActivity", "#123456", "#654321", "#ABCDEF")],
+                new Dictionary<string, double>());
+            var form = new ThemeSettingsForm(request);
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "AsPlannedActivity");
+
+                var fill = GetField<TextBox>(form, "_entityFillText");
+                Assert.Equal("#123456", fill.Text);
+
+                var swatch = GetField<Panel>(form, "_entityFillSwatch");
+                Assert.Equal(
+                    Color.FromArgb(0x12, 0x34, 0x56).ToArgb(),
+                    swatch.BackColor.ToArgb());
             }
             finally
             {
@@ -620,6 +676,73 @@ public class ThemeSettingsFormTests
         });
     }
 
+    [Fact]
+    public void The_delineator_offers_an_editable_line_type()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "DefaultDelineator");
+
+                // The dash is only editable for the delineator, so the combo
+                // offers the closed vocabulary. (Its Visible flag is not
+                // asserted: WinForms reports a control as hidden until the
+                // whole form is shown.)
+                var dash = FindAll(tab, c => c is ComboBox)
+                    .Cast<ComboBox>()
+                    .First(combo => combo.Items.Cast<object>().Any(item => item.ToString() == "Dash"));
+
+                dash.SelectedItem = dash.Items.Cast<object>().First(candidate => candidate.ToString() == "Dash");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edit = request.StyleEdits!.Single(candidate => candidate.StyleKey == "DefaultDelineator");
+                Assert.Equal(GanttStrokeDash.Dash, edit.StrokeDash);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
+    public void A_built_in_style_other_than_the_delineator_keeps_its_code_owned_line_type()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+                var tab = GetTab(form, "Entity styles");
+
+                SelectEntityStyle(tab, "AsPlannedActivity");
+
+                InvokeClick(form, "OkButton_Click");
+
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edit = request.StyleEdits!.Single(candidate => candidate.StyleKey == "AsPlannedActivity");
+
+                // The general dash stays code-owned: the reader exact-matches
+                // that column, so an edited value could not be kept.
+                Assert.Null(edit.StrokeDash);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [SuppressMessage("Design", "CA1031: Do not catch general exception types",
         Justification = "Any STA-thread exception must be marshaled back to the test thread and is rethrown via the task.")]
     private static void RunOnStaThread(Action action)
@@ -644,6 +767,30 @@ public class ThemeSettingsFormTests
     }
 
     private static TabPage GetCustomStylesTab(Form form) => GetTab(form, "Custom styles");
+
+    /// <summary>
+    /// Returns the Entity styles tab's master list.
+    /// </summary>
+    private static ListView RequireEntityStyleList(TabPage tab) =>
+        Assert.IsType<ListView>(Find(tab, c => c is ListView));
+
+    /// <summary>
+    /// Selects a style in the Entity styles list and runs the selection
+    /// handler, so the detail panel shows that style's properties.
+    /// </summary>
+    private static void SelectEntityStyle(TabPage tab, string styleKey)
+    {
+        var list = RequireEntityStyleList(tab);
+        var form = Assert.IsType<ThemeSettingsForm>(list.FindForm());
+
+        // The list view's selection is native state, which a unit test cannot
+        // create, so the form's own seam shows the style instead.
+        var seam = typeof(ThemeSettingsForm).GetMethod(
+            "ShowEntityStyleForTesting",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("ShowEntityStyleForTesting not found.");
+        seam.Invoke(form, new object[] { styleKey });
+    }
 
     private static TabPage GetTab(Form form, string title)
     {

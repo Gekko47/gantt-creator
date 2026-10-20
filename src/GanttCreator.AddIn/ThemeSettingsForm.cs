@@ -44,6 +44,15 @@ internal sealed class CustomStyleState(
     public GanttStrokeDash StrokeDash { get; } = strokeDash;
 }
 
+/// <summary>
+/// One built-in style's pending colour values, held while the master–detail
+/// view shows a different style.
+/// </summary>
+/// <param name="Fill">The fill colour, or empty when the style has no fill.</param>
+/// <param name="Stroke">The outline colour, or empty when the style has no outline.</param>
+/// <param name="Text">The label text colour, or empty.</param>
+internal sealed record EntityStyleColours(string Fill, string Stroke, string Text);
+
 internal sealed partial class ThemeSettingsForm : Form
 {
     private ThemeEditRequest? _validatedRequest;
@@ -90,6 +99,22 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly Dictionary<string, TextBox> _colorTextBoxes = [];
 
     /// <summary>
+    /// The colour swatch beside each editable colour, keyed exactly like
+    /// <see cref="_colorTextBoxes"/>. The swatch used to be found by walking
+    /// the form's direct children, which never matched: each swatch lives
+    /// inside a group box, so the swatch kept showing the code-owned default
+    /// while the text box beside it showed the workbook's colour.
+    /// </summary>
+    private readonly Dictionary<string, Panel> _colorSwatches = [];
+
+    /// <summary>
+    /// The chart-chrome colour swatches, keyed by the setting key the colour
+    /// is stored under. They have their own dictionary for the same reason as
+    /// <see cref="_colorSwatches"/>.
+    /// </summary>
+    private readonly Dictionary<string, Panel> _chromeColourSwatches = [];
+
+    /// <summary>
     /// The chart-chrome colour text boxes, keyed by the setting key the colour
     /// is stored under. They live on the Chart tab, because the colours belong
     /// to the chart as a whole rather than to any entity's style.
@@ -100,6 +125,41 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly Dictionary<string, Label> _metricLabels = [];
 
     // Custom styles tab controls
+    // Entity styles tab controls (master-detail: a list of styles, and the
+    // selected style's properties beside it).
+    private readonly ListView _entityStyleList = new();
+    private readonly Panel _entityStyleDetailPanel = new();
+    private readonly Label _entityStyleTitleLabel = new();
+    private readonly TextBox _entityFillText = new();
+    private readonly TextBox _entityStrokeText = new();
+    private readonly TextBox _entityTextText = new();
+    private readonly Button _entityFillPicker = new();
+    private readonly Button _entityStrokePicker = new();
+    private readonly Button _entityTextPicker = new();
+    private readonly Panel _entityFillSwatch = new();
+    private readonly Panel _entityStrokeSwatch = new();
+    private readonly Panel _entityTextSwatch = new();
+    private readonly Label _entityPatternLabel = new();
+    private readonly Label _entityDashLabel = new();
+    private readonly ComboBox _entityDashCombo = new();
+    private readonly Label _entityOutlineWidthLabel = new();
+    private readonly Label _entitySizeLabel = new();
+    private readonly Label _entityLabelPositionLabel = new();
+    private readonly NumericUpDown _entityLineWidthNumeric = new();
+
+    /// <summary>
+    /// The pending colour values for each built-in style the user has edited
+    /// or visited, keyed by the style key. The master-detail view shows one
+    /// style at a time, so the values for the styles that are not on screen
+    /// live here rather than in a text box.
+    /// </summary>
+    private readonly Dictionary<string, EntityStyleColours> _entityStyleColours = [];
+
+    /// <summary>
+    /// The style key whose properties the detail panel is currently showing.
+    /// </summary>
+    private string? _selectedEntityStyleKey;
+
     private const string _customStyleKeyLabel = "Style key:";
     private const string _customStyleEmptyHint = "No custom styles defined yet. Enter a key and click New custom style.";
 
@@ -317,6 +377,25 @@ internal sealed partial class ThemeSettingsForm : Form
             _customDefaultLabelCombo.Dispose();
             _customStrokeDashCombo.Dispose();
             _customAllowedLabelList.Dispose();
+            _entityStyleList.Dispose();
+            _entityStyleDetailPanel.Dispose();
+            _entityStyleTitleLabel.Dispose();
+            _entityFillText.Dispose();
+            _entityStrokeText.Dispose();
+            _entityTextText.Dispose();
+            _entityFillPicker.Dispose();
+            _entityStrokePicker.Dispose();
+            _entityTextPicker.Dispose();
+            _entityFillSwatch.Dispose();
+            _entityStrokeSwatch.Dispose();
+            _entityTextSwatch.Dispose();
+            _entityPatternLabel.Dispose();
+            _entityDashLabel.Dispose();
+            _entityDashCombo.Dispose();
+            _entityOutlineWidthLabel.Dispose();
+            _entitySizeLabel.Dispose();
+            _entityLabelPositionLabel.Dispose();
+            _entityLineWidthNumeric.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -383,6 +462,381 @@ internal sealed partial class ThemeSettingsForm : Form
         CancelButton = _cancelButton;
     }
 
+    /// <summary>
+    /// Builds the detail panel: the selected style's properties, grouped by
+    /// concern rather than by table column.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private void BuildEntityStyleDetailPanel()
+    {
+        _entityStyleTitleLabel.Dock = DockStyle.Top;
+        _entityStyleTitleLabel.Height = 26;
+        _entityStyleTitleLabel.Font = new Font(Font, FontStyle.Bold);
+        _entityStyleTitleLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _entityStyleDetailPanel.Controls.Add(_entityStyleTitleLabel);
+
+        FlowLayoutPanel body = new()
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            AutoScroll = true,
+            WrapContents = false,
+            Padding = new Padding(4, 4, 4, 4),
+        };
+        _entityStyleDetailPanel.Controls.Add(body);
+
+        body.Controls.Add(BuildEntityFillGroup());
+        body.Controls.Add(BuildEntityOutlineGroup());
+        body.Controls.Add(BuildEntityLabelGroup());
+        body.Controls.Add(BuildEntitySizeGroup());
+    }
+
+    /// <summary>
+    /// The Fill group: the fill colour and the fill pattern.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private GroupBox BuildEntityFillGroup()
+    {
+        GroupBox group = new() { Text = "Fill", Width = 380, AutoSize = true };
+        TableLayoutPanel table = NewEntityPropertyTable();
+        group.Controls.Add(table);
+
+        _entityFillText.Name = "entityFill";
+        _entityFillText.MaxLength = 9;
+        _entityFillText.CharacterCasing = CharacterCasing.Upper;
+        _entityFillText.Width = 110;
+        _entityFillText.Leave += (_, _) => ValidateColourTextBox(_entityFillText);
+        _entityFillText.TextChanged += (_, _) => CaptureSelectedEntityColours();
+
+        _entityFillPicker.Text = "\u2026";
+        _entityFillPicker.Width = 26;
+        _entityFillPicker.Tag = "entityFill";
+        _entityFillPicker.Click += ColorPickerButton_Click;
+
+        _entityFillSwatch.Size = new Size(24, 22);
+        _entityFillSwatch.BorderStyle = BorderStyle.FixedSingle;
+        _entityFillSwatch.Tag = "entityFill";
+
+        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
+        table.Controls.Add(_entityFillText, 1, 0);
+        table.Controls.Add(_entityFillPicker, 2, 0);
+        table.Controls.Add(_entityFillSwatch, 3, 0);
+
+        _entityPatternLabel.AutoSize = true;
+        _entityPatternLabel.ForeColor = SystemColors.GrayText;
+        table.Controls.Add(new Label { Text = "Pattern", AutoSize = true }, 0, 1);
+        table.Controls.Add(_entityPatternLabel, 1, 1);
+        table.SetColumnSpan(_entityPatternLabel, 3);
+
+        _colorTextBoxes["entityFill"] = _entityFillText;
+        _colorPickerButtons["entityFill"] = _entityFillPicker;
+        _colorSwatches["entityFill"] = _entityFillSwatch;
+
+        return group;
+    }
+
+    /// <summary>
+    /// Creates the four-column table every entity property group uses:
+    /// label, value, picker button, swatch.
+    /// </summary>
+    private static TableLayoutPanel NewEntityPropertyTable()
+    {
+        TableLayoutPanel table = new()
+        {
+            ColumnCount = 4,
+            AutoSize = true,
+            Dock = DockStyle.Top,
+        };
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        return table;
+    }
+    /// <summary>
+    /// The Outline group: the outline colour, its width, and its line type.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private GroupBox BuildEntityOutlineGroup()
+    {
+        GroupBox group = new() { Text = "Outline", Width = 380, AutoSize = true };
+        TableLayoutPanel table = NewEntityPropertyTable();
+        group.Controls.Add(table);
+
+        _entityStrokeText.Name = "entityStroke";
+        _entityStrokeText.MaxLength = 9;
+        _entityStrokeText.CharacterCasing = CharacterCasing.Upper;
+        _entityStrokeText.Width = 110;
+        _entityStrokeText.Leave += (_, _) => ValidateColourTextBox(_entityStrokeText);
+        _entityStrokeText.TextChanged += (_, _) => CaptureSelectedEntityColours();
+
+        _entityStrokePicker.Text = "\u2026";
+        _entityStrokePicker.Width = 26;
+        _entityStrokePicker.Tag = "entityStroke";
+        _entityStrokePicker.Click += ColorPickerButton_Click;
+
+        _entityStrokeSwatch.Size = new Size(24, 22);
+        _entityStrokeSwatch.BorderStyle = BorderStyle.FixedSingle;
+        _entityStrokeSwatch.Tag = "entityStroke";
+
+        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
+        table.Controls.Add(_entityStrokeText, 1, 0);
+        table.Controls.Add(_entityStrokePicker, 2, 0);
+        table.Controls.Add(_entityStrokeSwatch, 3, 0);
+
+        _entityOutlineWidthLabel.AutoSize = true;
+        _entityOutlineWidthLabel.ForeColor = SystemColors.GrayText;
+        table.Controls.Add(new Label { Text = "Width", AutoSize = true }, 0, 1);
+        table.Controls.Add(_entityOutlineWidthLabel, 1, 1);
+        table.SetColumnSpan(_entityOutlineWidthLabel, 3);
+
+        _entityDashLabel.AutoSize = true;
+        _entityDashLabel.ForeColor = SystemColors.GrayText;
+        _entityDashCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _entityDashCombo.Width = 140;
+
+        table.Controls.Add(new Label { Text = "Line type", AutoSize = true }, 0, 2);
+        table.Controls.Add(_entityDashCombo, 1, 2);
+        table.Controls.Add(_entityDashLabel, 2, 2);
+        table.SetColumnSpan(_entityDashLabel, 2);
+
+        _colorTextBoxes["entityStroke"] = _entityStrokeText;
+        _colorPickerButtons["entityStroke"] = _entityStrokePicker;
+        _colorSwatches["entityStroke"] = _entityStrokeSwatch;
+
+        return group;
+    }
+
+    /// <summary>
+    /// The Label group: the label colour and the label vocabulary.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private GroupBox BuildEntityLabelGroup()
+    {
+        GroupBox group = new() { Text = "Label", Width = 380, AutoSize = true };
+        TableLayoutPanel table = NewEntityPropertyTable();
+        group.Controls.Add(table);
+
+        _entityTextText.Name = "entityText";
+        _entityTextText.MaxLength = 9;
+        _entityTextText.CharacterCasing = CharacterCasing.Upper;
+        _entityTextText.Width = 110;
+        _entityTextText.Leave += (_, _) => ValidateColourTextBox(_entityTextText);
+        _entityTextText.TextChanged += (_, _) => CaptureSelectedEntityColours();
+
+        _entityTextPicker.Text = "\u2026";
+        _entityTextPicker.Width = 26;
+        _entityTextPicker.Tag = "entityText";
+        _entityTextPicker.Click += ColorPickerButton_Click;
+
+        _entityTextSwatch.Size = new Size(24, 22);
+        _entityTextSwatch.BorderStyle = BorderStyle.FixedSingle;
+        _entityTextSwatch.Tag = "entityText";
+
+        table.Controls.Add(new Label { Text = "Colour", AutoSize = true }, 0, 0);
+        table.Controls.Add(_entityTextText, 1, 0);
+        table.Controls.Add(_entityTextPicker, 2, 0);
+        table.Controls.Add(_entityTextSwatch, 3, 0);
+
+        _entityLabelPositionLabel.AutoSize = true;
+        _entityLabelPositionLabel.ForeColor = SystemColors.GrayText;
+        table.Controls.Add(new Label { Text = "Position", AutoSize = true }, 0, 1);
+        table.Controls.Add(_entityLabelPositionLabel, 1, 1);
+        table.SetColumnSpan(_entityLabelPositionLabel, 3);
+
+        _colorTextBoxes["entityText"] = _entityTextText;
+        _colorPickerButtons["entityText"] = _entityTextPicker;
+        _colorSwatches["entityText"] = _entityTextSwatch;
+
+        return group;
+    }
+
+    /// <summary>
+    /// The Size group: the bar height or milestone size, and the delineator's
+    /// own line width.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private GroupBox BuildEntitySizeGroup()
+    {
+        GroupBox group = new() { Text = "Size", Width = 380, AutoSize = true };
+        TableLayoutPanel table = new()
+        {
+            ColumnCount = 2,
+            AutoSize = true,
+            Dock = DockStyle.Top,
+        };
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        _ = table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        group.Controls.Add(table);
+
+        _entitySizeLabel.AutoSize = true;
+        _entitySizeLabel.ForeColor = SystemColors.GrayText;
+        table.Controls.Add(new Label { Text = "Entity", AutoSize = true }, 0, 0);
+        table.Controls.Add(_entitySizeLabel, 1, 0);
+
+        // The delineator's line width is the one built-in size the user may
+        // change: it is the chart-wide DelineatorLinePt metric, which no
+        // other entity reads.
+        _entityLineWidthNumeric.Minimum = 0;
+        _entityLineWidthNumeric.Maximum = 20;
+        _entityLineWidthNumeric.DecimalPlaces = 2;
+        _entityLineWidthNumeric.Increment = 0.25m;
+        _entityLineWidthNumeric.Width = 80;
+
+        table.Controls.Add(new Label { Text = "Line width", AutoSize = true }, 0, 1);
+        table.Controls.Add(_entityLineWidthNumeric, 1, 1);
+
+        return group;
+    }
+
+    /// <summary>
+    /// Shows the selected style's properties in the detail panel.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private void EntityStyleList_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        CaptureSelectedEntityColours();
+
+        if (_entityStyleList.SelectedItems.Count == 0
+            || _entityStyleList.SelectedItems[0].Tag is not string styleKey)
+        {
+            _selectedEntityStyleKey = null;
+            _entityStyleTitleLabel.Text = "Select a style to see its properties.";
+            return;
+        }
+
+        ShowEntityStyle(styleKey);
+    }
+
+    /// <summary>
+    /// Test hook: shows a style's properties without the list view's native
+    /// selection state, which a unit test cannot create.
+    /// </summary>
+    /// <param name="styleKey">The built-in style key.</param>
+    internal void ShowEntityStyleForTesting(string styleKey) => ShowEntityStyle(styleKey);
+
+    /// <summary>
+    /// Shows one style's properties in the detail panel.
+    /// </summary>
+    /// <param name="styleKey">The built-in style key.</param>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
+    private void ShowEntityStyle(string styleKey)
+    {
+        _selectedEntityStyleKey = styleKey;
+        GanttStylePreset preset = GanttCatalogues.GetPreset(styleKey);
+        _entityStyleTitleLabel.Text = preset.DisplayName;
+        EntityStyleColours colours = _entityStyleColours.TryGetValue(styleKey, out EntityStyleColours? known)
+            ? known
+            : new EntityStyleColours(preset.FillColour, preset.StrokeColour, preset.TextColour);
+
+        _entityFillText.Text = colours.Fill;
+        _entityStrokeText.Text = colours.Stroke;
+        _entityTextText.Text = colours.Text;
+        UpdateSwatch("entityFill", ParseColourOrDefault(colours.Fill));
+        UpdateSwatch("entityStroke", ParseColourOrDefault(colours.Stroke));
+        UpdateSwatch("entityText", ParseColourOrDefault(colours.Text));
+
+        _entityPatternLabel.Text = DescribeHatchPattern(preset.HatchPattern);
+
+        // The general dash, the outline width, and the bar height are
+        // code-owned for a built-in style: the reader exact-matches those
+        // columns, so an editable control would offer a change the workbook
+        // could not keep. The delineator's line type is the exception.
+        bool isDelineator = string.Equals(styleKey, "DefaultDelineator", StringComparison.Ordinal);
+        _entityDashCombo.Visible = isDelineator;
+        _entityDashLabel.Visible = !isDelineator;
+        _entityDashLabel.Text = DescribeStrokeDash(preset.StrokeDash);
+        if (isDelineator)
+        {
+            PopulateDashVocabulary(_entityDashCombo);
+            SelectDash(_entityDashCombo, preset.StrokeDash);
+        }
+
+        _entityOutlineWidthLabel.Text = preset.StandardOutlinePt > 0
+            ? $"{preset.StandardOutlinePt:0.##} pt (fixed by the built-in style)"
+            : "Not applicable";
+
+        _entitySizeLabel.Text = DescribeEntitySize(preset);
+
+        // The delineator's line width is the only size the user may change.
+        _entityLineWidthNumeric.Enabled = isDelineator;
+        _entityLineWidthNumeric.Visible = isDelineator;
+    }
+
+    /// <summary>
+    /// Describes an entity's size, which is a bar height for a span and a
+    /// diamond size for a milestone.
+    /// </summary>
+    private static string DescribeEntitySize(GanttStylePreset preset) =>
+        preset.ActivityHeightPt > 0
+            ? $"Bar height {preset.ActivityHeightPt:0.##} pt (fixed by the built-in style)"
+            : preset.MilestoneSizePt > 0
+                ? $"Milestone size {preset.MilestoneSizePt:0.##} pt (fixed by the built-in style)"
+                : "Not applicable";
+
+    /// <summary>
+    /// Captures the detail panel's colour values for the selected style.
+    /// </summary>
+    private void CaptureSelectedEntityColours()
+    {
+        if (_selectedEntityStyleKey is not { } styleKey)
+        {
+            return;
+        }
+
+        _entityStyleColours[styleKey] = new EntityStyleColours(
+            _entityFillText.Text,
+            _entityStrokeText.Text,
+            _entityTextText.Text);
+    }
+
+    /// <summary>
+    /// Returns the dash the delineator's line-type combo currently shows.
+    /// </summary>
+    private GanttStrokeDash? SelectedEntityDash() =>
+        _entityDashCombo.SelectedItem is StrokeDashItem item ? item.Dash : null;
+
+    /// <summary>
+    /// Fills a dash combo with the closed dash vocabulary.
+    /// </summary>
+    private static void PopulateDashVocabulary(ComboBox combo)
+    {
+        combo.Items.Clear();
+        foreach (GanttStrokeDash dash in Enum.GetValues<GanttStrokeDash>())
+        {
+            _ = combo.Items.Add(new StrokeDashItem(dash, DescribeStrokeDash(dash)));
+        }
+    }
+
+    /// <summary>
+    /// Selects the dash a combo shows for a given pattern.
+    /// </summary>
+    private static void SelectDash(ComboBox combo, GanttStrokeDash dash)
+    {
+        for (int index = 0; index < combo.Items.Count; index++)
+        {
+            if (combo.Items[index] is StrokeDashItem item && item.Dash == dash)
+            {
+                combo.SelectedIndex = index;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The entity styles tab: a master–detail view. The left list holds the
+    /// built-in styles grouped by their family, and the right panel holds
+    /// every property of the selected style.
+    /// </summary>
+    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
+        Justification = "Dialog UI strings are not localized in this release.")]
     private void CreateColoursTab()
     {
         TabPage tab = new TabPage("Entity styles")
@@ -391,155 +845,71 @@ internal sealed partial class ThemeSettingsForm : Form
         };
         _tabControl.TabPages.Add(tab);
 
-        Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        tab.Controls.Add(panel);
-
-        // The built-in styles are grouped by the entity family they belong to,
-        // so the list reads the way the chart does: the activities together,
-        // then the milestones, then the chart elements. Each group is one
-        // style object and shows that object's own properties.
-        int y = 8;
-        string? currentFamily = null;
-        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        SplitContainer split = new SplitContainer
         {
-            if (!preset.ColourCapability.HasFlag(EntityColourCapability.Fill) &&
-                !preset.ColourCapability.HasFlag(EntityColourCapability.Stroke) &&
-                !preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Vertical,
+            SplitterDistance = 250,
+            FixedPanel = FixedPanel.Panel1,
+        };
+        tab.Controls.Add(split);
+
+        // The master: one list, grouped by family. The group heading comes
+        // from the code-owned family authority, so a style can never appear
+        // under a second heading and no heading is emitted twice.
+        _entityStyleList.View = View.Details;
+        _entityStyleList.FullRowSelect = true;
+        _entityStyleList.HideSelection = false;
+        _entityStyleList.HeaderStyle = ColumnHeaderStyle.None;
+        _entityStyleList.Dock = DockStyle.Fill;
+        _entityStyleList.SelectedIndexChanged += EntityStyleList_SelectedIndexChanged;
+        split.Panel1.Controls.Add(_entityStyleList);
+
+        // The detail: the selected style's properties.
+        _entityStyleDetailPanel.Dock = DockStyle.Fill;
+        _entityStyleDetailPanel.AutoScroll = true;
+        _entityStyleDetailPanel.Padding = new Padding(8);
+        split.Panel2.Controls.Add(_entityStyleDetailPanel);
+
+        BuildEntityStyleDetailPanel();
+
+        Label title = new()
+        {
+            Text = "Select a style to see its properties.",
+            Dock = DockStyle.Top,
+            Height = 24,
+            ForeColor = SystemColors.GrayText,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _entityStyleDetailPanel.Controls.Add(title);
+
+        foreach (GanttEntityFamily family in GanttStyleFamilies.OrderedFamilies)
+        {
+            GanttStylePreset[] members =
+            [
+                .. GanttCatalogues.StylePresets
+                    .Where(preset => GanttStyleFamilies.For(preset.StyleKey) == family)
+                    .Where(preset =>
+                        preset.ColourCapability.HasFlag(EntityColourCapability.Fill)
+                        || preset.ColourCapability.HasFlag(EntityColourCapability.Stroke)
+                        || preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined)),
+            ];
+
+
+            if (members.Length == 0)
             {
                 continue;
             }
 
-            string family = FamilyFor(preset.StyleKey);
-            if (!string.Equals(family, currentFamily, StringComparison.Ordinal))
+            ListViewGroup group = new(GanttStyleFamilies.DisplayNameFor(family));
+            _ = _entityStyleList.Groups.Add(group);
+
+            foreach (GanttStylePreset preset in members)
             {
-                currentFamily = family;
-                Label familyLabel = new()
-                {
-                    Text = family,
-                    Location = new Point(12, y),
-                    Size = new Size(300, 20),
-                    Font = new Font(Font.FontFamily, 9.75f, FontStyle.Bold),
-                    ForeColor = SystemColors.GrayText,
-                };
-                panel.Controls.Add(familyLabel);
-                y += 24;
+                ListViewItem item = new(preset.DisplayName) { Group = group, Tag = preset.StyleKey };
+                _ = _entityStyleList.Items.Add(item);
             }
-
-            GroupBox group = new GroupBox
-            {
-                Text = preset.DisplayName,
-                Location = new Point(8, y),
-                Size = new Size(660, 100),
-                AutoSize = true,
-            };
-            panel.Controls.Add(group);
-
-            int innerY = 24;
-
-            if (preset.ColourCapability.HasFlag(EntityColourCapability.Fill) ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                AddColourRow(group, $"fill_{preset.StyleKey}", "Fill", preset.FillColour, innerY);
-                innerY += 28;
-            }
-
-            if (preset.ColourCapability.HasFlag(EntityColourCapability.Stroke) ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                AddColourRow(group, $"stroke_{preset.StyleKey}", "Outline", preset.StrokeColour, innerY);
-                innerY += 28;
-            }
-
-            if (preset.TextColour.Length > 0 ||
-                preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
-            {
-                AddColourRow(group, $"text_{preset.StyleKey}", "Label", preset.TextColour, innerY);
-                innerY += 28;
-            }
-
-            // The pattern and the line style are code-owned for a built-in
-            // style, so they are shown but not offered: the reader exact-matches
-            // both against the preset, so an editable control would offer a
-            // change the workbook could not keep.
-            Label codeOwned = new()
-            {
-                Text = $"Pattern: {DescribeHatchPattern(preset.HatchPattern)}    Line style: {DescribeStrokeDash(preset.StrokeDash)}",
-                Location = new Point(12, innerY + 2),
-                Size = new Size(620, 20),
-                ForeColor = SystemColors.GrayText,
-            };
-            group.Controls.Add(codeOwned);
-
-            y += group.Height + 8;
         }
-    }
-
-    /// <summary>
-    /// Returns the entity family a built-in style key belongs to. The families
-    /// follow the type catalogue's own grouping, so the list reads the way the
-    /// chart does.
-    /// </summary>
-    /// <param name="styleKey">The built-in style key.</param>
-    /// <returns>The family name.</returns>
-    private static string FamilyFor(string styleKey) => styleKey switch
-    {
-        "AsBuiltActivity" or "AsPlannedActivity" or "BaselineActivity" or "DelayEvent" or "CriticalInterval"
-            => "Activities",
-        "AsBuiltMilestone" or "AsPlannedMilestone" or "BaselineMilestone" or "CriticalMilestone"
-            => "Milestones",
-        "AsBuiltProcurement" or "AsPlannedProcurement" or "BaselineProcurement"
-            => "Procurement",
-        "DefaultDelineator" or "Splitter" or "Spacer"
-            => "Chart elements",
-        _ => "Custom types",
-    };
-
-    [SuppressMessage("Microsoft.Globalization", "CA1303:Do not pass literals as localized parameters",
-        Justification = "Dialog UI strings are not localized in this release.")]
-    private void AddColourRow(Control parent, string key, string label, string initialValue, int top)
-    {
-        Label lbl = new Label
-        {
-            Text = label,
-            Location = new Point(12, top + 3),
-            Size = new Size(50, 20),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        parent.Controls.Add(lbl);
-
-        TextBox txt = new TextBox
-        {
-            Name = key,
-            Location = new Point(70, top),
-            Size = new Size(100, 22),
-            Text = initialValue,
-            CharacterCasing = CharacterCasing.Upper,
-            MaxLength = 9,
-        };
-        txt.Leave += (_, _) => ValidateColourTextBox(txt);
-        parent.Controls.Add(txt);
-        _colorTextBoxes[key] = txt;
-
-        Button btn = new Button
-        {
-            Text = "\u2026",
-            Location = new Point(176, top - 1),
-            Size = new Size(26, 24),
-            Tag = key,
-        };
-        btn.Click += ColorPickerButton_Click;
-        parent.Controls.Add(btn);
-        _colorPickerButtons[key] = btn;
-
-        Panel swatch = new Panel
-        {
-            Location = new Point(210, top),
-            Size = new Size(24, 22),
-            BorderStyle = BorderStyle.FixedSingle,
-            BackColor = ParseColourOrDefault(initialValue),
-            Tag = key,
-        };
-        parent.Controls.Add(swatch);
     }
 
     private void ColorPickerButton_Click(object? sender, EventArgs e)
@@ -585,13 +955,20 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void UpdateSwatch(string key, Color color)
     {
-        foreach (Control ctrl in Controls)
+        // The swatch is found through the dictionary, not by walking the
+        // control tree: the walk only ever saw the form's DIRECT children, so
+        // a swatch inside a group box was never found and the swatch kept
+        // showing the code-owned default while the text box beside it showed
+        // the workbook's colour.
+        if (_colorSwatches.TryGetValue(key, out Panel? swatch))
         {
-            if (ctrl is Panel p && p.Tag?.ToString() == key)
-            {
-                p.BackColor = color;
-                break;
-            }
+            swatch.BackColor = color;
+            return;
+        }
+
+        if (_chromeColourSwatches.TryGetValue(key, out Panel? chromeSwatch))
+        {
+            chromeSwatch.BackColor = color;
         }
     }
 
@@ -620,22 +997,18 @@ internal sealed partial class ThemeSettingsForm : Form
         Panel panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         tab.Controls.Add(panel);
 
+        // The chart-wide knobs only. Two earlier groups are gone: "Entity
+        // defaults" carried the bar height and the outline width, which the
+        // scene resolves from the STYLE row rather than from these metrics, so
+        // the controls promised a change the chart never rendered; and "Hatch
+        // spacing" carried the pitch and the line width, which the host's
+        // MsoPatternType cannot express at all.
         int y = 8;
         y = AddMetricGroup(panel, "Rows and lanes", y, "GanttRowHeightPt", "SplitterHeightPt", "SpacerHeightPt");
-        y = AddMetricGroup(panel, "Entity defaults", y, "ActivityHeightPt", "MilestoneSizePt", "StandardOutlinePt", "DelineatorLinePt");
         y = AddMetricGroup(panel, "Grid", y, "GridLinePt", "MajorBoundaryPt");
-        y = AddMetricGroup(panel, "Hatch spacing", y, "HatchPitchPt", "HatchLinePt");
-        y = AddChromeColourGroup(panel, y);
-
-        Label note = new()
-        {
-            Text = "Hatch spacing and line width are fixed by the Excel pattern: "
-                + "the host offers no member that controls either, so these two are shown for reference only.",
-            Location = new Point(12, y + 4),
-            Size = new Size(520, 34),
-            ForeColor = SystemColors.GrayText,
-        };
-        panel.Controls.Add(note);
+        y = AddMetricGroup(panel, "Milestones", y, "MilestoneSizePt");
+        y = AddMetricGroup(panel, "Delineator", y, "DelineatorLinePt");
+        _ = AddChromeColourGroup(panel, y);
     }
 
     /// <summary>
@@ -777,6 +1150,7 @@ internal sealed partial class ThemeSettingsForm : Form
                 Tag = key,
             };
             group.Controls.Add(swatch);
+            _chromeColourSwatches[key] = swatch;
 
             innerY += RowHeight;
         }
@@ -1605,26 +1979,40 @@ internal sealed partial class ThemeSettingsForm : Form
 
     private void PopulateFromRequest(ThemeEditRequest request)
     {
-        // Colours
+        // Colours. The master–detail view shows one style at a time, so the
+        // workbook's current colours for EVERY style are held in the pending
+        // map; the detail panel reads from it when a style is selected.
+        //
+        // Every built-in style is seeded from the code-owned preset FIRST, so
+        // a style the request does not mention keeps its code-owned colours
+        // rather than losing them: the writer treats an absent edit as "use
+        // the preset", so an unseeded style would silently drop a colour the
+        // user had already chosen.
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            _entityStyleColours[preset.StyleKey] = new EntityStyleColours(
+                preset.FillColour,
+                preset.StrokeColour,
+                preset.TextColour);
+        }
+
         foreach (ThemeStyleEdit edit in request.StyleEdits)
         {
-            if (_colorTextBoxes.TryGetValue($"fill_{edit.StyleKey}", out TextBox? fillTxt))
-            {
-                fillTxt.Text = edit.FillColour;
-            }
-            if (_colorTextBoxes.TryGetValue($"stroke_{edit.StyleKey}", out TextBox? strokeTxt))
-            {
-                strokeTxt.Text = edit.StrokeColour;
-            }
-            if (_colorTextBoxes.TryGetValue($"text_{edit.StyleKey}", out TextBox? textTxt))
-            {
-                textTxt.Text = edit.TextColour;
-            }
+            _entityStyleColours[edit.StyleKey] = new EntityStyleColours(
+                edit.FillColour,
+                edit.StrokeColour,
+                edit.TextColour);
+        }
 
-            // Update swatches
-            UpdateSwatch($"fill_{edit.StyleKey}", ParseColourOrDefault(edit.FillColour));
-            UpdateSwatch($"stroke_{edit.StyleKey}", ParseColourOrDefault(edit.StrokeColour));
-            UpdateSwatch($"text_{edit.StyleKey}", ParseColourOrDefault(edit.TextColour));
+        if (_selectedEntityStyleKey is { } selectedKey
+            && _entityStyleColours.TryGetValue(selectedKey, out EntityStyleColours? selected))
+        {
+            _entityFillText.Text = selected.Fill;
+            _entityStrokeText.Text = selected.Stroke;
+            _entityTextText.Text = selected.Text;
+            UpdateSwatch("entityFill", ParseColourOrDefault(selected.Fill));
+            UpdateSwatch("entityStroke", ParseColourOrDefault(selected.Stroke));
+            UpdateSwatch("entityText", ParseColourOrDefault(selected.Text));
         }
 
         // Metrics
@@ -1745,16 +2133,33 @@ internal sealed partial class ThemeSettingsForm : Form
         }
 
         // Build request
+        // The pending colours for the style on screen are captured first, so
+        // an edit the user made just before pressing OK is not lost.
+        CaptureSelectedEntityColours();
+
         List<ThemeStyleEdit> styleEdits = [];
         foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
         {
-            string fill = _colorTextBoxes.TryGetValue($"fill_{preset.StyleKey}", out TextBox? ft) ? ft.Text : "";
-            string stroke = _colorTextBoxes.TryGetValue($"stroke_{preset.StyleKey}", out TextBox? st) ? st.Text : "";
-            string text = _colorTextBoxes.TryGetValue($"text_{preset.StyleKey}", out TextBox? tt) ? tt.Text : "";
+            if (!_entityStyleColours.TryGetValue(preset.StyleKey, out EntityStyleColours? colours))
+            {
+                continue;
+            }
+
+            string fill = colours.Fill;
+            string stroke = colours.Stroke;
+            string text = colours.Text;
 
             if (fill.Length > 0 || stroke.Length > 0 || text.Length > 0)
             {
-                styleEdits.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text));
+                // The line type is carried only for the delineator, whose dash
+                // the reader projects from the row rather than exact-matching
+                // it against the preset. Every other built-in style keeps its
+                // code-owned dash.
+                GanttStrokeDash? dash = string.Equals(preset.StyleKey, "DefaultDelineator", StringComparison.Ordinal)
+                    ? SelectedEntityDash()
+                    : null;
+
+                styleEdits.Add(new ThemeStyleEdit(preset.StyleKey, fill, stroke, text, dash));
             }
         }
 

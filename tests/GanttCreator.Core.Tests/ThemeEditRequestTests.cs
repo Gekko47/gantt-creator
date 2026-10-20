@@ -106,13 +106,48 @@ public sealed class ThemeEditRequestTests
     [Fact]
     public void Metric_outside_catalogue_range_is_refused_with_range_in_message()
     {
+        // An editable metric, so the refusal is about the VALUE and not about
+        // the token being off-limits. The bar height is no longer editable:
+        // the scene resolves it from the style row, not from this metric.
         var request = new ThemeEditRequest(
             [],
-            new Dictionary<string, double> { ["ActivityHeightPt"] = 999 });
+            new Dictionary<string, double> { ["DelineatorLinePt"] = 999 });
         Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
         Assert.Equal(ThemeEditRefusal.MetricOutOfRange, refusal);
-        Assert.Contains("2", message, StringComparison.Ordinal);
-        Assert.Contains("36", message, StringComparison.Ordinal);
+
+        GanttMetricToken token = GanttCatalogues.Metrics
+            .First(candidate => candidate.Name == "DelineatorLinePt");
+        Assert.Contains(
+            token.Minimum.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            token.Maximum.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_undefined_line_type_is_refused()
+    {
+        // The positive test for the guard: an undefined dash would serialise to
+        // a name the reader cannot parse, and the reader refuses the whole
+        // catalogue rather than skipping the row.
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit("DefaultDelineator", "#FF0000", "#C00000", "#FFFFFF", (GanttStrokeDash)99)],
+            new Dictionary<string, double>());
+        Assert.False(ThemeEditRequest.TryValidate(request, out var refusal, out var message));
+        Assert.Equal(ThemeEditRefusal.InvalidCustomStyle, refusal);
+        Assert.Contains("line type", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_defined_line_type_is_accepted()
+    {
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit("DefaultDelineator", "#FF0000", "#C00000", "#FFFFFF", GanttStrokeDash.Dash)],
+            new Dictionary<string, double>());
+        Assert.True(ThemeEditRequest.TryValidate(request, out _, out _));
     }
 
     [Fact]
