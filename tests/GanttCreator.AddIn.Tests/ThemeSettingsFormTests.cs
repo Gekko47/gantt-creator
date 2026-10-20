@@ -909,6 +909,58 @@ public class ThemeSettingsFormTests
         });
     }
 
+    /// <summary>
+    /// The dialog is sized to its content: narrow enough that the property
+    /// values are not stranded in a wide empty strip, wide enough that no tab
+    /// needs a horizontal scroll bar.
+    /// </summary>
+    [Fact]
+    public void The_dialog_is_sized_to_its_content_and_no_tab_overflows_it()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+
+                // The width is a deliberate number, not a guess: the master
+                // column plus the detail panel's label column and value
+                // cluster, plus the padding.
+                Assert.Equal(700, form.ClientSize.Width);
+
+                var tabControl = Assert.IsType<TabControl>(Find(form, c => c is TabControl));
+                foreach (TabPage page in tabControl.TabPages)
+                {
+                    LayOutTab(form, page);
+                    page.PerformLayout();
+
+                    // Every control on the page must sit inside the dialog's
+                    // client area, or the page needs a horizontal scroll bar.
+                    foreach (Control control in FindAll(page, c => c is not TabPage))
+                    {
+                        if (!control.Visible)
+                        {
+                            continue;
+                        }
+
+                        Point edge = control.PointToScreen(Point.Empty);
+                        Point client = form.PointToScreen(Point.Empty);
+                        int right = edge.X - client.X + control.Width;
+
+                        Assert.True(
+                            right <= form.ClientSize.Width,
+                            $"'{control.Name}' on the '{page.Text}' tab reaches {right}px in a {form.ClientSize.Width}px dialog.");
+                    }
+                }
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [Fact]
     public void The_custom_styles_tab_fits_its_tab_without_a_horizontal_scroll_bar()
     {
@@ -972,6 +1024,13 @@ public class ThemeSettingsFormTests
                 var shown = list.Items.Cast<ListViewItem>().Select(item => (string)item.Tag!).ToArray();
                 Assert.Contains("AsBuiltMilestone", shown, StringComparer.Ordinal);
                 Assert.Contains("DefaultDelineator", shown, StringComparer.Ordinal);
+
+                // The named custom activity and the named custom milestone take
+                // their style from the user, so their built-in fallback style is
+                // not listed here: those styles live on the Custom styles tab,
+                // where the user creates them.
+                Assert.DoesNotContain("CustomActivity", shown, StringComparer.Ordinal);
+                Assert.DoesNotContain("CustomMilestone", shown, StringComparer.Ordinal);
             }
             finally
             {

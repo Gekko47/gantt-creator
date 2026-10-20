@@ -109,6 +109,36 @@ public class GanttStyleFamiliesTests
     }
 
     [Fact]
+    public void TheUserAuthoredStylesAreExactlyTheStyleKeyTypesFallbacks()
+    {
+        // A style-key type takes the style the USER authored, so its built-in
+        // fallback is a placeholder rather than a style the user chose. The
+        // Entity styles list does not offer it; the Custom styles tab is where
+        // those styles live.
+        HashSet<string> expected = EntityTypeCatalog.Entries
+            .Where(entry => entry.RequiresStyleKey)
+            .Select(entry => entry.DefaultStyleKey)
+            .Where(key => key.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.NotEmpty(expected);
+        Assert.True(GanttUserAuthoredStyles.IsUserAuthored("CustomActivity"));
+        Assert.True(GanttUserAuthoredStyles.IsUserAuthored("CustomMilestone"));
+
+        // Every code-owned style the user did not author is not in the set.
+        Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedActivity"));
+        Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedMilestone"));
+        Assert.False(GanttUserAuthoredStyles.IsUserAuthored("DefaultDelineator"));
+
+        // The set is derived from the type catalogue, so it cannot drift from
+        // the types that require a style key.
+        foreach (string key in expected)
+        {
+            Assert.True(GanttUserAuthoredStyles.IsUserAuthored(key), key);
+        }
+    }
+
+    [Fact]
     public void TheEditableMetricSetIsExactlyTheLiveChartWideKnobs()
     {
         // The bar height and the outline width are resolved from the STYLE

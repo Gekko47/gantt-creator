@@ -450,11 +450,15 @@ internal sealed partial class ThemeSettingsForm : Form
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
 
-        // The client area is wide enough for the master-detail view: a list
-        // on the left and the selected object's properties on the right, with
-        // no tab needing a horizontal scroll bar.
-        ClientSize = new Size(900, 640);
-        MinimumSize = new Size(900, 640);
+        // The client area is sized to the CONTENT, not to a guess. The
+        // master-detail view needs a master column (250pt) plus a detail
+        // panel that holds a 130pt label column and a 160pt value cluster
+        // (colour text box, picker button and swatch) — about 330pt — plus
+        // the tab and form padding. 700pt is that sum with a little room,
+        // so no tab needs a horizontal scroll bar and none of the property
+        // values are stranded in a wide empty strip.
+        ClientSize = new Size(700, 640);
+        MinimumSize = new Size(700, 640);
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = SystemFonts.MessageBoxFont;
 
@@ -1147,7 +1151,14 @@ internal sealed partial class ThemeSettingsForm : Form
                     .Where(preset =>
                         preset.ColourCapability.HasFlag(EntityColourCapability.Fill)
                         || preset.ColourCapability.HasFlag(EntityColourCapability.Stroke)
-                        || preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined)),
+                        || preset.ColourCapability.HasFlag(EntityColourCapability.StyleDefined))
+
+                    // The named custom activity and the named custom milestone
+                    // take their style from the user, so their built-in
+                    // fallback style is not something the user chose and is
+                    // not offered here: those styles are created and edited on
+                    // the Custom styles tab.
+                    .Where(preset => !GanttUserAuthoredStyles.IsUserAuthored(preset.StyleKey)),
             ];
 
 
@@ -1297,7 +1308,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             Text = title,
             Location = new Point(8, top),
-            Size = new Size(660, (tokens.Count * 26) + 20),
+            Size = new Size(520, (tokens.Count * 26) + 20),
         };
         panel.Controls.Add(group);
 
@@ -1308,7 +1319,7 @@ internal sealed partial class ThemeSettingsForm : Form
             {
                 Text = $"{DescribeMetric(key)} ({token.Minimum} to {token.Maximum} pt)",
                 Location = new Point(12, innerY),
-                Size = new Size(300, 20),
+                Size = new Size(240, 20),
                 TextAlign = ContentAlignment.MiddleLeft,
             };
             group.Controls.Add(lbl);
@@ -1316,7 +1327,7 @@ internal sealed partial class ThemeSettingsForm : Form
             NumericUpDown nud = new()
             {
                 Name = key,
-                Location = new Point(460, innerY - 2),
+                Location = new Point(380, innerY - 2),
                 Size = new Size(90, 22),
                 Minimum = (decimal)token.Minimum,
                 Maximum = (decimal)token.Maximum,
@@ -1355,7 +1366,7 @@ internal sealed partial class ThemeSettingsForm : Form
         {
             Text = "Chart appearance",
             Location = new Point(8, top),
-            Size = new Size(660, (GanttChartChrome.Roles.Count * RowHeight) + 20),
+            Size = new Size(520, (GanttChartChrome.Roles.Count * RowHeight) + 20),
         };
         panel.Controls.Add(group);
 

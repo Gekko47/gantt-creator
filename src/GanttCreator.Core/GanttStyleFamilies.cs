@@ -123,6 +123,61 @@ public static class GanttStyleFamilies
 }
 
 /// <summary>
+/// The built-in style keys a user-authored style replaces.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A style-key type — the named custom activity and the named custom
+/// milestone — carries the style the <i>user</i> authored, so its built-in
+/// fallback style is a placeholder rather than a style the user chose. The
+/// Entity styles list therefore does not offer it: the styles for those
+/// entities live on the Custom styles tab, where the user creates them.
+/// </para>
+/// <para>
+/// The set is derived from the type catalogue rather than written out, so a
+/// new style-key type cannot be added without the list following it. The
+/// fallback styles themselves stay in the catalogue: the resolver and the
+/// reader still need them, and removing them would break a row whose
+/// user-created style was deleted.
+/// </para>
+/// </remarks>
+public static class GanttUserAuthoredStyles
+{
+    private static readonly HashSet<string> _keys = BuildKeys();
+
+    /// <summary>
+    /// Returns whether a style key names a style the user authors rather than
+    /// one the code owns.
+    /// </summary>
+    /// <param name="styleKey">The style key.</param>
+    /// <returns>True when the style is user-authored.</returns>
+    public static bool IsUserAuthored(string styleKey)
+    {
+        ArgumentNullException.ThrowIfNull(styleKey);
+        return _keys.Contains(styleKey);
+    }
+
+    /// <summary>
+    /// Builds the set from the types that require a style key: each one's
+    /// fallback style key is a style the user replaces.
+    /// </summary>
+    /// <returns>The user-authored style keys.</returns>
+    private static HashSet<string> BuildKeys()
+    {
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        foreach (EntityTypeDefinition entry in EntityTypeCatalog.Entries)
+        {
+            if (entry.RequiresStyleKey && entry.DefaultStyleKey.Length > 0)
+            {
+                _ = keys.Add(entry.DefaultStyleKey);
+            }
+        }
+
+        return keys;
+    }
+}
+
+/// <summary>
 /// Which built-in styles' stroke dash the user may change.
 /// </summary>
 /// <remarks>
