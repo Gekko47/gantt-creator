@@ -2139,6 +2139,101 @@ public sealed class SceneBuilderTests
         Assert.Equal(expectTitleBand, hasTitle);
     }
 
+    /// <summary>
+    /// R5.6d WI-D: the live title is an owned textbox shape in the reserved
+    /// row, so the scene draws no title band - but the frame must still
+    /// ENCLOSE it, or the border stopped at the header row and the title sat
+    /// outside the bordered block.
+    /// </summary>
+    [Fact]
+    public void The_live_frame_encloses_the_title_band_when_the_title_is_shown()
+    {
+        (double shown, double hidden) = LiveFrameTopEdges();
+
+        // The frame's top edge lifts by exactly the title band, so the
+        // title textbox - which sits one band above the header - is inside
+        // the bordered block.
+        double titleBand = PanelSceneRequest().TitleBandHeightPt;
+        Assert.True(
+            hidden - shown >= titleBand,
+            $"The live frame's top edge lifted by {hidden - shown}pt, less than the {titleBand}pt title band.");
+    }
+
+    /// <summary>
+    /// R5.6d WI-D: reserving the band must not DRAW a title band in the live
+    /// scene. ADR-0030 D6 removed the drawn band from the live sheet because
+    /// it was drawn straight over the year band; the reservation is geometry
+    /// only.
+    /// </summary>
+    [Fact]
+    public void The_live_scene_reserves_the_title_band_without_drawing_one()
+    {
+        SceneBuildOutcome build = SceneBuilder.TryBuild(
+            PanelSceneRequest() with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Panel = null,
+                Title = "Gantt Chart",
+                ShowTitle = true,
+            });
+
+        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
+
+        bool hasTitle = build.Result!.Scene.Primitives
+            .Any(primitive => primitive.PrimitiveId.Contains("title", StringComparison.Ordinal));
+
+        Assert.False(hasTitle);
+    }
+
+    /// <summary>
+    /// R5.6d WI-D: a hidden title reserves no band, so the live frame keeps
+    /// its previous extent.
+    /// </summary>
+    [Fact]
+    public void The_live_frame_does_not_reserve_a_title_band_when_the_title_is_hidden()
+    {
+        (double shown, double hidden) = LiveFrameTopEdges();
+
+        Assert.True(shown < hidden, $"The frame's top edge is {shown}pt with the title and {hidden}pt without.");
+    }
+
+    /// <summary>
+    /// The live frame's top edge with the title shown and with it hidden.
+    /// </summary>
+    /// <returns>The shown and hidden top edges, in points.</returns>
+    private static (double Shown, double Hidden) LiveFrameTopEdges()
+    {
+        SceneBuildOutcome shown = SceneBuilder.TryBuild(
+            PanelSceneRequest() with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Panel = null,
+                Title = "Gantt Chart",
+                ShowTitle = true,
+            });
+        SceneBuildOutcome hidden = SceneBuilder.TryBuild(
+            PanelSceneRequest() with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Panel = null,
+                Title = "Gantt Chart",
+                ShowTitle = false,
+            });
+
+        Assert.True(shown.Succeeded, "Scene build refused: " + shown.Refusal);
+        Assert.True(hidden.Succeeded, "Scene build refused: " + hidden.Refusal);
+
+        return (
+            shown.Result!.Scene.Primitives
+                .OfType<SceneLine>()
+                .First(line => line.PrimitiveId == "chart:frame:top")
+                .From.Y,
+            hidden.Result!.Scene.Primitives
+                .OfType<SceneLine>()
+                .First(line => line.PrimitiveId == "chart:frame:top")
+                .From.Y);
+    }
+
     /// <summary>The panel theme the export-profile cases supply.</summary>
     private static PanelTheme PanelThemeValue { get; } =
         new(

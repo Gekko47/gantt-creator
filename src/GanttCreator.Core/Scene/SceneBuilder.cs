@@ -162,6 +162,18 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the chart title, or null when untitled.</summary>
     public string? Title { get; init; }
 
+    /// <summary>
+    /// Gets whether the chart title is shown.
+    /// </summary>
+    /// <remarks>
+    /// The LIVE composition draws the title as an owned textbox shape in the
+    /// reserved row (ADR-0043), so the scene draws no title band - but the
+    /// frame must still enclose it, or the border stops at the header row
+    /// and the title sits outside the bordered block (R5.6d WI-D). The
+    /// export profiles draw the title in the scene and are unaffected.
+    /// </remarks>
+    public bool ShowTitle { get; init; }
+
     /// <summary>Gets whether alternating plot bands are emitted.</summary>
     public bool AlternateBanding { get; init; } = true;
 
@@ -834,6 +846,16 @@ public static class SceneBuilder
             request.Profile != SceneCompositionProfile.LiveExcel
             && !string.IsNullOrWhiteSpace(request.Title);
 
+        // R5.6d WI-D: the LIVE title is an owned textbox shape in the reserved
+        // row (ADR-0043), so the scene draws no title band - but the frame
+        // must still ENCLOSE it, or the border stopped at the header row and
+        // the title sat outside the bordered block. The band is therefore
+        // reserved (not drawn) when the live title is shown.
+        bool reserveTitleBand =
+            request.Profile == SceneCompositionProfile.LiveExcel
+            && request.ShowTitle
+            && !string.IsNullOrWhiteSpace(request.Title);
+
         // The panel is built FIRST, and its derived bounds are what the frame reads.
         // This is the single-authority decision (D-B1): there is no caller-supplied
         // panel rectangle any more, so the chart background cannot be sized from one
@@ -925,7 +947,8 @@ public static class SceneBuilder
                 request.ShowMajorGrid,
                 request.PlotBandHeaderOverlapPt,
                 request.ChartAnchorRowHeightPt,
-                frameTheme),
+                frameTheme,
+                reserveTitleBand),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
         {

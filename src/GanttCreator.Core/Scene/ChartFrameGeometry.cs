@@ -73,6 +73,13 @@ public sealed record FrameBandsTheme(
 /// reproduces the pre-ADR-0038 geometry exactly.
 /// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
+/// <param name="ReserveTitleBand">
+/// Whether the title band is reserved in the frame geometry even though no
+/// title is drawn in it. The live composition draws the title as an owned
+/// textbox shape in the reserved row (ADR-0043), so the scene draws no title
+/// band - but the frame must still enclose it, or the border stops at the
+/// header row and the title sits outside the bordered block (R5.6d WI-D).
+/// </param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
     GanttTimeScale Scale,
@@ -93,7 +100,8 @@ public sealed record FrameBandsRequest(
     bool ShowMajorGrid,
     double PlotBandHeaderOverlapPt,
     double ChartAnchorRowHeightPt,
-    FrameBandsTheme Theme
+    FrameBandsTheme Theme,
+    bool ReserveTitleBand = false
 );
 
 /// <summary>The result of a successful frame/band build.</summary>

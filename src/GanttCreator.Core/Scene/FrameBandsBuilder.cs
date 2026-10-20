@@ -162,7 +162,15 @@ public static class FrameBandsBuilder
             request.YearBandHeightPt
         );
         RectD contentBounds = Union(request.PanelBounds, yearBounds, periodBounds, request.PlotBounds);
-        RectD? titleBounds = request.ShowTitle
+
+        // The title band is reserved when the title is DRAWN (the export
+        // profiles) or when it is merely RESERVED (R5.6d WI-D: the live title
+        // is an owned textbox shape in the reserved row, so the scene draws no
+        // title but the frame must still enclose it - otherwise the border
+        // stopped at the header row and the title sat outside the bordered
+        // block).
+        bool titleBandReserved = request.ShowTitle || request.ReserveTitleBand;
+        RectD? titleBounds = titleBandReserved
             ? new RectD(contentBounds.X, contentBounds.Y - request.TitleBandHeightPt, contentBounds.Width, request.TitleBandHeightPt)
             : null;
         RectD unionBounds = titleBounds is { } title ? Union(contentBounds, title) : contentBounds;
@@ -381,7 +389,7 @@ public static class FrameBandsBuilder
         ITextWidthMeasurer textMeasurer
     )
     {
-        if (geometry.TitleBounds is not { } title)
+        if (!request.ShowTitle || geometry.TitleBounds is not { } title)
         {
             return;
         }

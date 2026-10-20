@@ -369,6 +369,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             PeriodLabelFormat = periodFormat,
             DateFormat = dateFormat,
             Title = ReadString(settings, "ChartTitle"),
+            ShowTitle = ReadBool(settings, "ShowTitle", fallback: true),
             AlternateBanding = ReadBool(settings, "AlternateBanding", fallback: true),
             ShowMinorGrid = ReadBool(settings, "ShowMinorGrid", fallback: true),
             ShowMajorGrid = ReadBool(settings, "ShowMajorGrid", fallback: true),
