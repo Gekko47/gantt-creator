@@ -350,15 +350,16 @@ public static class EntityTypeCatalog
             // R5.6a: both style-key types resolve from their row style. The
             // catalogue set is only a placeholder for them (_noLabelPositions
             // on Custom Milestone), never the authority.
-            if (styleRegistry is null
-                || !styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
-                || style is null
-                || style.AllowedLabelPositions is null)
-            {
-                return [];
-            }
-
-            allowed = style.AllowedLabelPositions;
+            //
+            // R5.6d: a row whose style the registry does not know - because the
+            // user has not chosen one yet, or because the style they chose was
+            // deleted - falls back to the type's CODE-OWNED default style, the
+            // same preset the scene falls back to when it renders the row. The
+            // row renders with that style, so the ribbon must offer the label
+            // positions that style permits; returning an empty set left the
+            // description-label dropdown disabled on a row that was perfectly
+            // renderable.
+            allowed = ResolveStyleKeyLabelPositions(definition, styleKey, styleRegistry);
         }
         else
         {
@@ -366,6 +367,38 @@ public static class EntityTypeCatalog
         }
 
         return [.. _displayOrder.Where(allowed.Contains)];
+    }
+
+    /// <summary>
+    /// Resolves the permitted label positions of a style-key type.
+    /// </summary>
+    /// <remarks>
+    /// R5.6d: a row whose style the registry does not know - because the user
+    /// has not chosen one yet, or because the style they chose was deleted -
+    /// falls back to the type's CODE-OWNED default style, the same preset the
+    /// scene falls back to when it renders the row. The row renders with that
+    /// style, so the ribbon must offer the label positions that style
+    /// permits; returning an empty set left the description-label dropdown
+    /// disabled on a row that was perfectly renderable.
+    /// </remarks>
+    /// <param name="definition">The type's catalogue definition.</param>
+    /// <param name="styleKey">The row's style key.</param>
+    /// <param name="styleRegistry">The named-style capabilities, or null.</param>
+    /// <returns>The permitted positions for the resolved style.</returns>
+    private static IReadOnlySet<GanttLabelPosition> ResolveStyleKeyLabelPositions(
+        EntityTypeDefinition definition,
+        string? styleKey,
+        GanttStyleRegistry? styleRegistry)
+    {
+        if (styleRegistry is not null
+            && styleRegistry.TryGet(styleKey, out GanttStyleDefinition? style)
+            && style?.AllowedLabelPositions is { } registryAllowed)
+        {
+            return registryAllowed;
+        }
+
+        _ = GanttCatalogues.TryGetPreset(definition.DefaultStyleKey, out GanttStylePreset? fallbackPreset);
+        return fallbackPreset?.AllowedLabelPositions ?? definition.AllowedLabelPositions;
     }
 
     /// <summary>

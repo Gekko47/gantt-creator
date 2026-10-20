@@ -134,7 +134,8 @@ public class ExcelLabelPositionMutator(
         // for which types resolve from the style registry (Custom Activity and
         // Custom Milestone), so a Custom Milestone row validates against its
         // row style exactly like a Custom Activity does.
-        if (EntityTypeCatalog.GetDefinition(type) is { RequiresStyleKey: true })
+        EntityTypeDefinition? definition = EntityTypeCatalog.GetDefinition(type);
+        if (definition is { RequiresStyleKey: true })
         {
             styleKey = ExcelGanttRowProjection.CellText(body[selectedIndex], columnMap, "StyleKey");
             ConfigReadOutcome catalogue = ReadCatalogue();
@@ -145,16 +146,22 @@ public class ExcelLabelPositionMutator(
             }
 
             registry = catalogue.Styles;
-            if (registry is null || !registry.TryGet(styleKey, out _))
-            {
-                return LabelPositionMutationOutcome.Refused(
-                    LabelPositionMutationRefusalReason.StyleUnknown,
-                    bodyIndex);
-            }
         }
 
-        if (position.HasValue
-            && !EntityTypeCatalog.IsLabelPositionAllowed(type, position.Value, styleKey, registry))
+        // R5.6d: the vocabulary is the row's style when the registry knows it
+        // and the type's CODE-OWNED default style otherwise - the same preset
+        // the scene falls back to when it renders the row. A row whose style
+        // has not been chosen yet, or whose style was deleted, still renders
+        // with that default, so it still offers the labels that default
+        // permits; refusing it left the description-label dropdown disabled
+        // on a row that was perfectly renderable. The vocabulary is never
+        // empty for a known type - the registry rejects a style that permits
+        // no position, and every catalogue type defines at least one - so a
+        // position outside it is the ordinary not-permitted refusal.
+        IReadOnlyList<GanttLabelPosition> allowed =
+            EntityTypeCatalog.GetAllowedLabelPositions(type, styleKey, registry);
+
+        if (position.HasValue && !allowed.Contains(position.Value))
         {
             return LabelPositionMutationOutcome.Refused(
                 LabelPositionMutationRefusalReason.PositionNotAllowedForType, bodyIndex);

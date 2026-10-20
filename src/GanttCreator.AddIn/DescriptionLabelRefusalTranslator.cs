@@ -50,9 +50,6 @@ internal static class DescriptionLabelRefusalTranslator
             LabelPositionMutationRefusalReason.PositionNotAllowedForType =>
                 row + "does not support that label position, so nothing was changed. "
                 + "Choose one of the positions this row's type offers.",
-            LabelPositionMutationRefusalReason.StyleUnknown =>
-                row + "is a Custom Activity whose style could not be found, so nothing was changed. "
-                + "Choose a StyleKey for the row (or run Repair configuration), then try again.",
             LabelPositionMutationRefusalReason.WriteFailed =>
                 "Excel refused a write, so the table may be out of order. Refresh the chart to repair it.",
             _ => "Gantt Creator could not change the label position. "

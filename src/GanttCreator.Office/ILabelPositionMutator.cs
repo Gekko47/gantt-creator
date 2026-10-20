@@ -36,11 +36,8 @@ public enum LabelPositionMutationRefusalReason
     /// <summary>The position is not permitted for the row's type (or style).</summary>
     PositionNotAllowedForType = 7,
 
-    /// <summary>A Custom Activity row names a style the registry does not know.</summary>
-    StyleUnknown = 8,
-
     /// <summary>The host refused the planned cell write.</summary>
-    WriteFailed = 9,
+    WriteFailed = 8,
 }
 
 /// <summary>

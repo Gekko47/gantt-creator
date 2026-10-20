@@ -370,13 +370,28 @@ public class EntityTypeCatalogTests
     [Theory]
     [InlineData(null)]
     [InlineData("Missing")]
-    public void GetAllowedLabelPositions_custom_activity_without_style_is_empty(string? styleKey)
+    public void GetAllowedLabelPositions_custom_activity_without_style_falls_back_to_the_type_default(
+        string? styleKey)
     {
+        // R5.6d: a row whose style the registry does not know still renders -
+        // the scene falls back to the type's code-owned default style - so the
+        // ribbon must offer the positions that default permits. Returning an
+        // empty set left the description-label dropdown disabled on a
+        // perfectly renderable row.
         IReadOnlyList<GanttLabelPosition> positions =
             EntityTypeCatalog.GetAllowedLabelPositions(
                 GanttEntityType.CustomActivity, styleKey, GanttStyleRegistry.Empty);
 
-        Assert.Empty(positions);
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.Inside,
+                GanttLabelPosition.None,
+            },
+            positions);
     }
 
     [Fact]
@@ -406,13 +421,45 @@ public class EntityTypeCatalogTests
     [Theory]
     [InlineData(null)]
     [InlineData("Missing")]
-    public void GetAllowedLabelPositions_custom_milestone_without_style_is_empty(string? styleKey)
+    public void GetAllowedLabelPositions_custom_milestone_without_style_falls_back_to_the_type_default(
+        string? styleKey)
     {
+        // R5.6d: the milestone fallback is the milestone vocabulary, so a
+        // Custom Milestone row that has not chosen a style still offers the
+        // milestone positions (and no Inside, which a milestone has not).
         IReadOnlyList<GanttLabelPosition> positions =
             EntityTypeCatalog.GetAllowedLabelPositions(
                 GanttEntityType.CustomMilestone, styleKey, GanttStyleRegistry.Empty);
 
-        Assert.Empty(positions);
+        Assert.Equal(
+            new[]
+            {
+                GanttLabelPosition.Auto,
+                GanttLabelPosition.Left,
+                GanttLabelPosition.Right,
+                GanttLabelPosition.None,
+            },
+            positions);
+    }
+
+    [Fact]
+    public void GetAllowedLabelPositions_a_known_style_wins_over_the_type_default()
+    {
+        // R5.6d: the fallback covers a style the registry does not KNOW. A
+        // style it does know is the authority, exactly as before.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "NarrowStyle",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.TopRight]),
+                EntityColourCapability.StyleDefined),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions =
+            EntityTypeCatalog.GetAllowedLabelPositions(
+                GanttEntityType.CustomActivity, "NarrowStyle", registry);
+
+        Assert.Equal(new[] { GanttLabelPosition.TopRight }, positions);
     }
 
     [Fact]

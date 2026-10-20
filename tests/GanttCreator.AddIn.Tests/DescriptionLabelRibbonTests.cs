@@ -191,6 +191,45 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     }
 
     [Fact]
+    public void The_dropdown_offers_the_fallback_set_for_a_custom_activity_with_no_style()
+    {
+        // R5.6d: a Custom Activity row whose style has not been chosen yet (or
+        // whose style was deleted) still renders - the scene falls back to the
+        // type's code-owned default style - so the dropdown offers that
+        // default's positions instead of being disabled on a perfectly
+        // renderable row.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("Custom Activity", null));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
+        Assert.Equal(6, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("Auto", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Left", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Right", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("Inside", service.GetDescriptionLabelItemID(4));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(5));
+    }
+
+    [Fact]
+    public void The_dropdown_offers_the_milestone_fallback_for_a_custom_milestone_with_no_style()
+    {
+        // R5.6d: the milestone fallback is the milestone vocabulary, so a
+        // Custom Milestone row with no style offers the milestone positions -
+        // and no Inside, which a milestone does not have.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(selection, Row("Custom Milestone", null));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.DescriptionLabel));
+        Assert.Equal(5, service.GetDescriptionLabelCount());
+        Assert.Equal("Default", service.GetDescriptionLabelItemID(0));
+        Assert.Equal("Auto", service.GetDescriptionLabelItemID(1));
+        Assert.Equal("Left", service.GetDescriptionLabelItemID(2));
+        Assert.Equal("Right", service.GetDescriptionLabelItemID(3));
+        Assert.Equal("None", service.GetDescriptionLabelItemID(4));
+    }
+
+    [Fact]
     public void The_dropdown_offers_no_auto_for_a_splitter()
     {
         // The splitter has no Auto in its catalogue set, and the projection
