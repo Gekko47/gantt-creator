@@ -321,6 +321,48 @@ public sealed class CustomStyleRibbonTests : IDisposable
     }
 
     [Fact]
+    public void A_style_created_after_the_capture_appears_once_the_ribbon_state_is_refreshed()
+    {
+        // R5.6a: the dropdown's items are projected from the workbook's style
+        // registry at capture time. A style the user creates in the Theme
+        // settings dialog is only reachable once the ribbon state has been
+        // re-captured, which is what the post-command hook does.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+        var service = ArmWithRow(
+            selection,
+            Row(EntityTypeCatalog.Format(GanttEntityType.CustomActivity), null));
+
+        Assert.Equal(1, service.GetCustomStyleCount()); // only the leading <c>None</c> item
+
+        // The user creates a style in the Theme settings dialog: the workbook
+        // now carries it, so the next read projects it.
+        var created = new List<GanttStyleDefinition>
+        {
+            new(
+                BuiltInKey,
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.Auto]),
+                EntityColourCapability.Fill),
+            new(
+                "Created",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.Auto]),
+                EntityColourCapability.StyleDefined),
+        };
+        var catalogues = new Mock<IConfigCatalogueReader>();
+        catalogues.Setup(item => item.Read()).Returns(
+            ConfigReadOutcome.Ok(
+                "W-1",
+                new Dictionary<string, string>(),
+                new GanttStyleRegistry(created),
+                new Dictionary<string, double>()));
+        service.SetCatalogueReader(catalogues.Object);
+
+        service.Refresh();
+
+        Assert.Equal(2, service.GetCustomStyleCount());
+        Assert.Equal("Created", service.GetCustomStyleItemID(1));
+    }
+
+    [Fact]
     public void The_ribbon_callbacks_route_through_the_state_service()
     {
         // Excel dispatches these by reflection, so a rename in either layer is

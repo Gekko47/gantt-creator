@@ -1788,5 +1788,87 @@ public class GanttRibbonTests
         var control = new Mock<IRibbonControl>();
         Record.Exception(() => GanttRibbon.OnThemeSettingsClick(control.Object, service));
     }
+
+    [Fact]
+    public void OnThemeSettingsClick_notifies_the_ribbon_state_after_a_successful_write()
+    {
+        // R5.6a: the Theme settings dialog can create a custom style, and the
+        // ribbon's custom-style dropdown projects its items from the workbook's
+        // style registry. The command that wrote the style must therefore
+        // re-capture and invalidate the ribbon state, or the dropdown keeps the
+        // list it had before the dialog opened and the new style never appears.
+        var service = new StubThemeDialogRibbonStateService(DialogResult.OK);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty,
+            new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        writer.Setup(w => w.WriteTheme(It.IsAny<ThemeEditRequest>())).Returns(ConfigWriteOutcome.Ok());
+        service.SetCatalogueWriter(writer.Object);
+
+        var completed = 0;
+        var refreshed = 0;
+        var control = new Mock<IRibbonControl>();
+
+        GanttRibbon.OnThemeSettingsClick(
+            control.Object,
+            service,
+            onCompleted: () => completed++,
+            refresh: () => refreshed++);
+
+        Assert.Equal(1, refreshed);
+        Assert.Equal(1, completed);
+    }
+
+    [Fact]
+    public void OnThemeSettingsClick_does_not_notify_the_ribbon_state_when_the_dialog_is_cancelled()
+    {
+        var service = new StubThemeDialogRibbonStateService(DialogResult.Cancel);
+        var reader = new Mock<IConfigCatalogueReader>();
+        reader.Setup(r => r.Read()).Returns(ConfigReadOutcome.Ok(
+            "wb-id",
+            new Dictionary<string, string>(),
+            GanttStyleRegistry.Empty,
+            new Dictionary<string, double>()));
+        service.SetCatalogueReader(reader.Object);
+
+        var writer = new Mock<IConfigCatalogueWriter>();
+        service.SetCatalogueWriter(writer.Object);
+
+        var completed = 0;
+        var refreshed = 0;
+        var control = new Mock<IRibbonControl>();
+
+        GanttRibbon.OnThemeSettingsClick(
+            control.Object,
+            service,
+            onCompleted: () => completed++,
+            refresh: () => refreshed++);
+
+        Assert.Equal(0, refreshed);
+        Assert.Equal(0, completed);
+    }
+
+    /// <summary>
+    /// Test double for <see cref="RibbonStateService"/> that substitutes a
+    /// fixed dialog result instead of running a blocking WinForms message
+    /// loop, which would hang forever without a user to click OK or Cancel.
+    /// </summary>
+    private sealed class StubThemeDialogRibbonStateService : RibbonStateService
+    {
+        private readonly DialogResult _dialogResult;
+
+        public StubThemeDialogRibbonStateService(DialogResult dialogResult) => _dialogResult = dialogResult;
+
+        protected override DialogResult ShowThemeSettingsDialog(ThemeSettingsForm dialog)
+        {
+            dialog.SetValidatedRequestForTesting(new ThemeEditRequest([], new Dictionary<string, double>()));
+            return _dialogResult;
+        }
+    }
 }
 

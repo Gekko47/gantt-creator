@@ -1805,7 +1805,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnThemeSettingsClick(IRibbonControl control)
-        => OnThemeSettingsClick(control, RibbonStateService.Instance);
+        => OnThemeSettingsClick(control, RibbonStateService.Instance, NotifyRibbonStateChanged);
 
     /// <summary>
     /// Runs <see cref="OnThemeSettingsClick(IRibbonControl)"/> against an
@@ -1814,13 +1814,30 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service running the command.</param>
-    internal static void OnThemeSettingsClick(IRibbonControl? control, RibbonStateService stateService)
+    /// <param name="onCompleted">
+    /// The post-command state hook. The Theme settings dialog can create a
+    /// custom style, and the ribbon's custom-style dropdown projects its
+    /// items from the workbook's style registry, so the ribbon state must be
+    /// re-captured and invalidated after the write. Without this hook the
+    /// dropdown kept the list it had before the dialog opened, and a style
+    /// the user had just created never appeared in it.
+    /// </param>
+    /// <param name="refresh">
+    /// The chart refresh that follows the write. A seam so a contract test
+    /// can drive the command without a live Excel host.
+    /// </param>
+    internal static void OnThemeSettingsClick(
+        IRibbonControl? control,
+        RibbonStateService stateService,
+        Action? onCompleted = null,
+        Action? refresh = null)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         if (stateService.ShowThemeSettingsDialog())
         {
-            RunRefreshSheet();
+            (refresh ?? RunRefreshSheet)();
+            onCompleted?.Invoke();
         }
     }
 
@@ -1830,7 +1847,7 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnChartTitleClick(IRibbonControl control)
-        => OnChartTitleClick(control, RibbonStateService.Instance);
+        => OnChartTitleClick(control, RibbonStateService.Instance, NotifyRibbonStateChanged);
 
     /// <summary>
     /// Runs <see cref="OnChartTitleClick(IRibbonControl)"/> against an
@@ -1839,13 +1856,27 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service running the command.</param>
-    internal static void OnChartTitleClick(IRibbonControl? control, RibbonStateService stateService)
+    /// <param name="onCompleted">
+    /// The post-command state hook. The chart title is a setting the ribbon
+    /// reads, so the state must be re-captured after the write — the same
+    /// contract every other ribbon command follows.
+    /// </param>
+    /// <param name="refresh">
+    /// The chart refresh that follows the write. A seam so a contract test
+    /// can drive the command without a live Excel host.
+    /// </param>
+    internal static void OnChartTitleClick(
+        IRibbonControl? control,
+        RibbonStateService stateService,
+        Action? onCompleted = null,
+        Action? refresh = null)
     {
         _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
         if (stateService.ShowChartTitleDialog())
         {
-            RunRefreshSheet();
+            (refresh ?? RunRefreshSheet)();
+            onCompleted?.Invoke();
         }
     }
 
