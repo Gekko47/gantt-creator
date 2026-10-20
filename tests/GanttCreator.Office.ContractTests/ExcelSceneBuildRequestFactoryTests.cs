@@ -1068,6 +1068,32 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     [Fact]
+    public void Every_chart_border_is_one_uniform_soft_grey()
+    {
+        // Owner ruling 2026-10-20: the chart's borders are one uniform soft
+        // grey. The minor grid, the year boundary and the plot frame all draw
+        // from the two grid roles, so the two must default to the SAME colour
+        // — the year boundary keeps its own MajorBoundaryPt width, which is how
+        // it reads as a boundary without needing a second colour.
+        Assert.Equal(
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MinorGrid),
+            GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid));
+
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            Grid(), new Dictionary<string, double>());
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+        FrameBandsTheme theme = outcome.Request!.FrameTheme!;
+
+        Assert.Equal(theme.MinorGrid.StrokeColour, theme.MajorGrid.StrokeColour);
+    }
+
+    [Fact]
     public void The_grid_line_widths_come_from_the_themed_metrics()
     {
         // The "Grid line width" and "Major boundary width" controls named

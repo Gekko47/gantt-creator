@@ -262,7 +262,7 @@ Hex values are initial defaults. Colours include an explicit alpha of `FF` unles
 | `SplitterFill` | `#FFE699` | Section/splitter band |
 | `AlternateBandFill` | `#F2F2F2` | Alternating period band |
 | `MinorGridStroke` | `#D9D9D9` | Minor grid/lane separator |
-| `MajorGridStroke` | `#000000` | Year/plot/frame boundary |
+| `MajorGridStroke` | `#D9D9D9` | Year/plot/frame boundary — **one uniform soft grey** (owner ruling 2026-10-20; the year boundary keeps its own `MajorBoundaryPt` width, so it reads as a boundary without a second colour) |
 | `DelineatorStroke` | `#404040` | Default delineator |
 | `WarningFill` | `#FFF2CC` | Non-exported validation indication |
 

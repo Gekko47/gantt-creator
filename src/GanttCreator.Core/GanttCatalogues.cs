@@ -256,7 +256,7 @@ public static class GanttCatalogues
         new("SplitterFill", "#FFE699"),
         new("AlternateBandFill", "#F2F2F2"),
         new("MinorGridStroke", "#D9D9D9"),
-        new("MajorGridStroke", "#000000"),
+        new("MajorGridStroke", "#D9D9D9"),
         new("DelineatorStroke", "#404040"),
         new("WarningFill", "#FFF2CC"),
     ];
