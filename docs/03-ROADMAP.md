@@ -222,8 +222,11 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.4 | Add move-up/down and expand/collapse display commands | Deterministic ordering and visibility tests | Required: exercise controls and confirm visible rows/shapes remain aligned |
 | R5.5 | Add label visibility/position controls | Scene snapshots and Type-specific allowed-position tests for every option | Required: inspect label placement, clipping, and retained settings after Refresh |
 | R5.6 | Add style/theme settings using explicit local defaults | Style round-trip, validation, and offline-dependency tests | Required: edit colours/heights/diamond size and compare Excel output with approved tokens |
-| R5.6a | Create, rename, and delete approved user named-style presets with explicit label/colour capabilities | Unique-key, capability, built-in protection, cancel-before-write, save/reopen, and Custom Activity consumption tests | Required: create a custom style, assign it to Custom Activity, Refresh, and compare the live result |
-| R5.6b | Add user-editable chart title and title-visibility settings | Nonblank-title, exact-settings-write, cancel/no-mutation, save/reopen, and Refresh-only tests | Required: edit title, toggle visibility, save/reopen, and confirm the chart changes only after Refresh |
+| R5.6a | Create, rename, and delete approved user named-style presets with explicit label/colour capabilities, edited as **one style object with all of its properties** (fill colour and pattern, outline colour, width and line style, label colour and vocabulary, sizes) | Unique-key, capability, built-in protection, cancel-before-write, save/reopen, Custom Activity consumption, and fill-pattern/stroke-dash round-trip tests | Required: create a custom style, assign it to Custom Activity, Refresh, and compare the live result |
+| R5.6b | Add user-editable chart title and title-visibility settings, with the live title drawn as an **owned textbox in the reserved heading row** rather than a cell | Nonblank-title, exact-settings-write, cancel/no-mutation, save/reopen, and Refresh-only tests | Required: edit title, toggle visibility, save/reopen, and confirm the chart changes only after Refresh |
+| R5.6c | Modernise the Theme settings dialog: every built-in style under **exactly one** family heading, both style tabs as **master–detail** views (the style list left, all of the selected style's properties right), and swatches that show the workbook's **current** colour rather than the code default | Grouping, geometry, and swatch tests: one heading per family and no duplicate, no control overflowing its group, no horizontal scroll bar, and the swatch matching the current colour | Required: open each tab and confirm the grouping, the layout, and the colours shown |
+| R5.6d | Make the **chart chrome** (background, alternating band, minor and major grid, year band, period band) **persisted, editable settings**; give the **delineator** an editable line width and line type; make every chart border **one soft grey**; and let a custom style's default label position be only one it permits | Setting round-trip, reader-refusal, delineator-line, border-token, and label-position tests, plus the scene and Office contract tests that prove the values reach the renderer | Required: edit a chrome colour, the delineator's line, and a border; Refresh; and compare the live result with the tokens |
+| R5.6e | Draw the live chart's outer border on the **union of the chart and the measured visible data table**, so the title, the table and the plot read as one object | Scene and Office contract tests: the live frame's left rule is at the table's measured origin, the background is not, and the export compositions and the golden scene snapshot are unchanged | Required: Refresh a live sheet and confirm the border encloses the title, the table and the plot as one rectangle |
 | R5.7 | Add Start-only delineator create/edit/delete workflow | Type/dialog creation, ignored-field warning, same-date, label, visibility, edit, and delete tests | Required: create from dropdown and Add Vertical Line dialog; chart changes only after Refresh |
 | R5.8 | Add warnings panel/dialog for clipped, missing, and conflicting data | Deterministic grouping, severity, and message tests | Required: provoke each warning in Excel and confirm it does not mutate data |
 | R5.9 | Complete Ribbon layout, icons, keytips, accessibility labels, and offline help | Ribbon XML/callback, resource, and offline-link contract tests | Required: keyboard, screen-reader label, high-contrast, and screenshot-layout review |
@@ -232,6 +235,47 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.12 | Select the Month period-label format (MM or MMM) from the Plot Time Scale ribbon | Ribbon XML/callback contract tests for the format dropdown; persist tests prove a user-chosen MM is stored and recalled and not clobbered by other settings | Required: choose MM, Refresh, confirm `01`-style month headers render, then MMM returns `Jan`-style |
 | R5.13 | Insert a row below a group child as a child of that group | Group-child join + regroup, top-level parent → first child, top-level leaf stays top-level, append stays top-level, and refused-positional-insert never reads/regroups tests | Required: insert below a group child, confirm the row joins the group and the native `-`/`+` controls reflect it without Refresh |
 | R5.14 | Add a per-row date-label selector (Auto/Start/Finish; the delineator's cell names a label corner instead — third owner ruling 2026-10-14) in the Labels group | Date-label capability-matrix, exact-enum, and type-capability validation tests; scene Auto/Start/Finish snapshot tests; delineator date-label corner snapshots | Required: set Auto/Start/Finish on a span, Refresh, confirm the start/finish date labels show and hide accordingly; set a corner on a delineator, Refresh, confirm the date label moves to it |
+
+> **Phase 5 notes (revision 12):** inserts three rows, `R5.6c`, `R5.6d` and
+> `R5.6e`, which extend R5.6's settings surface after the owner worked with it,
+> and re-states two rows whose delivered scope grew.
+> - **R5.6c** modernises the Theme settings dialog: every built-in style is
+>   grouped under **exactly one** family heading (the two user-authored styles
+>   are listed on the Custom styles tab, because a style-key type takes the
+>   style the *user* wrote and its built-in fallback is only a placeholder),
+>   both style tabs become **master–detail** views, and the colour swatches show
+>   the workbook's **current** colour rather than the code default. A property
+>   the renderer cannot honour is not offered: the hatch spacing and hatch line
+>   width are not editable, because the host's patterned fill is a fixed-pitch
+>   set with no member controlling either value.
+> - **R5.6d** makes the **chart chrome** — background, alternating band, minor
+>   and major grid, year band, period band — **persisted, editable settings**
+>   whose defaults are the entity guide's own tokens (ADR-0045), gives the
+>   **delineator** an editable line width and line type while every other
+>   built-in style's dash, outline width and bar height stay code-owned, makes
+>   every chart border **one soft grey** (ADR-0046), and lets a custom style's
+>   default label position be only one it permits.
+> - **R5.6e** draws the live chart's outer border on the **union of the chart
+>   and the measured visible data table**, so the title, the table and the plot
+>   read as one object (ADR-0048). Only the **border** uses the union: the
+>   background still stops at the plot, because a background over the table
+>   would paint the user's own cells. The export compositions and the golden
+>   scene snapshot are unchanged.
+> - **R5.6a**'s row now states the object-first editing the owner ruled for
+>   (2026-10-19): one style object with all of its properties, not a bag of
+>   option-kind rows. **R5.6b**'s row now states that the live title is an
+>   **owned textbox in the reserved heading row** (ADR-0043) rather than a cell.
+> - The live title's reserved-row placement and the frame's own top margin were
+>   reconciled in ADR-0047: a frame whose top margin reached above the sheet is
+>   shortened **at the top**, so its bottom edge stays where the geometry says.
+>   The title-band reservation that caused the frame to end below the row it
+>   belongs to was reverted.
+> - No existing row is removed, renumbered, or re-scoped. This revision contains
+>   **131** commit-sized work items, counted from the phase tables. The
+>   revision-11 figure of **125** did not match the tables — they already held
+>   **128** rows when it was written — so this figure is measured rather than
+>   inherited, and the discrepancy is recorded here rather than silently
+>   absorbed, exactly as revision 10 recorded revision 9's.
 
 > **Phase 5 notes (revision 11):** inserts one row, `R5.14`, which adds a
 > per-row **date-label selector** to the ribbon's **Labels** group (the group
@@ -342,6 +386,17 @@ Goal: export an exact-size PNG from the scene without depending on the Excel cli
 | R8.6 | Add atomic file writer and post-write validator | Corrupt, locked, invalid, and partial-file failure tests | None |
 | R8.7 | Add width/unit Ribbon controls and calculated-height preview | Parser, Ribbon-state, validation, and preview-value tests | Required: enter cm/in/px widths and confirm displayed height/pixel preview |
 | R8.8 | Wire Export PNG and ensure exact scene crop | Command plus independent dimensions, density, crop, and aspect tests | Required: export from Excel and inspect user flow, selected path, and resulting image |
+
+> **Phase 8 notes (revision 12):** a named style now carries an **outline dash
+> pattern** (ADR-0044), so the raster renderer must honour it: the PNG is
+> rendered from the scene rather than pasted from Excel, and a renderer that
+> dropped the dash would silently produce an export that does not match the
+> chart. The obligation belongs to **R8.2/R8.3** alongside the hatch, which is
+> the same kind of style-driven fill/line property. The chart chrome colours
+> (ADR-0045) and the live frame that encloses the visible table (ADR-0048)
+> add **no** export obligation: the chrome colours are already scene values,
+> and the export composition draws its own panel and its own frame, exactly as
+> it did before ADR-0048.
 
 > **Phase 8 notes (revision 10):** **R8.7** consumes the size-preset contract R4.7H owns rather than defining its own widths, and R8.1's `ExportSize` aspect calculation continues to govern the PNG's height. Raster remains an exporter of the scene as built: because the critical interval is a **filled rectangle** in the scene (ADR-0027), the raster renderer draws a filled rectangle with no critical-specific reinterpretation, exactly as Excel does.
 
