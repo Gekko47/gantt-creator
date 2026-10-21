@@ -243,6 +243,39 @@ try {
     Write-Host ("  --> every Gantt group expanded again? {0}" -f $allExpanded)
     Write-Host
 
+    Write-Host '=== Q5: does EXCEL''S OWN collapse produce the state we write? ==='
+    # The decisive check for "identical to the native control BY CONSTRUCTION":
+    # if Excel's own sheet-wide collapse leaves the child rows Hidden = $true,
+    # then writing that flag ourselves produces exactly the state Excel writes,
+    # and the Ribbon button is indistinguishable from the native control.
+    # A FRESH sheet is used so the sheet-wide call has no other group to touch.
+    $nativeSheet = $excel.Workbooks.Add().Worksheets.Item(1)
+    $nativeSheet.Name = 'Native'
+    $nativeTable = $nativeSheet.ListObjects.Add(1, $nativeSheet.Range('A1:C4'), $null, 1)
+    $nativeSheet.Rows.Item(2).OutlineLevel = 1
+    $nativeSheet.Rows.Item(3).OutlineLevel = 2
+    $nativeSheet.Rows.Item(4).OutlineLevel = 2
+
+    Write-Host '  -- Excel''s own collapse: worksheet.Outline.ShowLevels(1, 1) --'
+    $null = Invoke-ProbeCall 'nativeSheet.Outline.ShowLevels(1, 1)' {
+        $nativeSheet.Outline.ShowLevels(1, 1)
+    }
+    Show-GroupState $nativeSheet 2 4 'native sheet after Excel''s own collapse'
+    $nativeChildHidden = [bool]$nativeSheet.Rows.Item(3).Hidden
+    Write-Host ("  --> Excel's own collapse HIDES the child rows? {0}" -f $nativeChildHidden)
+    Write-Host '     (a TRUE here means our EntireRow.Hidden write produces exactly'
+    Write-Host '      the state Excel writes -- identical by construction)'
+    Write-Host
+
+    Write-Host '  -- Excel''s own expand: worksheet.Outline.ShowLevels(2, 1) --'
+    $null = Invoke-ProbeCall 'nativeSheet.Outline.ShowLevels(2, 1)' {
+        $nativeSheet.Outline.ShowLevels(2, 1)
+    }
+    Show-GroupState $nativeSheet 2 4 'native sheet after Excel''s own expand'
+    $nativeChildShown = -not [bool]$nativeSheet.Rows.Item(3).Hidden
+    Write-Host ("  --> Excel's own expand SHOWS the child rows? {0}" -f $nativeChildShown)
+    Write-Host
+
     Write-Host '=== VERDICT SUMMARY ==='
     Write-Host ('  Q1 scope:     the USER''s own group was collapsed too? {0}' -f $userGroupHidden)
     Write-Host '                 FALSE -> the mechanism is row-scoped, so the add-in'
@@ -255,6 +288,11 @@ try {
     Write-Host ('  Q3 restore:   every Gantt group expanded again? {0}' -f $allExpanded)
     Write-Host '  Q4 accessor:  `EntireRow.Hidden` is the write seam; a plain'
     Write-Host '                 `Range.Hidden` write is refused by the host.'
+    Write-Host ('  Q5 identical: Excel''s own collapse HIDES the child rows? {0}' -f $nativeChildHidden)
+    Write-Host ('                 its own expand SHOWS the child rows? {0}' -f $nativeChildShown)
+    Write-Host '                 TRUE/TRUE -> our write produces exactly the state Excel'
+    Write-Host '                              writes, so the Ribbon button is'
+    Write-Host '                              indistinguishable from the native control.'
     Write-Host '  Candidate A (`Range.Outline.ShowLevels`) is REJECTED: `Range.Outline`'
     Write-Host '  is not exposed on IDispatch, and the worksheet-level call is'
     Write-Host '  sheet-wide, so it would collapse the user''s own groups.'
