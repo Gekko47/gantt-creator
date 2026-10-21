@@ -10,6 +10,13 @@
           <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
           <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
           <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+          <!-- R5.3 WI-E: add a CHILD under the selected parent. The dropdown is
+               populated from the hierarchy catalogue, so it offers exactly the
+               child types the selected parent may take, and the planner accepts
+               every one of them. It is a dropDown rather than a menu because
+               Excel-DNA 1.9 exposes no IRibbonMenu type, so a getMenu callback
+               cannot be bound. -->
+          <dropDown id="ddnAddChild" getEnabled="GetEnabled" getItemCount="GetAddChildCount" getItemID="GetAddChildItemID" getItemLabel="GetAddChildItemLabel" onAction="OnAddChildChange"/>
           <button id="btnRemove" label="Remove" imageMso="TableInsertExcel" getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
         <group id="grpOrdering" label="Ordering">

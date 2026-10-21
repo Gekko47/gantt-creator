@@ -339,6 +339,175 @@ public class GanttRibbon : ExcelRibbon
         => OnAddRowClick(control, boundary, command, nameof(OnAddDelineatorClick), onCompleted);
 
     /// <summary>
+    /// Excel's <c>getItemCount</c> callback for the Add child dropdown
+    /// (R5.3 WI-E): how many child types the selected parent may take.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The item count; zero when the selection names no eligible parent.</returns>
+    public int GetAddChildCount(IRibbonControl control) =>
+        GetAddChildCount(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetAddChildCount(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the projection
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item count.</returns>
+    internal static int GetAddChildCount(IRibbonControl? control, RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+
+        return GetPermittedChildTypes(stateService).Count;
+    }
+
+    /// <summary>
+    /// Excel's <c>getItemID</c> callback for the Add child dropdown: the
+    /// stable id of the item at an index, which names the child type.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item id, or an empty string when the index is out of range.</returns>
+    public string GetAddChildItemID(IRibbonControl control, int index) =>
+        GetAddChildItemID(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetAddChildItemID(IRibbonControl, int)"/> against an
+    /// injected state service. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item id, or an empty string when the index is out of range.</returns>
+    internal static string GetAddChildItemID(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+
+        IReadOnlyList<GanttEntityType> permitted = GetPermittedChildTypes(stateService);
+        return index >= 0 && index < permitted.Count ? permitted[index].ToString() : string.Empty;
+    }
+
+    /// <summary>
+    /// Called when the user picks a child type from the Add child dropdown
+    /// (R5.3 WI-E).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    /// <param name="id">The id of the picked item, which names the child type.</param>
+    public void OnAddChildChange(IRibbonControl control, string id) =>
+        OnAddChildChange(
+            control,
+            id,
+            CommandBoundary.Instance,
+            type => () => AddChildCommand.RunForExcel(type),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnAddChildChange(IRibbonControl, string)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="id">The id of the picked item, which names the child type.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The command to run for the picked type.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnAddChildChange(
+        IRibbonControl? control,
+        string? id,
+        CommandBoundary boundary,
+        Func<GanttEntityType, Action> command,
+        Action? onCompleted = null)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(boundary);
+        ArgumentNullException.ThrowIfNull(command);
+
+        if (!Enum.TryParse(id, ignoreCase: false, out GanttEntityType childType)
+            || !EntityHierarchyCatalog.MayBeChild(childType))
+        {
+            // An unknown or non-child id is refused rather than guessed: the
+            // dropdown is the only producer, so an unknown id means the host
+            // changed something under us.
+            return;
+        }
+
+        boundary.Run(
+            nameof(OnAddChildChange),
+            () => command(childType)());
+        onCompleted?.Invoke();
+    }
+
+    /// <summary>
+    /// Excel's <c>getItemLabel</c> callback for the Add child dropdown: the
+    /// display name of the child type at an index.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    public string GetAddChildItemLabel(IRibbonControl control, int index) =>
+        GetAddChildItemLabel(control, index, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetAddChildItemLabel(IRibbonControl, int)"/> against an
+    /// injected state service. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="index">The zero-based item index.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The item label, or an empty string when the index is out of range.</returns>
+    internal static string GetAddChildItemLabel(
+        IRibbonControl? control,
+        int index,
+        RibbonStateService stateService)
+    {
+        _ = control;
+        ArgumentNullException.ThrowIfNull(stateService);
+
+        IReadOnlyList<GanttEntityType> permitted = GetPermittedChildTypes(stateService);
+        if (index < 0 || index >= permitted.Count)
+        {
+            return string.Empty;
+        }
+
+        GanttEntityType childType = permitted[index];
+        return EntityTypeCatalog.GetDefinition(childType)?.DisplayName ?? childType.ToString();
+    }
+
+    /// <summary>
+    /// The child types the selected parent may take, projected from the
+    /// hierarchy catalogue.
+    /// </summary>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The permitted child types; empty when the selection names no eligible parent.</returns>
+    /// <remarks>
+    /// The projection is the SAME one the Core planner accepts, so the
+    /// dropdown and the planner cannot disagree: a type the dropdown offers is
+    /// a type the planner admits.
+    /// </remarks>
+    private static IReadOnlyList<GanttEntityType> GetPermittedChildTypes(RibbonStateService stateService)
+    {
+        // CA1031: the callback runs inside Excel; a failure must not
+        // propagate into the Ribbon. An empty list disables the control,
+        // which is the fail-safe.
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetPermittedChildTypes();
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Called when the user clicks Promote to parent. The callback is a thin error
     /// boundary, exactly like the add-row clicks: it resolves the command name and
     /// delegates to <see cref="CommandBoundary"/>, which produces one log record
@@ -349,7 +518,6 @@ public class GanttRibbon : ExcelRibbon
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnPromoteToParentClick(IRibbonControl control) =>
         OnPromoteToParentClick(control, CommandBoundary.Instance, PromoteToParentCommand.RunForExcel, NotifyRibbonStateChanged);
-
     /// <summary>
     /// Runs <see cref="OnPromoteToParentClick(IRibbonControl)"/> against an
     /// injected boundary. Internal so contract tests can verify the routing

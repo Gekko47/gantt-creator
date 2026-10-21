@@ -102,6 +102,11 @@ public sealed class ProtectionGuardFirstTests
         // Promote, Demote, Move and Remove delegate to, so the guard is reached before
         // any ranged write.
         new("src/GanttCreator.Office/ExcelParentChildMutator.cs", "Mutate"),
+        // R5.3 WI-E: the add-child adapter inserts a new row and writes its
+        // ParentId and SiblingOrder cells, so it is a data mutation under
+        // ADR-0008 D4. Listed at "AddChild", the entry point that consults the
+        // shared guard before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelAddChildMutator.cs", "AddChild"),
         // R5.5: the label-position mutator writes the user's VISIBLE table -- exactly
         // one LabelPosition cell on one body row (bespoke per entity, never
         // group-applied) -- so it is a data mutation under ADR-0008 D4. Listed at
@@ -196,6 +201,11 @@ public sealed class ProtectionGuardFirstTests
         // Promote/Demote and the typed outcome; it performs no mutation of its own --
         // the mutating implementation is registered in MutatingAdapters above.
         "src/GanttCreator.Office/IParentChildMutator.cs",
+        // R5.3 WI-E: the add-child port and its typed outcome. The port
+        // declares AddChild and the outcome; it performs no mutation of its
+        // own -- the mutating implementation is registered in MutatingAdapters
+        // above.
+        "src/GanttCreator.Office/IAddChildMutator.cs",
         // R5.5: the label-position port and the selection identifier. The port declares
         // the single write and its typed outcome -- the mutating implementation is
         // registered in MutatingAdapters above. The identifier reads the active cell

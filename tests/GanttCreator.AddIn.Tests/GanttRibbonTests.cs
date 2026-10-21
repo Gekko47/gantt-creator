@@ -417,6 +417,11 @@ public class GanttRibbonTests
                 // R5.6a adds the custom-style dropdown after it (document
                 // order), gated on a single style-key row AND at least one
                 // user-created style key existing.
+                // R5.3 WI-E: the Add child dropdown is the FIRST dropdown in
+                // document order, because it sits in the Data group, before
+                // the Labels group's dropdowns. It is gated on the selection
+                // naming a row that may own children.
+                RibbonControlIds.AddChild,
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,

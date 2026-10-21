@@ -2144,6 +2144,7 @@ internal class RibbonStateService
             DateLabelContext dateLabelContext = CaptureDateLabelContext(previous);
             DateLabelPlacementContext dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
             CustomStyleContext customStyleContext = CaptureCustomStyleContext(previous);
+            AddChildContext addChildContext = CaptureAddChildContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 hasActiveWorkbook ?? previous.HasActiveWorkbook,
@@ -2173,7 +2174,8 @@ internal class RibbonStateService
                 dateLabelPlacementContext.Options,
                 customStyleContext.Available,
                 customStyleContext.SelectedKey,
-                customStyleContext.Options));
+                customStyleContext.Options,
+                addChildContext.Types));
         }
         catch
         {
@@ -2368,6 +2370,93 @@ internal class RibbonStateService
     /// <returns>The unavailable context.</returns>
     private static CustomStyleContext UnavailableCustomStyleContext(RibbonState previous) =>
         new(false, previous.SelectedCustomStyleKey, previous.CustomStyleOptions);
+
+    /// <summary>
+    /// The Add child dropdown's captured context (R5.3 WI-E).
+    /// </summary>
+    /// <param name="Available">Whether the selection names a row that may own children.</param>
+    /// <param name="Types">The child types the selected parent may take.</param>
+    private readonly record struct AddChildContext(
+        bool Available,
+        IReadOnlyList<GanttEntityType>? Types);
+
+    /// <summary>
+    /// Captures the Add child dropdown's context from the selection identifier
+    /// and the table reader (R5.3 WI-E).
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    /// <remarks>
+    /// The permitted types are PROJECTED from the hierarchy catalogue through
+    /// the same <c>AddChildPlanner.PermittedChildTypes</c> the Core planner
+    /// uses, so the dropdown and the planner cannot disagree: a type the
+    /// dropdown offers is a type the planner admits.
+    /// <para>
+    /// Never throws: an indeterminable selection keeps the previous context
+    /// (snapshot stickiness), so a transient COM failure cannot grey the
+    /// dropdown mid-selection.
+    /// </para>
+    /// </remarks>
+    private AddChildContext CaptureAddChildContext(RibbonState previous)
+    {
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        IGanttTableReader? reader = _tableReader;
+        if (identifier is null || reader is null)
+        {
+            return UnavailableAddChildContext(previous);
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.IsSingleBodyRow || facts.BodyIndex is not int bodyIndex)
+            {
+                return UnavailableAddChildContext(previous);
+            }
+
+            GanttTableReadOutcome read = reader.Read();
+            if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+            {
+                return UnavailableAddChildContext(previous);
+            }
+
+            GanttRowDto row = read.Rows[bodyIndex - 1];
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type))
+            {
+                return UnavailableAddChildContext(previous);
+            }
+
+            IReadOnlyList<GanttEntityType> permitted = AddChildPlanner.PermittedChildTypes(type);
+            return permitted.Count == 0
+                ? UnavailableAddChildContext(previous)
+                : new AddChildContext(true, permitted);
+        }
+        catch
+        {
+            return UnavailableAddChildContext(previous);
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The context used when the selection names no row that may own children.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The unavailable context.</returns>
+    private static AddChildContext UnavailableAddChildContext(RibbonState previous) =>
+        new(false, previous.PermittedChildTypes);
+
+    /// <summary>
+    /// The child types the selected parent may take (R5.3 WI-E). A pure read
+    /// of the cached snapshot; an empty list when the selection names no
+    /// eligible parent. Never throws.
+    /// </summary>
+    /// <returns>The permitted child types.</returns>
+    internal IReadOnlyList<GanttEntityType> GetPermittedChildTypes() =>
+        _state.PermittedChildTypes ?? [];
 
     /// <summary>
     /// Captures the date-label dropdown's context from the selection
