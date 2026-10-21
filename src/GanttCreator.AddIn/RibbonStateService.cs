@@ -1033,13 +1033,48 @@ internal class RibbonStateService
 
             // Show the WinForms dialog. Virtual so tests can substitute a
             // non-blocking dialog result instead of running a message loop.
-            using ThemeSettingsForm dialog = new ThemeSettingsForm(request);
+            //
+            // The write is INJECTED into the dialog (R5.6 WI-C) rather than
+            // performed here after it closes. The contrast warning has to be
+            // shown while the dialog is still open -- a warning the user
+            // never sees is not a warning -- and the writer lives in this
+            // service, so the dialog calls back through it. The dialog
+            // applies the write BEFORE it surfaces the warning, so the
+            // warning stays advisory and never blocks the write.
+            bool writeRefused = false;
+            using ThemeSettingsForm dialog = new ThemeSettingsForm(
+                request,
+                validated =>
+                {
+                    ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
+                    if (writeOutcome is { Succeeded: true })
+                    {
+                        return true;
+                    }
+
+                    if (writeOutcome is not null)
+                    {
+                        writeRefused = true;
+                        _errorPresenter(
+                            $"Failed to write theme settings: {writeOutcome.Refusal}");
+                    }
+
+                    return false;
+                });
             if (ShowThemeSettingsDialog(dialog) == DialogResult.OK)
             {
                 ThemeEditRequest? validated = dialog.GetValidatedRequest();
                 if (validated != null)
                 {
-                    // Write the themed edits
+                    // The dialog already performed the write. A dialog built
+                    // without a writer -- which is how the unit tests drive it
+                    // -- leaves the write to this method, so the write happens
+                    // here in that case and NOT twice.
+                    if (dialog.WroteRequest)
+                    {
+                        return !writeRefused;
+                    }
+
                     ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
                     if (writeOutcome is not null && writeOutcome.Succeeded)
                     {

@@ -157,6 +157,52 @@ internal sealed partial class ThemeSettingsForm : Form
     private readonly Dictionary<string, EntityStyleColours> _entityStyleColours = [];
 
     /// <summary>
+    /// The colours each built-in style carried when the dialog opened, as the
+    /// Core edit shape.
+    /// <para>
+    /// This is the grandfathering baseline for the contrast warning (R5.6 D2):
+    /// a text/fill pair the user did not change is not the user's doing, so
+    /// it is not reported. Without the baseline the shipped green/blue/red
+    /// defaults would warn every time the dialog was opened and accepted,
+    /// because the dialog emits an edit for every style it holds rather than
+    /// only the ones the user touched.
+    /// </para>
+    /// </summary>
+    private readonly List<ThemeStyleEdit> _originalStyleEdits = [];
+
+    /// <summary>
+    /// Applies a validated theme edit to the workbook, and reports whether it
+    /// was written.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The write is injected rather than performed by the service AFTER the
+    /// dialog closes, because the contrast warning has to be shown while the
+    /// dialog is still open. A warning the user never sees is not a warning,
+    /// and the service could not show one after the dialog had gone.
+    /// </para>
+    /// <para>
+    /// Null means no writer is wired, which is how the dialog's own unit
+    /// tests exercise it. The delegate returns false for a REFUSED write; the
+    /// dialog then closes so the caller can report the refusal, exactly as it
+    /// did when the caller owned the write.
+    /// </para>
+    /// </remarks>
+    private readonly Func<ThemeEditRequest, bool>? _write;
+
+    /// <summary>
+    /// The contrast warning currently on screen, or null when none is.
+    /// </summary>
+    /// <remarks>
+    /// The warning is advisory and never blocks the write, so the dialog stays
+    /// open to show it. The user then presses OK again to acknowledge it. The
+    /// text is remembered so the acknowledgement is recognised: the same
+    /// warning twice is the user saying "I have seen it", not a new warning
+    /// to show, and re-showing it would leave the dialog impossible to close.
+    /// </remarks>
+    private string? _shownWarningText;
+
+    /// <summary>
     /// The pending line type for each built-in style, keyed by the style key.
     /// <para>
     /// Only the delineator's line type is user-editable, but the value lives
@@ -362,8 +408,13 @@ internal sealed partial class ThemeSettingsForm : Form
     /// Initializes the dialog with the current theme values.
     /// </summary>
     /// <param name="request">The current theme edit request (pre-populated with workbook values).</param>
-    internal ThemeSettingsForm(ThemeEditRequest request)
+    /// <param name="write">
+    /// The write the OK button performs. Null leaves the dialog to produce a
+    /// validated request for a caller that writes it itself.
+    /// </param>
+    internal ThemeSettingsForm(ThemeEditRequest request, Func<ThemeEditRequest, bool>? write = null)
     {
+        _write = write;
         _originalCustomDefs = request.CustomStyleDefs ?? [];
         InitializeComponent();
         PopulateFromRequest(request);
@@ -432,6 +483,17 @@ internal sealed partial class ThemeSettingsForm : Form
     /// Gets the validated request if the user clicked OK, or null if cancelled/invalid.
     /// </summary>
     internal ThemeEditRequest? GetValidatedRequest() => _validatedRequest;
+
+    /// <summary>
+    /// Gets whether the dialog performed the write itself.
+    /// </summary>
+    /// <remarks>
+    /// The dialog writes through an injected delegate so the contrast warning
+    /// can be shown while the dialog is open. A caller that owns the write
+    /// uses this to know it must not write the request again: the write
+    /// happens exactly once, whichever side owns it.
+    /// </remarks>
+    internal bool WroteRequest { get; private set; }
 
     /// <summary>
     /// Test hook: sets the validated request without running the dialog's OK
@@ -2441,6 +2503,24 @@ internal sealed partial class ThemeSettingsForm : Form
                 edit.TextColour);
         }
 
+        // The grandfathering baseline for the contrast warning: the colours
+        // as they stand right now, which are the workbook's own values. It is
+        // captured BEFORE the user can change anything, so a pair the user
+        // does not touch compares equal to it and is not reported (R5.6 D2).
+        foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
+        {
+            if (!_entityStyleColours.TryGetValue(preset.StyleKey, out EntityStyleColours? colours))
+            {
+                continue;
+            }
+
+            _originalStyleEdits.Add(new ThemeStyleEdit(
+                preset.StyleKey,
+                colours.Fill,
+                colours.Stroke,
+                colours.Text));
+        }
+
         // The line types. Only the delineator's is user-editable, so only that
         // one carries a value; every other built-in style's dash is
         // code-owned and the reader exact-matches it against the preset.
@@ -2739,14 +2819,63 @@ internal sealed partial class ThemeSettingsForm : Form
             return;
         }
 
-        IReadOnlyList<string> warnings = ThemeEditRequest.ContrastWarnings(request);
-        if (warnings.Count > 0)
+        // R5.6 D2: the contrast warning is ADVISORY and never blocks the
+        // write, but it must be VISIBLE -- the user has to see it, or it is
+        // not a warning. It used to be computed and then thrown away by the
+        // `DialogResult = OK` below, so the dialog closed with the message
+        // set but never on screen.
+        //
+        // The order matters and is the whole point of the change:
+        //
+        //   1. The write happens FIRST, so the warning never blocks it.
+        //   2. The warning is then shown and the dialog STAYS OPEN, so the
+        //      user reads it against the colours they just chose.
+        //   3. The next OK is the acknowledgement: the same warning is not
+        //      shown twice, so the dialog closes.
+        IReadOnlyList<string> warnings = ThemeEditRequest.ContrastWarnings(request, _originalStyleEdits);
+        string warningText = string.Join("; ", warnings);
+
+        bool alreadyShown = string.Equals(warningText, _shownWarningText, StringComparison.Ordinal);
+        if (warnings.Count > 0 && !alreadyShown)
         {
-            _warningLabel.Text = string.Join("; ", warnings);
+            _shownWarningText = warningText;
+            _warningLabel.Text = warningText;
             _warningLabel.Visible = true;
         }
 
+        // The write is performed before the warning is surfaced, so the
+        // warning is genuinely advisory: it reports a fact about what was
+        // written, it does not gate it.
         _validatedRequest = request;
+        if (_write is { } write)
+        {
+            WroteRequest = true;
+
+            // The acknowledgement OK must not write AGAIN. The first OK
+            // already applied the change; the second is the user saying "I
+            // have seen the warning". Writing twice would apply the same
+            // request to the workbook twice, which is a second source of
+            // truth about how many times the user's change was written.
+            if (!alreadyShown)
+            {
+                if (!write(request))
+                {
+                    // The write was refused. The dialog closes so the caller
+                    // can report the refusal, which is how it behaved when the
+                    // caller owned the write.
+                    _validatedRequest = null;
+                    DialogResult = DialogResult.OK;
+                    return;
+                }
+            }
+        }
+
+        if (warnings.Count > 0 && !alreadyShown)
+        {
+            DialogResult = DialogResult.None;
+            return;
+        }
+
         DialogResult = DialogResult.OK;
     }
 

@@ -436,13 +436,51 @@ public sealed record ThemeEditRequest(
     /// Empty when nothing edited crosses the policy; never blocks the write.
     /// </summary>
     /// <param name="request">The validated request.</param>
+    /// <param name="originalStyles">
+    /// The colours each style carried when the editor opened, as the same
+    /// edit shape. A style whose fill and text are unchanged from this
+    /// baseline is <b>grandfathered</b> and is not reported: the shipped
+    /// default's contrast is not the user's doing, so no warning is raised
+    /// for it (R5.6 D2, "no warning on open"). Only a pair the user
+    /// actually changed is reported. A style absent from the baseline is
+    /// treated as changed, and is reported.
+    /// <para>
+    /// Null means no baseline is known, so every pair in the request is
+    /// reported. That is the conservative reading, and it is what a caller
+    /// with no baseline can honestly assert.
+    /// </para>
+    /// </param>
     /// <returns>Warning lines, or empty.</returns>
-    public static IReadOnlyList<string> ContrastWarnings(ThemeEditRequest request)
+    public static IReadOnlyList<string> ContrastWarnings(
+        ThemeEditRequest request,
+        IReadOnlyList<ThemeStyleEdit>? originalStyles = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        Dictionary<string, ThemeStyleEdit> baseline = new(StringComparer.Ordinal);
+        if (originalStyles is not null)
+        {
+            foreach (ThemeStyleEdit original in originalStyles)
+            {
+                baseline[original.StyleKey] = original;
+            }
+        }
+
         List<string> warnings = [];
         foreach (ThemeStyleEdit edit in request.StyleEdits)
         {
+            // R5.6 D2's grandfathering: a pair the user did not touch is
+            // not the user's doing, so it is not reported. The comparison is
+            // on the two colours the policy evaluates -- the fill the text
+            // sits on and the text itself -- so a stroke-only edit does not
+            // drag an unchanged pair into the report.
+            if (baseline.TryGetValue(edit.StyleKey, out ThemeStyleEdit? original)
+                && string.Equals(original.FillColour, edit.FillColour, StringComparison.Ordinal)
+                && string.Equals(original.TextColour, edit.TextColour, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             if (edit.FillColour.Length == 0 || edit.TextColour.Length == 0)
             {
                 continue;
