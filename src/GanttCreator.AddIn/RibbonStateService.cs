@@ -679,7 +679,7 @@ internal class RibbonStateService
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        IExcelApplicationAdapter? adapter = RibbonStateService.Instance._applicationAdapter;
+        IExcelApplicationAdapter? adapter = Instance._applicationAdapter;
         if (adapter is null)
         {
             return;
