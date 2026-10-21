@@ -103,10 +103,13 @@ function Invoke-ProbeCall {
 }
 
 function Set-RowHidden {
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param($Sheet, [int[]] $Rows, [bool] $Hidden)
 
     foreach ($r in $Rows) {
-        $Sheet.Rows.Item($r).EntireRow.Hidden = $Hidden
+        if ($PSCmdlet.ShouldProcess("row $r", "set Hidden to $Hidden")) {
+            $Sheet.Rows.Item($r).EntireRow.Hidden = $Hidden
+        }
     }
 }
 
