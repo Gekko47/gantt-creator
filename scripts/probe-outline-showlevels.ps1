@@ -276,6 +276,23 @@ try {
     Write-Host ("  --> Excel's own expand SHOWS the child rows? {0}" -f $nativeChildShown)
     Write-Host
 
+    Write-Host '  -- Q6: does Excel''s expand reveal a row the USER hid by hand? --'
+    # A row hidden by hand carries outline level 1 (it belongs to no group).
+    # If Excel''s own expand leaves it hidden, then "expand all" must leave
+    # hand-hidden rows alone, and the add-in must do the same: it may only
+    # reveal the rows ITS relationships hid.
+    $nativeSheet.Rows.Item(4).Hidden = $true
+    Write-Host '  (row 4 hidden by hand, outline level 2)'
+    $null = Invoke-ProbeCall 'nativeSheet.Outline.ShowLevels(2, 1) [expand again]' {
+        $nativeSheet.Outline.ShowLevels(2, 1)
+    }
+    Show-GroupState $nativeSheet 2 4 'native sheet after the expand'
+    $handHiddenStayedHidden = [bool]$nativeSheet.Rows.Item(4).Hidden
+    Write-Host ("  --> the hand-hidden row stayed hidden? {0}" -f $handHiddenStayedHidden)
+    Write-Host '     (a TRUE here means the add-in must only reveal the rows its own'
+    Write-Host '      relationships hid, and must not touch a hand-hidden row)'
+    Write-Host
+
     Write-Host '=== VERDICT SUMMARY ==='
     Write-Host ('  Q1 scope:     the USER''s own group was collapsed too? {0}' -f $userGroupHidden)
     Write-Host '                 FALSE -> the mechanism is row-scoped, so the add-in'
