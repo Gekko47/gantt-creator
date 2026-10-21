@@ -102,7 +102,7 @@ function Invoke-ProbeCall {
     }
 }
 
-function Set-ChildrenHidden {
+function Set-RowHidden {
     param($Sheet, [int[]] $Rows, [bool] $Hidden)
 
     foreach ($r in $Rows) {
@@ -174,7 +174,7 @@ try {
     Write-Host '  (a worksheet-wide collapse would hide the USER''s own group too,'
     Write-Host '   which is why Candidate A is rejected: see Q1 below)'
     # Undo whatever the sheet-wide call did, so the next case starts clean.
-    Set-ChildrenHidden $sheet $ganttChildRows $false
+    Set-RowHidden $sheet $ganttChildRows $false
     $sheet.Rows.Item(10).Hidden = $false
     $sheet.Rows.Item(3).OutlineLevel = $childOutlineLevel
     $sheet.Rows.Item(4).OutlineLevel = $childOutlineLevel
@@ -191,7 +191,7 @@ try {
 
     Write-Host '=== Q1: does the collapse reach the USER''s own group? ==='
     $null = Invoke-ProbeCall 'hide the Gantt child rows via EntireRow.Hidden' {
-        Set-ChildrenHidden $sheet $ganttChildRows $true
+        Set-RowHidden $sheet $ganttChildRows $true
     }
     Show-GroupState $sheet 2 6 'Gantt table body after the collapse'
     Show-GroupState $sheet 9 10 "the USER's own group after the collapse"
@@ -233,7 +233,7 @@ try {
 
     Write-Host '=== Q3: does clearing the flag expand everything again? ==='
     $null = Invoke-ProbeCall 'show the Gantt child rows again' {
-        Set-ChildrenHidden $sheet $ganttChildRows $false
+        Set-RowHidden $sheet $ganttChildRows $false
     }
     Show-GroupState $sheet 2 6 'Gantt table body after the expand'
     Show-GroupState $sheet 9 10 "the USER's own group after the expand"
@@ -251,7 +251,6 @@ try {
     # A FRESH sheet is used so the sheet-wide call has no other group to touch.
     $nativeSheet = $excel.Workbooks.Add().Worksheets.Item(1)
     $nativeSheet.Name = 'Native'
-    $nativeTable = $nativeSheet.ListObjects.Add(1, $nativeSheet.Range('A1:C4'), $null, 1)
     $nativeSheet.Rows.Item(2).OutlineLevel = 1
     $nativeSheet.Rows.Item(3).OutlineLevel = 2
     $nativeSheet.Rows.Item(4).OutlineLevel = 2
