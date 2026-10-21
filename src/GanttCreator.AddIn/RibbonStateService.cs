@@ -300,6 +300,18 @@ internal class RibbonStateService
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotStartDate, out DateOnly bound))
             {
                 string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+
+                // The seeded start is checked against the finish BEFORE the
+                // state is committed, for the same reason as the date commit:
+                // an inverted range must not reach ValidateSettings, which
+                // throws and would be reported as a generic error.
+                if (!TryAcceptExplicitStart(seeded, out string? warning))
+                {
+                    PresentWarning(warning!);
+                    Invalidate();
+                    return;
+                }
+
                 _state = _state with
                 {
                     PlotStartAuto = false,
@@ -388,6 +400,16 @@ internal class RibbonStateService
             if (PlotRangeResolver.TryParsePlotDate(_state.EffectivePlotFinishDate, out DateOnly bound))
             {
                 string seeded = GanttDateFormatting.FormatDdMMMyy(bound);
+
+                // The symmetric check: see SetPlotStartAuto for why the range
+                // is checked BEFORE the state is committed.
+                if (!TryAcceptExplicitFinish(seeded, out string? warning))
+                {
+                    PresentWarning(warning!);
+                    Invalidate();
+                    return;
+                }
+
                 _state = _state with
                 {
                     PlotFinishAuto = false,
@@ -455,10 +477,29 @@ internal class RibbonStateService
     {
         if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
         {
+            // R5.1 D3: a mode-change warning follows the R2.6 message
+            // discipline -- it says what was wrong and what to do. Silently
+            // reverting leaves the user pressing OK on a box that never
+            // took their value, with nothing to say why.
+            PresentWarning(
+                $"'{dateText}' is not a plot start date. Use dd-MMM-yy, for example 10-Jan-26. "
+                + "The previous start date has been kept.");
             return;
         }
 
         string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+
+        // The range is checked BEFORE the state is committed, so an inverted
+        // range changes neither the in-memory state nor the workbook. It is
+        // checked here rather than left to `ValidateSettings` because that
+        // throws, and the command boundary would then report it as a generic
+        // unexpected error -- a second, vaguer message after this one.
+        if (!TryAcceptExplicitStart(normalised, out string? warning))
+        {
+            PresentWarning(warning!);
+            return;
+        }
+
         _state = _state with
         {
             PlotStartAuto = false,
@@ -482,6 +523,113 @@ internal class RibbonStateService
     }
 
     /// <summary>
+    /// Accepts a candidate explicit plot-start date, or refuses it because it
+    /// would invert the range.
+    /// </summary>
+    /// <param name="normalisedStart">The candidate start date, formatted for storage.</param>
+    /// <param name="warning">The user-facing message when the candidate is refused.</param>
+    /// <returns>Whether the candidate may be committed.</returns>
+    /// <remarks>
+    /// The check is made against the finish end's CURRENT value, so the
+    /// warning names the two dates the user can see. An end still in
+    /// automatic mode cannot invert the range: it derives from the data, so
+    /// the start is whatever the user asked for and the range is the data's
+    /// to decide.
+    /// </remarks>
+    private bool TryAcceptExplicitStart(string normalisedStart, out string? warning)
+    {
+        warning = null;
+
+        if (_state.PlotFinishAuto)
+        {
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(_state.PlotFinishDate, out DateOnly finish))
+        {
+            // The finish end has no usable date yet, so there is no range to
+            // invert yet. The finish commit raises the same warning when the
+            // user supplies the other half.
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(normalisedStart, out DateOnly start))
+        {
+            return true;
+        }
+
+        if (start <= finish)
+        {
+            return true;
+        }
+
+        warning =
+            $"The plot start {start:dd-MMM-yy} is after the plot finish {finish:dd-MMM-yy}. "
+            + "The chart cannot be drawn over that range, so the start date has been kept.";
+        return false;
+    }
+
+    /// <summary>
+    /// Accepts a candidate explicit plot-finish date, or refuses it because it
+    /// would invert the range. The symmetric counterpart of
+    /// <see cref="TryAcceptExplicitStart"/>.
+    /// </summary>
+    /// <param name="normalisedFinish">The candidate finish date, formatted for storage.</param>
+    /// <param name="warning">The user-facing message when the candidate is refused.</param>
+    /// <returns>Whether the candidate may be committed.</returns>
+    private bool TryAcceptExplicitFinish(string normalisedFinish, out string? warning)
+    {
+        warning = null;
+
+        if (_state.PlotStartAuto)
+        {
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(_state.PlotStartDate, out DateOnly start))
+        {
+            return true;
+        }
+
+        if (!PlotRangeResolver.TryParsePlotDate(normalisedFinish, out DateOnly finish))
+        {
+            return true;
+        }
+
+        if (finish >= start)
+        {
+            return true;
+        }
+
+        warning =
+            $"The plot finish {finish:dd-MMM-yy} is before the plot start {start:dd-MMM-yy}. "
+            + "The chart cannot be drawn over that range, so the finish date has been kept.";
+        return false;
+    }
+
+    /// <summary>
+    /// Shows a user-facing warning, degrading to silence when the host refuses
+    /// to present one. A dialog failure must never turn a completed command
+    /// into an escaping exception.
+    /// </summary>
+    /// <param name="message">The message to present.</param>
+    private void PresentWarning(string message)
+    {
+        // CA1031: a presenter failure is outside command behaviour.
+#pragma warning disable CA1031
+        try
+        {
+            _errorPresenter(message);
+        }
+        catch
+        {
+            // Intentionally empty: the state change already happened; only the
+            // message is lost.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
     /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial
     /// the edit box echoes back), normalises it to dd-MMM-yy for storage, and
@@ -497,10 +645,25 @@ internal class RibbonStateService
     {
         if (!PlotRangeResolver.TryParsePlotDate(dateText, out DateOnly parsed))
         {
+            // R5.1 D3: the same actionable warning the start date gives. See
+            // SetPlotStartDate for why a silent revert is not enough.
+            PresentWarning(
+                $"'{dateText}' is not a plot finish date. Use dd-MMM-yy, for example 10-Jan-26. "
+                + "The previous finish date has been kept.");
             return;
         }
 
         string normalised = GanttDateFormatting.FormatDdMMMyy(parsed);
+
+        // The symmetric check: see SetPlotStartDate for why the range is
+        // checked BEFORE the state is committed rather than left to
+        // ValidateSettings.
+        if (!TryAcceptExplicitFinish(normalised, out string? warning))
+        {
+            PresentWarning(warning!);
+            return;
+        }
+
         _state = _state with
         {
             PlotFinishAuto = false,
