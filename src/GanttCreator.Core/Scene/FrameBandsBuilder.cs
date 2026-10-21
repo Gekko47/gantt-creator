@@ -546,14 +546,30 @@ public static class FrameBandsBuilder
 
     private static void AddOuterFrame(List<ScenePrimitive> primitives, FrameBandsRequest request, RectD bounds)
     {
+        // ADR-0048: a LIVE chart's border encloses the visible data table as well as
+        // the plot, so the top and bottom rules run from the table's first column to
+        // the plot's last and a vertical rule closes the rectangle at the table's
+        // start. The union takes the chart's own top and bottom (the chart's margins)
+        // and the table's left, so the frame is ONE rectangle rather than a step.
+        //
+        // Only the BORDER uses the union. The background, the bands, the grid and
+        // the closing line keep the plot's own rectangle: a background over the
+        // table would paint the user's own cells.
+        //
+        // The export compositions draw their own panel, so they pass no data-panel
+        // rectangle and keep the border exactly where it was.
+        RectD outline = request.DataPanelBounds is { } dataPanel
+            ? Union(bounds, dataPanel)
+            : bounds;
+
         SceneStyle style = request.Theme.MajorGrid;
         primitives.Add(
             new SceneLine(
                 "chart:frame:top",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Top),
-                new PointD(bounds.Right, bounds.Top),
+                new PointD(outline.Left, outline.Top),
+                new PointD(outline.Right, outline.Top),
                 style
             )
         );
@@ -562,8 +578,8 @@ public static class FrameBandsBuilder
                 "chart:frame:bottom",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Bottom),
-                new PointD(bounds.Right, bounds.Bottom),
+                new PointD(outline.Left, outline.Bottom),
+                new PointD(outline.Right, outline.Bottom),
                 style
             )
         );
@@ -572,8 +588,8 @@ public static class FrameBandsBuilder
                 "chart:frame:left",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Left, bounds.Top),
-                new PointD(bounds.Left, bounds.Bottom),
+                new PointD(outline.Left, outline.Top),
+                new PointD(outline.Left, outline.Bottom),
                 style
             )
         );
@@ -582,8 +598,8 @@ public static class FrameBandsBuilder
                 "chart:frame:right",
                 SceneOwnerId.Chart,
                 ZLayer.Frame,
-                new PointD(bounds.Right, bounds.Top),
-                new PointD(bounds.Right, bounds.Bottom),
+                new PointD(outline.Right, outline.Top),
+                new PointD(outline.Right, outline.Bottom),
                 style
             )
         );

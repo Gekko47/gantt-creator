@@ -816,6 +816,40 @@ public static class SceneBuilder
     }
 
 
+    /// <summary>
+    /// The visible data table's rectangle, in worksheet points (ADR-0048).
+    /// </summary>
+    /// <param name="grid">The measured data-panel grid.</param>
+    /// <returns>The table's rectangle, or <see langword="null"/> when there is no grid.</returns>
+    /// <remarks>
+    /// <para>
+    /// Every edge is MEASURED, so the border follows the table wherever it is.
+    /// The left edge is the panel's own origin - the same number the live title
+    /// textbox is placed at - so the border's vertical rule and the title's left
+    /// edge cannot disagree about where the table starts.
+    /// </para>
+    /// <para>
+    /// The top is the header row's top and the bottom is the last body row's
+    /// bottom, so the rectangle is the table itself rather than an approximation
+    /// of it. The chart's own top and bottom margins lie outside this rectangle,
+    /// and the border is drawn on the union, so those margins are preserved.
+    /// </para>
+    /// </remarks>
+    private static RectD? LiveDataPanelBounds(PanelCellGrid? grid)
+    {
+        if (grid is null)
+        {
+            return null;
+        }
+
+        double left = grid.OriginLeftPt;
+        double right = left + grid.Columns.Sum(column => column.WidthPt);
+        double top = grid.OriginTopPt - grid.HeaderHeightPt;
+        double bottom = grid.OriginTopPt + grid.RowHeightsPt.Sum();
+
+        return new RectD(left, top, right - left, bottom - top);
+    }
+
     private static SceneBuildOutcome BuildFramePanelAndScene(
         SceneBuildRequest request,
         TimeScale timeScale,
@@ -915,6 +949,15 @@ public static class SceneBuilder
         // accepted by RectD and would drag the content origin to the origin.
         RectD framePanelBounds = panelOutcome?.Result?.PanelBounds ?? plotBounds;
 
+        // ADR-0048: a LIVE chart's border must enclose the visible data table and
+        // the title that sits in its columns, not the plot alone. The live title
+        // is an owned textbox placed at the table's first column, so without this
+        // the border started at the plot and the chart read as two unrelated
+        // objects. The EXPORT compositions draw their own panel and are unaffected.
+        RectD? dataPanelBounds = request.Profile == SceneCompositionProfile.LiveExcel
+            ? LiveDataPanelBounds(request.Grid)
+            : null;
+
         FrameBandsCreationOutcome frame = FrameBandsBuilder.TryBuild(
             new FrameBandsRequest(
                 timeScale,
@@ -937,7 +980,8 @@ public static class SceneBuilder
                 request.PlotBandHeaderOverlapPt,
                 request.ChartAnchorRowHeightPt,
                 frameTheme,
-                SheetCoordinates: request.Profile == SceneCompositionProfile.LiveExcel),
+                SheetCoordinates: request.Profile == SceneCompositionProfile.LiveExcel,
+                DataPanelBounds: dataPanelBounds),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
         {

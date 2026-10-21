@@ -931,6 +931,88 @@ public sealed class FrameBandsBuilderTests
         });
     }
 
+    /// <summary>
+    /// ADR-0048: a LIVE chart's title is an owned textbox in the table's own
+    /// columns, so the table and the title sit to the LEFT of the plot. The
+    /// border must enclose them, or the chart reads as two unrelated objects.
+    /// </summary>
+    [Fact]
+    public void The_outer_frame_encloses_the_data_panel_a_live_chart_supplies()
+    {
+        // The live shape of the request: the panel bounds ARE the plot bounds (a
+        // live chart's panel is the worksheet's own cells, so the frame falls back
+        // to the plot), and the visible table is to the LEFT of the plot.
+        FrameBandsRequest request =
+            CreateRequest() with
+            {
+                PanelBounds = new RectD(100, 100, 300, 100),
+                DataPanelBounds = new RectD(-200, 100, 200, 100),
+            };
+
+        FrameBandsResult result = Build(request).Result!;
+        RectD bounds = result.Geometry.ChartBounds;
+
+        // The top and bottom rules now START at the table's first column, so
+        // they cross the columns between the table and the plot.
+        SceneLine top = FrameLine(result, "chart:frame:top");
+        Assert.Equal(-200, top.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, top.To!.X, precision: 9);
+
+        SceneLine bottom = FrameLine(result, "chart:frame:bottom");
+        Assert.Equal(-200, bottom.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, bottom.To!.X, precision: 9);
+
+        // The vertical rule closes the rectangle at the table's first column, and
+        // the chart's own top and bottom are unchanged.
+        SceneLine left = FrameLine(result, "chart:frame:left");
+        Assert.Equal(-200, left.From!.X, precision: 9);
+        Assert.Equal(-200, left.To!.X, precision: 9);
+        Assert.Equal(bounds.Top, left.From!.Y, precision: 9);
+        Assert.Equal(bounds.Bottom, left.To!.Y, precision: 9);
+
+        // The right rule is where it always was.
+        SceneLine right = FrameLine(result, "chart:frame:right");
+        Assert.Equal(bounds.Right, right.From!.X, precision: 9);
+
+        // The BACKGROUND is not the union: a background over the table would
+        // paint the user's own cells, so only the border grew.
+        SceneRect background = result.Primitives.OfType<SceneRect>()
+            .Single(rect => string.Equals(rect.PrimitiveId, "chart:background", StringComparison.Ordinal));
+        Assert.Equal(bounds.Left, background.Bounds.Left, precision: 9);
+        Assert.NotEqual(-200, background.Bounds.Left, precision: 9);
+    }
+
+    /// <summary>
+    /// The counterweight to the test above: with no data panel supplied - which
+    /// is what the EXPORT compositions do, because they draw their own panel -
+    /// the border is exactly where it was.
+    /// </summary>
+    [Fact]
+    public void The_outer_frame_is_unchanged_when_no_data_panel_is_supplied()
+    {
+        FrameBandsRequest request = CreateRequest() with { PanelBounds = new RectD(100, 100, 300, 100) };
+
+        FrameBandsResult result = Build(request).Result!;
+        RectD bounds = result.Geometry.ChartBounds;
+
+        SceneLine top = FrameLine(result, "chart:frame:top");
+        Assert.Equal(bounds.Left, top.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, top.To!.X, precision: 9);
+
+        SceneLine bottom = FrameLine(result, "chart:frame:bottom");
+        Assert.Equal(bounds.Left, bottom.From!.X, precision: 9);
+        Assert.Equal(bounds.Right, bottom.To!.X, precision: 9);
+
+        SceneLine left = FrameLine(result, "chart:frame:left");
+        Assert.Equal(bounds.Left, left.From!.X, precision: 9);
+        Assert.Equal(bounds.Top, left.From!.Y, precision: 9);
+        Assert.Equal(bounds.Bottom, left.To!.Y, precision: 9);
+    }
+
+    private static SceneLine FrameLine(FrameBandsResult result, string primitiveId) =>
+        result.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, primitiveId, StringComparison.Ordinal));
+
     private sealed class FixedMeasurer(Func<string, double> measure) : ITextWidthMeasurer
     {
         public bool TryMeasure(string text, out double widthPt)

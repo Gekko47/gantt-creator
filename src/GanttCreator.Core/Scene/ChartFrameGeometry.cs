@@ -97,6 +97,24 @@ public sealed record FrameBandsTheme(
 /// legitimate there and this flag is off.
 /// </para>
 /// </param>
+/// <param name="DataPanelBounds">
+/// The visible data table's rectangle, in worksheet points, when the chart's
+/// outer border must enclose it as well as the plot (ADR-0048).
+/// <para>
+/// A LIVE chart's title is an owned textbox placed in the table's own columns,
+/// so the title and the table sit to the LEFT of the plot. A border drawn on
+/// the plot's rectangle therefore encloses neither of them, and the chart reads
+/// as two unrelated objects. The border is drawn on the union of the chart's
+/// rectangle and this one, which is a single rectangle whose left edge is the
+/// table's first column.
+/// </para>
+/// <para>
+/// <b>Only the border uses it.</b> The background, the bands, the grid lines
+/// and the closing line keep the plot's own rectangle: a background over the
+/// table would paint the user's own cells. The EXPORT compositions draw their
+/// own panel, so they pass no rectangle and their border is unchanged.
+/// </para>
+/// </param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
     GanttTimeScale Scale,
@@ -118,7 +136,8 @@ public sealed record FrameBandsRequest(
     double PlotBandHeaderOverlapPt,
     double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme,
-    bool SheetCoordinates = false
+    bool SheetCoordinates = false,
+    RectD? DataPanelBounds = null
 );
 
 /// <summary>The result of a successful frame/band build.</summary>

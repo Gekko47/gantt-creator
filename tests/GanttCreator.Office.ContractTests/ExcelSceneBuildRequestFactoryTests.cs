@@ -286,6 +286,52 @@ public class ExcelSceneBuildRequestFactoryTests
     }
 
     /// <summary>
+    /// ADR-0048: the live chart's border encloses the visible data table, so its
+    /// vertical rule sits at the table's first column - the MEASURED origin - and
+    /// not at the plot's left edge.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The live title is an owned textbox placed in the table's own columns, so
+    /// the table and the title sit to the LEFT of the plot. A border drawn on the
+    /// plot's rectangle encloses neither of them, and the chart reads as two
+    /// unrelated objects.
+    /// </para>
+    /// <para>
+    /// The assertion is on the rule's own X, and the counterweight is the plot's
+    /// left edge, which is a different number: the table is 120pt wide, so a
+    /// border that started at the plot would be 120pt to the right of the one
+    /// that is correct.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_charts_border_starts_at_the_measured_table_origin()
+    {
+        ExcelSceneBuildRequestFactory factory = new(Metrics());
+
+        PanelCellGrid grid = Grid(widthPt: 120);
+
+        SceneBuildRequestOutcome outcome = factory.Create(
+            [Event(new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19))],
+            new Dictionary<string, string>(),
+            StyleRegistry(),
+            grid,
+            new Dictionary<string, double>()
+        );
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Message);
+
+        SceneBuildOutcome scene = SceneBuilder.TryBuild(outcome.Request!);
+        Assert.True(scene.Succeeded, "scene refused: " + scene.Refusal);
+
+        SceneLine left = scene.Result!.Scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+
+        Assert.Equal(grid.OriginLeftPt, left.From!.X, precision: 6);
+        Assert.NotEqual(outcome.Request!.PlotBounds!.Value.X, left.From!.X, precision: 6);
+    }
+
+    /// <summary>
     /// The plot's TOP is the first body row's measured top edge (ADR-0030 D1).
     /// </summary>
     /// <remarks>

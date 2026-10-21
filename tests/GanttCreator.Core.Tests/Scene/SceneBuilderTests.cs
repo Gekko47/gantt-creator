@@ -620,6 +620,60 @@ public sealed class SceneBuilderTests
             scene.Warnings,
             warning => warning.Code == "FrameClampedToSheet");
     }
+
+    /// <summary>
+    /// ADR-0048: a live chart's title is an owned textbox placed in the table's own
+    /// columns, so the table and the title sit to the LEFT of the plot. The border
+    /// must enclose them, or the chart reads as two unrelated objects.
+    /// </summary>
+    [Fact]
+    public void A_live_charts_border_encloses_the_visible_data_table()
+    {
+        // A grid whose table starts at X=40: a real workbook's table starts after
+        // the hidden engine columns, so the origin is a measurement, not a zero.
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 40), new PanelColumn("Description", 160)],
+            [10.0],
+            10,
+            ["Type", "Description"],
+            originTopPt: 60,
+            originLeftPt: 40,
+            topPaddingHeightPt: 6,
+            bottomPaddingHeightPt: 6,
+            anchorRowHeightPt: 0.25).Grid!;
+
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                Grid = grid,
+                PlotBounds = new RectD(300, 60, 300, 140),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        // The vertical rule sits at the table's first column - the same number the
+        // live title textbox is placed at - and not at the plot's left edge.
+        SceneLine left = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:left", StringComparison.Ordinal));
+        Assert.Equal(40, left.From!.X, precision: 9);
+        Assert.Equal(40, left.To!.X, precision: 9);
+
+        // The top and bottom rules now START at the table and run to the plot's
+        // right edge, so the frame is ONE rectangle rather than a step.
+        SceneLine top = scene.Primitives.OfType<SceneLine>()
+            .Single(line => string.Equals(line.PrimitiveId, "chart:frame:top", StringComparison.Ordinal));
+        Assert.Equal(40, top.From!.X, precision: 9);
+        Assert.Equal(600, top.To!.X, precision: 9);
+
+        // The BACKGROUND is untouched: a background over the table would paint
+        // the user's own cells, so only the border grew.
+        SceneRect background = scene.Primitives.OfType<SceneRect>()
+            .Single(rect => string.Equals(rect.PrimitiveId, "chart:background", StringComparison.Ordinal));
+        Assert.Equal(300, background.Bounds.Left, precision: 9);
+    }
+
     [Fact]
     public void The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship()
     {
