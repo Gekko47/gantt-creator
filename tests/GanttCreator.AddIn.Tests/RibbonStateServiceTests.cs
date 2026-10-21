@@ -83,6 +83,15 @@ public sealed class RibbonStateServiceTests : IDisposable
             return ThrowOnCapture ? throw new InvalidOperationException("capture failed") : WorkbookFact;
         }
 
+        /// <summary>
+        /// The status-bar messages this fake was asked to show. The warnings
+        /// are ADVISORY and NON-MODAL, so they are asserted through this
+        /// recorder rather than through a dialog.
+        /// </summary>
+        public List<string> StatusBarMessages { get; } = [];
+
+        public void ShowStatusBar(string message) => StatusBarMessages.Add(message);
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler)
         {
             ArgumentNullException.ThrowIfNull(handler);

@@ -79,6 +79,32 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
     }
 
     /// <inheritdoc />
+    public void ShowStatusBar(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return;
+        }
+
+        // CA1031: this write runs on the Ribbon state path, where a
+        // propagating COM failure surfaces as a host error. A failed write
+        // loses the message and nothing more.
+#pragma warning disable CA1031
+        try
+        {
+            application.StatusBar = message;
+        }
+        catch
+        {
+            // Intentionally empty: the message is lost; the state is not.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
     public IDisposable SubscribeWorkbookStateChanged(Action handler)
     {
         ArgumentNullException.ThrowIfNull(handler);

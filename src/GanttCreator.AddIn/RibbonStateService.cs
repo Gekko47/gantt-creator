@@ -142,11 +142,44 @@ internal class RibbonStateService
     private Action<string> _errorPresenter = CommandErrorDialog.Show;
 
     /// <summary>
+    /// The presenter for a NON-BLOCKING advisory warning.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a SEPARATE seam from <see cref="_errorPresenter"/> because the
+    /// two have different blocking behaviour, and the difference matters.
+    /// </para>
+    /// <para>
+    /// <b>Why a warning cannot use the modal error dialog.</b> The warnings
+    /// here are raised from a ribbon <c>editBox</c> callback -- the user has
+    /// typed a date and pressed Enter. A modal dialog there takes the Excel
+    /// UI thread hostage until it is dismissed, which also means a headless
+    /// test that drives the same path blocks forever: the test could never
+    /// reach its own assertion. The error dialog is modal by design (ADR-0006)
+    /// and is right for a command that has FAILED, but a rejected keystroke
+    /// is not a failed command -- it is a keystroke the ribbon declines.
+    /// </para>
+    /// <para>
+    /// The warning is therefore presented NON-MODALLY: the ribbon's own
+    /// status bar, which is where Excel itself reports a rejected edit, and
+    /// which needs no dismissal. The default presenter writes to it.
+    /// </para>
+    /// </remarks>
+    private Action<string> _warningPresenter = RibbonStatusBar.Warn;
+
+    /// <summary>
     /// Injects the presenter used for a user-facing failure.
     /// </summary>
     /// <param name="presenter">The presenter; a null presenter restores the default dialog.</param>
     internal void SetErrorPresenter(Action<string>? presenter) =>
         _errorPresenter = presenter ?? CommandErrorDialog.Show;
+
+    /// <summary>
+    /// Injects the presenter used for a non-blocking advisory warning.
+    /// </summary>
+    /// <param name="presenter">The presenter; a null presenter restores the status bar.</param>
+    internal void SetWarningPresenter(Action<string>? presenter) =>
+        _warningPresenter = presenter ?? RibbonStatusBar.Warn;
 
     /// <summary>
     /// Injects the catalogue writer that persists plot-range settings to the
@@ -619,12 +652,49 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            _errorPresenter(message);
+            // The NON-MODAL presenter, deliberately: these warnings are
+            // raised from a ribbon editBox callback, where a modal dialog
+            // would hold the Excel UI thread until it is dismissed.
+            _warningPresenter(message);
         }
         catch
         {
             // Intentionally empty: the state change already happened; only the
             // message is lost.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Writes a message to Excel's status bar, non-modally.
+    /// </summary>
+    /// <param name="message">The message to show.</param>
+    /// <remarks>
+    /// A status-bar write is a presentation, not a state change, so it
+    /// invalidates nothing: the ribbon's enabled states are unaffected by a
+    /// message. The write is best-effort -- a host that refuses it loses the
+    /// message, nothing more.
+    /// </remarks>
+    internal static void WriteStatusBar(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        IExcelApplicationAdapter? adapter = RibbonStateService.Instance._applicationAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+        // CA1031: a failing status-bar write is outside command behaviour; it
+        // degrades to no message.
+#pragma warning disable CA1031
+        try
+        {
+            adapter.ShowStatusBar(message);
+        }
+        catch
+        {
+            // Intentionally empty: the message is lost; the state is not.
         }
 #pragma warning restore CA1031
     }
@@ -2805,6 +2875,14 @@ internal class RibbonStateService
         _catalogueReader = null;
         _tableReader = null;
         _panelGridMeasurementPort = null;
+
+        // The presenters are restored to their defaults too. An injected
+        // presenter is a test seam: leaving it in place would let one test's
+        // collector receive another test's message, which is how a warning
+        // test passes for the wrong reason.
+        _errorPresenter = CommandErrorDialog.Show;
+        _warningPresenter = RibbonStatusBar.Warn;
+
         _state = RibbonState.Initial;
     }
 }

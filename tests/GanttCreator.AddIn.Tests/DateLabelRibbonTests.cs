@@ -110,6 +110,11 @@ public sealed class DateLabelRibbonTests : IDisposable
     {
         public bool? HasActiveWorkbook() => true;
 
+        public void ShowStatusBar(string message)
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
 
         private sealed class Subscription : IDisposable

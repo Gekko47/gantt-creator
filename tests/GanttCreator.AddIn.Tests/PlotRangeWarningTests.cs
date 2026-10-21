@@ -1,4 +1,5 @@
 using GanttCreator.Core;
+using GanttCreator.Office;
 
 namespace GanttCreator.AddIn.Tests;
 
@@ -19,15 +20,22 @@ public sealed class PlotRangeWarningTests : IDisposable
     }
 
     /// <summary>
-    /// Builds a state service whose presenter collects the messages instead
-    /// of showing a dialog.
+    /// Builds a state service whose WARNING presenter collects the messages
+    /// instead of showing them.
     /// </summary>
     /// <param name="messages">The collected messages.</param>
     /// <returns>The service under test.</returns>
+    /// <remarks>
+    /// The warning seam is deliberately NOT the error presenter. These
+    /// warnings are raised from a ribbon editBox callback, where a modal
+    /// dialog would hold the Excel UI thread until the user dismissed it --
+    /// and would block a headless test run forever, because there is nobody
+    /// to dismiss it. They are therefore presented non-modally.
+    /// </remarks>
     private static RibbonStateService ServiceWith(List<string> messages)
     {
         RibbonStateService service = RibbonStateService.Instance;
-        service.SetErrorPresenter(message => messages.Add(message));
+        service.SetWarningPresenter(message => messages.Add(message));
         return service;
     }
 
@@ -132,5 +140,62 @@ public sealed class PlotRangeWarningTests : IDisposable
         service.SetPlotFinishDate("15-Mar-26");
 
         Assert.Empty(messages);
+    }
+
+    [Fact]
+    public void A_warning_does_not_go_through_the_MODAL_error_dialog()
+    {
+        // The regression this pins. The warnings are raised from a ribbon
+        // editBox callback, and the error presenter is a MODAL TaskDialog: a
+        // modal dialog on that path holds the Excel UI thread until the user
+        // dismisses it, and blocks a headless test run forever, because there
+        // is nobody to dismiss it. The warning therefore has its own
+        // NON-MODAL seam, and the error presenter is never called.
+        var errors = new List<string>();
+        var warnings = new List<string>();
+        RibbonStateService service = RibbonStateService.Instance;
+        service.SetErrorPresenter(message => errors.Add(message));
+        service.SetWarningPresenter(message => warnings.Add(message));
+
+        service.SetPlotStartDate("not-a-date");
+
+        Assert.Single(warnings);
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void A_warning_reaches_the_status_bar_by_default()
+    {
+        // The default warning presenter is the non-modal status bar, NOT the
+        // modal dialog. This is what a production Excel session gets when the
+        // user types a bad date.
+        var statusBar = new RecordingApplicationAdapter();
+        RibbonStateService service = RibbonStateService.Instance;
+        service.SetApplicationAdapter(statusBar);
+
+        service.SetPlotStartDate("not-a-date");
+
+        Assert.Single(statusBar.Messages);
+    }
+
+    /// <summary>
+    /// An application adapter that records the status-bar messages.
+    /// </summary>
+    private sealed class RecordingApplicationAdapter : IExcelApplicationAdapter
+    {
+        public List<string> Messages { get; } = [];
+
+        public bool? HasActiveWorkbook() => true;
+
+        public void ShowStatusBar(string message) => Messages.Add(message);
+
+        public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
+
+        private sealed class Subscription : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
     }
 }

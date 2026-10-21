@@ -69,6 +69,22 @@ public interface IExcelApplicationAdapter
     bool? HasActiveWorkbook();
 
     /// <summary>
+    /// Writes a message to Excel's status bar, non-modally.
+    /// </summary>
+    /// <param name="message">The message to show.</param>
+    /// <remarks>
+    /// The status bar is where Excel itself reports a rejected edit, and --
+    /// unlike a message box -- it needs no dismissal. That makes it the right
+    /// home for an advisory warning raised from a Ribbon callback: a modal
+    /// dialog there would hold the Excel UI thread until the user dismissed
+    /// it, and would block a headless test run forever.
+    /// <para>
+    /// Never throws: a failure to write loses the message and nothing more.
+    /// </para>
+    /// </remarks>
+    void ShowStatusBar(string message);
+
+    /// <summary>
     /// Subscribes <paramref name="handler"/> to application-level workbook state
     /// changes: a workbook becoming active, a workbook being deactivated, and a
     /// new workbook being created.

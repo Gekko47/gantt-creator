@@ -409,6 +409,15 @@ public class AddInHostTests
 
         public bool? HasActiveWorkbook() => null;
 
+
+        public void ShowStatusBar(string message)
+
+        {
+
+            // Intentionally empty: the status bar is not under test here.
+
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler)
         {
             ArgumentNullException.ThrowIfNull(handler);
