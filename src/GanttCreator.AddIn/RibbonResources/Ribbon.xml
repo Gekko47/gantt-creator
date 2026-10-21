@@ -27,6 +27,18 @@
             </box>
           </box>
         </group>
+        <group id="grpOutline" label="Outline">
+          <!-- R5.4: the Ribbon surface over the native Excel outline. These
+               buttons collapse and expand EVERY parent/child group at once,
+               which is the one thing Excel's per-group -/+ controls cannot do.
+               They write the same state the native control writes (the child
+               rows' hidden flag), so the result is indistinguishable from
+               pressing the native control on each group. -->
+          <box id="boxOutlineGroups" boxStyle="horizontal">
+            <button id="btnExpandAllGroups" label="Expand all groups" imageMso="OutlineExpand" getEnabled="GetEnabled" onAction="OnExpandAllGroupsClick"/>
+            <button id="btnCollapseAllGroups" label="Collapse all groups" imageMso="OutlineCollapse" getEnabled="GetEnabled" onAction="OnCollapseAllGroupsClick"/>
+          </box>
+        </group>
         <group id="grpLabels" label="Labels">
           <!-- R5.5: dynamic item lists — items are projected from the selected
                row's Type (EntityTypeCatalog) at query time, so no option list

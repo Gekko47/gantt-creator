@@ -394,6 +394,12 @@ public class GanttRibbonTests
                 RibbonControlIds.DemoteToChild,
                 RibbonControlIds.MoveUp,
                 RibbonControlIds.MoveDown,
+                // R5.4: the collapse-all and expand-all buttons in the new
+                // Outline group, which sits after the Ordering group in
+                // document order. They are gated on workbook + initialised
+                // like every other Data-group button.
+                RibbonControlIds.ExpandAllGroups,
+                RibbonControlIds.CollapseAllGroups,
                 RibbonControlIds.ThemeSettings,
                 RibbonControlIds.ChartTitle,
                 RibbonControlIds.PresetA4Portrait,
@@ -573,6 +579,22 @@ public class GanttRibbonTests
         Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetA4Landscape));
         Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetPresentation16x9));
         Assert.Equal("PageOrientationPortrait", ImageMso(RibbonControlIds.PresetPresentation4x3));
+
+        // R5.4: the Outline group's two buttons. Both IDs satisfy the two
+        // bases. The gallery (customUI14.xml, 7344 unique IDs) lists
+        // "OutlineExpand" and "OutlineCollapse". The Excel idMso table rows
+        // are idMso=OutlineExpand, control=button, label="Expand" and
+        // idMso=OutlineCollapse, control=button, label="Collapse" — the
+        // semantically exact match for each action.
+        //
+        // The alternatives were measured and rejected: "ExpandAll" is absent
+        // from the gallery entirely, and "CollapseAll" IS gallery-present but
+        // names a different Excel command (a slide master layout action), so
+        // it is the wrong glyph for a row group even though it would pass a
+        // gallery-only check. The outline IDs name the outline operation
+        // itself, which is what these buttons drive.
+        Assert.Equal("OutlineExpand", ImageMso(RibbonControlIds.ExpandAllGroups));
+        Assert.Equal("OutlineCollapse", ImageMso(RibbonControlIds.CollapseAllGroups));
     }
 
     [Fact]

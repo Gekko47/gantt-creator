@@ -451,6 +451,56 @@ public class GanttRibbon : ExcelRibbon
     internal static void OnRemoveClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
         => OnAddRowClick(control, boundary, command, nameof(OnRemoveClick), onCompleted);
 
+    /// <summary>
+    /// Called when the user clicks Expand all groups: every parent/child group
+    /// in the table is expanded at once (R5.4). The command is silent on
+    /// success and on a sheet with no group; only a refusal is presented.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnExpandAllGroupsClick(IRibbonControl control) =>
+        OnExpandAllGroupsClick(
+            control,
+            CommandBoundary.Instance,
+            () => CollapseGroupsCommand.RunForExcel(OutlineCollapseDirection.Expand),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnExpandAllGroupsClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The expand-all command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnExpandAllGroupsClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnExpandAllGroupsClick), onCompleted);
+
+    /// <summary>
+    /// Called when the user clicks Collapse all groups: every parent/child
+    /// group in the table is collapsed at once (R5.4). The mirror of
+    /// <see cref="OnExpandAllGroupsClick(IRibbonControl)"/>.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnCollapseAllGroupsClick(IRibbonControl control) =>
+        OnCollapseAllGroupsClick(
+            control,
+            CommandBoundary.Instance,
+            () => CollapseGroupsCommand.RunForExcel(OutlineCollapseDirection.Collapse),
+            NotifyRibbonStateChanged);
+
+    /// <summary>
+    /// Runs <see cref="OnCollapseAllGroupsClick(IRibbonControl)"/> against an
+    /// injected boundary. Internal so contract tests can verify the routing
+    /// without the session singleton.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="boundary">The command error boundary.</param>
+    /// <param name="command">The collapse-all command to run.</param>
+    /// <param name="onCompleted">The post-command state hook.</param>
+    internal static void OnCollapseAllGroupsClick(IRibbonControl? control, CommandBoundary boundary, Action command, Action? onCompleted = null)
+        => OnAddRowClick(control, boundary, command, nameof(OnCollapseAllGroupsClick), onCompleted);
+
     private static void OnAddRowClick(
         IRibbonControl? control,
         CommandBoundary boundary,

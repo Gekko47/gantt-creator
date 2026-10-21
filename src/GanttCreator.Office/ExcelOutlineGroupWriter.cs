@@ -53,6 +53,136 @@ public class ExcelOutlineGroupWriter(
     internal const int ChildOutlineLevel = 2;
 
     /// <inheritdoc />
+    public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.NoActiveWorkbook);
+        }
+
+        if (!TryFindTable(workbook.Sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
+            || worksheet is null
+            || table is null)
+        {
+            return OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.TableMissing);
+        }
+
+        // First check in a mutating adapter (ADR-0008 D4), before any COM write.
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return OutlineCollapseOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? OutlineCollapseRefusalReason.NoActiveWorkbook
+                    : OutlineCollapseRefusalReason.TargetProtected);
+        }
+
+        Excel.Range? body = GetTableBody(table);
+        if (body is null)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        if (ReadFirstWorksheetRow(body) is not { } firstWorksheetRow)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        // Read the outline the sheet currently carries. This is a PRESENTATION
+        // command, so the groups it acts on are the groups the user can see
+        // through Excel's own +/- controls -- not a second derivation of the
+        // hierarchy, which stays the model (ADR-0026 D5). A collapsed child
+        // still reports its level, so the read works for a collapsed group
+        // too.
+        int bodyRowCount = GetBodyRowCount(body);
+        List<OutlineRowLevel> levels = new List<OutlineRowLevel>(bodyRowCount);
+        for (int rowNumber = 1; rowNumber <= bodyRowCount; rowNumber++)
+        {
+            Excel.Range? range = GetRowsRange(
+                worksheet,
+                firstWorksheetRow + rowNumber - 1,
+                firstWorksheetRow + rowNumber - 1);
+            if (range is null)
+            {
+                continue;
+            }
+
+            levels.Add(new OutlineRowLevel(
+                rowNumber,
+                ReadOutlineLevel(range) ?? TopLevelOutlineLevel));
+        }
+
+        OutlineCollapsePlan plan = OutlineCollapsePlanner.Plan(levels, direction);
+
+        // Nothing to write is a successful no-op, not a refusal: a sheet with
+        // no group has no relationship to collapse, and the user asked for a
+        // state that already holds.
+        if (plan.IsEmpty)
+        {
+            return OutlineCollapseOutcome.Ok(0);
+        }
+
+        // The plan names BODY rows; the sheet's rows are offset by the
+        // table's header row, which only this layer knows.
+        bool hidden = direction == OutlineCollapseDirection.Collapse;
+        int written = 0;
+        foreach (int bodyRow in plan.ChildRowNumbers)
+        {
+            Excel.Range? range = GetRowsRange(
+                worksheet,
+                firstWorksheetRow + bodyRow - 1,
+                firstWorksheetRow + bodyRow - 1);
+            if (range is null)
+            {
+                continue;
+            }
+
+            if (SetRowHidden(range, hidden))
+            {
+                written++;
+            }
+        }
+
+        return OutlineCollapseOutcome.Ok(written);
+    }
+
+    /// <summary>
+    /// Writes a row's hidden flag. Test seam over the COM <c>EntireRow.Hidden</c>
+    /// setter.
+    /// </summary>
+    /// <param name="range">The row to write.</param>
+    /// <param name="hidden">Whether the row is hidden.</param>
+    /// <returns>Whether the host accepted the write.</returns>
+    /// <remarks>
+    /// <para>
+    /// The write goes through <c>EntireRow.Hidden</c>, not
+    /// <c>Range.Hidden</c>. A live probe measured the difference: on an
+    /// unprotected sheet, <c>Range("A3:C3").Hidden = $true</c> is REFUSED with
+    /// COMException <c>0x800A03EC</c> ("Unable to set the Hidden property of the
+    /// Range class"), while the identically-shaped
+    /// <c>Range("A3:C3").EntireRow.Hidden = $true</c> is ACCEPTED. The refusal
+    /// is specific to the accessor, not to the span.
+    /// </para>
+    /// <para>
+    /// <b>Why this is the native control's own state.</b> A live probe measured
+    /// that Excel's own collapse leaves the group's child rows
+    /// <c>Hidden = $true</c> and its parent <c>Hidden = $false</c>, and that
+    /// Excel's own expand clears the child rows' flag and leaves the parent's
+    /// alone. Writing exactly those rows therefore reproduces the native
+    /// control's result rather than a look-alike of it.
+    /// </para>
+    /// </remarks>
+    internal virtual bool SetRowHidden(Excel.Range range, bool hidden)
+    {
+        ArgumentNullException.ThrowIfNull(range);
+
+        range.EntireRow.Hidden = hidden;
+        return true;
+    }
+
+    /// <inheritdoc />
     public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
     {
         ArgumentNullException.ThrowIfNull(events);

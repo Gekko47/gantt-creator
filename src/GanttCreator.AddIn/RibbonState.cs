@@ -213,6 +213,16 @@ internal sealed record RibbonState(
             && CustomStyleSelectionAvailable
             && CustomStyleOptions is { Count: > 0 },
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
+        // R5.4: the collapse-all and expand-all buttons are the Ribbon surface
+        // over the native Excel outline. They are gated on workbook +
+        // initialised like every other Data-group button: a sheet with no group
+        // is a quiet no-op by design, and the command refuses with an
+        // actionable message when the table is missing. Gating them on
+        // "a group exists" would need the sheet's outline state on every
+        // ribbon refresh, which is a COM read per control for a condition the
+        // command already handles.
+        RibbonControlIds.ExpandAllGroups => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.CollapseAllGroups => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,

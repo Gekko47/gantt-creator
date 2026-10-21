@@ -555,6 +555,14 @@ internal sealed class RefreshFakes
                 ? OutlineGroupOutcome.Refused(OutlineGroupRefusalReason.TargetProtected)
                 : OutlineGroupOutcome.Ok(0, 0);
         }
+
+        public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)
+        {
+            owner.Steps.Add("Collapse");
+            return owner.OutlineRefused
+                ? OutlineCollapseOutcome.Refused(OutlineCollapseRefusalReason.TargetProtected)
+                : OutlineCollapseOutcome.Ok(0);
+        }
     }
 
     /// <summary>

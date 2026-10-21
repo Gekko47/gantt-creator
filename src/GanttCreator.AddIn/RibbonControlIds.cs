@@ -116,6 +116,31 @@ internal static class RibbonControlIds
     internal const string CustomStyle = "ddnCustomStyle";
 
     /// <summary>
+    /// The Expand all groups button (<c>getEnabled</c> driven by workbook +
+    /// initialised).
+    /// </summary>
+    /// <remarks>
+    /// R5.4: the Ribbon surface over the native Excel outline. It expands every
+    /// parent/child group at once, which is the only thing the native
+    /// per-group <c>+</c> control cannot do. Gated on workbook + initialised
+    /// like every other Data-group button: a sheet with no group is a quiet
+    /// no-op by design, and the command refuses with an actionable message when
+    /// the table is missing.
+    /// </remarks>
+    internal const string ExpandAllGroups = "btnExpandAllGroups";
+
+    /// <summary>
+    /// The Collapse all groups button (<c>getEnabled</c> driven by workbook +
+    /// initialised).
+    /// </summary>
+    /// <remarks>
+    /// R5.4: the Ribbon surface over the native Excel outline. It collapses
+    /// every parent/child group at once. Gated exactly like
+    /// <see cref="ExpandAllGroups"/>.
+    /// </remarks>
+    internal const string CollapseAllGroups = "btnCollapseAllGroups";
+
+    /// <summary>
     /// The Remove button (<c>getEnabled</c> driven by workbook +
     /// initialised). Destructive under ADR-0008: the command itself
     /// confirms before the mutator runs, so the enabled gate stays

@@ -115,6 +115,9 @@ public class GanttRowInserterTests
             Applied.Add(events);
             return OutlineGroupOutcome.Ok(events.Count, 0);
         }
+
+        public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction) =>
+            OutlineCollapseOutcome.Ok(0);
     }
 
     private sealed class TestableInserter(

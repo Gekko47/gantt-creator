@@ -75,4 +75,44 @@ public interface IOutlineGroupPort
     /// <param name="events">The validated events, from <c>GanttRowValidator</c>.</param>
     /// <returns>How many groups were applied, or the refusal reason.</returns>
     OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events);
+
+    /// <summary>
+    /// Collapses or expands every group in the table, by hiding or showing the
+    /// child rows the sheet's outline carries.
+    /// </summary>
+    /// <param name="direction">Whether the groups are being collapsed or expanded.</param>
+    /// <returns>How many rows were written, or the refusal reason.</returns>
+    OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction);
+}
+
+/// <summary>Why the outline could not be collapsed or expanded.</summary>
+public enum OutlineCollapseRefusalReason
+{
+    /// <summary>The application object or active workbook was absent.</summary>
+    NoActiveWorkbook = 0,
+
+    /// <summary>The Gantt worksheet or its <c>tblGanttData</c> table was missing.</summary>
+    TableMissing = 1,
+
+    /// <summary>The target worksheet is protected.</summary>
+    TargetProtected = 2,
+}
+
+/// <summary>The typed result of collapsing or expanding the outline.</summary>
+/// <param name="RowsWritten">How many rows' visibility was written.</param>
+/// <param name="Refusal">The refusal reason, or <see langword="null"/> on success.</param>
+public sealed record OutlineCollapseOutcome(int RowsWritten, OutlineCollapseRefusalReason? Refusal)
+{
+    /// <summary>Gets whether the request was carried out.</summary>
+    public bool Succeeded => Refusal is null;
+
+    /// <summary>Creates a successful outcome.</summary>
+    /// <param name="rowsWritten">How many rows' visibility was written.</param>
+    /// <returns>The successful outcome.</returns>
+    public static OutlineCollapseOutcome Ok(int rowsWritten) => new(rowsWritten, null);
+
+    /// <summary>Creates a refusal.</summary>
+    /// <param name="refusal">The refusal reason.</param>
+    /// <returns>The refusal outcome.</returns>
+    public static OutlineCollapseOutcome Refused(OutlineCollapseRefusalReason refusal) => new(0, refusal);
 }
