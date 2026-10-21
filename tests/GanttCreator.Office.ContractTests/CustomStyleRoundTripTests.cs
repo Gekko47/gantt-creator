@@ -122,4 +122,65 @@ public sealed class CustomStyleRoundTripTests
         Assert.NotNull(definition);
         Assert.Equal(0, definition.ActivityHeightPt, 3);
     }
+
+    /// <summary>
+    /// A rename is visible to a later read under its NEW key, and the old key
+    /// is gone.
+    /// </summary>
+    /// <remarks>
+    /// WI-H: the R5.6a row says "create, rename, and delete", but the Core had
+    /// a validated <c>Rename</c> operation and the writer applied it, and no
+    /// path ever EMITTED one -- so the user could not reach it. The rename is
+    /// a single operation rather than a delete plus a create, which is what
+    /// preserves the style's identity: a row assigned to it keeps the
+    /// assignment.
+    /// </remarks>
+    [Fact]
+    public void A_renamed_custom_style_is_visible_to_a_later_read_under_its_new_key()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var created = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Create,
+                "UserStyle",
+                DisplayName: "User Style",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF")]);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), ConfigGraph.BuildWriter(fake).WriteTheme(created));
+
+        var renamed = new ThemeEditRequest(
+            [],
+            new Dictionary<string, double>(),
+            [new CustomStyleEdit(
+                CustomStyleOperation.Rename,
+                "UserStyle",
+                NewStyleKey: "RenamedStyle",
+                DisplayName: "Renamed Style",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF")]);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), ConfigGraph.BuildWriter(fake).WriteTheme(renamed));
+
+        ConfigReadOutcome read = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.True(read.Succeeded, $"The catalogue read refused: {read.Refusal}.");
+        Assert.NotNull(read.Styles);
+        Assert.Contains("RenamedStyle", read.Styles.StyleKeys);
+        Assert.DoesNotContain("UserStyle", read.Styles.StyleKeys);
+
+        // The style's PROPERTIES survive the rename: a rename is not a delete
+        // plus a create, so the style keeps its formatting.
+        Assert.True(read.Styles.TryGet("RenamedStyle", out var definition));
+        Assert.NotNull(definition);
+        Assert.Equal("#112233", definition.FillColour);
+        Assert.Equal("#445566", definition.StrokeColour);
+        Assert.Equal("#FFFFFF", definition.TextColour);
+    }
 }

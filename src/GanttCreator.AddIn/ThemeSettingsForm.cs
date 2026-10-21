@@ -329,6 +329,47 @@ internal sealed partial class ThemeSettingsForm : Form
         Enabled = false,
     };
 
+    /// <summary>
+    /// The new key a rename will give the selected custom style. Empty means
+    /// "no rename is pending".
+    /// </summary>
+    /// <remarks>
+    /// The style's own key field stays READ-ONLY, because the key NAMES the
+    /// style row: editing it in place would change which row the editor is
+    /// showing. A rename is therefore a separate action with its own field,
+    /// and it is applied as a single <c>Rename</c> operation when the user
+    /// commits, not as a delete plus a create -- the style's identity is
+    /// preserved, so a row assigned to it keeps its assignment.
+    /// </remarks>
+    private readonly TextBox _customRenameKeyText = new()
+    {
+        Size = new Size(120, 22),
+        CharacterCasing = CharacterCasing.Upper,
+        MaxLength = 32,
+    };
+
+    /// <summary>
+    /// The button that applies the pending rename.
+    /// </summary>
+    private readonly Button _customRenameButton = new()
+    {
+        Text = "Rename",
+        AutoSize = true,
+        Enabled = false,
+    };
+
+    /// <summary>
+    /// The renames the user has asked for, from the style's current key to the
+    /// key it will have. Empty until the user asks for one.
+    /// </summary>
+    /// <remarks>
+    /// A rename is held here rather than applied to the edit map immediately,
+    /// so the editor keeps showing the style under the key the workbook knows
+    /// it by. The commit turns each entry into a single <c>Rename</c>
+    /// operation.
+    /// </remarks>
+    private readonly Dictionary<string, string> _pendingRenames = new(StringComparer.Ordinal);
+
     // The fill pattern, the outline width, the two sizes, and the label
     // vocabulary are properties of the STYLE, so they sit in the style editor
     // beside the colours rather than in the chart-wide metric tabs.
@@ -446,6 +487,8 @@ internal sealed partial class ThemeSettingsForm : Form
             _customNewButton.Dispose();
             _customNewKeyText.Dispose();
             _customDeleteButton.Dispose();
+            _customRenameKeyText.Dispose();
+            _customRenameButton.Dispose();
             _customStyleListGroup.Dispose();
             _customStyleEditGroup.Dispose();
             _customHatchPatternCombo.Dispose();
@@ -1758,6 +1801,33 @@ internal sealed partial class ThemeSettingsForm : Form
         deleteRow.Controls.Add(_customDeleteButton);
         detail.Controls.Add(deleteRow, 0, 1);
 
+        // The rename sits on its own row above Delete: the key names the
+        // style, so it is not edited in place, and the new key is typed into
+        // its own field rather than into the read-only key display.
+        FlowLayoutPanel renameRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(0),
+        };
+        Label renameLabel = new()
+        {
+            Text = "Rename to",
+            AutoSize = true,
+            Margin = new Padding(0, 4, 6, 0),
+        };
+        _customRenameKeyText.Margin = new Padding(0, 2, 6, 0);
+        _customRenameKeyText.AccessibleDescription =
+            "The new key for the selected custom style. Leave empty for no rename.";
+        _customRenameButton.Click += CustomRenameButton_Click;
+        _customRenameButton.Margin = new Padding(0);
+        renameRow.Controls.Add(renameLabel);
+        renameRow.Controls.Add(_customRenameKeyText);
+        renameRow.Controls.Add(_customRenameButton);
+        detail.Controls.Add(renameRow, 0, 2);
+
         PopulateCustomStyleVocabularies();
 
         // The permitted-label list's window is font-relative rather than a
@@ -1973,6 +2043,8 @@ internal sealed partial class ThemeSettingsForm : Form
         _selectedCustomStyleKey = _customStyleList.SelectedItem as string;
         bool hasSelection = _selectedCustomStyleKey is not null;
         _customDeleteButton.Enabled = hasSelection;
+        _customRenameButton.Enabled = hasSelection;
+        _customRenameKeyText.Enabled = hasSelection;
         _customStyleEditGroup.Enabled = hasSelection;
 
         if (hasSelection && _selectedCustomStyleKey is { } key &&
@@ -2087,6 +2159,8 @@ internal sealed partial class ThemeSettingsForm : Form
     {
         _selectedCustomStyleKey = null;
         _customDeleteButton.Enabled = false;
+        _customRenameButton.Enabled = false;
+        _customRenameKeyText.Enabled = false;
         _customStyleEditGroup.Enabled = false;
         _customStyleKeyText.Text = string.Empty;
         _customStyleFillText.Text = string.Empty;
@@ -2212,9 +2286,81 @@ internal sealed partial class ThemeSettingsForm : Form
         return true;
     }
 
+    /// <summary>
+    /// Whether a key names a built-in preset and so cannot be a custom style.
+    /// </summary>
+    /// <param name="key">The candidate key, already upper-cased by the caller.</param>
+    /// <returns>Whether the key names a built-in preset.</returns>
+    /// <remarks>
+    /// The comparison is CASE-INSENSITIVE, and it has to be. The key fields
+    /// force upper case, so the key that arrives here is upper case, while
+    /// every one of the seventeen built-in preset keys is mixed case
+    /// ("AsPlannedActivity", "DelayEvent", and so on). An ORDINAL comparison
+    /// could therefore never match, and the built-in protection was dead code:
+    /// typing a built-in's name created a custom style whose key differed
+    /// from the built-in's only by case. The catalogue's own key authority is
+    /// ordinal, so such a style does not SHADOW the built-in -- the
+    /// protection here is a clear refusal rather than a correctness rule, and
+    /// the Core still refuses an exact-case collision.
+    /// </remarks>
     private static bool IsBuiltInCustomKey(string key) =>
         GanttCatalogues.StylePresets.Any(p =>
-            string.Equals(p.StyleKey, key, StringComparison.Ordinal));
+            string.Equals(p.StyleKey, key, StringComparison.OrdinalIgnoreCase));
+
+#pragma warning disable CA1303 // Literal strings are UI labels in a WinForms dialog; localization is out of scope for R5.6a.
+    private void CustomRenameButton_Click(object? sender, EventArgs e)
+    {
+        if (_selectedCustomStyleKey is not { } key)
+        {
+            return;
+        }
+
+        string newKey = _customRenameKeyText.Text.Trim().ToUpperInvariant();
+        if (newKey.Length == 0)
+        {
+            _warningLabel.Text = "Enter the new key for the rename.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
+            _ = _customRenameKeyText.Focus();
+            return;
+        }
+
+        if (string.Equals(newKey, key, StringComparison.Ordinal))
+        {
+            _warningLabel.Text = $"Custom style '{key}' already has that key.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
+            return;
+        }
+
+        if (IsBuiltInCustomKey(newKey))
+        {
+            _warningLabel.Text = $"Style key '{newKey}' is a built-in preset and cannot be used as a custom style.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
+            return;
+        }
+
+        if (_customStyleEdits.ContainsKey(newKey))
+        {
+            _warningLabel.Text = $"Custom style '{newKey}' already exists.";
+            _warningLabel.Visible = true;
+            _tabControl.SelectedTab = _tabControl.TabPages[2];
+            return;
+        }
+
+        // The rename is recorded as a PENDING rename rather than applied to
+        // the edit map here, so the map still holds the style under the key
+        // the editor is showing. The commit turns it into a single Rename
+        // operation, which is what preserves the style's identity -- a row
+        // assigned to it keeps the assignment.
+        _pendingRenames[key] = newKey;
+        _customRenameKeyText.Text = string.Empty;
+        _warningLabel.Text = $"Custom style '{key}' will be renamed to '{newKey}'.";
+        _warningLabel.Visible = true;
+        _tabControl.SelectedTab = _tabControl.TabPages[2];
+    }
+#pragma warning restore CA1303
 
     private void CustomDeleteButton_Click(object? sender, EventArgs e)
     {
@@ -2726,19 +2872,62 @@ internal sealed partial class ThemeSettingsForm : Form
         List<CustomStyleEdit> customStyleEdits = [];
         HashSet<string> originalKeys = new HashSet<string>(_originalCustomDefs.Select(d => d.StyleKey), StringComparer.Ordinal);
 
-        // Deletes: original custom styles no longer in _customStyleEdits
+        // Renames FIRST, so a renamed style is not ALSO reported as a delete
+        // of its old key plus a create of its new one. The rename carries the
+        // style's properties, so the create that would follow it is
+        // suppressed for the new key.
+        HashSet<string> renamedToKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> rename in _pendingRenames)
+        {
+            if (!_customStyleEdits.TryGetValue(rename.Key, out CustomStyleState? state))
+            {
+                // The style was deleted after the rename was asked for, so the
+                // rename has nothing to rename.
+                continue;
+            }
+
+            customStyleEdits.Add(new CustomStyleEdit(
+                CustomStyleOperation.Rename,
+                rename.Key,
+                NewStyleKey: rename.Value,
+                DisplayName: rename.Value,
+                FillColour: state.Fill,
+                StrokeColour: state.Stroke,
+                TextColour: state.Text,
+                HatchPattern: state.HatchPattern,
+                StandardOutlinePt: state.StandardOutlinePt,
+                ActivityHeightPt: state.ActivityHeightPt,
+                MilestoneSizePt: state.MilestoneSizePt,
+                DefaultLabelPosition: state.DefaultLabelPosition,
+                AllowedLabelPositions: state.AllowedLabelPositions,
+                StrokeDash: state.StrokeDash));
+            _ = renamedToKeys.Add(rename.Value);
+        }
+
+        // Deletes: original custom styles no longer in _customStyleEdits, and
+        // not being renamed. A renamed style's OLD key still exists in the
+        // workbook -- under its new name -- so deleting it would remove it.
         foreach (CustomStyleDef original in _originalCustomDefs)
         {
-            if (!_customStyleEdits.ContainsKey(original.StyleKey))
+            if (!_customStyleEdits.ContainsKey(original.StyleKey)
+                && !_pendingRenames.ContainsKey(original.StyleKey))
             {
                 customStyleEdits.Add(new CustomStyleEdit(CustomStyleOperation.Delete, original.StyleKey));
             }
         }
 
-        // Creates and updates: current custom styles
+        // Creates and updates: current custom styles. A style that is being
+        // RENAMED is not also created or updated: the Rename operation
+        // already carries its properties, and a second edit for the same
+        // style would be a duplicate key in the request.
         foreach (KeyValuePair<string, CustomStyleState> kvp in _customStyleEdits)
         {
             string key = kvp.Key;
+            if (_pendingRenames.ContainsKey(key) || renamedToKeys.Contains(key))
+            {
+                continue;
+            }
+
             CustomStyleState state = kvp.Value;
             CustomStyleDef? original = _originalCustomDefs.FirstOrDefault(d => d.StyleKey == key);
             if (original is null)
