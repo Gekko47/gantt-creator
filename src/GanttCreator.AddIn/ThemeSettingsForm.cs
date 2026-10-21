@@ -1673,6 +1673,8 @@ internal sealed partial class ThemeSettingsForm : Form
         _customMilestoneSizeNumeric.Minimum = 0;
         _customMilestoneSizeNumeric.AccessibleDescription =
             "Zero uses the chart's milestone size.";
+        _customActivityHeightNumeric.AccessibleDescription =
+            "Zero uses the height this entity kind's own style carries.";
         GroupBox sizeGroup = NewPropertyGroup("Size");
         sizeGroup.Controls.Add(sizeTable);
         properties.Controls.Add(sizeGroup, 0, 4);
@@ -2083,13 +2085,20 @@ internal sealed partial class ThemeSettingsForm : Form
         // size starts at ZERO, which means "use the chart's milestone size":
         // it is an override, not a second source of truth, so the chart-wide
         // knob stays live for a style that does not set it.
+        //
+        // The BAR height starts at zero for the same reason, and for the same
+        // contract: zero is "not applicable to this entity kind", so a style
+        // that sets no height of its own inherits the height its row's own
+        // default style carries (R5.6a). Seeding the code-owned default
+        // instead would pin a copied value into the style, and the row would
+        // then keep that number even if the kind's own height changed.
         _customStyleEdits[newKey] = new CustomStyleState(
             "#FFFFFF",
             "#000000",
             "#000000",
             GanttHatchPattern.None,
             GanttCatalogues.MetricDefault("StandardOutlinePt"),
-            GanttCatalogues.MetricDefault("ActivityHeightPt"),
+            0,
             0,
             GanttLabelPosition.Auto,
             new HashSet<GanttLabelPosition>

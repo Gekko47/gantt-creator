@@ -1509,9 +1509,31 @@ public static class SceneBuilder
             _ = GanttCatalogues.TryGetPreset(style.StyleKey, out preset);
         }
 
-        double heightPt = hasDefinition
-            ? definition!.ActivityHeightPt
-            : preset?.ActivityHeightPt ?? 0;
+        // The bar height. A USER-AUTHORED style may set its own height, and
+        // that value is honoured when it is positive -- exactly as the
+        // milestone size honours a user style's own size below. A BUILT-IN
+        // style always follows the code-owned value its registry entry
+        // carries, so the built-in rows stay protected and nothing about
+        // them changes.
+        //
+        // A user style that names no height of its own carries a zero, which
+        // is the style contract's "not applicable to this entity kind"
+        // value: a style used by a milestone carries a zero bar height, and
+        // one used by an activity carries a zero milestone size. So the
+        // zero falls back to the height the row's OWN default style carries
+        // -- what the row would render at with no custom style at all. It
+        // is deliberately not a constant: a milestone's default style
+        // carries a zero bar height too, and a constant here would give
+        // every milestone a bar it does not have.
+        bool userAuthored = hasDefinition
+            && !GanttCatalogues.TryGetPreset(style.StyleKey, out _);
+        double heightPt = userAuthored
+            ? definition!.ActivityHeightPt > 0
+                ? definition.ActivityHeightPt
+                : DefaultHeightFor(@event.Type)
+            : hasDefinition
+                ? definition!.ActivityHeightPt
+                : preset?.ActivityHeightPt ?? 0;
 
         // The hatch pattern, the standard outline width, and the stroke dash
         // are resolved style tokens, not renderer choices: the guide requires a
@@ -1549,6 +1571,37 @@ public static class SceneBuilder
             heightPt,
             milestoneSizePt);
         return true;
+    }
+
+    /// <summary>
+    /// The bar height a row type carries when no style of its own names one.
+    /// </summary>
+    /// <param name="type">The row's entity type.</param>
+    /// <returns>The height the type's code-owned default style carries, in points.</returns>
+    /// <remarks>
+    /// <para>
+    /// This is the fallback for a user-authored style that named no bar height
+    /// of its own, and for a built-in style whose registry entry carries none.
+    /// It reads the type's DEFAULT style rather than a constant, because the
+    /// bar height is not one number for every kind: a milestone's default
+    /// style carries a zero bar height (a milestone is a diamond, not a bar),
+    /// while an activity's carries the code-owned bar height. A constant here
+    /// would give every milestone a bar it does not have.
+    /// </para>
+    /// <para>
+    /// A type with no default style in the catalogue contributes nothing, so
+    /// the height stays zero rather than being invented.
+    /// </para>
+    /// </remarks>
+    private static double DefaultHeightFor(GanttEntityType type)
+    {
+        EntityTypeDefinition? definition = EntityTypeCatalog.GetDefinition(type);
+
+        return definition is not null
+            && GanttCatalogues.TryGetPreset(definition.DefaultStyleKey, out GanttStylePreset? preset)
+            && preset is not null
+                ? preset.ActivityHeightPt
+                : 0;
     }
 
     /// <summary>

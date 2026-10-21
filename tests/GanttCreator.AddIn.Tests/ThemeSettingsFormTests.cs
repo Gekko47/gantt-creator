@@ -209,6 +209,51 @@ public class ThemeSettingsFormTests
         });
     }
 
+    /// <summary>
+    /// WI-A: a new custom style starts with a bar height of ZERO, which the
+    /// style contract reads as "not applicable to this entity kind" -- so the
+    /// row inherits the height its own kind carries rather than a copied
+    /// constant. Seeding the code-owned default instead would pin a value
+    /// into the style, and the renderer would then keep that number even
+    /// though the style never asked for it.
+    /// </summary>
+    [Fact]
+    public void CreateNewStyle_BarHeight_StartsAtZero_SoTheStyleInheritsItsKindsHeight()
+    {
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest([], new Dictionary<string, double>()));
+            try
+            {
+                form.CreateControl();
+
+                var tab = GetCustomStylesTab(form);
+                var keyText = RequireKeyTextBox(tab);
+                keyText.Text = "NEWSTYLE";
+
+                InvokeClick(form, "CustomNewButton_Click");
+
+                var edits = GetField<Dictionary<string, CustomStyleState>>(form, "_customStyleEdits");
+                var entry = Assert.Single(edits).Value;
+
+                Assert.Equal(0, entry.ActivityHeightPt);
+
+                // The milestone size already used this convention, so the two
+                // size overrides agree: both start at zero and both inherit.
+                Assert.Equal(0, entry.MilestoneSizePt);
+
+                // The editor shows the same zero, so the user sees the
+                // inherited state rather than a copied constant.
+                var barHeight = GetField<NumericUpDown>(form, "_customActivityHeightNumeric");
+                Assert.Equal(0m, barHeight.Value);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
     [Fact]
     public void CreateNewStyle_BlankKey_RejectedWithWarning()
     {
