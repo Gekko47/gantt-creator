@@ -374,39 +374,47 @@ public sealed class GanttRefreshOrchestrator(
 
         // Step 8. Row heights, so the measured lane geometry is meaningful.
         //
-        // The three targets come from the token catalogue rather than from literals
-        // written here. This call previously passed (15, 6, 6) against catalogue
-        // defaults of 18 / 18 / 9, so the sheet was normalised to a height the tokens
-        // do not describe — and because R4.7D removed lane auto-growth and derives the
-        // lane height from the measured row, the worksheet and the chart were being
-        // driven to disagree by the row that exists to stop them disagreeing
-        // (ADR-0026 D2/D3).
+        // The targets come from the WORKBOOK's metrics, not from the token
+        // catalogue's defaults. This call previously passed
+        // GanttCatalogues.MetricDefault(...) for all seven, so the sheet was
+        // normalised to the catalogue height whatever the user had set: the
+        // "Row height", "Splitter height" and "Spacer height" controls in the
+        // Theme dialog were written to the metrics table and then ignored on
+        // every Refresh. The scene factory already read the workbook's metrics
+        // (config.Metrics), so the sheet and the chart disagreed about how tall a
+        // row is - the exact disagreement row-height normalisation exists to
+        // prevent (ADR-0026 D2/D3).
+        //
+        // A metric the workbook does not carry falls back to the catalogue
+        // default, so a workbook written before a token existed still
+        // normalises to a defined height rather than to nothing.
         RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
-            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
-            GanttCatalogues.MetricDefault("SplitterHeightPt"),
-            GanttCatalogues.MetricDefault("SpacerHeightPt"),
+            ThemedMetric(config.Metrics, "GanttRowHeightPt"),
+            ThemedMetric(config.Metrics, "SplitterHeightPt"),
+            ThemedMetric(config.Metrics, "SpacerHeightPt"),
 
             // ADR-0030 D4/D5: the header row IS the period band's row, so its
             // height is what makes the period band's bottom coincide with the first
             // body row's top; the reserved row above it carries the table title and
-            // the year band. Both come from the token catalogue for the same reason
-            // the three above do -- a literal here is a second authority that can
-            // drift from the token the user retunes.
-            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
-            GanttCatalogues.MetricDefault("YearBandHeightPt"),
+            // the year band. Both come from the workbook's metrics for the same
+            // reason the three above do -- a literal here is a second authority
+            // that can drift from the value the user retunes.
+            ThemedMetric(config.Metrics, "PeriodBandHeightPt"),
+            ThemedMetric(config.Metrics, "YearBandHeightPt"),
 
             // ADR-0031 D2: the chart's top and bottom margins are worksheet rows, so
             // they are normalised to their own token rather than borrowing a band's
             // height. It is the LAST argument because it is the newest row, and the
-            // catalogue -- not a literal -- is the authority for how tall it is.
-            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+            // workbook's metric -- not a literal -- is the authority for how tall
+            // it is.
+            ThemedMetric(config.Metrics, "ChartPaddingRowHeightPt"),
 
             // ADR-0038 D1: the reserved anchor row below the body, which the
             // plot-spanning shapes paint through so Excel resolves their bottom cell
             // anchor below the insert point. A THIRD reserved-row token, not the
             // padding height: this row is the sub-row anchor, and a margin-height row
             // here would be a visible strip of sheet rather than an anchor.
-            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
+            ThemedMetric(config.Metrics, "ChartAnchorRowHeightPt"));
         if (!heights.Succeeded)
         {
             // The Duration column has already been written at this point, so the
@@ -484,13 +492,27 @@ public sealed class GanttRefreshOrchestrator(
             || !string.Equals(showText, "FALSE", StringComparison.Ordinal);
         if (showTitle && !string.IsNullOrWhiteSpace(chartTitle))
         {
-            double titleBandHeightPt = GanttCatalogues.MetricDefault("TitleBandHeightPt");
             PanelCellGrid panelGrid = grid.Grid!;
+
+            // The title occupies the RESERVED ROW exactly: the heading space
+            // ADR-0043 gave it, and the same row that carries the year band over
+            // the plot columns. The title and the year band therefore share one
+            // height and one top edge.
+            //
+            // The height is the reserved row's MEASURED height, derived from the
+            // grid, and NOT the TitleBandHeightPt token. The two disagreed - the
+            // token is 24pt and the reserved row is normalised to
+            // YearBandHeightPt (18pt) - so the textbox began 6pt ABOVE the
+            // reserved row, in the top padding row, and the chart frame's top
+            // edge (the reserved row's top) cut straight through the title
+            // instead of enclosing it. One row has one authority: the row.
+            double reservedRowHeightPt =
+                panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - panelGrid.TopPaddingHeightPt;
             RectD titleBounds = new(
                 panelGrid.OriginLeftPt,
-                panelGrid.OriginTopPt - panelGrid.HeaderHeightPt - titleBandHeightPt,
+                panelGrid.TopPaddingHeightPt,
                 panelGrid.Columns.Sum(column => column.WidthPt),
-                titleBandHeightPt);
+                reservedRowHeightPt);
             titleRequest = new OfficeShapeRequest(
                 PrimitiveId: "ChartTitle",
                 Kind: OfficeShapeKind.TextBox,
@@ -558,6 +580,22 @@ public sealed class GanttRefreshOrchestrator(
                 validation.Issues,
                 duration.CellsWritten);
     }
+
+    /// <summary>
+    /// Reads one metric from the workbook's effective metrics, falling back to the
+    /// token catalogue's default when the workbook does not carry it.
+    /// </summary>
+    /// <param name="metrics">The workbook's effective metric values.</param>
+    /// <param name="tokenName">The metric token name, for example <c>GanttRowHeightPt</c>.</param>
+    /// <returns>The workbook's value, or the catalogue default.</returns>
+    /// <remarks>
+    /// The workbook is the authority for a metric the user has set; the catalogue is
+    /// the authority for one it has not. A token added to the catalogue after a
+    /// workbook was written therefore still normalises to a defined height rather
+    /// than to nothing.
+    /// </remarks>
+    private static double ThemedMetric(IReadOnlyDictionary<string, double> metrics, string tokenName) =>
+        metrics.TryGetValue(tokenName, out double value) ? value : GanttCatalogues.MetricDefault(tokenName);
 
     /// <summary>
     /// Mirrors the written <c>StyleKey</c> cells into the validated events so the

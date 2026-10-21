@@ -544,8 +544,15 @@ public sealed class SceneBuilderTests
         // rather than supplied, that fudge is no longer needed: the bands may extend
         // above the plot and the scene stays coherent, because the chart bounds
         // follow the content instead of constraining it.
+        //
+        // The profile is named because this fixture's geometry puts the year band
+        // ABOVE the origin (20 - 20 - 16 = -16). That is legitimate in the EXPORT
+        // coordinate space, which the renderer translates to a zero origin, and it
+        // is not legitimate on a live sheet, where nothing can be drawn above row
+        // 1 (ADR-0047). The live case has its own test below.
         SceneBuildRequest request = Request(Event(1)) with
         {
+            Profile = SceneCompositionProfile.Raster,
             PlotBounds = new RectD(200, 20, 300, 140),
         };
 
@@ -554,6 +561,64 @@ public sealed class SceneBuilderTests
         Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
         SceneValidationReport report = SceneValidator.Validate(outcome.Result!.Scene);
         Assert.True(report.IsClean, "Findings: " + string.Join("; ", report.Findings));
+    }
+
+    /// <summary>
+    /// ADR-0047: a live chart's coordinates are the sheet's own, so content that
+    /// would start above row 1 cannot be drawn where the model says. Excel
+    /// clamps it instead, which moves the band down over the row it belongs to,
+    /// so the build is refused rather than silently misplaced.
+    /// </summary>
+    [Fact]
+    public void A_live_chart_whose_content_would_start_above_the_sheet_is_refused()
+    {
+        // The same geometry as the awkward case above: the year band's top is
+        // 20 - 20 - 16 = -16, which is above the top of the sheet.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                PlotBounds = new RectD(200, 20, 300, 140),
+            });
+
+        Assert.False(outcome.Succeeded, "The build succeeded, so a chart that cannot be drawn was composed.");
+        Assert.Equal(SceneBuilderRefusal.ChartAboveSheet, outcome.Refusal);
+    }
+
+    /// <summary>
+    /// ADR-0047: the frame's own top margin may reach above the sheet, and is
+    /// then clamped - the frame is shortened at the top so that its BOTTOM edge
+    /// stays exactly where it belongs. A clamped top with an unchanged height
+    /// would move the bottom down, and the chart's background and right edge
+    /// would end below the row they belong to.
+    /// </summary>
+    [Fact]
+    public void A_live_frame_whose_top_margin_reaches_above_the_sheet_is_shortened_at_the_top()
+    {
+        // The content's top is 0 (the year band sits on the sheet's top edge) and
+        // the frame's top margin reaches 6pt above it, so the unclamped frame
+        // would start at -6.
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(
+            Request(Event(1)) with
+            {
+                Profile = SceneCompositionProfile.LiveExcel,
+                PlotBounds = new RectD(200, 36, 300, 140),
+                ChartPadding = new ChartPaddingPt(0, 6, 0, 0),
+            });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        GanttScene scene = outcome.Result!.Scene;
+
+        Assert.Equal(0, scene.ChartBounds.Top, precision: 9);
+
+        // The bottom is where it was: the content's bottom (the plot's, 36 + 140)
+        // plus the bottom margin. A clamp that moved the bottom would be the
+        // defect this test exists to prevent.
+        Assert.Equal(176, scene.ChartBounds.Bottom, precision: 9);
+
+        Assert.Contains(
+            scene.Warnings,
+            warning => warning.Code == "FrameClampedToSheet");
     }
     [Fact]
     public void The_outer_padding_is_included_and_translating_the_chart_to_a_zero_origin_changes_no_relationship()
@@ -2137,101 +2202,6 @@ public sealed class SceneBuilderTests
             .Any(primitive => primitive.PrimitiveId.Contains("title", StringComparison.Ordinal));
 
         Assert.Equal(expectTitleBand, hasTitle);
-    }
-
-    /// <summary>
-    /// R5.6d WI-D: the live title is an owned textbox shape in the reserved
-    /// row, so the scene draws no title band - but the frame must still
-    /// ENCLOSE it, or the border stopped at the header row and the title sat
-    /// outside the bordered block.
-    /// </summary>
-    [Fact]
-    public void The_live_frame_encloses_the_title_band_when_the_title_is_shown()
-    {
-        (double shown, double hidden) = LiveFrameTopEdges();
-
-        // The frame's top edge lifts by exactly the title band, so the
-        // title textbox - which sits one band above the header - is inside
-        // the bordered block.
-        double titleBand = PanelSceneRequest().TitleBandHeightPt;
-        Assert.True(
-            hidden - shown >= titleBand,
-            $"The live frame's top edge lifted by {hidden - shown}pt, less than the {titleBand}pt title band.");
-    }
-
-    /// <summary>
-    /// R5.6d WI-D: reserving the band must not DRAW a title band in the live
-    /// scene. ADR-0030 D6 removed the drawn band from the live sheet because
-    /// it was drawn straight over the year band; the reservation is geometry
-    /// only.
-    /// </summary>
-    [Fact]
-    public void The_live_scene_reserves_the_title_band_without_drawing_one()
-    {
-        SceneBuildOutcome build = SceneBuilder.TryBuild(
-            PanelSceneRequest() with
-            {
-                Profile = SceneCompositionProfile.LiveExcel,
-                Panel = null,
-                Title = "Gantt Chart",
-                ShowTitle = true,
-            });
-
-        Assert.True(build.Succeeded, "Scene build refused: " + build.Refusal);
-
-        bool hasTitle = build.Result!.Scene.Primitives
-            .Any(primitive => primitive.PrimitiveId.Contains("title", StringComparison.Ordinal));
-
-        Assert.False(hasTitle);
-    }
-
-    /// <summary>
-    /// R5.6d WI-D: a hidden title reserves no band, so the live frame keeps
-    /// its previous extent.
-    /// </summary>
-    [Fact]
-    public void The_live_frame_does_not_reserve_a_title_band_when_the_title_is_hidden()
-    {
-        (double shown, double hidden) = LiveFrameTopEdges();
-
-        Assert.True(shown < hidden, $"The frame's top edge is {shown}pt with the title and {hidden}pt without.");
-    }
-
-    /// <summary>
-    /// The live frame's top edge with the title shown and with it hidden.
-    /// </summary>
-    /// <returns>The shown and hidden top edges, in points.</returns>
-    private static (double Shown, double Hidden) LiveFrameTopEdges()
-    {
-        SceneBuildOutcome shown = SceneBuilder.TryBuild(
-            PanelSceneRequest() with
-            {
-                Profile = SceneCompositionProfile.LiveExcel,
-                Panel = null,
-                Title = "Gantt Chart",
-                ShowTitle = true,
-            });
-        SceneBuildOutcome hidden = SceneBuilder.TryBuild(
-            PanelSceneRequest() with
-            {
-                Profile = SceneCompositionProfile.LiveExcel,
-                Panel = null,
-                Title = "Gantt Chart",
-                ShowTitle = false,
-            });
-
-        Assert.True(shown.Succeeded, "Scene build refused: " + shown.Refusal);
-        Assert.True(hidden.Succeeded, "Scene build refused: " + hidden.Refusal);
-
-        return (
-            shown.Result!.Scene.Primitives
-                .OfType<SceneLine>()
-                .First(line => line.PrimitiveId == "chart:frame:top")
-                .From.Y,
-            hidden.Result!.Scene.Primitives
-                .OfType<SceneLine>()
-                .First(line => line.PrimitiveId == "chart:frame:top")
-                .From.Y);
     }
 
     /// <summary>The panel theme the export-profile cases supply.</summary>

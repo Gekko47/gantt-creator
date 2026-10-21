@@ -73,12 +73,29 @@ public sealed record FrameBandsTheme(
 /// reproduces the pre-ADR-0038 geometry exactly.
 /// </param>
 /// <param name="Theme">Resolved frame/band styles.</param>
-/// <param name="ReserveTitleBand">
-/// Whether the title band is reserved in the frame geometry even though no
-/// title is drawn in it. The live composition draws the title as an owned
-/// textbox shape in the reserved row (ADR-0043), so the scene draws no title
-/// band - but the frame must still enclose it, or the border stops at the
-/// header row and the title sits outside the bordered block (R5.6d WI-D).
+/// <param name="SheetCoordinates">
+/// Whether the request's coordinates are absolute worksheet points, which is
+/// true of the LIVE composition and false of the EXPORT ones (ADR-0047).
+/// <para>
+/// A live chart's coordinates are the sheet's own, so nothing can be drawn
+/// above row 1. Excel clamps a shape's negative top to the top of the sheet,
+/// and a clamped top with an unchanged height moves the shape's BOTTOM down,
+/// so the chart's background and right edge end below the row they belong to -
+/// the sheet and the model then disagree about where the chart ends.
+/// </para>
+/// <para>
+/// Two rules follow, and both are applied by the frame builder. The CONTENT
+/// must be on the sheet: a band above row 1 cannot be drawn at all, so the
+/// build is refused rather than silently misplaced. The FRAME's own top
+/// margin may reach above the sheet, and is then clamped - the frame is
+/// shortened at the top so that its bottom edge stays exactly where it
+/// belongs.
+/// </para>
+/// <para>
+/// The EXPORT compositions build in their own coordinate space and are
+/// translated to a zero origin by the renderer, so a negative origin is
+/// legitimate there and this flag is off.
+/// </para>
 /// </param>
 public sealed record FrameBandsRequest(
     TimeScale TimeScale,
@@ -101,7 +118,7 @@ public sealed record FrameBandsRequest(
     double PlotBandHeaderOverlapPt,
     double ChartAnchorRowHeightPt,
     FrameBandsTheme Theme,
-    bool ReserveTitleBand = false
+    bool SheetCoordinates = false
 );
 
 /// <summary>The result of a successful frame/band build.</summary>
@@ -137,6 +154,17 @@ public enum FrameBandsRefusal
 
     /// <summary>One or more resolved styles were null.</summary>
     InvalidTheme = 6,
+
+    /// <summary>
+    /// The chart's content would be drawn above the top of the sheet.
+    /// </summary>
+    /// <remarks>
+    /// A live chart's coordinates are the sheet's own, so a band above row 1
+    /// cannot be drawn where the model says. Excel clamps it instead, which
+    /// moves the band down over the row it belongs to, so the build is
+    /// refused rather than silently misplaced (ADR-0047).
+    /// </remarks>
+    ContentAboveSheet = 7,
 }
 
 /// <summary>The typed result of attempting to build frame/bands.</summary>

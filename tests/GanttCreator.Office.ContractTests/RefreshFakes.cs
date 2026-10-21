@@ -36,6 +36,35 @@ internal sealed class RefreshFakes
     /// <summary>Whether the configuration read refuses.</summary>
     public bool ConfigReadRefused { get; set; }
 
+    /// <summary>
+    /// The metrics the configuration read returns, so a test can prove the
+    /// workbook's own values reach the row-height normalisation.
+    /// </summary>
+    /// <remarks>
+    /// The Theme dialog writes the user's row, splitter and spacer heights to the
+    /// metrics table, and the orchestrator used to normalise the sheet to the
+    /// token catalogue's DEFAULTS instead - so the setting was stored and then
+    /// ignored on every Refresh. A fake that returned an empty map could not
+    /// tell that apart from a workbook that never carried the metric.
+    /// </remarks>
+    public IReadOnlyDictionary<string, double> Metrics { get; set; } = new Dictionary<string, double>();
+
+    /// <summary>
+    /// The settings the configuration read returns, so a test can supply the
+    /// chart title and its visibility.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Settings { get; set; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// The grid the panel measurement returns, or null for the Excel-like
+    /// default.
+    /// </summary>
+    /// <remarks>
+    /// The default grid models a sheet with no reserved row, so a test that
+    /// needs the title to land in one injects a grid that has it.
+    /// </remarks>
+    public PanelCellGrid? MeasuredGrid { get; set; }
+
     /// <summary>Whether the protection guard reports a protected target.</summary>
     public ProtectionGuardOutcome Protection { get; set; } = ProtectionGuardOutcome.NotProtected;
 
@@ -302,7 +331,7 @@ internal sealed class RefreshFakes
                 // ordering claims are about what happens after composition.
                 : ConfigReadOutcome.Ok(
                     "wb",
-                    new Dictionary<string, string>(),
+                    owner.Settings,
                     new GanttStyleRegistry(
                         [
                             new GanttStyleDefinition(
@@ -327,7 +356,7 @@ internal sealed class RefreshFakes
                                 StandardOutlinePt: 1,
                                 ActivityHeightPt: 12),
                         ]),
-                    new Dictionary<string, double>());
+                    owner.Metrics);
         }
     }
 
@@ -354,8 +383,13 @@ internal sealed class RefreshFakes
         {
             owner.Steps.Add("Measure");
             LastMeasuredColumns = includedColumns;
-            return owner.MeasurementRefused
-                ? PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing)
+            if (owner.MeasurementRefused)
+            {
+                return PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing);
+            }
+
+            return owner.MeasuredGrid is { } grid
+                ? PanelGridOutcome.Ok(grid)
                 : MeasureLikeExcel(includedColumns);
         }
 
@@ -389,14 +423,28 @@ internal sealed class RefreshFakes
                     new PanelColumn(name, hidden.Contains(name) ? 0d : 24d)),
             ];
 
+            // The grid models the LIVE sheet's vertical layout, because a grid
+            // without the reserved row is a sheet that cannot exist (ADR-0030
+            // D4/D5): the top padding row, then the reserved row that carries the
+            // table title and the year band, then the header row that IS the
+            // period band's row, then the body. The old fake had a header and a
+            // body but no reserved row, so the year band would have been drawn
+            // over the header - and a live chart whose content starts above row 1
+            // is now refused rather than silently misplaced (ADR-0047).
+            //
             // Total width of 120pt across the visible columns keeps the plot resolver
             // from refusing for insufficient width, so these tests exercise composition
             // rather than the shortfall path.
+            double reservedRowHeightPt = GanttCatalogues.MetricDefault("YearBandHeightPt");
+            double headerHeightPt = GanttCatalogues.MetricDefault("PeriodBandHeightPt");
             PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
                 columns,
-                [15.0],
-                15,
-                includedColumns);
+                [GanttCatalogues.MetricDefault("GanttRowHeightPt")],
+                headerHeightPt,
+                includedColumns,
+                originTopPt: reservedRowHeightPt + headerHeightPt,
+                originLeftPt: 0d,
+                topPaddingHeightPt: 0d);
 
             return created.Succeeded && created.Grid is not null
                 ? PanelGridOutcome.Ok(created.Grid)

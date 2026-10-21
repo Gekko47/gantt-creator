@@ -24,6 +24,17 @@ public enum SceneBuilderRefusal
     /// <summary>The lane metrics or the resolved frame settings were refused.</summary>
     InvalidLayoutSettings = 6,
 
+    /// <summary>
+    /// The chart's content would be drawn above the top of the sheet.
+    /// </summary>
+    /// <remarks>
+    /// A live chart's coordinates are the sheet's own, so a band above row 1
+    /// cannot be drawn where the model says. Excel clamps it instead, which
+    /// moves the band down over the row it belongs to, so the build is refused
+    /// rather than silently misplaced (ADR-0047).
+    /// </remarks>
+    ChartAboveSheet = 11,
+
     /// <summary>One event's named style could not be resolved to a renderable style.</summary>
     UnresolvableStyle = 7,
 
@@ -161,18 +172,6 @@ public sealed record SceneBuildRequest
 
     /// <summary>Gets the chart title, or null when untitled.</summary>
     public string? Title { get; init; }
-
-    /// <summary>
-    /// Gets whether the chart title is shown.
-    /// </summary>
-    /// <remarks>
-    /// The LIVE composition draws the title as an owned textbox shape in the
-    /// reserved row (ADR-0043), so the scene draws no title band - but the
-    /// frame must still enclose it, or the border stops at the header row
-    /// and the title sits outside the bordered block (R5.6d WI-D). The
-    /// export profiles draw the title in the scene and are unaffected.
-    /// </remarks>
-    public bool ShowTitle { get; init; }
 
     /// <summary>Gets whether alternating plot bands are emitted.</summary>
     public bool AlternateBanding { get; init; } = true;
@@ -846,16 +845,6 @@ public static class SceneBuilder
             request.Profile != SceneCompositionProfile.LiveExcel
             && !string.IsNullOrWhiteSpace(request.Title);
 
-        // R5.6d WI-D: the LIVE title is an owned textbox shape in the reserved
-        // row (ADR-0043), so the scene draws no title band - but the frame
-        // must still ENCLOSE it, or the border stopped at the header row and
-        // the title sat outside the bordered block. The band is therefore
-        // reserved (not drawn) when the live title is shown.
-        bool reserveTitleBand =
-            request.Profile == SceneCompositionProfile.LiveExcel
-            && request.ShowTitle
-            && !string.IsNullOrWhiteSpace(request.Title);
-
         // The panel is built FIRST, and its derived bounds are what the frame reads.
         // This is the single-authority decision (D-B1): there is no caller-supplied
         // panel rectangle any more, so the chart background cannot be sized from one
@@ -948,11 +937,18 @@ public static class SceneBuilder
                 request.PlotBandHeaderOverlapPt,
                 request.ChartAnchorRowHeightPt,
                 frameTheme,
-                reserveTitleBand),
+                SheetCoordinates: request.Profile == SceneCompositionProfile.LiveExcel),
             new TextWidthMeasurer(request.Metrics!));
         if (frame.Result is not { } frameResult)
         {
-            return Refused(SceneBuilderRefusal.InvalidLayoutSettings);
+            // The frame's own refusal is carried through when it is about the
+            // sheet, because "the chart would be drawn above row 1" is a
+            // different fault from "the layout settings were refused" and the
+            // two need different answers.
+            return Refused(
+                frame.Refusal == FrameBandsRefusal.ContentAboveSheet
+                    ? SceneBuilderRefusal.ChartAboveSheet
+                    : SceneBuilderRefusal.InvalidLayoutSettings);
         }
 
         primitives.AddRange(frameResult.Primitives);

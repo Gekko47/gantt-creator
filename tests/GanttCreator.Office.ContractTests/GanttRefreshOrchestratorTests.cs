@@ -233,6 +233,144 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
+    /// The row heights written on Refresh are the WORKBOOK's metrics, not the token
+    /// catalogue's defaults.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the test that would have caught the ignored-setting defect.</b> The
+    /// Theme dialog writes the user's "Row height", "Splitter height" and "Spacer
+    /// height" to the metrics table, and the orchestrator then normalised the sheet
+    /// to the catalogue's DEFAULTS - so the setting was stored, reported as written,
+    /// and had no effect at all on the sheet. The scene factory read the workbook's
+    /// metrics while the sheet was normalised to the defaults, so the two disagreed
+    /// about how tall a row is: the exact disagreement row-height normalisation
+    /// exists to prevent (ADR-0026 D2/D3).
+    /// </para>
+    /// <para>
+    /// The values are asserted against the map the test supplied, not against
+    /// literals, so the assertion is about the WORKBOOK being the authority rather
+    /// than about a particular number.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_heights_written_are_the_workbooks_metrics()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Metrics = new Dictionary<string, double>
+            {
+                ["GanttRowHeightPt"] = 27,
+                ["SplitterHeightPt"] = 31,
+                ["SpacerHeightPt"] = 12,
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(27, fakes.LastManagedHeightPt);
+        Assert.Equal(31, fakes.LastSplitterHeightPt);
+        Assert.Equal(12, fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// A metric the workbook does not carry falls back to the catalogue's default,
+    /// so a workbook written before a token existed still normalises to a defined
+    /// height rather than to nothing.
+    /// </summary>
+    [Fact]
+    public void A_metric_the_workbook_does_not_carry_falls_back_to_the_catalogue_default()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Metrics = new Dictionary<string, double> { ["GanttRowHeightPt"] = 27 },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(27, fakes.LastManagedHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SplitterHeightPt"), fakes.LastSplitterHeightPt);
+        Assert.Equal(GanttCatalogues.MetricDefault("SpacerHeightPt"), fakes.LastSpacerHeightPt);
+    }
+
+    /// <summary>
+    /// The live title occupies the RESERVED ROW exactly: the same row that carries
+    /// the year band over the plot columns.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The title's height came from the TitleBandHeightPt token (24pt) while the
+    /// reserved row it is drawn in is normalised to YearBandHeightPt (18pt). The two
+    /// disagreed, so the textbox began 6pt ABOVE the reserved row, in the top
+    /// padding row, and the chart frame's top edge - the reserved row's top - cut
+    /// straight through the title instead of enclosing it. One row has one
+    /// authority: the row itself.
+    /// </para>
+    /// <para>
+    /// The grid here models a sheet with a real reserved row: 18pt of padding row
+    /// above, then the 18pt reserved row, then the 15pt header, so the first body
+    /// row's top is 51pt down.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_live_title_occupies_the_reserved_row()
+    {
+        PanelCellGrid grid = GridWithAReservedRow();
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            MeasuredGrid = grid,
+            Settings = new Dictionary<string, string>
+            {
+                ["ChartTitle"] = "Gantt Chart",
+                ["ShowTitle"] = "TRUE",
+            },
+        };
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.True(
+            fakes.Shapes.Requests.ContainsKey("ChartTitle"),
+            "No ChartTitle shape was written: " + string.Join(", ", fakes.Shapes.Calls));
+
+        RectD? bounds = fakes.Shapes.Requests["ChartTitle"].Geometry.Bounds;
+        Assert.NotNull(bounds);
+
+        // The reserved row's top is the top padding row's height (18pt) and its
+        // height is 18pt, so the title sits in the row the year band occupies.
+        Assert.Equal(18, bounds!.Value.Top, precision: 9);
+        Assert.Equal(18, bounds!.Value.Height, precision: 9);
+    }
+
+    /// <summary>
+    /// A grid that models a sheet with a real reserved row: an 18pt top padding
+    /// row, an 18pt reserved row, a 15pt header row, and one 15pt body row.
+    /// </summary>
+    private static PanelCellGrid GridWithAReservedRow()
+    {
+        PanelCellGridCreationOutcome created = PanelCellGrid.TryCreate(
+            [new PanelColumn("Type", 24d)],
+            [15d],
+            15d,
+            ["Type"],
+            originTopPt: 51d,
+            originLeftPt: 0d,
+            topPaddingHeightPt: 18d);
+
+        Assert.True(created.Succeeded, "The grid was refused: " + created.Refusal);
+        Assert.NotNull(created.Grid);
+        return created.Grid;
+    }
+
+    /// <summary>
     /// The two layout-row heights are the catalogue tokens, not literals.
     /// </summary>
     /// <remarks>

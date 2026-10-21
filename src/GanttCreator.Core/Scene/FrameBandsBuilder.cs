@@ -76,6 +76,9 @@ public static class FrameBandsBuilder
     private const string _titleOverflowCode = "TitleOverflow";
     private const string _periodLabelsSuppressedCode = "AllPeriodLabelsSuppressed";
 
+    /// <summary>The warning code raised when the frame had to be shortened at the top.</summary>
+    private const string _frameClampedToSheetCode = "FrameClampedToSheet";
+
     /// <summary>Attempts to build the frame and time bands.</summary>
     /// <param name="request">The typed frame/band request.</param>
     /// <param name="textMeasurer">The injected deterministic text-width seam.</param>
@@ -162,15 +165,7 @@ public static class FrameBandsBuilder
             request.YearBandHeightPt
         );
         RectD contentBounds = Union(request.PanelBounds, yearBounds, periodBounds, request.PlotBounds);
-
-        // The title band is reserved when the title is DRAWN (the export
-        // profiles) or when it is merely RESERVED (R5.6d WI-D: the live title
-        // is an owned textbox shape in the reserved row, so the scene draws no
-        // title but the frame must still enclose it - otherwise the border
-        // stopped at the header row and the title sat outside the bordered
-        // block).
-        bool titleBandReserved = request.ShowTitle || request.ReserveTitleBand;
-        RectD? titleBounds = titleBandReserved
+        RectD? titleBounds = request.ShowTitle
             ? new RectD(contentBounds.X, contentBounds.Y - request.TitleBandHeightPt, contentBounds.Width, request.TitleBandHeightPt)
             : null;
         RectD unionBounds = titleBounds is { } title ? Union(contentBounds, title) : contentBounds;
@@ -180,12 +175,40 @@ public static class FrameBandsBuilder
         // margin-width away from it. Export passes ChartPaddingPt.Uniform and is
         // unaffected.
         ChartPaddingPt padding = request.Padding;
-        RectD chartBounds = new(
+        RectD rawChartBounds = new(
             unionBounds.X - padding.LeftPt,
             unionBounds.Y - padding.TopPt,
             unionBounds.Width + padding.LeftPt + padding.RightPt,
             unionBounds.Height + padding.TopPt + padding.BottomPt
         );
+
+        // The live chart's coordinates are the sheet's own (ADR-0047), so the
+        // CONTENT must be on the sheet: a band above row 1 cannot be drawn at
+        // all, and Excel would silently clamp it - moving the band down over
+        // the row it belongs to. A build that cannot be drawn where the model
+        // says is refused, not misplaced.
+        if (request.SheetCoordinates && unionBounds.Y < 0d)
+        {
+            return Refused(FrameBandsRefusal.ContentAboveSheet);
+        }
+
+        // The FRAME's own top margin may reach above the sheet, and is then
+        // clamped. Excel clamps a shape whose top is negative to the top of the
+        // sheet, and a clamped top with an unchanged height moves the BOTTOM
+        // down: the frame would then end lower than the geometry says, and the
+        // chart's background and right edge would sit below the row they
+        // belong to. Clamping the top here and taking the difference off the
+        // HEIGHT keeps the bottom exactly where it was - the frame shortens
+        // towards its top instead of growing downwards - so what is drawn is
+        // what the scene says.
+        double topClampPt = request.SheetCoordinates ? Math.Max(0d, -rawChartBounds.Y) : 0d;
+        RectD chartBounds = topClampPt > 0d
+            ? new RectD(
+                rawChartBounds.X,
+                rawChartBounds.Y + topClampPt,
+                rawChartBounds.Width,
+                rawChartBounds.Height - topClampPt)
+            : rawChartBounds;
         ChartFrameGeometry geometry = new(chartBounds, contentBounds, titleBounds, yearBounds, periodBounds);
 
         // ADR-0037 D1: the vertical extent every PLOT-SPANNING shape shares --
@@ -240,6 +263,15 @@ public static class FrameBandsBuilder
             new SceneRect("chart:background", SceneOwnerId.Chart, ZLayer.Background, chartBounds, request.Theme.Background),
         ];
         List<SceneWarning> warnings = [];
+        if (topClampPt > 0d)
+        {
+            warnings.Add(
+                new SceneWarning(
+                    SceneOwnerId.Chart,
+                    _frameClampedToSheetCode,
+                    "The chart frame started above the top of the sheet, so it was shortened at the top to keep its bottom edge where it belongs."));
+        }
+
         AddBands(primitives, request, sequence, plotSpanBounds);
         AddHeaders(primitives, request, sequence, geometry);
         AddTitle(primitives, warnings, request, geometry, textMeasurer);
@@ -389,7 +421,7 @@ public static class FrameBandsBuilder
         ITextWidthMeasurer textMeasurer
     )
     {
-        if (!request.ShowTitle || geometry.TitleBounds is not { } title)
+        if (geometry.TitleBounds is not { } title)
         {
             return;
         }

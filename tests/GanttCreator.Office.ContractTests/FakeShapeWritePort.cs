@@ -43,6 +43,18 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
     public List<string> Calls { get; } = [];
 
     /// <summary>
+    /// The shape request last written for each primitive, so a test can assert
+    /// on a shape's GEOMETRY.
+    /// </summary>
+    /// <remarks>
+    /// The fake recorded the shape's name and its ownership tag, and nothing
+    /// about where the shape was put. A test that could not see the geometry
+    /// could not tell whether the title sat in the reserved row or over the
+    /// header - which is the whole question the live title's placement turns on.
+    /// </remarks>
+    public Dictionary<string, OfficeShapeRequest> Requests { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Gets the shape-mutating calls only, in order — the create, update, and
     /// delete calls, excluding the reads and the z-order pass.
     /// </summary>
@@ -189,6 +201,7 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         // sheet forever, indistinguishable from a user's own.
         _shapes[request.PrimitiveId] = FakeShape.ForPrimitive(request.PrimitiveId);
         _owned.Add(request.PrimitiveId);
+        Requests[request.PrimitiveId] = request;
 
         return ShapeWriteOutcome.Ok();
     }
@@ -206,9 +219,13 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         // happens. The check is the ownership filter, not name membership: a user
         // shape that happens to share an identifier is refused exactly as the
         // adapter refuses it (R4.8 D1).
-        return CarriesOwnTag(request.PrimitiveId)
-            ? ShapeWriteOutcome.Ok()
-            : ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        if (!CarriesOwnTag(request.PrimitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        Requests[request.PrimitiveId] = request;
+        return ShapeWriteOutcome.Ok();
     }
 
     public ShapeWriteOutcome Delete(string primitiveId)
