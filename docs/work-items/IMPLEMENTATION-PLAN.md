@@ -227,6 +227,7 @@ files only; the local audit verifies every file exists.
 | R5.1 | `R5.1-plot-range-modes.md` | Authored (Tier B) |
 | R5.2 | `R5.2-scale-layout-choices.md` | Authored (Tier B) |
 | R5.3 | `R5.3-parent-child-commands.md` | Authored (Tier B) |
+| R5.3 WI-E | `R5.3-wi-e-add-child.md` | Authored (Tier B; added 2026-10-21 — the Add Child command and the permitted child-Type selector) |
 | R5.4 | `R5.4-move-expand-collapse.md` | Authored (Tier B) |
 | R5.5 | `R5.5-label-controls.md` | Authored (Tier B) |
 | R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
