@@ -200,5 +200,5 @@ public static class GanttSchemaVersion
     /// is Initialise.
     /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 20;
+    public const int CurrentSchemaVersion = 21;
 }

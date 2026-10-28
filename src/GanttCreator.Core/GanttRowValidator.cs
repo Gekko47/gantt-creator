@@ -600,6 +600,13 @@ public static class GanttRowValidator
                 IReadOnlySet<GanttLabelPosition> allowedLabels = definition!.RequiresStyleKey
                     ? styleDefinition!.AllowedLabelPositions
                     : definition!.AllowedLabelPositions;
+                if (type is GanttEntityType.Delineator)
+                {
+                    // A1: the corner set is the floor for a delineator. A custom
+                    // style may narrow within the corners but never offer span
+                    // positions that the corner-label builder cannot render.
+                    allowedLabels = allowedLabels.Intersect(definition!.AllowedLabelPositions).ToHashSet();
+                }
                 if (!allowedLabels.Contains(parsedLabel))
                 {
                     Add(

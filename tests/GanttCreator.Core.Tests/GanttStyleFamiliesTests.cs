@@ -128,7 +128,7 @@ public class GanttStyleFamiliesTests
         // Every code-owned style the user did not author is not in the set.
         Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedActivity"));
         Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedMilestone"));
-        Assert.False(GanttUserAuthoredStyles.IsUserAuthored("DefaultDelineator"));
+        Assert.True(GanttUserAuthoredStyles.IsUserAuthored("DefaultDelineator"));
 
         // The set is derived from the type catalogue, so it cannot drift from
         // the types that require a style key.

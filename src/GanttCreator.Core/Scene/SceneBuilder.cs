@@ -1123,13 +1123,28 @@ public static class SceneBuilder
             .OrderBy(@event => @event.Id.Value, StringComparer.Ordinal)
             .GroupBy(@event => (@event.Start!.Value, delineatorStyles[@event.Id])))
         {
+            // D1/D4: the line width comes from the resolved named style's
+            // StandardOutlinePt when it is positive AND the style is
+            // user-authored (a custom style that sets its own width).
+            // Built-in styles follow the chart-wide DelineatorLinePt metric,
+            // so the built-in DefaultDelineator path is unchanged. Zero means
+            // "not set" on a user-authored style and falls back to the metric.
             DelineatorRequest[] requests =
             [
-                .. group.Select(@event => new DelineatorRequest(
-                    @event,
-                    delineatorStyles[@event.Id],
-                    request.DelineatorLinePt,
-                    plotBounds,
+                .. group.Select(@event =>
+                {
+                    bool styleIsBuiltIn = GanttCatalogues.TryGetPreset(
+                        delineatorStyles[@event.Id].StyleKey, out _);
+                    return new DelineatorRequest(
+                        @event,
+                        delineatorStyles[@event.Id],
+                        styleIsBuiltIn
+                            ? request.DelineatorLinePt
+                            : (delineatorStyles[@event.Id].OutlineWidthPt is { } resolvedWidth &&
+                              resolvedWidth > 0
+                                ? resolvedWidth
+                                : request.DelineatorLinePt),
+                        plotBounds,
                     chartBounds,
                     request.LabelGapPt,
                     request.Metrics!,
@@ -1138,8 +1153,10 @@ public static class SceneBuilder
                     LineTopPt: lineTopPt,
                     LabelStyle: request.LabelStyle,
                     DateFormat: request.DateFormat,
-                    ShowDateLabels: request.ShowDateLabels)),
-            ];
+                    ShowDateLabels: request.ShowDateLabels
+                    );
+                }
+            )];
 
             DelineatorGroupCreationOutcome groupOutcome = DelineatorLayout.TryBuildGroup(
                 new DelineatorGroupRequest(requests, request.DelineatorStackGapPt),

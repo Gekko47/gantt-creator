@@ -1108,14 +1108,13 @@ public class ThemeSettingsFormTests
                 // that happens to lose whole families.
                 var shown = list.Items.Cast<ListViewItem>().Select(item => (string)item.Tag!).ToArray();
                 Assert.Contains("AsBuiltMilestone", shown, StringComparer.Ordinal);
-                Assert.Contains("DefaultDelineator", shown, StringComparer.Ordinal);
 
-                // The named custom activity and the named custom milestone take
-                // their style from the user, so their built-in fallback style is
-                // not listed here: those styles live on the Custom styles tab,
-                // where the user creates them.
+                // The style-key types take their style from the user, so their
+                // built-in fallback style is not listed here: those styles live
+                // on the Custom styles tab, where the user creates them.
                 Assert.DoesNotContain("CustomActivity", shown, StringComparer.Ordinal);
                 Assert.DoesNotContain("CustomMilestone", shown, StringComparer.Ordinal);
+                Assert.DoesNotContain("DefaultDelineator", shown, StringComparer.Ordinal);
             }
             finally
             {

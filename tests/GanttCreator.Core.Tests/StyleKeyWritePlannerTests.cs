@@ -55,7 +55,6 @@ public sealed class StyleKeyWritePlannerTests
     [Theory]
     [InlineData(GanttEntityType.AsPlannedActivity, "AsPlannedActivity")]
     [InlineData(GanttEntityType.AsBuiltActivity, "AsBuiltActivity")]
-    [InlineData(GanttEntityType.Delineator, "DefaultDelineator")]
     [InlineData(GanttEntityType.Splitter, "Splitter")]
     public void Every_type_writes_its_own_default_when_the_cell_is_blank(
         GanttEntityType type,
@@ -93,6 +92,9 @@ public sealed class StyleKeyWritePlannerTests
     [Fact]
     public void Writes_are_ordered_by_row_number_regardless_of_input_order()
     {
+        // A Delineator now requires a StyleKey, so a blank cell produces no
+        // write (it is a validation error, not a default to sync). Only the
+        // two activity types write their defaults.
         StyleKeyWritePlan plan = StyleKeyWritePlanner.Plan(
         [
             Event(5, GanttEntityType.AsPlannedActivity, null),
@@ -100,7 +102,7 @@ public sealed class StyleKeyWritePlannerTests
             Event(4, GanttEntityType.Delineator, null),
         ]);
 
-        Assert.Equal([2, 4, 5], plan.Writes.Select(write => write.RowNumber));
+        Assert.Equal([2, 5], plan.Writes.Select(write => write.RowNumber));
     }
 
     [Fact]

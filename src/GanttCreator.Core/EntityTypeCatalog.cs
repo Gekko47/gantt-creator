@@ -228,7 +228,7 @@ public static class EntityTypeCatalog
             EntityDateMode.StartOnly,
             "DefaultDelineator",
             EntityColourCapability.Stroke,
-            requiresStyleKey: false,
+            requiresStyleKey: true,
             _delineatorLabelPositions),
     ];
 
@@ -364,6 +364,14 @@ public static class EntityTypeCatalog
         else
         {
             allowed = definition.AllowedLabelPositions;
+        }
+
+        if (type == GanttEntityType.Delineator)
+        {
+            // A1: the corner set is the floor for a delineator. A custom style
+            // may narrow within the corners but never offer span positions
+            // (Left, Right, Inside) that the corner-label builder cannot render.
+            allowed = allowed.Intersect(definition.AllowedLabelPositions).ToHashSet();
         }
 
         return [.. _displayOrder.Where(allowed.Contains)];

@@ -121,7 +121,7 @@ public class GanttRowValidatorTests
                 new DateOnly(2026, 9, 1),
                 null,
                 null,
-                null,
+                typeText == "Delineator" ? "DefaultDelineator" : null,
                 null,
                 null,
                 null,
@@ -223,7 +223,7 @@ public class GanttRowValidatorTests
             new DateOnly(2026, 9, 1),
             null,
             null,
-            null,
+            "DefaultDelineator",
             null,
             null,
             null,
@@ -379,7 +379,8 @@ public class GanttRowValidatorTests
         DateOnly? start = definition.DateMode == EntityDateMode.None ? null : new DateOnly(2026, 9, 1);
         DateOnly? finish = definition.DateMode == EntityDateMode.StartFinish ? new DateOnly(2026, 9, 5) : null;
         string? parentId = null;
-        var styleKey = type == GanttEntityType.CustomActivity ? "MyStyle" : null;
+        var styleKey = type == GanttEntityType.CustomActivity ? "MyStyle"
+            : type == GanttEntityType.Delineator ? "DefaultDelineator" : null;
 
         if (type == GanttEntityType.CriticalInterval)
         {
@@ -593,7 +594,7 @@ public class GanttRowValidatorTests
             new DateOnly(2026, 9, 1),
             null,
             null,
-            null,
+            "DefaultDelineator",
             null,
             null,
             null,
@@ -1432,7 +1433,7 @@ public class GanttRowValidatorTests
                 new DateOnly(2026, 9, 1),
                 null,
                 null,
-                null,
+                "DefaultDelineator",
                 "None",
                 null,
                 null,

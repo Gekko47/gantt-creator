@@ -97,7 +97,7 @@ public class EntityTypeCatalogTests
             (GanttEntityType.BaselineMilestone, "Baseline Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "BaselineMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.CriticalMilestone, "Critical Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CriticalMilestone", EntityColourCapability.Fill | EntityColourCapability.Stroke, false, s_milestoneLabels),
             (GanttEntityType.CustomMilestone, "Custom Milestone", EntityKind.Milestone, EntityDateMode.StartOnly, "CustomMilestone", EntityColourCapability.StyleDefined, true, s_milestoneLabels),
-            (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, false, s_delineatorLabels),
+            (GanttEntityType.Delineator, "Delineator", EntityKind.Delineator, EntityDateMode.StartOnly, "DefaultDelineator", EntityColourCapability.Stroke, true, s_delineatorLabels),
         };
 
         Assert.Equal(17, expected.Length);
@@ -177,12 +177,13 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
-    public void Only_custom_types_require_a_style_key()
+    public void Only_style_key_types_require_a_style_key()
     {
         Assert.All(EntityTypeCatalog.Entries, entry =>
             Assert.Equal(
                 entry.Type == GanttEntityType.CustomActivity
-                    || entry.Type == GanttEntityType.CustomMilestone,
+                    || entry.Type == GanttEntityType.CustomMilestone
+                    || entry.Type == GanttEntityType.Delineator,
                 entry.RequiresStyleKey));
     }
 

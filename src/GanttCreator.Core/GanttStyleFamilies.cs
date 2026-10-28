@@ -127,11 +127,11 @@ public static class GanttStyleFamilies
 /// </summary>
 /// <remarks>
 /// <para>
-/// A style-key type — the named custom activity and the named custom
-/// milestone — carries the style the <i>user</i> authored, so its built-in
-/// fallback style is a placeholder rather than a style the user chose. The
-/// Entity styles list therefore does not offer it: the styles for those
-/// entities live on the Custom styles tab, where the user creates them.
+/// A style-key type — the named custom activity, the named custom milestone,
+/// and the delineator — carries the style the <i>user</i> authored, so its
+/// built-in fallback style is a placeholder rather than a style the user
+/// chose. The Entity styles list therefore does not offer it: the styles for
+/// those entities live on the Custom styles tab, where the user creates them.
 /// </para>
 /// <para>
 /// The set is derived from the type catalogue rather than written out, so a

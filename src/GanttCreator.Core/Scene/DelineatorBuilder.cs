@@ -570,9 +570,10 @@ public static class DelineatorBuilder
     /// <remarks>
     /// <para>
     /// <see cref="SceneStyle"/> exposes read-only properties, so it is rebuilt
-    /// rather than copied with a <c>with</c> expression. §24 fixes the width at
-    /// the <c>DelineatorLinePt</c> token, so the width is never taken from the
-    /// named style.
+    /// rather than copied with a <c>with</c> expression. §24 lets the width
+    /// come from the resolved named style's outline width; the chart-wide
+    /// <c>DelineatorLinePt</c> metric is the fallback when the style names
+    /// none (SceneBuilder resolves this before calling WithWidth).
     /// </para>
     /// <para>
     /// Every member is forwarded, including the optional
