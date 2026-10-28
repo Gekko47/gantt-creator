@@ -708,11 +708,11 @@ Placement priority is: explicit manual positions first; then critical milestones
 
 **Source:** `Type=Delineator`, the single event date in `Start`, description, style, stroke override, and label position. `Finish`, `LaneId`, and `StackIndex` are not read for geometry.
 
-**Creation workflow:** the user may select `Delineator` directly from the Type dropdown or click **Add Vertical Line** on the Ribbon. The Ribbon command opens an offline dialog for Date, Label, Label Position, Line Style, Colour, Thickness, and Visible; on confirmation it adds one visible table row with a generated stable ID. It edits table data only and does not draw until Refresh.
+**Creation workflow:** the user selects `Delineator` directly from the Type dropdown (R2.8's inserter with `DefaultDelineator` as the code-owned named style); on confirmation it adds one visible table row with a generated stable ID. It edits table data only and does not draw until Refresh.
 
-**Editing/removal:** change the row's `Start`, `Description`, `LabelPosition`, `StrokeColour`, `StyleKey`, or `Visible` value, then click Refresh. **Remove Selection** deletes a selected valid delineator row after the standard confirmation/undo policy. Direct click-to-draw interaction on the chart is excluded from the first release.
+**Editing/removal:** change the row's `Start`, `Description`, `LabelPosition`, `StrokeColour`, `StyleKey`, or `Visible` value, then click Refresh. **Remove Selection** deletes a selected valid delineator row after the standard confirmation/undo policy (R2.7a). Direct click-to-draw interaction on the chart is excluded from the first release.
 
-**Geometry:** X is the exact date position. The line runs from `PlotBounds.Top` **lifted `PlotBandHeaderOverlapPt` up into the header row** (ADR-0037 D1) to the plot's **closing boundary** — `PlotBounds.Bottom` plus the live-anchoring overhang of §7 (ADR-0038 D2), which is zero when `ChartAnchorRowHeightPt` is `0`. The title, data and time-header bands are excluded: the line reaches only a sub-row amount into the header, never through the title or period bands. Width is `DelineatorLinePt`.
+**Geometry:** X is the exact date position. The line runs from `PlotBounds.Top` **lifted `PlotBandHeaderOverlapPt` up into the header row** (ADR-0037 D1) to the plot's **closing boundary** — `PlotBounds.Bottom` plus the live-anchoring overhang of §7 (ADR-0038 D2), which is zero when `ChartAnchorRowHeightPt` is `0`. The title, data and time-header bands are excluded: the line reaches only a sub-row amount into the header, never through the title or period bands. Width is `StandardOutlinePt` from the resolved named style; the chart-wide `DelineatorLinePt` metric is the fallback when the style names none. The built-in `DefaultDelineator` preset resolves its `StandardOutlinePt` from the `DelineatorLinePt` token, so the built-in path is unchanged.
 
 A delineator is a **plot-spanning shape** and shares the bands' and grid lines' vertical span at BOTH ends, so that all of them stretch together on a row insert at either end. Measured live 2026-10-04 (`scripts/probe-delineator-top.ps1`): with its top exactly on the header/body boundary, a row added at the top of the body moved the line by `TopDelta +15.75` with `HeightDelta 0` — it **slid**, while the bands beside it stretched correctly.
 
@@ -730,7 +730,7 @@ Its **label corners still resolve against `PlotBounds`**, at both ends — exten
 
 **Validation:** `Start` is required and must be within or on the plot range; blank description is allowed only when label is `None`. A populated `Finish`, `LaneId`, or `StackIndex` is retained but produces a non-blocking “not used by Delineator” warning so data is never silently deleted.
 
-**Tests:** Type dropdown creation, Ribbon-dialog creation, Start-only date semantics, ignored-field warnings, no render before Refresh, edit/remove/visibility workflow, full plot height, exact X, every label corner, left/right plot edge, same-date stacking, z-order behind bars, and export equivalence.
+**Tests:** Type dropdown creation, Start-only date semantics, ignored-field warnings, no render before Refresh, edit/remove/visibility workflow, full plot height, exact X, every label corner, left/right plot edge, same-date stacking, z-order behind bars, style-resolved width (custom style overrides the `DelineatorLinePt` metric; built-in path unchanged), and export equivalence.
 
 ## 25. Optional legend
 
