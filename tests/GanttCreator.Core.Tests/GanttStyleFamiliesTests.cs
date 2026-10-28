@@ -116,7 +116,7 @@ public class GanttStyleFamiliesTests
         // Entity styles list does not offer it; the Custom styles tab is where
         // those styles live.
         HashSet<string> expected = EntityTypeCatalog.Entries
-            .Where(entry => entry.RequiresStyleKey)
+            .Where(entry => entry.RequiresStyleKey && entry.Type != GanttEntityType.Delineator)
             .Select(entry => entry.DefaultStyleKey)
             .Where(key => key.Length > 0)
             .ToHashSet(StringComparer.Ordinal);
@@ -128,7 +128,7 @@ public class GanttStyleFamiliesTests
         // Every code-owned style the user did not author is not in the set.
         Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedActivity"));
         Assert.False(GanttUserAuthoredStyles.IsUserAuthored("AsPlannedMilestone"));
-        Assert.True(GanttUserAuthoredStyles.IsUserAuthored("DefaultDelineator"));
+        Assert.False(GanttUserAuthoredStyles.IsUserAuthored("DefaultDelineator"));
 
         // The set is derived from the type catalogue, so it cannot drift from
         // the types that require a style key.
