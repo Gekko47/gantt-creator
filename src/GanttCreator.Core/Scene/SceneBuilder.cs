@@ -1151,7 +1151,10 @@ public static class SceneBuilder
                     @event.LabelPosition ?? GanttLabelPosition.Auto,
                     LineBottomPt: lineBottomPt,
                     LineTopPt: lineTopPt,
-                    LabelStyle: request.LabelStyle,
+                    LabelStyle: delineatorStyles[@event.Id].TextColour is { } delineatorTextColour
+                        && request.LabelStyle is { } labelStyle
+                        ? labelStyle.WithTextColour(delineatorTextColour)
+                        : request.LabelStyle,
                     DateFormat: request.DateFormat,
                     ShowDateLabels: request.ShowDateLabels
                     );
@@ -1497,6 +1500,7 @@ public static class SceneBuilder
                 @event.StyleKey,
                 @event.FillColour,
                 @event.StrokeColour,
+                null,
                 @event.LabelPosition,
                 out GanttResolvedStyle? style,
                 out _)
@@ -1641,7 +1645,8 @@ public static class SceneBuilder
         return new SceneStyle(
             preset.StyleKey,
             string.IsNullOrEmpty(preset.FillColour) ? null : ColourHex.Parse(preset.FillColour),
-            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour));
+            string.IsNullOrEmpty(preset.StrokeColour) ? null : ColourHex.Parse(preset.StrokeColour),
+            textColour: string.IsNullOrEmpty(preset.TextColour) ? null : ColourHex.Parse(preset.TextColour));
     }
 
     /// <summary>

@@ -219,8 +219,12 @@ public sealed class CustomStyleRibbonTests : IDisposable
             Row(EntityTypeCatalog.Format(GanttEntityType.AsPlannedActivity), null),
             "MyStyle");
 
+        // The control is disabled because the selection is not on a
+        // style-key row (Custom Activity / Custom Milestone), even though
+        // custom styles exist in the catalogue. The dropdown's item list
+        // always reflects the current catalogue: None + MyStyle = 2 items.
         Assert.False(service.GetEnabled(RibbonControlIds.CustomStyle));
-        Assert.Equal(1, service.GetCustomStyleCount()); // context capture is unavailable for non-style rows; only <c>None</c> remains
+        Assert.Equal(2, service.GetCustomStyleCount()); // None + MyStyle
     }
 
     [Fact]

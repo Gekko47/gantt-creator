@@ -408,6 +408,36 @@ public sealed class DateLabelRibbonTests : IDisposable
     }
 
     [Fact]
+    public void Switching_from_delineator_to_span_activity_shows_which_date_options()
+    {
+        // Regression: after a delineator selection, the placement options
+        // (corners) were carried forward as stale state. A subsequent span
+        // activity selection must show the which-date vocabulary instead.
+        var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
+
+        // First: select a delineator — populates the placement context.
+        Assert.Equal(
+            6,
+            ArmWithRow(selection, Row(EntityTypeCatalog.Format(GanttEntityType.Delineator), null)).GetDateLabelCount());
+
+        // Then: select an as-planned activity (span). Placement context
+        // becomes unavailable, but its options must not leak into the
+        // which-date getters.
+        var spanService = ArmWithRow(selection, Row("As-Built Activity", null));
+
+        Assert.Equal(4, spanService.GetDateLabelCount());
+        Assert.Equal("Default", spanService.GetDateLabelItemID(0));
+        Assert.Equal("Start", spanService.GetDateLabelItemID(1));
+        Assert.Equal("Finish", spanService.GetDateLabelItemID(2));
+        Assert.Equal("None", spanService.GetDateLabelItemID(3));
+        Assert.Equal("Auto", spanService.GetDateLabelItemLabel(0));
+        Assert.Equal("Start", spanService.GetDateLabelItemLabel(1));
+        Assert.Equal("Finish", spanService.GetDateLabelItemLabel(2));
+        Assert.Equal("None", spanService.GetDateLabelItemLabel(3));
+        Assert.Equal(0, spanService.GetDateLabelSelectedIndex());
+    }
+
+    [Fact]
     public void The_selection_subscription_is_detached_exactly_once_on_reset()
     {
         // R1.6: unload must leave no COM connection behind.

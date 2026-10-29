@@ -1991,7 +1991,8 @@ internal class RibbonStateService
     /// pure read of the cached snapshot. Never throws.
     /// </summary>
     internal int GetDateLabelCount() =>
-        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
+        _state.DateLabelPlacementSelectionAvailable
+        && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
             ? placementOptions.Count
             : _state.DateLabelOptions is { Count: > 0 } options ? options.Count : 0;
 
@@ -2011,7 +2012,8 @@ internal class RibbonStateService
         // label's corners. Auto clears the cell, so its item id is
         // the clear marker, not the enum name
         // (TryParseDateLabelPlacementSelection maps Default to null).
-        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
         {
             return index < 0 || index >= placementOptions.Count
                 ? string.Empty
@@ -2041,7 +2043,8 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="index">The zero-based item index.</param>
     internal string GetDateLabelItemLabel(int index) =>
-        _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
+        _state.DateLabelPlacementSelectionAvailable
+        && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions
         && index >= 0
         && index < placementOptions.Count
             ? LabelPositionDisplayText(placementOptions[index])
@@ -2063,7 +2066,8 @@ internal class RibbonStateService
         // Owner ruling 2026-10-14: the positionable vocabulary's
         // leading choice is Auto, exactly as the which-date vocabulary's
         // is, so a blank cell reads as index 0 in either.
-        if (_state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 } placementOptions)
         {
             // Blank (null) resolves to Auto, and Auto is the leading choice.
             GanttLabelPosition selectedPlacement = _state.SelectedDateLabelPlacement ?? GanttLabelPosition.Auto;
@@ -2126,7 +2130,8 @@ internal class RibbonStateService
     /// <param name="selectionId">The selected item ID, or null in tests.</param>
     internal void SetDateLabelPosition(string? selectionId)
     {
-        if (_state.DateLabelPlacementOptions is { Count: > 0 }
+        if (_state.DateLabelPlacementSelectionAvailable
+            && _state.DateLabelPlacementOptions is { Count: > 0 }
             && EntityTypeCatalog.TryParseDateLabelPlacementSelection(
                 selectionId,
                 out GanttLabelPosition? placement))
@@ -2370,59 +2375,70 @@ internal class RibbonStateService
 #pragma warning disable CA1031
         try
         {
-            SelectionFacts facts = identifier.Identify();
-            if (!facts.IsSingleBodyRow || facts.BodyIndex is not int bodyIndex)
-            {
-                return UnavailableCustomStyleContext(previous);
-            }
-
-            GanttTableReadOutcome read = reader.Read();
-            if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
-            {
-                return UnavailableCustomStyleContext(previous);
-            }
-
-            GanttRowDto row = read.Rows[bodyIndex - 1];
-            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type)
-                || EntityTypeCatalog.GetDefinition(type) is not { RequiresStyleKey: true })
-            {
-                return UnavailableCustomStyleContext(previous);
-            }
-
-            // The dropdown offers user-created styles only: the registry's
-            // keys minus the code-owned built-in presets (the same
-            // StylePresets authority the Theme settings dialog subtracts).
-            // A failed catalogue read yields no options — the dropdown
-            // disables, and the command still refuses unknown keys at
-            // execution.
+            // Always capture the current catalogue of user-created styles,
+            // independent of what row is selected. The dropdown's item list
+            // is global to the workbook; only the enabled flag and selected
+            // item depend on the selection. A failed catalogue read keeps
+            // the previous options rather than presenting a stale-empty list.
             ConfigReadOutcome catalogues = _catalogueReader.Read();
-            if (!catalogues.Succeeded || catalogues.Styles is null)
+            IReadOnlyList<string> options = previous.CustomStyleOptions ?? [];
+            if (catalogues.Succeeded && catalogues.Styles is not null)
             {
-                return UnavailableCustomStyleContext(previous);
-            }
-
-            HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
-            {
-                _ = builtInKeys.Add(preset.StyleKey);
-            }
-
-            List<string> options = [];
-            foreach (string key in catalogues.Styles.StyleKeys)
-            {
-                if (!builtInKeys.Contains(key))
+                HashSet<string> builtInKeys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (GanttStylePreset preset in GanttCatalogues.StylePresets)
                 {
-                    options.Add(key);
+                    _ = builtInKeys.Add(preset.StyleKey);
+                }
+
+                List<string> captured = [];
+                foreach (string key in catalogues.Styles.StyleKeys)
+                {
+                    if (!builtInKeys.Contains(key))
+                    {
+                        captured.Add(key);
+                    }
+                }
+                options = captured;
+            }
+
+            // Now resolve selection-dependent state: is the selection a single
+            // style-key-type body row, and if so, which custom style does it
+            // name?
+            SelectionFacts facts = identifier.Identify();
+            bool available = false;
+            int bodyIndex = 0;
+            if (facts.IsSingleBodyRow && facts.BodyIndex is int bi)
+            {
+                bodyIndex = bi;
+                available = true;
+            }
+            string? selectedKey = null;
+
+            if (available)
+            {
+                GanttTableReadOutcome read = reader.Read();
+                if (!read.Succeeded || bodyIndex < 1 || bodyIndex > read.Rows.Count)
+                {
+                    available = false;
+                }
+                else
+                {
+                    GanttRowDto row = read.Rows[bodyIndex - 1];
+                    if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type)
+                        || EntityTypeCatalog.GetDefinition(type) is not { RequiresStyleKey: true })
+                    {
+                        available = false;
+                    }
+                    else
+                    {
+                        selectedKey = options.Contains(row.StyleKey ?? string.Empty, StringComparer.Ordinal)
+                            ? row.StyleKey
+                            : null;
+                    }
                 }
             }
 
-            // A built-in assignment reads as no match (null): the dropdown
-            // never lists built-ins, so it must not select one.
-            string? selectedKey = options.Contains(row.StyleKey ?? string.Empty, StringComparer.Ordinal)
-                ? row.StyleKey
-                : null;
-
-            return new CustomStyleContext(true, selectedKey, options);
+            return new CustomStyleContext(available, selectedKey, options);
         }
         catch
         {

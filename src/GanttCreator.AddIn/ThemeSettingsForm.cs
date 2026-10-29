@@ -1750,14 +1750,14 @@ internal sealed partial class ThemeSettingsForm : Form
 
         // The property groups, one per concern: Fill, Outline, Label, Size.
         TableLayoutPanel fillTable = NewPropertyTable();
-        AddCustomColourRow(fillTable, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 0);
+        AddCustomColourRow(fillTable, "Colour", _customStyleFillText, _customFillColorButton, _customFillSwatch, 0, CustomFillColorButton_Click);
         AddCustomPropertyRow(fillTable, "Pattern", _customHatchPatternCombo, 1);
         GroupBox fillGroup = NewPropertyGroup("Fill");
         fillGroup.Controls.Add(fillTable);
         properties.Controls.Add(fillGroup, 0, 1);
 
         TableLayoutPanel outlineTable = NewPropertyTable();
-        AddCustomColourRow(outlineTable, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 0);
+        AddCustomColourRow(outlineTable, "Colour", _customStyleStrokeText, _customStrokeColorButton, _customStrokeSwatch, 0, CustomStrokeColorButton_Click);
         AddCustomPropertyRow(outlineTable, "Width", _customOutlineWidthNumeric, 1);
         AddCustomPropertyRow(outlineTable, "Line style", _customStrokeDashCombo, 2);
         GroupBox outlineGroup = NewPropertyGroup("Outline");
@@ -1765,7 +1765,7 @@ internal sealed partial class ThemeSettingsForm : Form
         properties.Controls.Add(outlineGroup, 0, 2);
 
         TableLayoutPanel labelTable = NewPropertyTable();
-        AddCustomColourRow(labelTable, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 0);
+        AddCustomColourRow(labelTable, "Colour", _customStyleTextText, _customTextColorButton, _customTextSwatch, 0, CustomTextColorButton_Click);
         AddCustomPropertyRow(labelTable, "Default", _customDefaultLabelCombo, 1);
         AddCustomPropertyRow(labelTable, "Allowed", _customAllowedLabelList, 2);
         GroupBox labelGroup = NewPropertyGroup("Label");
@@ -1853,16 +1853,18 @@ internal sealed partial class ThemeSettingsForm : Form
     /// <param name="pickerButton">The colour picker button.</param>
     /// <param name="swatch">The colour swatch.</param>
     /// <param name="row">The row the control sits in.</param>
+    /// <param name="pickerClick">The click handler for this row's picker button.</param>
     private void AddCustomColourRow(
         TableLayoutPanel table,
         string label,
         TextBox textBox,
         Button pickerButton,
         Panel swatch,
-        int row)
+        int row,
+        EventHandler pickerClick)
     {
         textBox.TextChanged += CustomStyleColourTextChanged;
-        pickerButton.Click += CustomFillColorButton_Click;
+        pickerButton.Click += pickerClick;
 
         // The three colour controls travel together in one right-anchored
         // cluster, so the swatch can never drift away from the colour it
@@ -2243,6 +2245,10 @@ internal sealed partial class ThemeSettingsForm : Form
                 GanttLabelPosition.Left,
                 GanttLabelPosition.Right,
                 GanttLabelPosition.Inside,
+                GanttLabelPosition.TopLeft,
+                GanttLabelPosition.TopRight,
+                GanttLabelPosition.BottomLeft,
+                GanttLabelPosition.BottomRight,
                 GanttLabelPosition.None,
             },
             GanttStrokeDash.Solid);

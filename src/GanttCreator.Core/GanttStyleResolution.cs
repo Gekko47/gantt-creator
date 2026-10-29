@@ -81,6 +81,7 @@ public static class GanttStyleResolver
     /// <param name="styleKey">The selected named style, or null.</param>
     /// <param name="fillColour">The explicit fill override, or null.</param>
     /// <param name="strokeColour">The explicit stroke override, or null.</param>
+    /// <param name="textColour">The explicit text colour override, or null.</param>
     /// <param name="labelPosition">The explicit label override, or null.</param>
     /// <param name="resolved">The resolved style when successful.</param>
     /// <param name="refusal">The refusal when unsuccessful.</param>
@@ -90,6 +91,7 @@ public static class GanttStyleResolver
         string? styleKey,
         string? fillColour,
         string? strokeColour,
+        string? textColour,
         GanttLabelPosition? labelPosition,
         out GanttResolvedStyle? resolved,
         out GanttStyleResolutionRefusal? refusal) =>
@@ -99,6 +101,7 @@ public static class GanttStyleResolver
             styleKey,
             fillColour,
             strokeColour,
+            textColour,
             labelPosition,
             out resolved,
             out refusal);
@@ -121,6 +124,7 @@ public static class GanttStyleResolver
     /// <param name="styleKey">The selected named style, or null.</param>
     /// <param name="fillColour">The explicit fill override, or null.</param>
     /// <param name="strokeColour">The explicit stroke override, or null.</param>
+    /// <param name="textColour">The explicit text colour override, or null.</param>
     /// <param name="labelPosition">The explicit label override, or null.</param>
     /// <param name="resolved">The resolved style when successful.</param>
     /// <param name="refusal">The refusal when unsuccessful.</param>
@@ -131,6 +135,7 @@ public static class GanttStyleResolver
         string? styleKey,
         string? fillColour,
         string? strokeColour,
+        string? textColour,
         GanttLabelPosition? labelPosition,
         out GanttResolvedStyle? resolved,
         out GanttStyleResolutionRefusal? refusal)
@@ -166,7 +171,8 @@ public static class GanttStyleResolver
             || !TryParseOptionalColour(selected.StrokeColour, out ColourHex? baseStroke)
             || !TryParseOptionalColour(selected.TextColour, out ColourHex? baseText)
             || !TryParseOptionalColour(fillColour, out ColourHex? overrideFill)
-            || !TryParseOptionalColour(strokeColour, out ColourHex? overrideStroke))
+            || !TryParseOptionalColour(strokeColour, out ColourHex? overrideStroke)
+            || !TryParseOptionalColour(textColour, out ColourHex? overrideText))
         {
             refusal = GanttStyleResolutionRefusal.StyleUnavailable;
             return false;
@@ -176,7 +182,7 @@ public static class GanttStyleResolver
             selected.StyleKey,
             overrideFill ?? baseFill,
             overrideStroke ?? baseStroke,
-            baseText,
+            overrideText ?? baseText,
             labelPosition ?? selected.DefaultLabelPosition,
             usedFallback);
         refusal = null;

@@ -37,6 +37,7 @@ public class GanttStyleRegistryTests
             "AsBuiltActivity",
             "#112233",
             null,
+            null,
             GanttLabelPosition.Inside,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
@@ -69,6 +70,7 @@ public class GanttStyleRegistryTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -92,6 +94,7 @@ public class GanttStyleRegistryTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -109,6 +112,7 @@ public class GanttStyleRegistryTests
         Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.CustomActivity,
             GanttStyleRegistry.Empty,
+            null,
             null,
             null,
             null,
@@ -140,6 +144,7 @@ public class GanttStyleRegistryTests
         Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.AsBuiltActivity,
             registry,
+            null,
             null,
             null,
             null,
@@ -177,11 +182,43 @@ public class GanttStyleRegistryTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
 
         Assert.Equal("#FFFFFF", resolved!.TextColour!.ToString());
+    }
+
+    [Fact]
+    public void Resolver_applies_per_row_text_colour_override_over_style_default()
+    {
+        // A per-row text colour override must win over the named style's own
+        // text colour, mirroring the fill/stroke override rule.
+        var registry = new GanttStyleRegistry([
+            new GanttStyleDefinition(
+                "DelayEvent",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
+                EntityColourCapability.Fill | EntityColourCapability.Stroke,
+                GanttLabelPosition.Inside,
+                FillColour: "#FF0000",
+                StrokeColour: "#C00000",
+                TextColour: "#FFFFFF",
+                HatchPattern: GanttHatchPattern.None)]);
+
+        Assert.True(GanttStyleResolver.TryResolve(
+            GanttEntityType.DelayEvent,
+            registry,
+            "DelayEvent",
+            null,
+            null,
+            "#FF0000",
+            GanttLabelPosition.Inside,
+            out GanttResolvedStyle? resolved,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Null(refusal);
+        Assert.Equal("#FF0000", resolved!.TextColour!.ToString());
     }
 
     [Fact]
@@ -197,6 +234,7 @@ public class GanttStyleRegistryTests
             GanttEntityType.CustomActivity,
             registry,
             "TextlessStyle",
+            null,
             null,
             null,
             null,
@@ -241,6 +279,36 @@ public class GanttStyleRegistryTests
     }
 
     [Fact]
+    public void Resolver_refuses_a_malformed_per_row_text_colour_override()
+    {
+        // A malformed per-row text colour override must refuse resolution,
+        // symmetric with the fill/stroke guards.
+        var registry = new GanttStyleRegistry([
+            new GanttStyleDefinition(
+                "DelayEvent",
+                new HashSet<GanttLabelPosition> { GanttLabelPosition.Inside },
+                EntityColourCapability.Fill | EntityColourCapability.Stroke,
+                GanttLabelPosition.Inside,
+                FillColour: "#FF0000",
+                StrokeColour: "#C00000",
+                TextColour: "#FFFFFF",
+                HatchPattern: GanttHatchPattern.None)]);
+
+        Assert.False(GanttStyleResolver.TryResolve(
+            GanttEntityType.DelayEvent,
+            registry,
+            "DelayEvent",
+            null,
+            null,
+            "not-a-colour",
+            GanttLabelPosition.Inside,
+            out _,
+            out GanttStyleResolutionRefusal? refusal));
+
+        Assert.Equal(GanttStyleResolutionRefusal.StyleUnavailable, refusal);
+    }
+
+    [Fact]
     public void A_registry_text_colour_reaches_the_resolved_style_verbatim()
     {
         // The reachable end-to-end path: a user-authored style's text colour is
@@ -253,6 +321,7 @@ public class GanttStyleRegistryTests
             GanttEntityType.CustomActivity,
             registry,
             "TextlessStyle",
+            null,
             null,
             null,
             null,
@@ -491,6 +560,7 @@ public sealed class GanttStyleFormattingTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -512,6 +582,7 @@ public sealed class GanttStyleFormattingTests
             registry,
             "UserStyle",
             "#ABCDEF",
+            null,
             null,
             GanttLabelPosition.None,
             out GanttResolvedStyle? resolved,
@@ -542,6 +613,7 @@ public sealed class GanttStyleFormattingTests
             null,
             null,
             null,
+            null,
             out _,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -565,6 +637,7 @@ public sealed class GanttStyleFormattingTests
             GanttEntityType.CustomActivity,
             registry,
             "CustomStyle",
+            null,
             null,
             null,
             null,
@@ -595,12 +668,14 @@ public sealed class GanttStyleFormattingTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? first,
             out _));
         Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.CustomActivity,
             rebuilt,
             "UserStyle",
+            null,
             null,
             null,
             null,
@@ -622,6 +697,7 @@ public sealed class GanttStyleFormattingTests
         Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.AsPlannedActivity,
             registry,
+            null,
             null,
             null,
             null,
@@ -649,6 +725,7 @@ public sealed class GanttStyleFormattingTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -667,6 +744,7 @@ public sealed class GanttStyleFormattingTests
             GanttEntityType.CustomMilestone,
             GanttStyleRegistry.Empty,
             "DeletedCustomStyle",
+            null,
             null,
             null,
             null,
@@ -691,6 +769,7 @@ public sealed class GanttStyleFormattingTests
             null,
             null,
             null,
+            null,
             out GanttResolvedStyle? resolved,
             out GanttStyleResolutionRefusal? refusal));
 
@@ -706,6 +785,7 @@ public sealed class GanttStyleFormattingTests
         Assert.True(GanttStyleResolver.TryResolve(
             GanttEntityType.CustomMilestone,
             GanttStyleRegistry.Empty,
+            null,
             null,
             null,
             null,

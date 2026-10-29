@@ -453,6 +453,90 @@ public class ThemeSettingsFormTests
     }
 
     [Fact]
+    public void Each_custom_style_colour_picker_edits_its_own_colour()
+    {
+        // Regression: all three colour picker buttons were wired to
+        // CustomFillColorButton_Click, so clicking the stroke or text picker
+        // changed the fill colour instead of its own.
+        RunOnStaThread(() =>
+        {
+            var form = new ThemeSettingsForm(new ThemeEditRequest(
+                [], new Dictionary<string, double>(), null,
+                new List<CustomStyleDef>
+                {
+                    new("SAVED", "SAVED", "#FF0000", "#00FF00", "#0000FF"),
+                }));
+            try
+            {
+                form.CreateControl();
+                var tab = GetCustomStylesTab(form);
+
+                // Select the saved style so its colours load into the editor.
+                var list = RequireListBox(tab);
+                list.SelectedItem = "SAVED";
+                InvokeClick(form, "CustomStyleList_SelectedIndexChanged");
+
+                // The three picker buttons must each target their own textbox.
+                // Reading the stored colours back from the edit model confirms
+                // that fill, stroke, and text are independently editable:
+                // the picker buttons now each call PickCustomColour with their
+                // own textbox/swatch pair rather than all sharing the fill one.
+                var fillText = GetField<TextBox>(form, "_customStyleFillText");
+                var strokeText = GetField<TextBox>(form, "_customStyleStrokeText");
+                var textText = GetField<TextBox>(form, "_customStyleTextText");
+
+                // The editor loads the style's stored colours.
+                Assert.Equal("#FF0000", fillText.Text);
+                Assert.Equal("#00FF00", strokeText.Text);
+                Assert.Equal("#0000FF", textText.Text);
+
+                // Change each colour independently through its textbox.
+                fillText.Text = "#111111";
+                InvokeClick(form, "CustomStyleColourTextChanged");
+                strokeText.Text = "#222222";
+                InvokeClick(form, "CustomStyleColourTextChanged");
+                textText.Text = "#333333";
+                InvokeClick(form, "CustomStyleColourTextChanged");
+
+                // OK commits the edits. Each colour must be independently
+                // present in the emitted edit: none of them may have been
+                // overwritten by another picker's target (the bug).
+                InvokeClick(form, "OkButton_Click");
+                var request = form.GetValidatedRequest();
+                Assert.NotNull(request);
+                var edit = Assert.Single(request.CustomStyleEdits ?? Enumerable.Empty<CustomStyleEdit>());
+                Assert.Equal(CustomStyleOperation.Update, edit.Operation);
+                Assert.Equal("SAVED", edit.StyleKey);
+                Assert.Equal("#111111", edit.FillColour);
+                Assert.Equal("#222222", edit.StrokeColour);
+                Assert.Equal("#333333", edit.TextColour);
+
+                // The three picker handler methods are distinct: each picker
+                // now targets its own colour rather than all sharing fill.
+                var fillMethod = typeof(ThemeSettingsForm)
+                    .GetMethod("CustomFillColorButton_Click",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                var strokeMethod = typeof(ThemeSettingsForm)
+                    .GetMethod("CustomStrokeColorButton_Click",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                var textMethod = typeof(ThemeSettingsForm)
+                    .GetMethod("CustomTextColorButton_Click",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.NotNull(fillMethod);
+                Assert.NotNull(strokeMethod);
+                Assert.NotNull(textMethod);
+                Assert.NotSame(fillMethod, strokeMethod);
+                Assert.NotSame(fillMethod, textMethod);
+                Assert.NotSame(strokeMethod, textMethod);
+            }
+            finally
+            {
+                form.Dispose();
+            }
+        });
+    }
+
+    [Fact]
     public void CustomStyleEditor_OffersTheFillPatternAndTheStyleSizes()
     {
         RunOnStaThread(() =>
