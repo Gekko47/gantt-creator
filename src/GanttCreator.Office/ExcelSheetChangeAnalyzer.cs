@@ -1,5 +1,6 @@
 using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
+using System.Text.RegularExpressions;
 
 namespace GanttCreator.Office;
 
@@ -18,13 +19,12 @@ namespace GanttCreator.Office;
 /// chained member expressions, and never force-released.
 /// </para>
 /// <para>
-/// Only <c>Id</c> (column 1) and <c>Type</c> (column 4) changes trigger
-/// auto-refresh, per the R5.8 decision Q3: type/id changes refresh
-/// automatically; start/finish require a manual Refresh; duration is
-/// engine-driven.
+/// Any chart-affecting table body column triggers automatic refresh.
+/// <c>Duration</c> is derived and excluded. Header cells and changes outside
+/// the active workbook's Gantt table are ignored.
 /// </para>
 /// </remarks>
-public class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyzer
+public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyzer
 {
     private readonly Application? _application = application as Application;
 
@@ -48,8 +48,24 @@ public class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyze
             return false;
         }
 
+        int bang = changedAddress.LastIndexOf('!');
+        if (bang < 0)
+        {
+            return false;
+        }
+
+        string owner = changedAddress[..bang].Trim('"', '\'');
+        string cellRange = changedAddress[(bang + 1)..];
+        int separator = owner.LastIndexOf('|');
+        if (separator < 0
+            || !string.Equals(owner[..separator], workbook.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         Sheets sheets = workbook.Sheets;
-        if (!TryFindTable(sheets, out ListObject? table) || table is null)
+        if (!TryFindTable(sheets, out ListObject? table, out string? tableSheetName) || table is null
+            || !string.Equals(owner[(separator + 1)..], tableSheetName, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -59,26 +75,67 @@ public class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyze
             return false;
         }
 
-        // Parse the Excel address ($C$5 → column index 3). The address may
-        // refer to a multi-cell range; use the top-left cell's column.
-        int columnIndex = ParseColumnIndex(changedAddress);
-        if (columnIndex < 1)
+        Microsoft.Office.Interop.Excel.Range? body = table.DataBodyRange;
+        if (body is null || !TryParseRange(cellRange, out int firstRow, out int lastRow, out int firstColumn, out int lastColumn))
         {
             return false;
         }
 
-        // Schema column ordinals are 0-based; table column indices are 1-based.
-        // Id is schema[0], Type is schema[3].
-        bool isIdColumn = columnMap[0] == columnIndex;
-        bool isTypeColumn = columnMap[3] == columnIndex;
-        return isIdColumn || isTypeColumn;
+        int bodyFirstRow = body.Row;
+        int bodyLastRow = bodyFirstRow + body.Rows.Count - 1;
+        int bodyFirstColumn = body.Column;
+        int bodyLastColumn = bodyFirstColumn + table.ListColumns.Count - 1;
+        return RangeIntersectsBody(firstRow, lastRow, firstColumn, lastColumn,
+                bodyFirstRow, bodyLastRow, bodyFirstColumn, bodyLastColumn)
+            && HasChartAffectingColumn(
+                GanttTableSchema.Default.Columns, columnMap, bodyFirstColumn, firstColumn, lastColumn);
+    }
+
+    internal static bool RangeIntersectsBody(
+        int firstRow, int lastRow, int firstColumn, int lastColumn,
+        int bodyFirstRow, int bodyLastRow, int bodyFirstColumn, int bodyLastColumn) =>
+        lastRow >= bodyFirstRow && firstRow <= bodyLastRow
+        && lastColumn >= bodyFirstColumn && firstColumn <= bodyLastColumn;
+
+    internal static bool HasChartAffectingColumn(
+        IReadOnlyList<GanttTableColumn> schema,
+        IReadOnlyList<int> columnMap,
+        int bodyFirstColumn,
+        int firstChangedColumn,
+        int lastChangedColumn)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(columnMap);
+        if (columnMap.Count != schema.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < schema.Count; index++)
+        {
+            if (schema[index].Name.Equals("Duration", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            int localColumn = columnMap[index];
+            if (localColumn > 0
+                && IsColumnIncluded(bodyFirstColumn + localColumn - 1, firstChangedColumn, lastChangedColumn))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryFindTable(
         Sheets sheets,
-        out ListObject? table)
+        out ListObject? table,
+        out string? sheetName)
     {
         table = null;
+        sheetName = null;
         try
         {
             foreach (object? sheet in sheets)
@@ -94,6 +151,7 @@ public class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyze
                             StringComparison.OrdinalIgnoreCase))
                     {
                         table = listObject;
+                        sheetName = ws.Name;
                         return true;
                     }
                 }
@@ -147,45 +205,50 @@ public class ExcelSheetChangeAnalyzer(object? application) : ISheetChangeAnalyze
         return true;
     }
 
-    /// <summary>
-    /// Parses the one-based column index from an Excel-style address such as
-    /// <c>"$C$5"</c> or <c>"C5"</c>. Returns 0 when unparseable.
-    /// </summary>
-    private static int ParseColumnIndex(string address)
+    internal static bool TryParseRange(string address, out int firstRow, out int lastRow, out int firstColumn, out int lastColumn)
     {
-        try
+        firstRow = lastRow = firstColumn = lastColumn = 0;
+        string[] areas = address.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (areas.Length == 0)
         {
-            int start = 0;
-            if (address.Length > 0 && address[0] == '$')
-            {
-                start = 1;
-            }
-
-            int end = start;
-            while (end < address.Length && char.IsLetter(address[end]))
-            {
-                end++;
-            }
-
-            if (end == start)
-            {
-                return 0;
-            }
-
-            string letters = address[start..end];
-            int column = 0;
-            foreach (char c in letters)
-            {
-                column = (column * 26) + (char.ToUpperInvariant(c) - 'A') + 1;
-            }
-
-            return column;
+            return false;
         }
-#pragma warning disable CA1031
-        catch
+
+        foreach (string area in areas)
         {
-            return 0;
+            Match match = RangeRegex().Match(area);
+            if (!match.Success
+                || !int.TryParse(match.Groups[2].Value, out int row1)
+                || !int.TryParse(match.Groups[4].Success ? match.Groups[4].Value : match.Groups[2].Value, out int row2))
+            {
+                firstRow = lastRow = firstColumn = lastColumn = 0;
+                return false;
+            }
+
+            int areaFirstColumn = ColumnNumber(match.Groups[1].Value);
+            int areaLastColumn = match.Groups[3].Success ? ColumnNumber(match.Groups[3].Value) : areaFirstColumn;
+            int areaFirstRow = Math.Min(row1, row2);
+            int areaLastRow = Math.Max(row1, row2);
+            if (areaFirstRow < 1 || areaFirstColumn < 1 || areaLastColumn < 1)
+            {
+                firstRow = lastRow = firstColumn = lastColumn = 0;
+                return false;
+            }
+
+            firstRow = firstRow == 0 ? areaFirstRow : Math.Min(firstRow, areaFirstRow);
+            lastRow = Math.Max(lastRow, areaLastRow);
+            firstColumn = firstColumn == 0 ? areaFirstColumn : Math.Min(firstColumn, areaFirstColumn);
+            lastColumn = Math.Max(lastColumn, areaLastColumn);
         }
-#pragma warning restore CA1031
+
+        return true;
     }
+
+    internal static bool IsColumnIncluded(int column, int firstColumn, int lastColumn) =>
+        column >= firstColumn && column <= lastColumn;
+
+    [GeneratedRegex(@"^\$?([A-Z]+)\$?(\d+)(?::\$?([A-Z]+)\$?(\d+))?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RangeRegex();
+
+    private static int ColumnNumber(string letters) => letters.Aggregate(0, (value, character) => (value * 26) + char.ToUpperInvariant(character) - 'A' + 1);
 }

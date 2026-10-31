@@ -134,6 +134,9 @@ public sealed record GanttRefreshOutcome(
     int DurationCellsWritten,
     int StyleKeyCellsWritten)
 {
+    /// <summary>Scene warnings from the last successfully built scene.</summary>
+    public IReadOnlyList<SceneWarning> Warnings { get; init; } = [];
+
     /// <summary>Gets whether the refresh completed.</summary>
     public bool Succeeded => Refusal is null;
 
@@ -164,13 +167,18 @@ public sealed record GanttRefreshOutcome(
     /// <param name="shapesWritten">How many shape operations ran.</param>
     /// <param name="durationCellsWritten">How many duration cells were written.</param>
     /// <param name="styleKeyCellsWritten">How many <c>StyleKey</c> cells were written.</param>
+    /// <param name="warnings">The scene warnings from the successfully built scene, if any.</param>
     /// <returns>The successful outcome.</returns>
     public static GanttRefreshOutcome Ok(
         IReadOnlyList<GanttValidationIssue> issues,
         int shapesWritten,
         int durationCellsWritten,
-        int styleKeyCellsWritten) =>
-        new(null, null, issues, shapesWritten, durationCellsWritten, styleKeyCellsWritten);
+        int styleKeyCellsWritten,
+        IReadOnlyList<SceneWarning>? warnings = null) =>
+        new GanttRefreshOutcome(null, null, issues, shapesWritten, durationCellsWritten, styleKeyCellsWritten)
+        {
+            Warnings = warnings ?? [],
+        };
 
     /// <summary>Creates a refusal.</summary>
     /// <param name="refusal">Why the refresh did not complete.</param>

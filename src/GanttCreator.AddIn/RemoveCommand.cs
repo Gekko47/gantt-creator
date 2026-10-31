@@ -33,7 +33,7 @@ internal static class RemoveCommand
                 outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             CommandErrorDialog.Confirm,
             CommandErrorDialog.Show,
-            RefreshSheetCommand.RunForExcel);
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
 
     /// <summary>Runs an injected remove command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>

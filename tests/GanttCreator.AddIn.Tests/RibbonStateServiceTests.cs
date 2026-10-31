@@ -54,6 +54,21 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.Null(service.GetCatalogueWriter());
     }
 
+    [Fact]
+    public void Current_validation_findings_do_not_replace_last_rendered_scene_warnings()
+    {
+        var service = new RibbonStateService();
+        SceneWarning sceneWarning = new(SceneOwnerId.Chart, "PlotRange", "Chart warning.");
+        GanttValidationIssue validationIssue = new(
+            3, "Start", "InvalidDate", GanttValidationSeverity.Error, "Enter a valid start date.");
+
+        service.UpdateWarnings([sceneWarning]);
+        service.UpdateCurrentValidationIssues([validationIssue]);
+
+        Assert.Equal([sceneWarning], service.GetLastSuccessfulSceneWarnings());
+        Assert.Equal([validationIssue], service.GetCurrentValidationIssues());
+    }
+
     /// <summary>
     /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
     /// captures and subscriptions so the tests can prove the getters never probe

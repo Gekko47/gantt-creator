@@ -133,6 +133,13 @@ public sealed class ProtectionGuardFirstTests
         // at "SetStyleKey", the entry point that consults the shared guard
         // before any workbook or table access.
         new("src/GanttCreator.Office/ExcelStyleKeyMutator.cs", "SetStyleKey"),
+        // R5.8: validation fills change visible worksheet formatting. Each public
+        // mutation path checks protection before resolving the workbook/table.
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "HighlightRow"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "HighlightCell"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ClearHighlight"),
+        new("src/GanttCreator.Office/ExcelRowWarningHighlighter.cs", "ReconcileHighlights"),
+        new("src/GanttCreator.Office/ExcelWarningHighlighter.cs", "HighlightWarnings"),
     ];
 
     /// <summary>
@@ -156,6 +163,7 @@ public sealed class ProtectionGuardFirstTests
         // its own; the mutating implementation is registered in MutatingAdapters above.
         "src/GanttCreator.Office/IColumnPresentationPort.cs",
         "src/GanttCreator.Office/ExcelApplicationAdapter.cs",
+        "src/GanttCreator.Office/ExcelSheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/ExcelConfigCatalogueReader.cs",
         "src/GanttCreator.Office/ExcelConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/ExcelGanttTableReader.cs",
@@ -173,6 +181,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IPanelGridMeasurementPort.cs",
         "src/GanttCreator.Office/ShapeWriteOutcome.cs",
         "src/GanttCreator.Office/ShapeOwnershipTag.cs",
+        "src/GanttCreator.Office/ShapeDeltaCache.cs",
         "src/GanttCreator.Office/ExcelPanelGridMeasurement.cs",
         "src/GanttCreator.Office/ExcelInsertedRowSelector.cs",
         "src/GanttCreator.Office/IInsertedRowSelector.cs",
@@ -188,8 +197,11 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IPlotAnchorRepairer.cs",
         "src/GanttCreator.Office/IGanttRowIdentityRepairer.cs",
         "src/GanttCreator.Office/IExcelApplicationAdapter.cs",
+        "src/GanttCreator.Office/ISheetChangeAnalyzer.cs",
         "src/GanttCreator.Office/IGanttTableReader.cs",
         "src/GanttCreator.Office/IGanttValidationReporter.cs",
+        "src/GanttCreator.Office/IRowWarningHighlighter.cs",
+        "src/GanttCreator.Office/IWarningHighlighter.cs",
         "src/GanttCreator.Office/InternalsVisibleTo.cs",
         "src/GanttCreator.Office/ITypeOptionsMaterialiser.cs",
         "src/GanttCreator.Office/IWorkbookInitialiser.cs",
@@ -380,6 +392,8 @@ public sealed class ProtectionGuardFirstTests
         // wanted)`), and a comparison contains the same text as a write.
         ".Locked",
         ".Hidden",
+        ".Color",
+        ".ColorIndex",
     ];
 
     /// <summary>

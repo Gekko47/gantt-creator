@@ -188,8 +188,8 @@ internal sealed class RefreshFakes
     /// <summary>The row-identity repairer fake.</summary>
     public IGanttRowIdentityRepairer Identity => new FakeIdentityRepairer(this);
 
-    /// <summary>The validation-notes reporter fake.</summary>
-    public IGanttValidationReporter Notes => new FakeValidationReporter(this);
+    /// <summary>The row/cell warning highlighter fake.</summary>
+    public IRowWarningHighlighter Highlighter => new FakeRowWarningHighlighter(this);
 
     /// <summary>Whether the column-classification restore refuses.</summary>
     public bool ColumnPresentationRefused { get; set; }
@@ -198,10 +198,10 @@ internal sealed class RefreshFakes
     /// Every issue list the reporter was handed, in call order, so a test can assert
     /// what the orchestrator reported rather than only how many times it called.
     /// </summary>
-    public List<IReadOnlyList<GanttValidationIssue>> ReportedIssues { get; } = [];
+    public List<IReadOnlyList<HighlightTarget>> HighlightReconciliations { get; } = [];
 
     /// <summary>Whether the notes reporter refuses.</summary>
-    public bool ValidationNotesRefused { get; set; }
+    public bool WarningHighlightsRefused { get; set; }
 
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
@@ -231,6 +231,9 @@ internal sealed class RefreshFakes
     /// <summary>How many times the table reader was called.</summary>
     public int TableReadCount { get; private set; }
 
+    /// <summary>How many unsafe changed-row reads were requested.</summary>
+    public int TargetedTableReadCount { get; private set; }
+
     /// <summary>Builds the orchestrator over these fakes.</summary>
     /// <returns>The composed orchestrator.</returns>
     public GanttRefreshOrchestrator BuildOrchestrator() =>
@@ -247,7 +250,47 @@ internal sealed class RefreshFakes
             ColumnPresentation,
             Identity,
             null,
-            Notes);
+            null,
+            Highlighter);
+
+    /// <summary>Builds the orchestrator with a pending worksheet change batch.</summary>
+    public GanttRefreshOrchestrator BuildOrchestratorWithChanges(ChangeTracker tracker) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            changeTracker: tracker);
+
+    /// <summary>Builds an orchestrator using the injected payload-signature cache.</summary>
+    public GanttRefreshOrchestrator BuildOrchestratorWithDeltaCache(ShapeDeltaCache cache, bool useDeltaCache = true) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            shapeDeltaCache: cache,
+            useDeltaCache: useDeltaCache);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -265,17 +308,19 @@ internal sealed class RefreshFakes
             Shapes,
             ColumnPresentation,
             Identity,
-            scope);
+            scope,
+            null,
+            Highlighter);
 
     /// <summary>
-    /// Builds the orchestrator with an explicit notes reporter, so a test can prove the
-    /// dependency is genuinely optional rather than merely defaulted.
+    /// Builds the orchestrator with an explicit warning highlighter, so a test can prove
+    /// the dependency is genuinely optional rather than merely defaulted.
     /// </summary>
-    /// <param name="validationReporter">
-    /// The reporter to wire, or <see langword="null"/> to omit it entirely.
+    /// <param name="warningHighlighter">
+    /// The highlighter to wire, or <see langword="null"/> to omit it entirely.
     /// </param>
     /// <returns>The composed orchestrator.</returns>
-    public GanttRefreshOrchestrator BuildOrchestrator(IGanttValidationReporter? validationReporter) =>
+    public GanttRefreshOrchestrator BuildOrchestratorWithWarningHighlighter(IRowWarningHighlighter? warningHighlighter) =>
         new(
             TableReader,
             ConfigReader,
@@ -289,7 +334,8 @@ internal sealed class RefreshFakes
             ColumnPresentation,
             Identity,
             null,
-            validationReporter);
+            null,
+            warningHighlighter);
 
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
@@ -314,6 +360,12 @@ internal sealed class RefreshFakes
             return owner.TableReadRefused
                 ? GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing)
                 : GanttTableReadOutcome.Ok(owner.Rows);
+        }
+
+        public GanttTableReadOutcome Read(IReadOnlyList<int> rowNumbers)
+        {
+            owner.TargetedTableReadCount++;
+            return GanttTableReadOutcome.Ok([.. owner.Rows.Where(row => rowNumbers.Contains(row.RowNumber))]);
         }
     }
 
@@ -528,21 +580,26 @@ internal sealed class RefreshFakes
         }
     }
 
-    /// <summary>
-    /// The validation-notes reporter fake. It records the issue list it was handed
-    /// rather than only a count, because the clearing defect this stands in for turns
-    /// on WHICH list arrived: a successful refresh must report an EMPTY list, and that
-    /// empty call is the one that removes a corrected row's note.
-    /// </summary>
-    private sealed class FakeValidationReporter(RefreshFakes owner) : IGanttValidationReporter
+    private sealed class FakeRowWarningHighlighter(RefreshFakes owner) : IRowWarningHighlighter
     {
-        public GanttValidationReportOutcome Report(IReadOnlyList<GanttValidationIssue> issues)
+        public GanttValidationReportOutcome HighlightRow(int rowNumber, GanttValidationSeverity severity) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome HighlightCell(int rowNumber, int column, GanttValidationSeverity severity) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome ClearHighlight(int rowNumber, int? column = null) =>
+            GanttValidationReportOutcome.Ok(0);
+
+        public GanttValidationReportOutcome ReconcileHighlights(
+            IReadOnlyList<HighlightTarget> currentTargets,
+            IReadOnlyList<int>? rowsToReconcile = null)
         {
-            owner.Steps.Add("Notes");
-            owner.ReportedIssues.Add(issues);
-            return owner.ValidationNotesRefused
+            owner.Steps.Add("Highlights");
+            owner.HighlightReconciliations.Add(currentTargets);
+            return owner.WarningHighlightsRefused
                 ? GanttValidationReportOutcome.Refused(GanttValidationReportRefusalReason.TargetProtected)
-                : GanttValidationReportOutcome.Ok(issues.Count);
+                : GanttValidationReportOutcome.Ok(currentTargets.Count);
         }
     }
 

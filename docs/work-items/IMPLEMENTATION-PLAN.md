@@ -66,7 +66,7 @@
 > kills against a ceiling of 26** (`KNOWN-LIMITATIONS.md` L19) — R4.8A's new
 > adapter surface is the first thing that could push it over.
 
-> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The manifest covers **94** roadmap-guide records: **41 Tier A and 53 Tier B** — counts re-taken from the table itself on 2026-09-27, superseding the "92 / 39 / 53" of 2026-09-26, which had itself corrected the earlier "90 / 27 / 63" (`R5.6b` and `R2.7d` had never been counted). The two rows still uncounted were `R3.16` and `R3.17`, both Tier A: the Phase-3 exit had already landed them, so the 2026-09-26 recount of 92 predated them. R2.7, R2.7a, and R2.7b are landed; the R2.1a/R2.2a/R2.4a/R2.4b/R2.5a/R2.6a hardening rows and R5.6a have approved guides. ADR-0009 defines style capabilities, R2.7c carries the style registry's resolved formatting, and ADR-0010 records the executable first-live-slice order. [`../STATUS.md`](../STATUS.md) records landed state and `AGENTS.md` retains requirement precedence.
+> Reauthored 23 September 2026 from the landed R2.7a state to incorporate the approved [`GanttCreator_R2_Implementation_Plan.md`](../GanttCreator_R2_Implementation_Plan.md), and revised 26 September 2026 at the Phase-3 exit: R3.14 landed, and R4.1–R4.10 were upgraded from Tier B to Tier A against the landed Phase-3 code. The current index contains **105** roadmap-guide records: **43 Tier A and 62 Tier B**, counted from the table on 2026-10-31, including the two later Tier-A additions R4.7I and R4.11. The earlier 94/41/53 count was a dated snapshot and omitted later roadmap additions. Historical recount notes below explain the earlier discrepancies; they do not describe the current index. [`../STATUS.md`](../STATUS.md) records implementation and acceptance state; `AGENTS.md` retains requirement precedence.
 
 ## Tier model (approved 2026-09-21)
 
@@ -153,11 +153,14 @@ above. Phase 3's guides are Tier A from initial authoring. ADR-0010 is the
 only approved exception to table-order execution: after R4.9, execute R2.10,
 then R3.13, before R4.10.
 
-## Index of guides (94)
+## Index of guides (105)
 
-One row per roadmap-guide record. Status values: `Landed`, `Implemented`
-(working-tree implementation with observed gates; pending commit), `Approved`
-(file and decision exist; not implemented), or `Authored` (binding contract).
+One row per roadmap-guide record. Status values distinguish implementation
+from acceptance evidence: `Landed` means the implementation is committed and
+its required evidence is closed; `Implemented` means code/tests are present but
+one or more required gates remain; `Approved` means a decision exists but the
+implementation has not started; `Authored` means a binding guide exists but
+implementation has not started. A row note names material open evidence.
 Filenames are backticked, not linked, so link checking stays on authored
 files only; the local audit verifies every file exists.
 
@@ -177,8 +180,8 @@ files only; the local audit verifies every file exists.
 | R2.7c | `R2.7c-style-registry-formatting.md` | Landed (`69a986d`) |
 | R2.7d | `R2.7d-date-display-format-setting.md` | Landed (ADR-0016) |
 | R2.8 | `R2.8-add-row-commands.md` | Landed (`61e67f9`; fix `75df937`) |
-| R2.9 | `R2.9-type-dropdown-materialisation.md` | Authored (Tier A) |
-| R2.10 | `R2.10-config-repair-migration.md` | Authored (Tier A; deferred by ADR-0010) |
+| R2.9 | `R2.9-type-dropdown-materialisation.md` | Implemented; required Excel dropdown/paste acceptance evidence remains to be reconciled |
+| R2.10 | `R2.10-config-repair-migration.md` | Implemented; automated synthetic-damage coverage is present, human Excel acceptance remains required |
 
 ### Phase 3 — Core scene engine (Tier A)
 
@@ -196,7 +199,7 @@ files only; the local audit verifies every file exists.
 | R3.10 | `R3.10-delineator-lines-labels.md` | Landed (ADR-0017) |
 | R3.11 | `R3.11-table-header-primitives.md` | Landed (`d763e67` step 1 grid, `aeea924` step 2 panel/header, `2012174` step 3 date labels) |
 | R3.12 | `R3.12-scene-validator-benchmark.md` | Landed (`abd52c9` steps 1-2, `808162f` step 3, `2e40998` step 4, `b46c59c` steps 5-6) |
-| R3.13 | `R3.13-mutation-testing.md` | **Landed 2026-10-05** (Tier A). D-G3 approved by the human's instruction to install and proceed; `dotnet-stryker` 5.0.0 pinned in `tool-versions.psd1` and invoked by `ci.yml`. The local `verify.ps1` step of the same name is a **disabled stub** (it prints PASS without invoking `mutation-gate.ps1`) pending the first full-Core baseline run — CI is where the gate runs today. Pester guard in `scripts/mutation-gate.Tests.ps1` (26 tests, 12 positive) with a positive test for every guard branch; **a green mutation-gate run has not yet been observed** — the guard's first observed pass is recorded in `docs/STATUS.md` when it happens. Baseline run pending; the 80% threshold applies from the next Core change onward. |
+| R3.13 | `R3.13-mutation-testing.md` | Implemented; first full-Core mutation baseline and enabling the local verification step remain required |
 | R3.14 | `R3.14-equivalence-thin-slice.md` | Landed (`aa50633`, exit record `0b985bb`, guide upgrade `98e744a`) |
 | R3.15 | `R3.15-scene-chart-bounds-single-source.md` | Landed (`e3efd4e`; golden `d8acd0d`) |
 | R3.16 | `R3.16-equivalence-field-table.md` | Landed (guide revision 6; D-G14 accepted 2026-09-27) |
@@ -208,43 +211,52 @@ files only; the local audit verifies every file exists.
 | --- | --- | --- |
 | R4.1 | `R4.1-excel-adapter-interfaces.md` | **Landed** (`IShapeWritePort`, `IPanelGridMeasurementPort`, `ShapeOwnershipTag`; D2 corrected by ADR-0019; live `AlternativeText` probe **discharged** 2026-09-27) |
 | R4.2 | `R4.2-application-state-scope.md` | **Landed** (`ExcelApplicationStateScope`, five settings per ADR-0020; Office gate PASS 39/39) |
-| R4.3 | `R4.3-shape-render-conversion.md` | Upgraded to Tier A (2026-09-26) |
-| R4.4 | `R4.4-text-alignment-conversion.md` | Upgraded to Tier A (2026-09-26) |
-| R4.5 | `R4.5-polygons-z-order.md` | Upgraded to Tier A (2026-09-26) |
-| R4.6 | `R4.6-style-token-mapping.md` | Upgraded to Tier A (2026-09-26) |
+| R4.3 | `R4.3-shape-render-conversion.md` | Landed; required renderer evidence closed |
+| R4.4 | `R4.4-text-alignment-conversion.md` | Landed; required renderer evidence closed |
+| R4.5 | `R4.5-polygons-z-order.md` | Landed; required renderer evidence closed |
+| R4.6 | `R4.6-style-token-mapping.md` | Landed; required renderer evidence closed |
 | R4.7 | `R4.7-refresh-idempotence.md` | **Landed** (`ShapeReconciler` + `ShapeReconcilePlan`; D1's create-only premise expired with R4.6 and **D5 was added** replacing the unachievable "zero operations" pin with a fixed-point property, both approved 2026-09-28; **L18 decided** — refuse and surface; Office gate PASS 46/46) |
-| R4.8 | `R4.8-unowned-content-preservation.md` | Upgraded to Tier A (2026-09-26) |
+| R4.8 | `R4.8-unowned-content-preservation.md` | Landed; required preservation evidence closed |
 | R4.8A | `R4.8A-refresh-orchestrator.md` | **Implemented** (`GanttRefreshOrchestrator`, `ExcelSceneBuildRequestFactory`; D8 wired). **Office gate CLOSED 2026-10-04** by R4.9's session (Excel `16.0.20430.20032`) — all six named conditions observed, including milestones |
 | R4.9 | `R4.9-refresh-command.md` | **Implemented; Office gate PASSED 2026-10-04** (Excel 16.0.20430.20032, human-driven F5 session; Tier A 2026-09-26; first live slice. D1 amended onto R4.8A D1 — the command is a thin boundary, not the pipeline) |
 | R4.7I | `R4.7I-live-chart-vertical-anchoring.md` | **Source landed**; anchoring test coverage closed 2026-10-04; **Office gate PASSED 2026-10-04** in the same session |
-| R4.10 | `R4.10-thousand-event-performance.md` | Revised 2026-10-31 for storage-bounded benchmark flow. **Blocked** on R3.13 full-Core baseline and R2.10 Office gate; previous 1,000-event attempt exceeded local-storage capacity, so diagnose resource pressure and use the size ladder before collecting compact full-size evidence |
+| R4.10 | `R4.10-thousand-event-performance.md` | Excluded by owner from this implementation; do not implement or run its benchmark |
 | R4.11 | `R4.11-label-text-colour-propagation.md` | **Landed** (`e286dfe`; golden `e80bc8f`); **Office gate PASSED 45/45**, Office `16.0.20326.20158` x64. Independent of R4.9 and closed on its own live run. **Added to this manifest 2026-10-04** — the row existed in the roadmap, had a guide, and had landed, but was absent here |
 
-### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
+### Phase 5 — interaction and UX (Tier B guides; implementation-state snapshot below)
 
 | ID | Guide | Status |
 | --- | --- | --- |
-| R5.1 | `R5.1-plot-range-modes.md` | Authored (Tier B) |
-| R5.2 | `R5.2-scale-layout-choices.md` | Authored (Tier B) |
-| R5.3 | `R5.3-parent-child-commands.md` | Authored (Tier B) |
-| R5.3 WI-E | `R5.3-wi-e-add-child.md` | Authored (Tier B; added 2026-10-21 — the Add Child command and the permitted child-Type selector) |
-| R5.4 | `R5.4-move-expand-collapse.md` | Authored (Tier B) |
-| R5.5 | `R5.5-label-controls.md` | Authored (Tier B) |
-| R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
-| R5.6a | `R5.6a-named-style-presets.md` | Authored (Tier B; added 2026-09-23) |
-| R5.6b | `R5.6b-chart-title-settings.md` | Authored (Tier B; added 2026-09-25) |
-| R5.6c | `R5.6c-theme-dialog-modernisation.md` | Authored (Tier B; successful settings commits join revised R5.11 trigger coverage) |
-| R5.6d | `R5.6d-theme-dialog-and-chrome-fixes.md` | Authored (Tier B; theme-wide invalidation joins revised R5.11) |
-| R5.6e | `R5.6e-chart-frame-encloses-the-table.md` | Authored (Tier B; frame refresh joins revised R5.11) |
-| R5.7 | `R5.7-delineator-workflow.md` | Authored (Tier B) |
-| R5.8 | `R5.8-warnings-panel.md` | Authored (Tier B) |
-| R5.9 | `R5.9-ribbon-completion.md` | Authored (Tier B) |
-| R5.10 | `R5.10-selection-overrides.md` | Authored (Tier B) |
-| R5.11 | `R5.11-refresh-only-enforcement.md` | Revised planning contract 2026-10-31 — coalesced auto-refresh, full validation/build before content-aware delta reconciliation, full fallback, empty initialization, and non-modal validation feedback |
-| R5.12 | `R5.12-period-label-fit-ladder.md` | Authored (Tier B; successful format commits join R5.11 trigger coverage) |
-| R5.13 | `R5.13-group-aware-row-insert.md` | Authored (Tier B; successful row commits join R5.11 trigger coverage) |
-| R5.14 | `R5.14-date-labels.md` | Authored (Tier B; successful label commits join R5.11 trigger coverage) |
-| R5.15 | `R5.15-managed-worksheet-protection.md` | Proposed proof-first live Excel feasibility/ADR item; no production protection behavior until proof and owner decision |
+| R5.1 | `R5.1-plot-range-modes.md` | Implemented; live review of date edits, warnings, and refresh behavior remains |
+| R5.2 | `R5.2-scale-layout-choices.md` | Implemented; live scale, margin, preset, and displayed-width review remains |
+| R5.3 | `R5.3-parent-child-commands.md` | Implemented; live parent/child, Add Child, delete/promote, and selector review remains |
+| R5.3 WI-E | `R5.3-wi-e-add-child.md` | Implemented; live Add Child and rendered-result review remains |
+| R5.4 | `R5.4-move-expand-collapse.md` | Implemented; live ordering/alignment review and native outline-handle trigger proof remain |
+| R5.5 | `R5.5-label-controls.md` | Implemented; live description-label control review remains |
+| R5.6 | `R5.6-style-theme-settings.md` | Implemented; live theme edit, contrast warning, save/reopen, and rendered-result review remain |
+| R5.6a | `R5.6a-named-style-presets.md` | Implemented; live custom-style create/assign/rename and rendered-result review remains |
+| R5.6b | `R5.6b-chart-title-settings.md` | Implemented; live title visibility/edit and save/reopen review remains |
+| R5.6c | `R5.6c-theme-dialog-modernisation.md` | Implemented; visual Excel-host review remains |
+| R5.6d | `R5.6d-theme-dialog-and-chrome-fixes.md` | Implemented; live chrome/style/row-height review remains |
+| R5.6e | `R5.6e-chart-frame-encloses-the-table.md` | Implemented; live frame-enclosure review remains |
+| R5.7 | `R5.7-delineator-workflow.md` | Implemented; live create/edit/delete and refresh review remains |
+| R5.8 | `R5.8-warnings-panel.md` | Implemented; live warning, non-mutation, and invalid-entry recovery review remains |
+| R5.9 | `R5.9-ribbon-completion.md` | Implemented; keyboard/accessibility/visual review and the documented property-column scope decision remain |
+| R5.10 | `R5.10-selection-overrides.md` | Implemented; live preventive gating and override persistence review remains |
+| R5.11 | `R5.11-refresh-only-enforcement.md` | Implemented; production scheduler-to-render, empty-chart, trigger matrix, and failure-recovery host evidence remain |
+| R5.12 | `R5.12-period-label-fit-ladder.md` | Implemented; live Month MM/MMM result and setting persistence review remains |
+| R5.13 | `R5.13-group-aware-row-insert.md` | Implemented; live group-aware insertion and outline review remains |
+| R5.14 | `R5.14-date-labels.md` | Implemented; live date-label selection and placement review remains |
+| R5.15 | `R5.15-managed-worksheet-protection.md` | Not implemented; proof-first live feasibility and ADR decision required before any protection adoption |
+
+**Phase 5 completion snapshot (2026-10-31):** R5.1–R5.14 feature code and
+automated coverage are present in the current source. Their required live
+acceptance checks are not uniformly closed; the R5.11 end-to-end scheduler host
+test has been added but could not start Excel in this session (`0x80070520`).
+Native outline-handle events remain unproven. R5.15 has not started. Complete
+the live acceptance matrix and the unresolved R5.9 property-column scope
+decision before claiming Phase 5 exit. The code-side refresh foundation does
+not include R4.10 or its benchmark.
 
 ### Phase 6 — PowerPoint editable export (Tier B; upgrade at Phase 5 exit; R6.7 spike first)
 

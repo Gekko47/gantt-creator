@@ -120,6 +120,96 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
         return subscription;
     }
 
+    /// <inheritdoc />
+    public IDisposable SubscribeSheetChanged(Action<string?> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        Excel.AppEvents_Event? events = _events;
+        return events is null
+            ? InertSheetChangeSubscription.Instance
+            : new SheetChangeSubscription(events, handler);
+    }
+
+    /// <summary>
+    /// Owns one application-level SheetChange connection and reports the event
+    /// target using a workbook/sheet-qualified A1 address. The target and sheet
+    /// COM objects are Excel-owned roots and are never force-released.
+    /// </summary>
+    private sealed class SheetChangeSubscription : IDisposable
+    {
+        private readonly Excel.AppEvents_Event _events;
+        private Action<string?>? _handler;
+        private Excel.AppEvents_SheetChangeEventHandler? _onSheetChange;
+        private bool _disposed;
+
+        internal SheetChangeSubscription(Excel.AppEvents_Event events, Action<string?> handler)
+        {
+            _events = events;
+            _handler = handler;
+            _onSheetChange = OnSheetChange;
+
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetChange += _onSheetChange;
+            }
+            catch
+            {
+                _disposed = true;
+                _handler = null;
+                _onSheetChange = null;
+            }
+#pragma warning restore CA1031
+        }
+
+        private void OnSheetChange(object sheetObject, Excel.Range target)
+        {
+            if (_disposed || sheetObject is not Excel.Worksheet worksheet)
+            {
+                return;
+            }
+
+#pragma warning disable CA1031
+            try
+            {
+                Excel.Workbook workbook = (Excel.Workbook)worksheet.Parent;
+                string qualifiedSheet = workbook.Name + "|" + worksheet.Name;
+                string address = target.Address;
+                _handler?.Invoke(qualifiedSheet + "!" + address);
+            }
+            catch
+            {
+                // A failed address probe is ignored; it must not escape the
+                // Excel event dispatcher or schedule a refresh for unknown data.
+            }
+#pragma warning restore CA1031
+        }
+
+        public void Dispose()
+        {
+            if (_onSheetChange is null)
+            {
+                return;
+            }
+
+            _disposed = true;
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetChange -= _onSheetChange;
+                _onSheetChange = null;
+                _handler = null;
+            }
+            catch
+            {
+                // Teardown must never throw into Excel. Retain the delegate so
+                // another Dispose call can retry detaching the live connection.
+            }
+#pragma warning restore CA1031
+        }
+    }
+
     /// <summary>
     /// The one owned resource: the event connection. It adds exactly one handler
     /// to each of the three workbook-state events and removes exactly those

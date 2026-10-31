@@ -27,31 +27,30 @@ namespace GanttCreator.AddIn;
 /// did not happen.
 /// </para>
 /// <para>
-/// <b>Why the command does not refresh the chart.</b> Collapsing a group does
-/// not change the model: the hierarchy, the dates, and the scene are all
-/// unchanged. A live probe measured that a Refresh preserves the collapsed
-/// state -- neither the group pass nor the reset pass re-expands a collapsed
-/// group -- so the chart stays correct without a rebuild, and the command
-/// avoids the cost of one.
+/// Successful outline changes schedule a coalesced refresh because visible
+/// rows affect the rendered scene. A no-op does not schedule work.
 /// </para>
 /// </remarks>
 internal static class CollapseGroupsCommand
 {
     /// <summary>Runs the production collapse-all command in the current Excel session.</summary>
-    internal static void RunForExcel(OutlineCollapseDirection direction) =>
-        Run(
+    internal static void RunForExcel(OutlineCollapseDirection direction)
+        => Run(
             new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application),
             direction,
-            CommandErrorDialog.Show);
+            CommandErrorDialog.Show,
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
 
     /// <summary>Runs an injected collapse-all command.</summary>
     /// <param name="outline">The outline port that performs the writes.</param>
     /// <param name="direction">Whether the groups are being collapsed or expanded.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
+    /// <param name="onChanged">Runs once after a successful change that wrote rows.</param>
     internal static void Run(
         IOutlineGroupPort outline,
         OutlineCollapseDirection direction,
-        Action<string> presenter)
+        Action<string> presenter,
+        Action? onChanged = null)
     {
         ArgumentNullException.ThrowIfNull(outline);
         ArgumentNullException.ThrowIfNull(presenter);
@@ -62,6 +61,10 @@ internal static class CollapseGroupsCommand
         // sheet carries no group.
         if (outcome.Succeeded)
         {
+            if (outcome.RowsWritten > 0)
+            {
+                onChanged?.Invoke();
+            }
             return;
         }
 

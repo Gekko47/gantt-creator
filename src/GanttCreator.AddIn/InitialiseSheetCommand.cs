@@ -49,7 +49,8 @@ internal static class InitialiseSheetCommand
                 application,
                 catalogueWriter: RibbonStateService.Instance.GetCatalogueWriter()
                     ?? new ExcelConfigCatalogueWriter(application)),
-            CommandErrorDialog.Show);
+            CommandErrorDialog.Show,
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
     }
 
     /// <summary>
@@ -59,8 +60,9 @@ internal static class InitialiseSheetCommand
     /// </summary>
     /// <param name="initialiser">The workbook-initialiser port.</param>
     /// <param name="presenter">Receives the translated refusal message.</param>
+    /// <param name="onInitialised">Schedules the one-time initial empty render after creation succeeds.</param>
     /// <exception cref="ArgumentNullException">A dependency is <see langword="null"/>.</exception>
-    internal static void Run(IWorkbookInitialiser initialiser, Action<string> presenter)
+    internal static void Run(IWorkbookInitialiser initialiser, Action<string> presenter, Action? onInitialised = null)
     {
         ArgumentNullException.ThrowIfNull(initialiser);
         ArgumentNullException.ThrowIfNull(presenter);
@@ -68,6 +70,7 @@ internal static class InitialiseSheetCommand
         WorkbookInitialiseOutcome outcome = initialiser.Initialise();
         if (outcome.Succeeded)
         {
+            onInitialised?.Invoke();
             return;
         }
 

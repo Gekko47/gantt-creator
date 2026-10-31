@@ -347,6 +347,7 @@ public sealed record PanelCellGrid
     /// to zero on the same reasoning: an EXPORT composition has no worksheet rows to
     /// anchor to, so it paints no overhang and emits no closing line.
     /// </param>
+    /// <param name="allowEmptyRows">Allows an intentionally empty live chart grid; defaults to the established no-rows refusal.</param>
     /// <returns>A typed result or refusal.</returns>
     public static PanelCellGridCreationOutcome TryCreate(
         IReadOnlyList<PanelColumn>? columns,
@@ -357,7 +358,8 @@ public sealed record PanelCellGrid
         double originLeftPt = 0d,
         double topPaddingHeightPt = 0d,
         double bottomPaddingHeightPt = 0d,
-        double anchorRowHeightPt = 0d)
+        double anchorRowHeightPt = 0d,
+        bool allowEmptyRows = false)
     {
         // A padding height is a MEASUREMENT, so it is validated like every other
         // measurement here rather than defaulted when absent. Zero is a legitimate
@@ -393,7 +395,7 @@ public sealed record PanelCellGrid
             return Refused(PanelCellGridRefusal.NoColumns);
         }
 
-        if (rowHeightsPt is null || rowHeightsPt.Count == 0)
+        if (rowHeightsPt is null || (!allowEmptyRows && rowHeightsPt.Count == 0))
         {
             return Refused(PanelCellGridRefusal.NoRows);
         }

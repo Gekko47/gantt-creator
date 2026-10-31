@@ -56,7 +56,9 @@ public sealed class GanttRefreshOrchestrator(
     IApplicationStateScope? stateScope = null,
     IStyleKeyWritePort? styleKeyWriter = null,
     IRowWarningHighlighter? rowWarningHighlighter = null,
-    ChangeTracker? changeTracker = null)
+    ChangeTracker? changeTracker = null,
+    ShapeDeltaCache? shapeDeltaCache = null,
+    bool useDeltaCache = true)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -88,14 +90,11 @@ public sealed class GanttRefreshOrchestrator(
     /// </summary>
     private readonly IRowWarningHighlighter? _rowWarningHighlighter = rowWarningHighlighter;
 
-    /// <summary>
-    /// Records cell changes since the last successful refresh, or
-    /// <see langword="null"/> when change-aware behaviour is not requested.
-    /// When present and non-empty, the orchestrator targets only the affected
-    /// rows instead of re-reading, re-validating, and re-rendering the whole
-    /// table.
-    /// </summary>
+    /// <summary>Tracks pending automatic changes until a complete render succeeds.</summary>
     private readonly ChangeTracker? _changeTracker = changeTracker;
+    private readonly ShapeDeltaCache? _shapeDeltaCache = shapeDeltaCache;
+    private readonly bool _useDeltaCache = useDeltaCache;
+
     /// <remarks>
     /// <para>
     /// Optional rather than required so a caller with no Excel application, and a test
@@ -176,23 +175,12 @@ public sealed class GanttRefreshOrchestrator(
     /// <returns>The typed outcome.</returns>
     private GanttRefreshOutcome RunRefresh()
     {
-        // Change-aware: when a tracker has changes, run the incremental pipeline
-        // — targeted read, gated writes, skip row-height normalisation and panel
-        // measurement, and return before touching shapes. A full refresh rebuilds
-        // everything; an auto-refresh only touches what changed.
-        bool incremental = false;
-        IReadOnlyList<int>? changedRows = null;
-        if (_changeTracker is { } tracker && tracker.HasChanges)
-        {
-            incremental = true;
-            changedRows = tracker.ChangedRows();
-        }
-
-        // Step 1-2. Read the user's rows and the engine's configuration. Both are
+        // Step 1-2. Read the complete user's table and configuration. Automatic
+        // refresh may use its payload-signature snapshot to skip unchanged host
+        // writes, but it never validates only changed rows: identifiers,
+        // hierarchy, and layout constraints can depend on any row. Both reads are
         // read-only, so a refusal here has mutated nothing at all.
-        GanttTableReadOutcome rows = incremental
-            ? _tableReader.Read(changedRows!)
-            : _tableReader.Read();
+        GanttTableReadOutcome rows = _tableReader.Read();
         if (!rows.Succeeded)
         {
             // No active workbook is its own refusal, not a table problem: telling a
@@ -266,9 +254,7 @@ public sealed class GanttRefreshOrchestrator(
             // user. Re-read through the same port, and take the same refusal path a
             // failed first read takes, because from here on it is indistinguishable
             // from one.
-            rows = incremental
-                ? _tableReader.Read(changedRows!)
-                : _tableReader.Read();
+            rows = _tableReader.Read();
             if (!rows.Succeeded)
             {
                 GanttTableReadRefusalReason rereadRefusal =
@@ -279,18 +265,15 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
-        // Step 6. Validate every row on the full path; on the incremental path
-        // rows.Rows already contains only the changed rows (targeted read at
-        // step 1-2), so no further filtering is needed.
+        // Step 6. Validate every row before derived worksheet writes or shape
+        // mutation. This is required on both explicit and automatic refreshes.
         //
         // The style registry is passed so a Custom Activity / Custom Milestone
         // row whose user-created style has been deleted is reported by name
         // (a warning) rather than passing through unexamined. The registry
         // comes from the same read at step 2, so no second sheet read is
         // introduced.
-        IReadOnlyList<GanttRowDto> rowsToValidate = rows.Rows;
-
-        GanttValidationOutcome validation = GanttRowValidator.Validate(rowsToValidate, config.Styles);
+        GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows, config.Styles);
 
         // Step 6b. Bring the cell notes into line with what was just found, BEFORE
         // deciding whether to render.
@@ -339,13 +322,10 @@ public sealed class GanttRefreshOrchestrator(
         }
 
         // Step 7. Duration. Calculated in Core and written in one bulk pass; an
-        // already-correct column produces no write at all. When incremental, only
-        // the changed rows' current durations are read — unchanged rows are not
-        // compared and never written.
-        IReadOnlyList<GanttRowDto> durationRows = incremental ? rowsToValidate : rows.Rows;
+        // already-correct column produces no write at all.
         DurationWritePlan plan = DurationCalculator.Plan(
             events,
-            ReadCurrentDurations(durationRows));
+            ReadCurrentDurations(rows.Rows));
         DurationWriteOutcome duration = _durationWriter.Write(plan);
         if (!duration.Succeeded)
         {
@@ -385,10 +365,7 @@ public sealed class GanttRefreshOrchestrator(
             styleCellsWritten = style.CellsWritten;
         }
 
-        // Step 8. Row heights — SKIPPED on the incremental path. Id/Type edits
-        // do not change row heights, so normalising them on every auto-refresh
-        // is pure overhead.
-        if (!incremental)
+        // Step 8. Normalize row heights before measuring and building the scene.
         {
             RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
                 ThemedMetric(config.Metrics, "GanttRowHeightPt"),
@@ -429,21 +406,7 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
-        // Steps 9-10. Panel measurement and scene construction — SKIPPED on the
-        // incremental path. Cell edits do not change panel geometry, and without
-        // a fresh measurement the scene cannot be correctly positioned. The
-        // full shape rebuild happens on the next manual refresh.
-        if (incremental)
-        {
-            return GanttRefreshOutcome.Ok(
-                validation.Issues,
-                0,
-                duration.CellsWritten,
-                styleCellsWritten,
-                []);
-        }
-
-        // Step 9-10 (full path). Measure the live panel, then resolve the scene
+        // Step 9-10. Measure the live panel, then resolve the scene
         // inputs. The measurement is a read; the factory performs no host call
         // of its own.
         PanelGridOutcome grid = _panelMeasurement.Measure(ExcelSceneBuildRequestFactory.MeasuredColumns);
@@ -556,14 +519,25 @@ public sealed class GanttRefreshOrchestrator(
         // Step 13. The first and only shape mutation of the whole pipeline. Every
         // validation, measurement, and scene construction above has completed; from
         // here the reconciliation stops at the first refusal (D3).
+        ShapeDeltaSnapshot? previousSnapshot = _useDeltaCache ? _shapeDeltaCache?.Snapshot : null;
+        // Host writes are not transactional. Invalidate before entering the
+        // mutation boundary so an unexpected exception cannot leave a cache
+        // describing a partially changed shape collection.
+        _shapeDeltaCache?.Invalidate();
         ShapeReconcileOutcome reconcile = ShapeReconciler.Reconcile(
             _shapeWriter,
-            new ShapeReconcileRequest(desired, HasBlockingErrors: false));
+            new ShapeReconcileRequest(desired, HasBlockingErrors: false)
+            {
+                PreviousSnapshot = previousSnapshot,
+            });
 
         if (reconcile.Succeeded)
         {
+            _changeTracker?.Reset();
+            _shapeDeltaCache?.Commit(desired);
             return GanttRefreshOutcome.Ok(validation.Issues, reconcile.CompletedCount, duration.CellsWritten, styleCellsWritten, scene.Result!.Scene.Warnings);
         }
+
 
         // A reconciliation that stopped after at least one write leaves the sheet in
         // a state the user can see: part old scene, part new. That is reported
@@ -715,20 +689,13 @@ public sealed class GanttRefreshOrchestrator(
             return GanttValidationReportOutcome.Ok(0);
         }
 
-        // Build the complete set of highlight targets from current issues.
-        // Change-aware: when a tracker is present and has changes, only the
-        // affected rows are considered and the reconciliation is scoped to
-        // those rows so unchanged rows' highlight fills are preserved.
-        IReadOnlyList<int> rowsToConsider = _changeTracker is { } tracker && tracker.HasChanges
-            ? tracker.ChangedRows()
-            : [.. issues
-                .Select(i => i.RowNumber)
-                .Distinct()
-                .Order()];
-
-        IReadOnlyList<int>? reconcileScope = _changeTracker is { } tracker2 && tracker2.HasChanges
-            ? rowsToConsider
-            : null;
+        // Build targets from every current issue and reconcile the entire
+        // previous highlight set. A changed-row scope could leave stale
+        // highlights on rows whose state was affected by another row's edit.
+        IReadOnlyList<int> rowsToConsider = [.. issues
+            .Select(i => i.RowNumber)
+            .Distinct()
+            .Order()];
 
         List<HighlightTarget> targets = [];
         foreach (int row in rowsToConsider)
@@ -761,7 +728,7 @@ public sealed class GanttRefreshOrchestrator(
 
         // Single differential reconciliation: clear stale fills, write new fills,
         // skip unchanged addresses. No full-table clear-then-rewrite.
-        return _rowWarningHighlighter.ReconcileHighlights(targets, reconcileScope);
+        return _rowWarningHighlighter.ReconcileHighlights(targets);
     }
 
     /// <summary>

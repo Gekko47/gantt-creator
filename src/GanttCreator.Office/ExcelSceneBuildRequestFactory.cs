@@ -361,6 +361,7 @@ public sealed class ExcelSceneBuildRequestFactory(ITextMetrics? metrics = null) 
             // request that supplies one, so this cannot drift into drawing a replica
             // over the user's rows.
             Profile = SceneCompositionProfile.LiveExcel,
+            AllowEmptyEvents = true,
             Panel = null,
 
             PlotStart = plotStart,

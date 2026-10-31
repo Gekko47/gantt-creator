@@ -1,4 +1,3 @@
-using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
@@ -25,37 +24,25 @@ namespace GanttCreator.AddIn;
 /// </remarks>
 internal static class RefreshSheetCommand
 {
-    /// <summary>
-    /// The shared, long-lived <see cref="ChangeTracker"/> owned by this command.
-    /// <see cref="GanttRefreshScheduler"/> populates it on every sheet-change
-    /// event; <see cref="RunSilentForExcel"/> consumes and resets it after each
-    /// successful refresh. This is what makes change-aware refresh actually
-    /// change-aware instead of always running the full pipeline.
-    /// </summary>
-    private static readonly ChangeTracker _sharedTracker = new();
+    private static readonly ShapeDeltaCache _shapeDeltaCache = new();
 
-    /// <summary>
-    /// Records one cell change on the shared tracker. Called by
-    /// <see cref="GanttRefreshScheduler"/> on every
-    /// <c>SheetChange</c> that warrants an auto-refresh. Old value is
-    /// <see langword="null"/> because <c>SheetChange</c> fires after the edit;
-    /// the new value is read from the cell at call time.
-    /// </summary>
-    /// <param name="rowNumber">The one-based body-row index.</param>
-    /// <param name="column">The 1-based body-column index.</param>
-    /// <param name="newValue">The post-edit cell value.</param>
-    internal static void RecordChange(int rowNumber, int column, object? newValue) => _sharedTracker.Record(rowNumber, column, null, newValue);
+    internal static void ResetDeltaCache() => _shapeDeltaCache.Invalidate();
 
     /// <summary>Runs the production refresh in the current Excel session.</summary>
     internal static void RunForExcel()
     {
-        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(ExcelDna.Integration.ExcelDnaUtil.Application);
+        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
+            ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: false);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
+        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service so the warnings
         // panel can surface them. Row-level validation issues are reported
         // through row/cell fill colours; scene-level warnings surface here.
-        RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+        if (outcome.Succeeded)
+        {
+            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+        }
 
         if (!outcome.Succeeded)
         {
@@ -78,26 +65,15 @@ internal static class RefreshSheetCommand
     /// </summary>
     internal static void RunSilentForExcel()
     {
-        // Change-aware auto-refresh: use the shared ChangeTracker owned by
-        // GanttRefreshScheduler, which populates it on every SheetChange.
-        // The orchestrator targets only affected rows instead of re-reading
-        // and re-validating the whole table.
         GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
-            ExcelDna.Integration.ExcelDnaUtil.Application, _sharedTracker);
+            ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: true);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
+        RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service — same as RunForExcel.
-        RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
-
         if (outcome.Succeeded)
         {
-            // Reset the shared tracker so it only records changes since this
-            // successful refresh completed. Until this reset, the tracker still
-            // holds the changes that triggered this auto-refresh, so a second
-            // immediate SheetChange would re-run the incremental pipeline on
-            // the same rows.
-            _sharedTracker.Reset();
-
+            RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
             // Invalidate only the selection-dependent controls so their enabled
             // state re-evaluates against the post-refresh sheet state. Mirrors
             // NotifyRibbonStateChanged() on the manual refresh path, but scoped
@@ -167,8 +143,8 @@ internal static class RefreshSheetCommand
     // restore nothing, which is the opposite of what is wanted.
 #pragma warning disable CA2000
     /// <param name="application">The Excel application object.</param>
-    /// <param name="changeTracker">Optional change tracker for change-aware auto-refresh.</param>
-    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, ChangeTracker? changeTracker = null) =>
+    /// <param name="useDeltaCache">Whether this scheduled refresh may skip unchanged payload writes.</param>
+    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, bool useDeltaCache) =>
         new(
             new ExcelGanttTableReader(application),
             new ExcelConfigCatalogueReader(application),
@@ -218,7 +194,7 @@ internal static class RefreshSheetCommand
             // writes — no SpecialCells scan, no per-cell Comment read, and no stale
             // note left behind when a row is corrected.
             new ExcelRowWarningHighlighter(application),
-
-            changeTracker);
+            shapeDeltaCache: _shapeDeltaCache,
+            useDeltaCache: useDeltaCache);
 #pragma warning restore CA2000
 }

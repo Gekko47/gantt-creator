@@ -38,6 +38,9 @@ internal static class RibbonControlIds
     /// </remarks>
     internal const string RefreshSheet = "btnRefreshSheet";
 
+    /// <summary>The explicit scene-warning list button.</summary>
+    internal const string Warnings = "btnWarnings";
+
     /// <summary>The Repair configuration button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string RepairConfig = "btnRepairConfig";
 

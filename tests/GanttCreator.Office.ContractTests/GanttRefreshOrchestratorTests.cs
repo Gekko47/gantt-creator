@@ -23,6 +23,46 @@ namespace GanttCreator.Office.ContractTests;
 /// </remarks>
 public class GanttRefreshOrchestratorTests
 {
+    [Fact]
+    public void A_pending_change_batch_still_reads_and_validates_the_complete_table()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(3, null, "Not a chart type", "Invalid row", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+            ],
+        };
+        ChangeTracker tracker = new();
+        tracker.Record(2, 4, null, "As-Planned Activity");
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithChanges(tracker);
+
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+        Assert.Equal(2, fakes.TableReadCount);
+        Assert.Equal(0, fakes.TargetedTableReadCount);
+        Assert.Empty(fakes.Shapes.Calls);
+        Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 3);
+        Assert.True(tracker.HasChanges);
+    }
+
+    [Fact]
+    public void A_successful_full_reconciliation_clears_the_pending_change_batch()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ChangeTracker tracker = new();
+        tracker.Record(2, 4, null, "As-Planned Activity");
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithChanges(tracker).Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.False(tracker.HasChanges);
+        Assert.NotEmpty(fakes.Shapes.Calls);
+    }
+
     /// <summary>One valid planned activity, enough for a scene to be built.</summary>
     private static GanttRowDto[] ValidRows() =>
     [
@@ -46,8 +86,8 @@ public class GanttRefreshOrchestratorTests
     /// quirk of the test helper.
     /// </remarks>
     /// <summary>
-    /// A successful refresh hands the reporter an EMPTY issue list, which is the call
-    /// that clears the notes a previous Validate left behind.
+    /// A successful refresh reconciles an EMPTY highlight target list, clearing stale
+    /// row/cell indicators.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -66,20 +106,20 @@ public class GanttRefreshOrchestratorTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void A_successful_refresh_reports_an_empty_issue_list_so_stale_notes_are_cleared()
+    public void A_successful_refresh_reconciles_empty_highlights_to_clear_stale_indicators()
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal);
-        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
+        IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
         Assert.Empty(reported);
     }
 
     /// <summary>
-    /// A refresh that finds a blocking error still writes the notes, because the notes
-    /// are how the user is told what to fix.
+    /// A refresh that finds a blocking error still highlights its row/cell so the user
+    /// can identify what to fix.
     /// </summary>
     /// <remarks>
     /// The counterweight to the empty-list assertion above, and the reason the reporter
@@ -89,7 +129,7 @@ public class GanttRefreshOrchestratorTests
     /// message about a problem they had already fixed.
     /// </remarks>
     [Fact]
-    public void A_blocked_refresh_still_reports_the_errors_it_found()
+    public void A_blocked_refresh_still_highlights_the_errors_it_found()
     {
         RefreshFakes fakes = new()
         {
@@ -105,9 +145,8 @@ public class GanttRefreshOrchestratorTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
 
-        IReadOnlyList<GanttValidationIssue> reported = Assert.Single(fakes.ReportedIssues);
-        Assert.Equal(outcome.ValidationIssues.Count, reported.Count);
-        Assert.NotEmpty(reported);
+        IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
+        Assert.Contains(reported, target => target.Row == 2);
     }
 
     /// <summary>
@@ -121,10 +160,10 @@ public class GanttRefreshOrchestratorTests
     /// the user keeps their last valid chart and gets told why nothing changed.
     /// </remarks>
     [Fact]
-    public void A_refused_notes_update_stops_the_refresh_before_any_shape_is_touched()
+    public void A_refused_highlight_update_stops_the_refresh_before_any_shape_is_touched()
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
-        fakes.ValidationNotesRefused = true;
+        fakes.WarningHighlightsRefused = true;
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
@@ -157,12 +196,12 @@ public class GanttRefreshOrchestratorTests
                 Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
-        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator(validationReporter: null);
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithWarningHighlighter(null);
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.Empty(fakes.ReportedIssues);
+        Assert.Empty(fakes.HighlightReconciliations);
     }
 
     private static GanttRowDto Row(
@@ -199,6 +238,45 @@ public class GanttRefreshOrchestratorTests
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
         return (fakes, fakes.BuildOrchestrator());
+    }
+
+    [Fact]
+    public void Scheduled_refresh_skips_unchanged_shape_writes_and_explicit_refresh_forces_full_updates()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        GanttRefreshOutcome first = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+        Assert.True(first.Succeeded, "first refresh refused: " + first.Refusal);
+        Assert.NotNull(cache.Snapshot);
+        int shapeWritesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+        int zOrderCallsAfterFirst = fakes.Shapes.ZOrderLists.Count;
+
+        GanttRefreshOutcome scheduled = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(scheduled.Succeeded, "scheduled refresh refused: " + scheduled.Refusal);
+        Assert.Equal(shapeWritesAfterFirst, fakes.Shapes.ShapeCalls.Count);
+        Assert.Equal(zOrderCallsAfterFirst, fakes.Shapes.ZOrderLists.Count);
+
+        GanttRefreshOutcome explicitRefresh = fakes.BuildOrchestratorWithDeltaCache(cache, useDeltaCache: false).Refresh();
+
+        Assert.True(explicitRefresh.Succeeded, "explicit refresh refused: " + explicitRefresh.Refusal);
+        Assert.True(fakes.Shapes.ShapeCalls.Count > shapeWritesAfterFirst);
+        Assert.Equal(zOrderCallsAfterFirst + 1, fakes.Shapes.ZOrderLists.Count);
+        Assert.NotNull(cache.Snapshot);
+    }
+
+    [Fact]
+    public void A_failed_shape_reconcile_does_not_commit_a_delta_snapshot()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.Shapes.Refusals["Create#1"] = ShapeWriteRefusal.HostRejected;
+        ShapeDeltaCache cache = new();
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.False(outcome.Succeeded);
+        Assert.Null(cache.Snapshot);
     }
 
     /// <summary>
@@ -592,7 +670,7 @@ public class GanttRefreshOrchestratorTests
                 // follows. Placed BEFORE the render decision on purpose: a refresh that
                 // now finds no errors must clear the notes a previous Validate left
                 // behind, and that call has to happen on the blocked path too.
-                "Notes",
+                "Highlights",
                 "Outline",
                 "Duration",
                 "RowHeights",

@@ -48,6 +48,7 @@ internal class RibbonStateService
     private IExcelApplicationAdapter? _applicationAdapter;
     private Func<bool?>? _logAvailabilitySource;
     private IDisposable? _workbookStateSubscription;
+    private GanttRefreshScheduler? _refreshScheduler;
 
     /// <summary>The standalone selection identifier (R5.5 ruling 6), or null when not wired.</summary>
     private ISelectionIdentifier? _selectionIdentifier;
@@ -60,6 +61,40 @@ internal class RibbonStateService
     private IGanttTableReader? _tableReader;
     private IPanelGridMeasurementPort? _panelGridMeasurementPort;
     private RibbonState _state = RibbonState.Initial;
+    private IReadOnlyList<SceneWarning> _lastSuccessfulSceneWarnings = [];
+    private IReadOnlyList<GanttValidationIssue> _currentValidationIssues = [];
+    private DateTimeOffset? _lastSuccessfulRenderAtUtc;
+
+    /// <summary>Stores warnings only after a complete successful render.</summary>
+    internal void UpdateWarnings(IReadOnlyList<SceneWarning> warnings)
+    {
+        ArgumentNullException.ThrowIfNull(warnings);
+        _lastSuccessfulSceneWarnings = [.. warnings];
+        _lastSuccessfulRenderAtUtc = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Gets warnings from the most recent successful render.</summary>
+    internal IReadOnlyList<SceneWarning> GetLastSuccessfulSceneWarnings() => _lastSuccessfulSceneWarnings;
+
+    internal DateTimeOffset? GetLastSuccessfulRenderAtUtc() => _lastSuccessfulRenderAtUtc;
+
+    internal void UpdateCurrentValidationIssues(IReadOnlyList<GanttValidationIssue> issues)
+    {
+        ArgumentNullException.ThrowIfNull(issues);
+        _currentValidationIssues = [.. issues];
+    }
+
+    internal IReadOnlyList<GanttValidationIssue> GetCurrentValidationIssues() => _currentValidationIssues;
+
+    /// <summary>Opens the read-only list for the last successful rendered scene.</summary>
+    internal void ShowWarningsPanel()
+    {
+        using WarningsPanelForm dialog = new(
+            _lastSuccessfulSceneWarnings, _lastSuccessfulRenderAtUtc, _currentValidationIssues);
+        _ = ShowWarningsPanelDialog(dialog);
+    }
+
+    protected virtual DialogResult ShowWarningsPanelDialog(WarningsPanelForm dialog) => dialog.ShowDialog();
 
     /// <summary>
     /// The description-label dropdown's per-selection context: whether the selection
@@ -276,6 +311,9 @@ internal class RibbonStateService
     /// </summary>
     /// <param name="adapter">The application adapter, or null when unavailable.</param>
     internal void SetApplicationAdapter(IExcelApplicationAdapter? adapter) => _applicationAdapter = adapter;
+
+    /// <summary>Coalesces a successful command/configuration write into the automatic refresh queue.</summary>
+    internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleRefresh();
 
     /// <summary>
     /// Injects the log-availability source that supplies the second state fact.
@@ -1133,6 +1171,10 @@ internal class RibbonStateService
         };
 
         ConfigWriteOutcome? outcome = _catalogueWriter?.WriteSettings(values);
+        if (outcome is { Succeeded: true })
+        {
+            ScheduleAutomaticRefresh();
+        }
         if (outcome is not null && !outcome.Succeeded)
         {
             string message = $"Failed to persist plot settings: {outcome.Refusal}";
@@ -1282,6 +1324,7 @@ internal class RibbonStateService
                     ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
                     if (writeOutcome is { Succeeded: true })
                     {
+                        ScheduleAutomaticRefresh();
                         return true;
                     }
 
@@ -1311,6 +1354,7 @@ internal class RibbonStateService
                     ConfigWriteOutcome? writeOutcome = _catalogueWriter.WriteTheme(validated);
                     if (writeOutcome is not null && writeOutcome.Succeeded)
                     {
+                        ScheduleAutomaticRefresh();
                         return true;
                     }
                     else if (writeOutcome is not null)
@@ -1380,6 +1424,7 @@ internal class RibbonStateService
                         ChartTitleEditRequest.ToSettings(validated));
                     if (writeOutcome is not null && writeOutcome.Succeeded)
                     {
+                        ScheduleAutomaticRefresh();
                         return true;
                     }
                     else if (writeOutcome is not null)
@@ -1694,6 +1739,7 @@ internal class RibbonStateService
     internal void Activate()
     {
         SubscribeToWorkbookStateChanges();
+        SubscribeToSheetChanges();
         SubscribeToSelectionChanges();
         LoadPlotSettingsFromWorkbook();
         Refresh();
@@ -2816,11 +2862,64 @@ internal class RibbonStateService
 #pragma warning restore CA1031
     }
 
+    private void SubscribeToSheetChanges()
+    {
+        DisposeRefreshScheduler();
+        IExcelApplicationAdapter? adapter = _applicationAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+            GanttRefreshScheduler scheduler = new(adapter, new ExcelSheetChangeAnalyzer(application));
+            scheduler.Activate();
+            _refreshScheduler = scheduler;
+        }
+        catch
+        {
+            _refreshScheduler = null;
+        }
+#pragma warning restore CA1031
+    }
+
+    private void DisposeRefreshScheduler()
+    {
+        GanttRefreshScheduler? scheduler = _refreshScheduler;
+        _refreshScheduler = null;
+        if (scheduler is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            scheduler.Dispose();
+        }
+        catch
+        {
+            // AutoClose must not surface a teardown failure into Excel.
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>
     /// Handles one workbook-state change: a single refresh (snapshot capture
     /// plus one ribbon invalidation). Never throws.
     /// </summary>
-    private void OnWorkbookStateChanged() => Refresh();
+    private void OnWorkbookStateChanged()
+    {
+        _refreshScheduler?.CancelPendingRefresh();
+        RefreshSheetCommand.ResetDeltaCache();
+        _lastSuccessfulSceneWarnings = [];
+        _currentValidationIssues = [];
+        _lastSuccessfulRenderAtUtc = null;
+        Refresh();
+    }
 
     /// <summary>
     /// Detaches the workbook-state subscription exactly once. Never throws.
@@ -2881,6 +2980,7 @@ internal class RibbonStateService
     /// </summary>
     private void Teardown()
     {
+        DisposeRefreshScheduler();
         DisposeSelectionSubscription();
         DisposeWorkbookStateSubscription();
         _ribbon = null;
@@ -2900,5 +3000,8 @@ internal class RibbonStateService
         _warningPresenter = RibbonStatusBar.Warn;
 
         _state = RibbonState.Initial;
+        _lastSuccessfulSceneWarnings = [];
+        _currentValidationIssues = [];
+        _lastSuccessfulRenderAtUtc = null;
     }
 }

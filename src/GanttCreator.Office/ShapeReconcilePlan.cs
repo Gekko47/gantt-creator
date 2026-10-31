@@ -103,7 +103,11 @@ public sealed record ShapeReconcileRequest(
     IReadOnlyList<OfficeShapeRequest> Desired,
     IReadOnlyList<string>? Owned = null,
     bool HasBlockingErrors = false
-);
+)
+{
+    /// <summary>Optional prior successful payload signatures for no-op update elimination.</summary>
+    public ShapeDeltaSnapshot? PreviousSnapshot { get; init; }
+}
 
 /// <summary>Why a reconciliation stopped without completing.</summary>
 public enum ShapeReconcileRefusal

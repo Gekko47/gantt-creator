@@ -97,6 +97,12 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Fills or clears the entire visible row of <c>tblGanttData</c> body cells.</summary>
     public GanttValidationReportOutcome HighlightRow(int rowNumber, GanttValidationSeverity severity)
     {
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ProtectionRefusal(activeProtection);
+        }
+
         HighlightSetup? setup = ResolveSetup();
         if (setup is null)
         {
@@ -140,6 +146,12 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Fills or clears a single user-visible data cell.</summary>
     public GanttValidationReportOutcome HighlightCell(int rowNumber, int column, GanttValidationSeverity severity)
     {
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ProtectionRefusal(activeProtection);
+        }
+
         HighlightSetup? setup = ResolveSetup();
         if (setup is null)
         {
@@ -175,6 +187,12 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Clears the highlight fill from a row, or from a single cell.</summary>
     public GanttValidationReportOutcome ClearHighlight(int rowNumber, int? column = null)
     {
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ProtectionRefusal(activeProtection);
+        }
+
         HighlightSetup? setup = ResolveSetup();
         if (setup is null)
         {
@@ -227,6 +245,12 @@ public class ExcelRowWarningHighlighter(
         IReadOnlyList<int>? rowsToReconcile = null)
     {
         ArgumentNullException.ThrowIfNull(currentTargets);
+        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
+        if (activeProtection != ProtectionGuardOutcome.NotProtected)
+        {
+            return ProtectionRefusal(activeProtection);
+        }
+
         HighlightSetup? setup = ResolveSetup();
         if (setup is null)
         {
@@ -369,16 +393,6 @@ public class ExcelRowWarningHighlighter(
             return new HighlightSetup(null, null, GanttValidationReportRefusalReason.NoActiveWorkbook);
         }
 
-        ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
-        if (activeProtection != ProtectionGuardOutcome.NotProtected)
-        {
-            return new HighlightSetup(
-                null, null,
-                activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? GanttValidationReportRefusalReason.NoActiveWorkbook
-                    : GanttValidationReportRefusalReason.TargetProtected);
-        }
-
         Sheets sheets = workbook.Sheets;
         if (!TryFindTable(sheets, out Worksheet? worksheet, out ListObject? table) ||
             worksheet is null || table is null)
@@ -395,6 +409,12 @@ public class ExcelRowWarningHighlighter(
                     : GanttValidationReportRefusalReason.TargetProtected)
             : new HighlightSetup(worksheet, table.DataBodyRange, null);
     }
+
+    private static GanttValidationReportOutcome ProtectionRefusal(ProtectionGuardOutcome outcome) =>
+        GanttValidationReportOutcome.Refused(
+            outcome == ProtectionGuardOutcome.NoActiveWorkbook
+                ? GanttValidationReportRefusalReason.NoActiveWorkbook
+                : GanttValidationReportRefusalReason.TargetProtected);
 
     private static bool TryFindTable(
         Sheets sheets,

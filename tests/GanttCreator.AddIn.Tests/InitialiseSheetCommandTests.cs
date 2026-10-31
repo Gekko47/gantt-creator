@@ -63,6 +63,30 @@ public class InitialiseSheetCommandTests
     }
 
     [Fact]
+    public void Successful_initialise_schedules_the_one_time_empty_render()
+    {
+        int schedules = 0;
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.Adopted(GanttWorkbookContract.GanttSheetLabel));
+
+        InitialiseSheetCommand.Run(initialiser.Object, _ => { }, () => schedules++);
+
+        Assert.Equal(1, schedules);
+    }
+
+    [Fact]
+    public void Refused_initialise_does_not_schedule_a_render()
+    {
+        int schedules = 0;
+        var initialiser = InitialiserWith(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TableExists));
+
+        InitialiseSheetCommand.Run(initialiser.Object, _ => { }, () => schedules++);
+
+        Assert.Equal(0, schedules);
+    }
+
+    [Fact]
     public void NoActiveWorkbook_refusal_surfaces_one_actionable_message()
     {
         var messages = new List<string>();

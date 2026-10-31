@@ -44,13 +44,6 @@ public class ExcelWarningHighlighter(
                 GanttValidationReportRefusalReason.NoActiveWorkbook);
         }
 
-        Workbook? workbook = application.ActiveWorkbook;
-        if (workbook is null)
-        {
-            return GanttValidationReportOutcome.Refused(
-                GanttValidationReportRefusalReason.NoActiveWorkbook);
-        }
-
         ProtectionGuardOutcome activeProtection = _protectionGuard.Query();
         if (activeProtection != ProtectionGuardOutcome.NotProtected)
         {
@@ -58,6 +51,13 @@ public class ExcelWarningHighlighter(
                 activeProtection == ProtectionGuardOutcome.NoActiveWorkbook
                     ? GanttValidationReportRefusalReason.NoActiveWorkbook
                     : GanttValidationReportRefusalReason.TargetProtected);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return GanttValidationReportOutcome.Refused(
+                GanttValidationReportRefusalReason.NoActiveWorkbook);
         }
 
         Sheets sheets = workbook.Sheets;

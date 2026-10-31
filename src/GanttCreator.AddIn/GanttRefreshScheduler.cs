@@ -5,15 +5,14 @@ namespace GanttCreator.AddIn;
 
 /// <summary>
 /// Schedules a debounced automatic Gantt refresh when the user edits
-/// <c>Id</c> or <c>Type</c> cells in <c>tblGanttData</c>.
+/// chart-affecting cells in <c>tblGanttData</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Excel's <c>SheetChange</c> event fires on every cell edit. The scheduler
 /// consults <see cref="ISheetChangeAnalyzer.ShouldAutoRefresh"/> to decide
-/// whether the change warrants an automatic refresh: <c>Id</c>/<c>Type</c>
-/// changes do; <c>Start</c>/<c>Finish</c> require a manual Refresh; and
-/// <c>Duration</c> is engine-driven. Changes are debounced (~300 ms) so
+/// whether the change warrants an automatic refresh: chart-affecting data
+/// and presentation changes do; <c>Duration</c> is engine-driven. Changes are debounced (~300 ms) so
 /// rapid multi-cell edits produce a single refresh rather than one per edit.
 /// </para>
 /// <para>
@@ -31,12 +30,8 @@ namespace GanttCreator.AddIn;
 /// preventing double rendering.
 /// </para>
 /// <para>
-/// <b>Change tracking.</b> Each <c>SheetChange</c> that warrants auto-refresh
-/// records the changed row on <see cref="RefreshSheetCommand._sharedTracker"/>
-/// so the next auto-refresh can target only affected rows. The cell value is
-/// not read here (old value is unavailable because <c>SheetChange</c> fires
-/// after the edit); only the row number is recorded, which is sufficient for
-/// change-aware validation and highlighting gating.
+/// <b>Change tracking.</b> The safe refresh validates and builds the complete
+/// table before reconciliation, so events schedule a debounced full refresh.
 /// </para>
 /// <para>
 /// All Excel COM calls run on the Excel main STA thread via
@@ -44,18 +39,38 @@ namespace GanttCreator.AddIn;
 /// itself runs on a thread-pool thread and is marshalled accordingly.
 /// </para>
 /// </remarks>
-internal sealed class GanttRefreshScheduler(
-    IExcelApplicationAdapter adapter,
-    ISheetChangeAnalyzer analyzer) : IDisposable
+internal sealed class GanttRefreshScheduler : IDisposable
 {
     private const int _debounceMilliseconds = 300;
 
-    private readonly IExcelApplicationAdapter _adapter = adapter;
-    private readonly ISheetChangeAnalyzer _analyzer = analyzer;
+    private readonly IExcelApplicationAdapter _adapter;
+    private readonly ISheetChangeAnalyzer _analyzer;
+    private readonly Action<ExcelDna.Integration.ExcelAction> _queueAsMacro;
+    private readonly Action _refresh;
     private System.Threading.Timer? _timer;
     private int _timerGeneration;
     private IDisposable? _sheetChangeSubscription;
     private bool _disposed;
+
+    internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
+        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel)
+    {
+    }
+
+    internal GanttRefreshScheduler(
+        IExcelApplicationAdapter adapter,
+        ISheetChangeAnalyzer analyzer,
+        Action<ExcelDna.Integration.ExcelAction> queueAsMacro,
+        Action refresh)
+    {
+        _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+        _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
+        _queueAsMacro = queueAsMacro ?? throw new ArgumentNullException(nameof(queueAsMacro));
+        _refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
+    }
+
+    private static void QueueMacro(ExcelDna.Integration.ExcelAction macro) =>
+        ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(macro);
 
     /// <summary>
     /// Activates the scheduler: subscribes to worksheet cell changes.
@@ -80,15 +95,29 @@ internal sealed class GanttRefreshScheduler(
     /// </summary>
     public void Deactivate()
     {
+        _ = System.Threading.Interlocked.Increment(ref _timerGeneration);
         DisposeTimer();
         _sheetChangeSubscription?.Dispose();
         _sheetChangeSubscription = null;
     }
 
+    internal void ScheduleRefresh()
+    {
+        if (!_disposed)
+        {
+            ResetTimer();
+        }
+    }
+
+    internal void CancelPendingRefresh()
+    {
+        _ = System.Threading.Interlocked.Increment(ref _timerGeneration);
+        DisposeTimer();
+    }
+
     /// <summary>
     /// Handles a worksheet cell change: if the changed address warrants an
-    /// automatic refresh, records the changed row on the shared tracker and
-    /// resets the debounce timer.
+    /// automatic refresh and resets the debounce timer.
     /// </summary>
     /// <param name="changedAddress">The Excel-style address of the changed range.</param>
     private void OnSheetChanged(string? changedAddress)
@@ -98,74 +127,7 @@ internal sealed class GanttRefreshScheduler(
             return;
         }
 
-#pragma warning disable CA1031 // Best-effort tracking: catch all exceptions to never block a refresh on tracking failure.
-        try
-        {
-            RecordChange(changedAddress);
-        }
-        catch (Exception)
-        {
-            // Best-effort tracking; never block a refresh on tracking failure.
-        }
-#pragma warning restore CA1031
-
         ResetTimer();
-    }
-
-    /// <summary>
-    /// Parses an Excel-style address (e.g. <c>"$K$5"</c>, <c>"K$5"</c>,
-    /// <c>"Sheet1!$K$5"</c>) and records the changed row on the shared
-    /// tracker so the next auto-refresh can target only affected rows.
-    /// </summary>
-    /// <param name="changedAddress">The Excel-style address of the changed range.</param>
-    private static void RecordChange(string? changedAddress)
-    {
-        if (string.IsNullOrEmpty(changedAddress))
-        {
-            return;
-        }
-
-        // Strip sheet name prefix if present (everything before '!').
-        string address = changedAddress;
-        int bang = address.IndexOf('!', StringComparison.Ordinal);
-        if (bang >= 0)
-        {
-            address = address[(bang + 1)..];
-        }
-
-        // Remove '$' absolute-reference markers.
-        address = address.Replace('$', '\0');
-
-        // Split into column letters and row number.
-        int i = 0;
-        while (i < address.Length && char.IsLetter(address[i]))
-        {
-            i++;
-        }
-
-        if (i == 0 || i == address.Length)
-        {
-            // Not a recognizable cell address.
-            return;
-        }
-
-        string columnLetters = address[..i];
-        string rowPart = address[i..];
-
-        if (!int.TryParse(rowPart, out int rowNumber))
-        {
-            return;
-        }
-
-        // Convert column letters to 1-based index: A=1, B=2, ..., Z=26, AA=27, ...
-        int column = 0;
-        foreach (char c in columnLetters)
-        {
-            column = column * 26 + (char.ToUpperInvariant(c) - 'A' + 1);
-        }
-
-        // Old value is null because SheetChange fires after the edit.
-        RefreshSheetCommand.RecordChange(rowNumber, column, null);
     }
 
     /// <summary>
@@ -201,8 +163,13 @@ internal sealed class GanttRefreshScheduler(
         }
 
         // Marshal to the Excel main STA thread before touching COM.
-        ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(
-            RefreshSheetCommand.RunSilentForExcel);
+        _queueAsMacro(() =>
+        {
+            if (!_disposed && generation == System.Threading.Volatile.Read(ref _timerGeneration))
+            {
+                _refresh();
+            }
+        });
     }
 
     /// <summary>

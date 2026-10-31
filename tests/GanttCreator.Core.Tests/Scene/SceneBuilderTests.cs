@@ -113,7 +113,8 @@ public sealed class SceneBuilderTests
             [new PanelColumn("Id", 40), new PanelColumn("Description", 160)],
             [.. Enumerable.Repeat(10.0, rowCount)],
             10,
-            ["Id", "Description"]).Grid!;
+            ["Id", "Description"],
+            allowEmptyRows: rowCount == 0).Grid!;
 
     private static FrameBandsTheme FrameTheme() => new(
         new SceneStyle("Background"),
@@ -495,6 +496,16 @@ public sealed class SceneBuilderTests
     public void An_empty_event_list_is_refused()
     {
         Assert.Equal(SceneBuilderRefusal.EmptyEvents, SceneBuilder.TryBuild(Request()).Refusal);
+    }
+
+    [Fact]
+    public void An_intentionally_empty_live_scene_still_builds_its_frame()
+    {
+        SceneBuildOutcome outcome = SceneBuilder.TryBuild(Request() with { AllowEmptyEvents = true });
+
+        Assert.True(outcome.Succeeded, "Scene build refused: " + outcome.Refusal);
+        Assert.Contains(outcome.Result!.Scene.Primitives, primitive => primitive.PrimitiveId == "chart:background");
+        Assert.DoesNotContain(outcome.Result!.Scene.Primitives, primitive => primitive.ZLayer == ZLayer.ActivityBody);
     }
 
     [Fact]

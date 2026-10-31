@@ -88,6 +88,10 @@ public sealed record SceneBuildRequest
     /// <summary>Gets the validated events to render, in any order.</summary>
     public IReadOnlyList<GanttEvent> Events { get; init; } = [];
 
+    /// <summary>Gets whether this request intentionally represents a valid empty chart.</summary>
+    /// <remarks>Defaults to false for exports and callers that require at least one scene entity.</remarks>
+    public bool AllowEmptyEvents { get; init; }
+
     /// <summary>Gets the named-style registry used to resolve each event's style.</summary>
     public GanttStyleRegistry Registry { get; init; } = GanttStyleRegistry.Empty;
 
@@ -362,7 +366,9 @@ public static class SceneBuilder
             return Refused(SceneBuilderRefusal.LiveProfileCarriesPanel);
         }
 
-        if (request.Events is null || request.Events.Count == 0 || request.Events.Any(@event => @event is null))
+        if (request.Events is null
+            || (!request.AllowEmptyEvents && request.Events.Count == 0)
+            || request.Events.Any(@event => @event is null))
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }
@@ -436,7 +442,7 @@ public static class SceneBuilder
         // event". A Delineator renders a line and consumes no lane, so a scene of only
         // delineators is a real scene; refusing it reported a renderable chart as
         // having nothing to draw.
-        if (laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
+        if (!request.AllowEmptyEvents && laneParticipants.Count == 0 && plotGlobalEntities.Count == 0)
         {
             return Refused(SceneBuilderRefusal.EmptyEvents);
         }

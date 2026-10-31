@@ -237,15 +237,17 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.14 | Add a per-row date-label selector (Auto/Start/Finish; the delineator's cell names a label corner instead — third owner ruling 2026-10-14) in the Labels group | Date-label capability-matrix, exact-enum, and type-capability validation tests; scene snapshots; successful commit refresh and cancel/no-refresh tests | Required: set Auto/Start/Finish on a span and confirm labels update after coalesced refresh; set a delineator corner and confirm its date label moves |
 | R5.15 | Prove feasibility of add-in-owned worksheet protection and record an ADR decision before any production adoption | Live Excel proof for editable/locked cells, table operations, add-in writes, reopen behavior, guard-first refusal, and preservation of user-owned protection | Required: prove supported operations and reopen behavior; retain current refusal policy unless proof and owner decision authorize an amendment |
 
-> **Phase 5 notes (revision 13):** revises R5.11 from manual-only refresh to
+> **Phase 5 notes (revision 14):** revises R5.11 from manual-only refresh to
 > coalesced automatic refresh plus content-aware host-write deltas; adds
 > proof-first R5.15 worksheet-protection feasibility; and makes settings/row
 > command refresh behavior explicit. R5.11 requires full input validation and
 > a complete desired scene before deltas; changed-row-only validation is not
-> allowed. Order: (1) R4.10 bounded 1,000-event measurement, (2) R5.15
-> protection feasibility/ADR, (3) R5.11 safe full-validation/delta foundation,
-> (4) R5.8 non-modal current/last-rendered warning feedback, (5) successful-
-> commit trigger integration across R5.1–R5.7/R5.10/R5.12–R5.14, (6) Office
+> allowed. Owner direction on 2026-10-31 excludes R4.10 from this
+> implementation: do not alter its benchmark flow or collect its measurements.
+> Order: (1) R5.15
+> protection feasibility/ADR, (2) R5.11 safe full-validation/delta foundation,
+> (3) R5.8 non-modal current/last-rendered warning feedback, (4) successful-
+> commit trigger integration across R5.1–R5.7/R5.10/R5.12–R5.14, (5) Office
 > host exit evidence. Protection is not presumed: current ADR-0008/R2.7a
 > refuses protected sheets, and moving engine/activity data to the VeryHidden
 > sheet violates the product invariant. R5.6/R5.6a–e and other settings work

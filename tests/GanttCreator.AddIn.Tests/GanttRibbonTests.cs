@@ -407,6 +407,7 @@ public class GanttRibbonTests
                 RibbonControlIds.PresetPresentation16x9,
                 RibbonControlIds.PresetPresentation4x3,
                 RibbonControlIds.RefreshSheet,
+                RibbonControlIds.Warnings,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // R5.5: the description-label dropdown is the first

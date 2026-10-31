@@ -185,7 +185,8 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             originLeft,
             topPaddingHeight,
             bottomPaddingHeight,
-            anchorHeight);
+            anchorHeight,
+            allowEmptyRows: true);
         return created.Succeeded && created.Grid is not null
             ? PanelGridOutcome.Ok(created.Grid)
             : PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);

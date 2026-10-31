@@ -20,7 +20,7 @@ internal static class MoveDownCommand
                 outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
-            RefreshSheetCommand.RunForExcel);
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
 
     /// <summary>Runs an injected move-down command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>

@@ -1591,4 +1591,97 @@ predates the current 12-step gate and is superseded by the measured
 
 - _none yet_
 - **Planning revision (2026-10-31):** R4.10 now includes a resource-bounded 1,000-event benchmark flow after local-storage pressure; R5.11 replaces the manual-only refresh plan with full-validation/coalesced auto-refresh and content-aware Excel shape deltas; R5.8/R5.10 cover non-modal validation feedback and preventive selection gating; R5.15 is a proof-first worksheet-protection feasibility item. No source code changed in this planning update. See `docs/03-ROADMAP.md` Phase 5 notes and the revised work items.
+- **R5.11 implementation started (2026-10-31; R4.10 explicitly excluded).** Removed the automatic-refresh shortcut that read only changed rows and returned before scene construction/reconciliation. Pending changes now run full-table validation, row/panel normalization, full scene construction, and reconciliation; the change batch resets only after successful shape reconciliation. Added regressions for validating an unchanged invalid row despite a pending edit, retaining the batch on refusal, and clearing it only after successful reconciliation. Updated `AGENTS.md`, R5.11, and the Phase-5 roadmap so the governing requirement is consistent and R4.10 is not an implementation dependency. `git diff --check` passed. **Verification blocked:** the focused `dotnet test` command failed twice before tests ran due existing Office-project compile errors: `ExcelWarningHighlighter.cs` references missing `GanttCatalogues.WarningFill` twice, and `GanttRefreshOrchestrator.cs` calls a nonexistent five-argument `GanttRefreshOutcome.Ok`. Per the bounded-retry rule, no unrelated fixes were attempted. Excel-host protection proof remains unavailable in this session. No R4.10 files, benchmark, or measurements were touched.
 
+- **R5.11 implementation update (2026-10-31):** Worksheet changes are now
+  subscribed and debounced in production; chart-affecting `tblGanttData` body
+  edits refresh automatically, while `Duration`, headers, other sheets, and
+  the very-hidden configuration worksheet do not trigger via cell events.
+  Successful plot/theme/title settings and the Initialize/Move/Remove/Reorder/
+  Outline command paths queue the same refresh. Initial live scene requests
+  allow an empty chart; exports retain the default empty-scene refusal. The
+  explicit Warnings Ribbon action shows the last successful scene-warning
+  list and timestamp. Scheduled refreshes use an in-memory payload-signature
+  cache to skip unchanged shape writes; manual Refresh forces a full shape
+  reconcile and re-seeds it. R4.10 remains excluded. Trigger-classifier and
+  AddIn warning-state contract tests are now present; native outline-event
+  behavior and the remaining live Excel proof are outstanding.
+
+- **R5.11/R5.8 implementation continuation (2026-10-31; R4.10 excluded):**
+  Completed the current code-side implementation for coalesced automatic
+  refresh, full-table validation before shape writes, in-memory shape payload
+  delta reconciliation with cache invalidation/full-refresh fallback, once-only
+  empty live initialization, and separate last-rendered scene warnings/current
+  validation feedback. Added event-classifier, adapter, scheduler/orchestrator,
+  delta, initialization, warning-state, and architecture regressions. Release
+  build passed with 0 warnings/errors; the non-OfficeIntegration solution test
+  run passed 3,451 tests (120 Architecture, 1,755 Core, 949 Office Contract,
+  572 AddIn, 41 Raster, 14 Office Integration). Changed production C# files
+  pass `dotnet format whitespace --verify-no-changes`; the solution-wide
+  formatter still reports whitespace/style findings in test sources, so no
+  broad formatting pass was applied. `git diff --check` passes. Full
+  `verify.ps1` and `verify-quick.ps1` remain blocked by their clean/committed
+  tree preconditions while this working diff is uncommitted. Excel-host proof
+  managed `verify-office.ps1` suite passed 54 OfficeIntegration tests on
+  Microsoft 365 x64 `16.0.20527.20088` (9m 9s); its COM-proxy leak signal was
+  34/35 with end state 0. That suite does not yet prove the new auto-refresh /
+  delta scenarios or R5.15 protection feasibility. Native outline
+  expand/collapse trigger coverage and those feature-specific Excel-host proofs
+  remain due. Do not enable worksheet protection or claim those scenarios are
+  host-validated from the generic integration pass. No R4.10 code, benchmark,
+  or measurements were performed.
+
+- **R5.11 focused Excel evidence (2026-10-31):** Added a live application-event
+  test that edits a real `tblGanttData` cell and proves the qualified
+  `SheetChange` address is classified as chart-affecting. Extended the live
+  shape idempotence test to prove an unchanged cached scene performs zero
+  shape operations and one changed label payload performs exactly one update;
+  the changed text is read back from the real Excel shape. Both focused
+  OfficeIntegration tests pass on Microsoft 365 x64 `16.0.20527.20088` (38s).
+  Release solution build passes with 0 warnings/errors; the non-OfficeIntegration
+  suite remains green at 3,451 tests; changed production and integration-test
+  C# files pass whitespace verification; `git diff --check` is clean. The
+  AddIn scheduler-to-render loop, native outline handles, empty live render,
+  and R5.15 feasibility matrix remain due.
+
+- **R5.11 scheduler-test continuation (2026-10-31):** After owner approval to
+  resume, the .NET 10 test project established the installed Excel-DNA 1.9 API
+  signature as `QueueAsMacro(ExcelAction)`. The scheduler now routes through a
+  named `QueueMacro(ExcelAction)` adapter and an explicit constructor seam;
+  production still queues the existing silent refresh on Excel's macro queue.
+  Four AddIn tests pass: signature contract, positive null-guard paths,
+  coalescing multiple schedules into one queued refresh, and rejecting a macro
+  invalidated after queueing. Release solution build passes with 0 warnings and
+  errors; the full non-OfficeIntegration solution run passes 3,455 tests
+  (120 Architecture, 1,755 Core, 949 Office Contract, 576 AddIn, 41 Raster,
+  14 non-tagged Office Integration). The earlier method-group/lambda inference
+  failures are resolved; no scheduler test seam remains unverified.
+  Follow-up workspace check: `git diff --check` passes after the status update.
+
+- **R5.11 production scheduler-to-render host test added (2026-10-31):** The
+  OfficeIntegration suite now loads the packed XLL, initializes a workbook,
+  enters a valid activity row, and waits for the production scheduler to render
+  its label shape; a second description edit must update that live Excel shape.
+  The targeted project build passes with 0 warnings/errors. Two focused host
+  test attempts both failed before reaching test code when Excel activation
+  returned COM `0x80070520` (“A specified logon session does not exist”) from
+  `OfficeFixture.InitializeAsync`; the existing event-classifier host test failed
+  at the same startup point. The source compiles, but end-to-end Excel behavior
+  remains **unverified** until the test runs in the logged-in desktop session
+  required by `verify-office.ps1`. `git diff --check` passes. R4.10 remains
+  excluded.
+
+- **Implementation-plan state reconciliation (2026-10-31; R4.10 excluded):**
+  Updated the guide index to the current 105 records (43 Tier A, 62 Tier B)
+  and replaced stale Phase-4/Phase-5 `Authored` labels with implementation and
+  acceptance states. R2.9 implementation is present, but its required Excel
+  dropdown/paste acceptance still needs an evidence record; R2.10 automated
+  repair coverage is present and its human Excel acceptance remains open.
+  R3.13's first full-Core mutation baseline and local verification-step
+  enablement remain open. R4.1-R4.9 and R4.11 are recorded landed; R4.10 is
+  explicitly excluded. R5.1-R5.14 implementation and automated coverage are
+  present, with their required host acceptance matrix still open; R5.10 remains
+  in scope. Native outline-handle triggering and the R5.9 property-column
+  scope decision remain unresolved. R5.15 has not started; no worksheet
+  protection is enabled. Plan files now distinguish implemented code from
+  closed acceptance evidence.

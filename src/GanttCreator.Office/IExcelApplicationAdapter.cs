@@ -54,6 +54,19 @@ public interface IWorkbookStateSubscriptionStatus
 public interface IExcelApplicationAdapter
 {
     /// <summary>
+    /// Subscribes to worksheet cell changes and supplies an address qualified by
+    /// workbook and worksheet name. Implementations without worksheet events return
+    /// an inert subscription.
+    /// </summary>
+    /// <param name="handler">Receives a qualified address on Excel's main thread.</param>
+    /// <returns>A subscription that detaches when disposed.</returns>
+    IDisposable SubscribeSheetChanged(Action<string?> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return InertSheetChangeSubscription.Instance;
+    }
+
+    /// <summary>
     /// Gets whether Excel currently has an active workbook, or <see langword="null"/>
     /// when the fact cannot be determined.
     /// </summary>
@@ -101,4 +114,21 @@ public interface IExcelApplicationAdapter
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
     IDisposable SubscribeWorkbookStateChanged(Action handler);
+}
+
+/// <summary>An inert worksheet-change subscription for non-Excel adapters.</summary>
+internal sealed class InertSheetChangeSubscription : IDisposable
+{
+    private InertSheetChangeSubscription()
+    {
+    }
+
+    /// <summary>The shared stateless instance.</summary>
+    internal static InertSheetChangeSubscription Instance { get; } = new();
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        // No event handler was attached.
+    }
 }

@@ -261,6 +261,9 @@ public static class GanttCatalogues
         new("WarningFill", "#FFF2CC"),
     ];
 
+    /// <summary>The code-owned pastel warning fill used by non-blocking validation.</summary>
+    public static ColourHex WarningFill { get; } = ColourHex.Parse(ResolveColour("WarningFill"));
+
     /// <summary>
     /// The 6 typography tokens, in entity-guide order (bold flags for
     /// <c>YearFontSizePt</c>, <c>TitleFontSizePt</c>, and

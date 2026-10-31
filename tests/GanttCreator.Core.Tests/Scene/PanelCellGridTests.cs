@@ -201,6 +201,17 @@ public sealed class PanelCellGridTests
     }
 
     [Fact]
+    public void An_intentionally_empty_live_grid_is_accepted_only_when_opted_in()
+    {
+        PanelCellGridCreationOutcome outcome = PanelCellGrid.TryCreate(
+            [Col("Id"), Col("Type"), Col("Description"), Col("Start")],
+            [], 12.0, Required, allowEmptyRows: true);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Empty(outcome.Grid!.RowHeightsPt);
+    }
+
+    [Fact]
     public void A_non_positive_or_non_finite_header_height_is_refused()
     {
         // §4's header follows the live header-cell bounds, so the header height is a

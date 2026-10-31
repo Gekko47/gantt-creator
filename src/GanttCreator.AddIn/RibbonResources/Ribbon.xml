@@ -144,6 +144,7 @@
         </group>
         <group id="grpPlaceholder" label="Gantt Creator">
           <button id="btnRefreshSheet" label="Refresh chart" imageMso="Refresh" getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+          <button id="btnWarnings" label="Warnings..." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics">
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

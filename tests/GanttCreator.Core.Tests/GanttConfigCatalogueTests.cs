@@ -235,6 +235,12 @@ public class GanttConfigCatalogueTests
         Assert.Equal(22, GanttCatalogues.Colours.Count);
 
     [Fact]
+    public void Warning_fill_property_is_the_catalogued_warning_token() =>
+        Assert.Equal(
+            GanttCatalogues.Colours.Single(token => token.Name == "WarningFill").HexValue,
+            GanttCatalogues.WarningFill.ToString());
+
+    [Fact]
     public void CriticalLinePt_is_absent_from_the_catalogue()
     {
         // ADR-0027 D4 retires the token. A leftover entry would keep materialising

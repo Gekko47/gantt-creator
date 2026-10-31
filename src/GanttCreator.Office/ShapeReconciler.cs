@@ -60,6 +60,7 @@ public static partial class ShapeReconciler
     /// The identifiers the host currently holds, as returned by
     /// <see cref="IShapeWritePort.ListOwned"/>.
     /// </param>
+    /// <param name="unchangedIds">Cached IDs whose desired payload is unchanged.</param>
     /// <returns>The planned operations and the back-to-front z-order list.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="desired"/> or <paramref name="owned"/> is
@@ -86,7 +87,10 @@ public static partial class ShapeReconciler
     /// order.
     /// </para>
     /// </remarks>
-    public static ShapeReconcilePlan Plan(IReadOnlyList<OfficeShapeRequest> desired, IReadOnlyList<string> owned)
+    public static ShapeReconcilePlan Plan(
+        IReadOnlyList<OfficeShapeRequest> desired,
+        IReadOnlyList<string> owned,
+        IReadOnlySet<string>? unchangedIds = null)
     {
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(owned);
@@ -113,7 +117,10 @@ public static partial class ShapeReconciler
 
             if (ownedIds.Contains(request.PrimitiveId))
             {
-                updates.Add(request);
+                if (unchangedIds?.Contains(request.PrimitiveId) != true)
+                {
+                    updates.Add(request);
+                }
             }
             else
             {
@@ -206,7 +213,25 @@ public static partial class ShapeReconciler
         }
 
         IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
-        ShapeReconcilePlan plan = Plan(request.Desired, owned);
+        ShapeDeltaSnapshot? previous = request.PreviousSnapshot;
+        bool cacheMatchesOwned = previous is not null
+            && owned.Count == previous.Signatures.Count
+            && owned.All(previous.Signatures.ContainsKey);
+        HashSet<string>? unchangedIds = null;
+        if (cacheMatchesOwned && previous is not null)
+        {
+            unchangedIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (OfficeShapeRequest item in request.Desired)
+            {
+                if (previous.Signatures.TryGetValue(item.PrimitiveId, out string? signature)
+                    && string.Equals(signature, ShapeDeltaCache.Signature(item), StringComparison.Ordinal))
+                {
+                    _ = unchangedIds.Add(item.PrimitiveId);
+                }
+            }
+        }
+
+        ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds);
 
         int completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
@@ -238,7 +263,11 @@ public static partial class ShapeReconciler
 
         // The z-order pass runs only once every shape write has succeeded, so a
         // half-applied plan is never stacked as though it were complete.
-        ShapeWriteOutcome zOrder = writer.ApplyZOrder(plan.BackToFront);
+        bool orderUnchanged = cacheMatchesOwned && previous is not null
+            && previous.BackToFront.SequenceEqual(plan.BackToFront, StringComparer.Ordinal);
+        ShapeWriteOutcome zOrder = orderUnchanged
+            ? ShapeWriteOutcome.Ok()
+            : writer.ApplyZOrder(plan.BackToFront);
 
         return zOrder.Succeeded
             ? new ShapeReconcileOutcome(null, plan, null, completed)

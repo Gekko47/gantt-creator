@@ -56,6 +56,27 @@ public class ExcelApplicationAdapterTests
     }
 
     [Fact]
+    public void SubscribeSheetChanged_rejects_a_null_handler()
+    {
+        var adapter = new ExcelApplicationAdapter(new Mock<Excel.Application>().Object);
+
+        Assert.Throws<ArgumentNullException>(() => adapter.SubscribeSheetChanged(null!));
+    }
+
+    [Fact]
+    public void SubscribeSheetChanged_attaches_and_detaches_one_handler()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        using (new ExcelApplicationAdapter(application.Object).SubscribeSheetChanged(_ => { }))
+        {
+            events.VerifyAdd(e => e.SheetChange += It.IsAny<Excel.AppEvents_SheetChangeEventHandler>(), Times.Once);
+        }
+
+        events.VerifyRemove(e => e.SheetChange -= It.IsAny<Excel.AppEvents_SheetChangeEventHandler>(), Times.Once);
+    }
+
+    [Fact]
     public void SubscribeWorkbookStateChanged_without_an_application_returns_an_inert_subscription()
     {
         var subscription = new ExcelApplicationAdapter(null).SubscribeWorkbookStateChanged(() => { });

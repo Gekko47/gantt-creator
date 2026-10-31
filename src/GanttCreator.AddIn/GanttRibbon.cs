@@ -271,6 +271,13 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
 
+    /// <summary>Opens the read-only warnings list for the last successful render.</summary>
+    public void OnWarningsClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnWarningsClick)),
+            RibbonStateService.Instance.ShowWarningsPanel,
+            nameof(OnWarningsClick));
+
     /// <summary>Called when the user clicks the Repair configuration button.</summary>
     /// <param name="control">The ribbon control that raised the event.</param>
     public void OnRepairConfigClick(IRibbonControl control)

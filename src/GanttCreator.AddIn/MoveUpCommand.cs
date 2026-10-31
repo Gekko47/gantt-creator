@@ -21,7 +21,7 @@ internal static class MoveUpCommand
                 outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
-            RefreshSheetCommand.RunForExcel);
+            RibbonStateService.Instance.ScheduleAutomaticRefresh);
 
     /// <summary>Runs an injected move-up command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>

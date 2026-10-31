@@ -30,6 +30,59 @@ public class ShapeReconcilerTests
             new OfficeShapeGeometry(Bounds: new RectD(left, 0, 100, 20)),
             ZLayer.ActivityBody);
 
+    [Fact]
+    public void Matching_cached_payloads_skip_shape_writes_and_unchanged_z_order()
+    {
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(desired);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded, $"Refusal={outcome.Refusal}; failure={outcome.Failure}; calls={string.Join(',', port.Calls)}");
+        Assert.Empty(port.ShapeCalls);
+        Assert.Empty(port.ZOrderLists);
+    }
+
+    [Fact]
+    public void Changed_cached_payload_updates_only_that_shape()
+    {
+        OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 45d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
+        Assert.Empty(port.ZOrderLists);
+    }
+
+    [Fact]
+    public void Structural_delta_preserves_unchanged_shapes_and_creates_deletes_only_the_changed_ids()
+    {
+        OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-3:bar", 80d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Create:row-3:bar", "Delete:row-2:bar"], port.ShapeCalls);
+        Assert.Single(port.ZOrderLists);
+    }
+
     /// <summary>
     /// R4.7 D5's central pin: reconciling a converged chart twice produces the
     /// same plan and the same owned set both times.

@@ -185,6 +185,7 @@ internal sealed record RibbonState(
         RibbonControlIds.InitialiseSheet => HasActiveWorkbook,
         RibbonControlIds.ValidateSheet => HasActiveWorkbook,
         RibbonControlIds.RefreshSheet => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.Warnings => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.RepairConfig => HasActiveWorkbook,
         RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
