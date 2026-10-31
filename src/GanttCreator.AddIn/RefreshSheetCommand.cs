@@ -1,3 +1,4 @@
+using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
@@ -24,11 +25,98 @@ namespace GanttCreator.AddIn;
 /// </remarks>
 internal static class RefreshSheetCommand
 {
+    /// <summary>
+    /// The shared, long-lived <see cref="ChangeTracker"/> owned by this command.
+    /// <see cref="GanttRefreshScheduler"/> populates it on every sheet-change
+    /// event; <see cref="RunSilentForExcel"/> consumes and resets it after each
+    /// successful refresh. This is what makes change-aware refresh actually
+    /// change-aware instead of always running the full pipeline.
+    /// </summary>
+    private static readonly ChangeTracker _sharedTracker = new();
+
+    /// <summary>
+    /// Records one cell change on the shared tracker. Called by
+    /// <see cref="GanttRefreshScheduler"/> on every
+    /// <c>SheetChange</c> that warrants an auto-refresh. Old value is
+    /// <see langword="null"/> because <c>SheetChange</c> fires after the edit;
+    /// the new value is read from the cell at call time.
+    /// </summary>
+    /// <param name="rowNumber">The one-based body-row index.</param>
+    /// <param name="column">The 1-based body-column index.</param>
+    /// <param name="newValue">The post-edit cell value.</param>
+    internal static void RecordChange(int rowNumber, int column, object? newValue) => _sharedTracker.Record(rowNumber, column, null, newValue);
+
     /// <summary>Runs the production refresh in the current Excel session.</summary>
-    internal static void RunForExcel() =>
-        Run(
-            CreateLiveOrchestrator(ExcelDna.Integration.ExcelDnaUtil.Application),
-            CommandErrorDialog.Show);
+    internal static void RunForExcel()
+    {
+        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(ExcelDna.Integration.ExcelDnaUtil.Application);
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        // Store scene warnings in the Ribbon state service so the warnings
+        // panel can surface them. Row-level validation issues are reported
+        // through row/cell fill colours; scene-level warnings surface here.
+        RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+
+        if (!outcome.Succeeded)
+        {
+            Present(CommandErrorDialog.Show, outcome.Message ?? "The chart could not be refreshed.");
+        }
+    }
+
+    /// <summary>
+    /// Runs a silent production refresh: status bar only, no modal dialogs.
+    /// Used by the on-change refresh scheduler so an automatic refresh never
+    /// interrupts the user with a dialog. Follows the same sequencing as the
+    /// manual refresh: orchestrator pipeline, warning capture, then targeted
+    /// ribbon control invalidation so selection-gated controls
+    /// (MoveUp/MoveDown/PromoteToParent/DemoteToChild/AddChild) re-evaluate
+    /// against the live selection after the auto-refresh rewrites the sheet.
+    /// Does <b>not</b> call <see cref="RibbonStateService.Refresh"/> or
+    /// RibbonStateService.Invalidate — those re-read every table row and
+    /// re-query every ribbon getter, which is unnecessary when the selection
+    /// has not changed.
+    /// </summary>
+    internal static void RunSilentForExcel()
+    {
+        // Change-aware auto-refresh: use the shared ChangeTracker owned by
+        // GanttRefreshScheduler, which populates it on every SheetChange.
+        // The orchestrator targets only affected rows instead of re-reading
+        // and re-validating the whole table.
+        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
+            ExcelDna.Integration.ExcelDnaUtil.Application, _sharedTracker);
+        GanttRefreshOutcome outcome = orchestrator.Refresh();
+
+        // Store scene warnings in the Ribbon state service — same as RunForExcel.
+        RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+
+        if (outcome.Succeeded)
+        {
+            // Reset the shared tracker so it only records changes since this
+            // successful refresh completed. Until this reset, the tracker still
+            // holds the changes that triggered this auto-refresh, so a second
+            // immediate SheetChange would re-run the incremental pipeline on
+            // the same rows.
+            _sharedTracker.Reset();
+
+            // Invalidate only the selection-dependent controls so their enabled
+            // state re-evaluates against the post-refresh sheet state. Mirrors
+            // NotifyRibbonStateChanged() on the manual refresh path, but scoped
+            // to the controls that read SelectionBoundaryContext / AddChildContext
+            // instead of re-reading every table row and re-querying every ribbon
+            // getter.
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveUp);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.AddChild);
+            return;
+        }
+
+        Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
+    }
 
     /// <summary>Runs an injected refresh, for tests and for the R4.9 wiring.</summary>
     /// <param name="orchestrator">The refresh service to invoke.</param>
@@ -72,24 +160,15 @@ internal static class RefreshSheetCommand
 #pragma warning restore CA1031
     }
 
-    /// <summary>
-    /// Composes the live orchestrator from the Excel application object.
-    /// </summary>
-    /// <param name="application">The Excel application object.</param>
-    /// <returns>The composed orchestrator.</returns>
-    /// <remarks>
-    /// Every dependency is constructed here and nowhere else, so the composition root
-    /// is one readable list rather than something assembled across the command, the
-    /// Ribbon, and a static initialiser. Each adapter is the one already landed for
-    /// its own row; this method invents no behaviour.
-    /// </remarks>
     // CA2000: the scope is handed to the orchestrator, which OWNS it and disposes it
     // in a `using` on every path (R4.8A D8). The analyzer cannot see ownership
     // transfer through a constructor, so the disposal it asks for here would be a
     // second, redundant one - and a scope disposed before the refresh ran would
     // restore nothing, which is the opposite of what is wanted.
 #pragma warning disable CA2000
-    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application) =>
+    /// <param name="application">The Excel application object.</param>
+    /// <param name="changeTracker">Optional change tracker for change-aware auto-refresh.</param>
+    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, ChangeTracker? changeTracker = null) =>
         new(
             new ExcelGanttTableReader(application),
             new ExcelConfigCatalogueReader(application),
@@ -129,16 +208,17 @@ internal static class RefreshSheetCommand
             // silent; a null sink was the previous behaviour.
             new ExcelApplicationStateScope(application, CommandBoundary.Instance.WriteTechnicalRecord),
 
-            // The notes reporter. Without it here, Refresh never touched the cell notes:
-            // Validate wrote them and Refresh left them alone, so a user who fixed a
-            // validation error and pressed Refresh saw the stale note still sitting on
-            // the row. The reporter clears the notes this add-in owns on every call, so
-            // passing it here is what makes a corrected row lose its note.
-            new ExcelGanttValidationReporter(application),
-
             // The StyleKey column is engine-owned: every Refresh brings column K
             // into line with each row's current Type, so the writer is part of the
             // live composition, not an optional extra.
-            new ExcelStyleKeyWriter(application));
+            new ExcelStyleKeyWriter(application),
+
+            // The row/cell fill highlighter replaces the cell-notes reporter
+            // (ExcelGanttValidationReporter). Fills are cosmetic Interior.ColorIndex
+            // writes — no SpecialCells scan, no per-cell Comment read, and no stale
+            // note left behind when a row is corrected.
+            new ExcelRowWarningHighlighter(application),
+
+            changeTracker);
 #pragma warning restore CA2000
 }

@@ -84,6 +84,94 @@ public class ExcelGanttTableReader(
         return GanttTableReadOutcome.Ok(rows);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <paramref name="rowNumbers"/> are worksheet row numbers (1-based on the
+    /// sheet), matching what <see cref="ChangeTracker"/> stores. They are
+    /// converted to body-row indexes (1-based within <c>DataBodyRange</c>) using
+    /// the table's first body row, so a table whose header sits below row 1 is
+    /// handled correctly.
+    /// </remarks>
+    public GanttTableReadOutcome Read(IReadOnlyList<int> rowNumbers)
+    {
+        Application? application = _application;
+        if (application is null)
+        {
+            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook);
+        }
+
+        Workbook? workbook = application.ActiveWorkbook;
+        if (workbook is null)
+        {
+            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook);
+        }
+
+        ExcelDateSystemKind dateSystem = GetDateSystem(workbook);
+        if (!_dateSystemConverter.IsSupported(dateSystem))
+        {
+            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.DateSystemUnsupported);
+        }
+
+        Sheets sheets = workbook.Sheets;
+        if (!TryFindTable(sheets, out ListObject? table) || table is null)
+        {
+            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+        }
+
+        if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
+        {
+            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+        }
+
+        Excel.Range? body = table.DataBodyRange;
+        if (body is null)
+        {
+            return GanttTableReadOutcome.Ok([]);
+        }
+
+        ArgumentNullException.ThrowIfNull(rowNumbers);
+
+        if (rowNumbers.Count == 0)
+        {
+            return GanttTableReadOutcome.Ok([]);
+        }
+
+        // rowNumbers are worksheet row numbers. Convert to body-row indexes
+        // (1-based within DataBodyRange) using the table's first body row.
+        int firstBodyRow = body.Row;
+        int bodyRowCount = body.Rows.Count;
+        List<GanttRowDto> rows = new List<GanttRowDto>(rowNumbers.Count);
+
+        foreach (int worksheetRowNumber in rowNumbers)
+        {
+            int bodyRowIndex = worksheetRowNumber - firstBodyRow + 1;
+            if (bodyRowIndex < 1 || bodyRowIndex > bodyRowCount)
+            {
+                continue;
+            }
+
+            Excel.Range rowRange = body.Rows[bodyRowIndex];
+            object? rawRow = GetBodyValues(rowRange);
+            List<object?[]> matrixRows = ExcelValue2Matrix.ReadRows(rawRow);
+            if (matrixRows.Count == 0)
+            {
+                continue;
+            }
+
+            object?[] matrix = matrixRows[0];
+            object?[] cells = new object?[columnMap.Length];
+            for (int schemaIndex = 0; schemaIndex < columnMap.Length; schemaIndex++)
+            {
+                int tableIndex = columnMap[schemaIndex];
+                cells[schemaIndex] = tableIndex < 1 || tableIndex > matrix.Length ? null : CoerceCell(matrix[tableIndex - 1]);
+            }
+
+            rows.Add(ConvertRow(bodyRowIndex, cells, dateSystem));
+        }
+
+        return GanttTableReadOutcome.Ok(rows);
+    }
+
     /// <summary>
     /// Finds <c>tblGanttData</c> on any worksheet. Chart sheets carry no
     /// list objects and are skipped via the worksheet cast.

@@ -28,4 +28,15 @@ public interface IGanttTableReader
     /// empty row list. On a refusal nothing was mutated.
     /// </returns>
     GanttTableReadOutcome Read();
+
+    /// <summary>
+    /// Reads only the specified body rows of <c>tblGanttData</c> in body order.
+    /// Used by change-aware auto-refresh to avoid re-reading unchanged rows.
+    /// </summary>
+    /// <param name="rowNumbers">The one-based body-row indexes to read, in ascending order.</param>
+    /// <returns>
+    /// The typed outcome: the requested rows on success, or the refusal reason
+    /// with an empty row list. On a refusal nothing was mutated.
+    /// </returns>
+    GanttTableReadOutcome Read(IReadOnlyList<int> rowNumbers);
 }
