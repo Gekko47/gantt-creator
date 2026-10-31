@@ -95,7 +95,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// </summary>
     public void Deactivate()
     {
-        _ = System.Threading.Interlocked.Increment(ref _timerGeneration);
+        _ = Interlocked.Increment(ref _timerGeneration);
         DisposeTimer();
         _sheetChangeSubscription?.Dispose();
         _sheetChangeSubscription = null;
@@ -111,7 +111,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
 
     internal void CancelPendingRefresh()
     {
-        _ = System.Threading.Interlocked.Increment(ref _timerGeneration);
+        _ = Interlocked.Increment(ref _timerGeneration);
         DisposeTimer();
     }
 
@@ -139,7 +139,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private void ResetTimer()
     {
         DisposeTimer();
-        int generation = System.Threading.Interlocked.Increment(ref _timerGeneration);
+        int generation = Interlocked.Increment(ref _timerGeneration);
         _timer = new System.Threading.Timer(
             _ => OnTimerElapsed(generation),
             null,
@@ -165,7 +165,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
         // Marshal to the Excel main STA thread before touching COM.
         _queueAsMacro(() =>
         {
-            if (!_disposed && generation == System.Threading.Volatile.Read(ref _timerGeneration))
+            if (!_disposed && generation == Volatile.Read(ref _timerGeneration))
             {
                 _refresh();
             }
