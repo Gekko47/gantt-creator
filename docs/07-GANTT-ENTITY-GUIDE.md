@@ -182,26 +182,23 @@ For a valid selected rectangle or diamond:
 
 For line-only entities such as `CP Interval` and `Delineator`, Shape Fill is disabled and **Line Colour** writes `StrokeColour`. Procurement exposes hatch-family colour through `StrokeColour`; background fill remains style-defined unless the approved procurement style supports a fill override.
 
-Changing a property edits the table only. It does not directly format the existing generated shape. The new appearance becomes visible after Refresh.
+Changing a property edits the table only. It does not directly format the existing generated shape. A successful property write schedules the coalesced refresh defined by R5.11; the renderer continues to derive the shape from the table and scene model.
 
 Tests cover selection inside each table column, full-row selection, multiple rows, collapsed parents, expanded leaf rows, every capability combination, inherited/overridden state, colour parsing, allowed label positions, and preservation through sort/save/reopen.
 
-## Refresh-only rendering contract
+## Refresh and automatic-update contract
 
-The add-in never renders in response to normal worksheet editing. Do not connect `Worksheet.Change`, selection change, table events, colour-picker completion, or Type dropdown changes to Refresh.
+Chart-affecting edits schedule a coalesced automatic refresh. Do not render on selection/navigation changes, intermediate dialog edits, or unsuccessful/cancelled commands. The refresh reads and validates the complete current table and configuration, builds the complete scene, and only then reconciles owned shapes. A burst of edits produces one refresh from the final workbook state. The explicit Ribbon **Refresh** remains a full validation and repair pass.
 
-Editing behaviour:
+Chart-affecting changes include row creation/deletion, Type and entity data, dates and descriptions, move/reorder/parent/expand state, per-row style overrides, style/theme/title/chrome settings, plot range, scale/time-scale and label settings, and any metric that affects geometry. Successful command/dialog commits enqueue refresh after their table/config write completes. Cancelled dialogs and refused writes do not enqueue. Selection changes update ribbon capability state only.
 
-1. The user edits Type, description, dates, fill/line override, or label position.
-2. Excel stores the changed table values immediately.
-3. Existing Gantt shapes remain exactly as last rendered.
-4. The user clicks **Refresh** on the Gantt Creator Ribbon.
-5. Refresh reads the complete current table, validates it, builds a new scene, and updates owned shapes only if there are no blocking errors.
-6. On a blocking error, the previous valid chart remains unchanged and the user receives actionable row/field errors.
+Initialization creates an empty chart frame/title once, after the worksheet/config/table setup succeeds. Repeated Initialize must not duplicate or clear it. An empty or all-structural table after initialization renders a valid empty chart state and removes stale owned event shapes while retaining the frame/title.
 
-The implementation may mark the workbook/chart as `Changes pending` without rendering, but this indicator is optional in the first release. It must not alter the chart or save the workbook automatically.
+Automatic-update outcomes are preventative and non-modal during ordinary editing: blocking validation keeps the previous chart, identifies the affected row or field, updates the warning/validation surface and pending/failed state, and leaves the user able to correct the input. Do not show repeated pop-up windows for each edit. The warnings surface must distinguish the last successful scene from current validation state. Explicit user commands may report one concise typed refusal where an operation cannot be made safe by disabling it.
 
-Automated tests prove that editing commands and worksheet-change callbacks never call the render service. Real Excel tests edit several fields, verify shape properties remain unchanged, click Refresh once, and then verify all changes appear together.
+Partial refresh means partial host mutation, not partial validation: always validate the full table and create a complete desired scene first. Then compare deterministic entity payload signatures and apply only changed shape writes plus necessary creates/deletes/z-order operations. A full reconcile is required on cache miss, initialization, workbook switch, explicit Refresh, configuration/theme-wide invalidation, or after any failed partial mutation. Keep cache in memory only. Defer incremental scene building until profiling proves scene construction is the bottleneck and its invalidation dependencies are tested.
+
+Automated tests prove trigger coverage and non-triggers, debounce/coalescing, complete validation before mutation, shape delta correctness and full-fallback behavior. Real Excel tests cover representative edit families, errors, empty initialization, recovery, and idempotence.
 
 ## Shared metric tokens
 
@@ -708,9 +705,9 @@ Placement priority is: explicit manual positions first; then critical milestones
 
 **Source:** `Type=Delineator`, the single event date in `Start`, description, style, stroke override, and label position. `Finish`, `LaneId`, and `StackIndex` are not read for geometry.
 
-**Creation workflow:** the user selects `Delineator` directly from the Type dropdown (R2.8's inserter with `DefaultDelineator` as the code-owned named style); on confirmation it adds one visible table row with a generated stable ID. It edits table data only and does not draw until Refresh.
+**Creation workflow:** the user selects `Delineator` directly from the Type dropdown (R2.8's inserter with `DefaultDelineator` as the code-owned named style); on confirmation it adds one visible table row with a generated stable ID. The successful row commit schedules the coalesced refresh; it does not format a shape directly.
 
-**Editing/removal:** change the row's `Start`, `Description`, `LabelPosition`, `StrokeColour`, `StyleKey`, or `Visible` value, then click Refresh. **Remove Selection** deletes a selected valid delineator row after the standard confirmation/undo policy (R2.7a). Direct click-to-draw interaction on the chart is excluded from the first release.
+**Editing/removal:** changing the row's `Start`, `Description`, `LabelPosition`, `StrokeColour`, `StyleKey`, or `Visible` schedules refresh after commit. **Remove Selection** deletes a selected valid delineator row after the standard confirmation/undo policy (R2.7a), then schedules refresh. Direct click-to-draw interaction on the chart is excluded from the first release.
 
 **Geometry:** X is the exact date position. The line runs from `PlotBounds.Top` **lifted `PlotBandHeaderOverlapPt` up into the header row** (ADR-0037 D1) to the plot's **closing boundary** — `PlotBounds.Bottom` plus the live-anchoring overhang of §7 (ADR-0038 D2), which is zero when `ChartAnchorRowHeightPt` is `0`. The title, data and time-header bands are excluded: the line reaches only a sub-row amount into the header, never through the title or period bands. Width is `StandardOutlinePt` from the resolved named style; the chart-wide `DelineatorLinePt` metric is the fallback when the style names none. The built-in `DefaultDelineator` preset resolves its `StandardOutlinePt` from the `DelineatorLinePt` token, so the built-in path is unchanged.
 

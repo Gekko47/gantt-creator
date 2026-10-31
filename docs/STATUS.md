@@ -1590,3 +1590,5 @@ predates the current 12-step gate and is superseded by the measured
 ## Open questions for human
 
 - _none yet_
+- **Planning revision (2026-10-31):** R4.10 now includes a resource-bounded 1,000-event benchmark flow after local-storage pressure; R5.11 replaces the manual-only refresh plan with full-validation/coalesced auto-refresh and content-aware Excel shape deltas; R5.8/R5.10 cover non-modal validation feedback and preventive selection gating; R5.15 is a proof-first worksheet-protection feasibility item. No source code changed in this planning update. See `docs/03-ROADMAP.md` Phase 5 notes and the revised work items.
+

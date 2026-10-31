@@ -189,11 +189,11 @@ Refresh is idempotent:
 6. Apply z-order deterministically.
 7. Restore application state even after failure.
 
-Refresh runs only when the user invokes the Ribbon Refresh command or another explicitly documented render command. Normal cell edits, Type dropdown changes, per-row colour changes, label-position changes, and selection changes must not call the renderer. A failed Refresh leaves the last valid chart unchanged.
+Chart-affecting table edits and successful chart-setting/property commands schedule a coalesced automatic refresh; selection and navigation changes never render. The Ribbon Refresh command remains a full validation and repair pass. Automatic refresh reads and validates the complete current table/configuration and builds a complete scene before any shape mutation. If blocking errors exist, the last valid chart remains unchanged and the validation state is surfaced without a modal error loop. Excel shape writes are not transactional: if a host failure occurs after mutation begins, report refresh as incomplete, invalidate the in-memory delta cache, and make the next attempt perform a full reconciliation. Do not claim the previous scene survived unless tested compensation actually restored it.
 
 Per-entity Ribbon properties are enabled only for one selected expanded entity row. They write `FillColour`, `StrokeColour`, or `LabelPosition` in the table; they never directly modify the current generated shape. Collapsed roll-ups, multi-row selections, headers, and unsupported entity capabilities disable the corresponding controls.
 
-Prefer updating existing shapes to delete/recreate when it materially preserves user selection and performance. If diff rendering becomes unreliable, replace the complete owned set atomically within the state scope; document the choice with benchmarks.
+Prefer updating existing shapes to delete/recreate when it materially preserves user selection and performance. Delta reconciliation may reduce host writes only after a complete validated scene exists; compare deterministic content signatures as well as stable IDs, and update/create/delete only changed entities. Structural, ordering, chart-wide style/theme, date-range, time-scale, and metrics changes may invalidate broad portions or all of the scene. Cache state is in memory only, never on `_GanttCreatorConfig`; cache misses, workbook switches, initialization, explicit Refresh, or a failed partial write use full reconciliation. Profile before introducing incremental scene construction, and document the dependency/invalidation closure and benchmark evidence.
 
 ## Editable export composition
 

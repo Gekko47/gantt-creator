@@ -217,7 +217,7 @@ files only; the local audit verifies every file exists.
 | R4.8A | `R4.8A-refresh-orchestrator.md` | **Implemented** (`GanttRefreshOrchestrator`, `ExcelSceneBuildRequestFactory`; D8 wired). **Office gate CLOSED 2026-10-04** by R4.9's session (Excel `16.0.20430.20032`) — all six named conditions observed, including milestones |
 | R4.9 | `R4.9-refresh-command.md` | **Implemented; Office gate PASSED 2026-10-04** (Excel 16.0.20430.20032, human-driven F5 session; Tier A 2026-09-26; first live slice. D1 amended onto R4.8A D1 — the command is a thin boundary, not the pipeline) |
 | R4.7I | `R4.7I-live-chart-vertical-anchoring.md` | **Source landed**; anchoring test coverage closed 2026-10-04; **Office gate PASSED 2026-10-04** in the same session |
-| R4.10 | `R4.10-thousand-event-performance.md` | Upgraded to Tier A (2026-09-26). **Blocked** on ADR-0010's two predecessors: R3.13 (**landed 2026-10-05** — tool installed, gate wired into `ci.yml` (the `verify.ps1` step of the same name is a disabled stub pending the first full-Core baseline run), Pester guard green, baseline run pending) and R2.10 (source landed, Office gate still owed — see its own status line for why R4.9 did not discharge it) |
+| R4.10 | `R4.10-thousand-event-performance.md` | Revised 2026-10-31 for storage-bounded benchmark flow. **Blocked** on R3.13 full-Core baseline and R2.10 Office gate; previous 1,000-event attempt exceeded local-storage capacity, so diagnose resource pressure and use the size ladder before collecting compact full-size evidence |
 | R4.11 | `R4.11-label-text-colour-propagation.md` | **Landed** (`e286dfe`; golden `e80bc8f`); **Office gate PASSED 45/45**, Office `16.0.20326.20158` x64. Independent of R4.9 and closed on its own live run. **Added to this manifest 2026-10-04** — the row existed in the roadmap, had a guide, and had landed, but was absent here |
 
 ### Phase 5 — interaction and UX (Tier B; upgrade at Phase 4 exit)
@@ -233,11 +233,18 @@ files only; the local audit verifies every file exists.
 | R5.6 | `R5.6-style-theme-settings.md` | Authored (Tier B) |
 | R5.6a | `R5.6a-named-style-presets.md` | Authored (Tier B; added 2026-09-23) |
 | R5.6b | `R5.6b-chart-title-settings.md` | Authored (Tier B; added 2026-09-25) |
+| R5.6c | `R5.6c-theme-dialog-modernisation.md` | Authored (Tier B; successful settings commits join revised R5.11 trigger coverage) |
+| R5.6d | `R5.6d-theme-dialog-and-chrome-fixes.md` | Authored (Tier B; theme-wide invalidation joins revised R5.11) |
+| R5.6e | `R5.6e-chart-frame-encloses-the-table.md` | Authored (Tier B; frame refresh joins revised R5.11) |
 | R5.7 | `R5.7-delineator-workflow.md` | Authored (Tier B) |
 | R5.8 | `R5.8-warnings-panel.md` | Authored (Tier B) |
 | R5.9 | `R5.9-ribbon-completion.md` | Authored (Tier B) |
 | R5.10 | `R5.10-selection-overrides.md` | Authored (Tier B) |
-| R5.11 | `R5.11-refresh-only-enforcement.md` | Authored (Tier B) |
+| R5.11 | `R5.11-refresh-only-enforcement.md` | Revised planning contract 2026-10-31 — coalesced auto-refresh, full validation/build before content-aware delta reconciliation, full fallback, empty initialization, and non-modal validation feedback |
+| R5.12 | `R5.12-period-label-fit-ladder.md` | Authored (Tier B; successful format commits join R5.11 trigger coverage) |
+| R5.13 | `R5.13-group-aware-row-insert.md` | Authored (Tier B; successful row commits join R5.11 trigger coverage) |
+| R5.14 | `R5.14-date-labels.md` | Authored (Tier B; successful label commits join R5.11 trigger coverage) |
+| R5.15 | `R5.15-managed-worksheet-protection.md` | Proposed proof-first live Excel feasibility/ADR item; no production protection behavior until proof and owner decision |
 
 ### Phase 6 — PowerPoint editable export (Tier B; upgrade at Phase 5 exit; R6.7 spike first)
 

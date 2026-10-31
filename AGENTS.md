@@ -32,7 +32,7 @@ At session start, read [the repository map](docs/REPO-MAP.md) for project respon
 - The `Type` column uses the single code-owned catalogue in `docs/07-GANTT-ENTITY-GUIDE.md`, materialised to the VeryHidden configuration worksheet for data validation; do not duplicate, extend, or infer type values elsewhere.
 - Live output is native Excel cells and shapes. All positioning comes from the scene/layout model.
 - Every visible entity uses the geometry, style-token, label, z-order, validation, and renderer-equivalence contract in `docs/07-GANTT-ENTITY-GUIDE.md`. Undefined behaviour is an unknown requiring a decision.
-- Normal worksheet, Type, colour, label-position, and selection changes never render. Only the explicit Refresh/render commands rebuild the chart.
+- Chart-affecting worksheet edits and successful chart-setting or property commands schedule a coalesced automatic refresh; selection/navigation changes never render. Explicit Refresh remains available as a full validation and repair pass. See R5.11 and the renderer contract in `docs/02-ARCHITECTURE.md` / `docs/07-GANTT-ENTITY-GUIDE.md`.
 - Per-row fill/line/label overrides operate only on one expanded visible entity selection and are stored in that visible table row; they do not directly format the existing generated shape or move schedule data to the configuration sheet.
 - The Core project has no Office, Excel-DNA, SkiaSharp, clipboard, filesystem-dialog, or UI dependency.
 - Multiple events on one lane, overlapping planned/actual events, milestones, critical intervals, and labelled full-height delineators are first-class domain cases.
