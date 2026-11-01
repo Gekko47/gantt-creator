@@ -1738,6 +1738,11 @@ internal class RibbonStateService
     /// </summary>
     internal void Activate()
     {
+        // ExcelDnaUtil.Application may be null during AddInHost.AutoOpen
+        // (before Excel-DNA has fully initialized) but is available by the
+        // time the ribbon onLoad fires. Re-probe here so the SheetChange
+        // subscription and table reader use a live application object.
+        SetApplicationAdapter(new ExcelApplicationAdapter(ExcelDna.Integration.ExcelDnaUtil.Application));
         SubscribeToWorkbookStateChanges();
         SubscribeToSheetChanges();
         SubscribeToSelectionChanges();

@@ -41,7 +41,12 @@ public class GanttRibbon : ExcelRibbon
     {
         ArgumentNullException.ThrowIfNull(stateService);
         stateService.SetRibbon(ribbon);
-        stateService.Refresh();
+        // Activate arms the state service subscriptions (SheetChange, workbook
+        // state, selection) and performs the first refresh. ExcelDnaUtil.Application
+        // is guaranteed available here (ribbon onLoad fires after AutoOpen), so the
+        // auto-refresh scheduler can subscribe to sheet changes and the table
+        // reader can read the live workbook.
+        stateService.Activate();
     }
     /// <summary>
     /// Returns the RibbonX document for the Excel workbook RibbonID, else null.

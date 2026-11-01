@@ -26,8 +26,8 @@ namespace GanttCreator.AddIn;
 /// <exception cref="ArgumentNullException">A source is <see langword="null"/>.</exception>
 [SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
     Justification = "AddInHost is an Excel-DNA IExcelAddIn entry point, not a disposable type. " +
-    "Deterministic teardown runs through AutoClose, which disposes the owned GanttRefreshScheduler " +
-    "and the rolling log instead of implementing IDisposable.")]
+    "Deterministic teardown runs through AutoClose, which disposes the owned rolling log " +
+    "instead of implementing IDisposable.")]
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
     Func<IRollingLog> logSource,
@@ -47,7 +47,6 @@ public sealed class AddInHost(
 
     private IRollingLog? _log;
     private string? _sessionToken;
-    private GanttRefreshScheduler? _scheduler;
 
     /// <summary>
     /// Creates the add-in host with the production identity and log
@@ -178,26 +177,30 @@ public sealed class AddInHost(
             // Intentionally empty: state-service arming degrades silently.
         }
 
-        // Arm the production auto-refresh scheduler so chart-affecting table
-        // edits trigger a debounced, silent refresh (work item R5.11). The
-        // scheduler owns its SheetChange subscription and debounce timer; it is
-        // disposed in AutoClose. A scheduler that cannot arm must never abort
-        // add-in load, so the whole step is guarded.
-        try
-        {
-            IExcelApplicationAdapter schedulerAdapter =
-                new ExcelApplicationAdapter(ExcelDnaUtil.Application);
-            ISheetChangeAnalyzer schedulerAnalyzer =
-                new ExcelSheetChangeAnalyzer(ExcelDnaUtil.Application);
-            _scheduler = new GanttRefreshScheduler(schedulerAdapter, schedulerAnalyzer);
-            _scheduler.Activate();
-        }
+        // ExcelDnaUtil.Application may be null during AutoOpen (before Excel-DNA
+        // has fully initialized) but becomes available once the XLL is loaded.
+        // Queue Activate() on the main STA thread so the auto-refresh scheduler
+        // can subscribe to sheet changes even when the ribbon onLoad callback
+        // does not fire (for example, when Excel is started invisible). The
+        // ribbon onLoad also calls Activate(), so this is a belt-and-suspenders
+        // fallback.
 #pragma warning disable CA1031
-        catch
-#pragma warning restore CA1031
+        ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(() =>
         {
-            // Intentionally empty: scheduler arming degrades silently.
-        }
+            try
+            {
+                if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+                {
+                    RibbonStateService.Instance.Activate();
+                }
+            }
+            catch
+            {
+                // A failure here must not escape AutoOpen.
+            }
+        });
+#pragma warning restore CA1031
+
     }
 
     /// <summary>
@@ -221,19 +224,6 @@ public sealed class AddInHost(
         // Reset never throws by contract (every detach failure is guarded
         // inside the subscription itself); this guard is defence in depth so
         // a failure here cannot skip steps 2-5.
-
-        // Detach the auto-refresh scheduler's SheetChange subscription and
-        // dispose its debounce timer before any other teardown, so no cell
-        // change event can fire into services mid-shutdown (work item R5.11).
-        // Covered by the CA1031 disable at the top of AutoClose.
-        try
-        {
-            _scheduler?.Dispose();
-        }
-        catch
-        {
-            // Intentionally empty: teardown degrades silently.
-        }
 
         try
         {
