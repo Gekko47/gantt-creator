@@ -88,6 +88,22 @@ public class AddInHostTests
     }
 
     [Fact]
+    public void AutoOpen_degrades_silently_when_the_excel_macro_queue_is_unavailable()
+    {
+        // The unit-test harness has no Excel host, so ExcelAsyncUtil.QueueAsMacro
+        // itself throws (not merely the callback). AutoOpen must absorb that and
+        // still write its open record; the ribbon onLoad is the production path
+        // that arms the scheduler in a real session.
+        var log = new CapturingLog();
+        var host = new AddInHost(() => TestIdentity, () => log);
+
+        Exception? thrown = Record.Exception(host.AutoOpen);
+
+        Assert.Null(thrown);
+        Assert.Equal([ExpectedOpenRecord], log.Records);
+    }
+
+    [Fact]
     public void AutoClose_writes_exactly_one_close_record_and_disposes_the_log()
     {
         var log = new CapturingLog();

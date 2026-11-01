@@ -185,20 +185,30 @@ public sealed class AddInHost(
         // ribbon onLoad also calls Activate(), so this is a belt-and-suspenders
         // fallback.
 #pragma warning disable CA1031
-        ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(() =>
+        try
         {
-            try
+            ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(() =>
             {
-                if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+                try
                 {
-                    RibbonStateService.Instance.Activate();
+                    if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+                    {
+                        RibbonStateService.Instance.Activate();
+                    }
                 }
-            }
-            catch
-            {
-                // A failure here must not escape AutoOpen.
-            }
-        });
+                catch
+                {
+                    // A failure inside the queued callback must not escape.
+                }
+            });
+        }
+        catch
+        {
+            // QueueAsMacro ITSELF throws outside a live Excel host (the unit-test
+            // harness has no host), and AutoOpen must never surface that. In a real
+            // session the ribbon onLoad calls Activate() regardless, so nothing is
+            // lost by degrading here.
+        }
 #pragma warning restore CA1031
 
     }

@@ -1764,7 +1764,16 @@ internal class RibbonStateService
         // (before Excel-DNA has fully initialized) but is available by the
         // time the ribbon onLoad fires. Re-probe here so the SheetChange
         // subscription and table reader use a live application object.
-        SetApplicationAdapter(new ExcelApplicationAdapter(ExcelDna.Integration.ExcelDnaUtil.Application));
+        //
+        // Only when a live application exists: outside an Excel host the
+        // static is null, and replacing the adapter unconditionally would
+        // clobber an explicitly injected adapter (the unit-test fakes) with
+        // one built over nothing, silently disabling every subscription.
+        if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+        {
+            SetApplicationAdapter(new ExcelApplicationAdapter(ExcelDna.Integration.ExcelDnaUtil.Application));
+        }
+
         SubscribeToWorkbookStateChanges();
         SubscribeToSheetChanges();
         SubscribeToSelectionChanges();
