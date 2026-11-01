@@ -69,6 +69,28 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.Equal([validationIssue], service.GetCurrentValidationIssues());
     }
 
+    [Fact]
+    public void A_workbook_switch_clears_the_last_rendered_warnings_and_current_issues()
+    {
+        // R5.8/R5.11: both snapshots are per-workbook. Carrying them across a
+        // switch would show another workbook's warnings and stale badges, which
+        // the user can never dismiss.
+        var adapter = new FakeApplicationAdapter { WorkbookFact = false };
+        var service = Arm(adapter);
+        service.UpdateWarnings([new SceneWarning(SceneOwnerId.Chart, "PlotRange", "Chart warning.")]);
+        service.UpdateCurrentValidationIssues(
+            [new GanttValidationIssue(3, "Start", "InvalidDate", GanttValidationSeverity.Error, "Enter a valid start date.")]);
+        Assert.NotEmpty(service.GetLastSuccessfulSceneWarnings());
+        Assert.NotEmpty(service.GetCurrentValidationIssues());
+        Assert.NotNull(service.GetLastSuccessfulRenderAtUtc());
+
+        adapter.RaiseWorkbookStateChanged();
+
+        Assert.Empty(service.GetLastSuccessfulSceneWarnings());
+        Assert.Empty(service.GetCurrentValidationIssues());
+        Assert.Null(service.GetLastSuccessfulRenderAtUtc());
+    }
+
     /// <summary>
     /// Hand-written fake for <see cref="IExcelApplicationAdapter"/>: counts
     /// captures and subscriptions so the tests can prove the getters never probe
