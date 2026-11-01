@@ -46,7 +46,7 @@ public sealed class AutoRefreshTriggerIntegrationTests
             SetCell("Finish", 46270d);
             SetCell("Visible", true);
 
-            string labelName = rowId + ":bar-label";
+            string labelName = rowId + ":label";
             Assert.Equal(
                 "Scheduler initial render",
                 await WaitForShapeTextAsync(
