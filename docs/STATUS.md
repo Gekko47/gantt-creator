@@ -1580,6 +1580,8 @@ predates the current 12-step gate and is superseded by the measured
 - **Excel-DNA target**: 1.9.0
 - **Self-hosted runner policy**: option 1 — a real licensed Microsoft 365 x64 install on this machine; the Office-integration suite is excluded from `verify.ps1` and runs via `scripts/verify-office.ps1` only at phase exit and release.
 
+- **Message pins measured against the mutation score (2026-11-01, Excel closed).** 26 validation codes now have their full issue text pinned exactly (`GanttRowValidatorMessageTests` plus exact-text assertions in two existing multi-fault tests). A scoped mutation run over `GanttRowValidator.cs` on `GanttCreator.Core.Tests` took that file's open mutants from **117 to 86 — 31 killed**, message-string mutants falling from 59 to 36. That is 31 of the 114 killed mutants the branch needs for the pinned 80%. The same run established that `--mutate <file>` does **not** reduce wall clock: the tested set fell to 403 of 6,687 mutants but the run still took about 50 minutes, because Stryker generates and compile-checks every mutant project-wide before applying the mutate filter. Scoping by file buys precision, not time — which is also why the widened test-project set looked catastrophic. Core suite 1779/1779.
+
 ## Known limitations
 
 - **A mutation run cannot build while Excel holds the packed add-in.** Stryker's initial build covers the solution, and the AddIn's `ExcelDnaPack` target fails with `DNA-426010896` — "Existing output .xll file ... could not be deleted. (Perhaps loaded in Excel?)" — when the packed AddIn64 `.xll` is loaded. Confirmed 2026-11-01 with `EXCEL.EXE` running. Close Excel before `mutation-gate.ps1`, `-Baseline` or any full-solution Release build; the Office-host gate has the opposite prerequisite.
