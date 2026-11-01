@@ -25,6 +25,20 @@ R5.11 automatic refresh entry points are `RibbonStateService.SubscribeToSheetCha
 `RibbonStateService.ScheduleAutomaticRefresh`. The explicit scene-warning list
 is surfaced by `GanttRibbon.OnWarningsClick` and `WarningsPanelForm`.
 
+R5.9's presentation delta is pinned in
+`tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs` (keytip presence and
+uniqueness, label coverage, offline-only help text). R5.11's alignment
+guarantee is pinned by `tests/GanttCreator.Core.Tests/GanttRowValidatorTests.cs`
+(a blank row is skipped, produces no event, and later rows keep their numbers)
+and `tests/GanttCreator.Core.Tests/Scene/LaneRowAnchorResolverTests.cs` (a
+blank or leading-blank band stays empty while later lanes keep their measured
+rows). The recalc/resize/filter trigger-matrix cells are pinned in
+`tests/GanttCreator.Office.ContractTests/ExcelSheetChangeAnalyzerTests.cs`,
+and the warnings snapshots' workbook-switch clearing in
+`tests/GanttCreator.AddIn.Tests/RibbonStateServiceTests.cs`. The R5.15
+protection decision is ADR-0051 (`docs/adr/0051-retain-unprotected-worksheet.md`);
+the deferred R5.9 presentation scope is row `R5.9a`.
+
 R5.11 live-host coverage is in `tests/GanttCreator.Office.IntegrationTests/AutoRefreshTriggerIntegrationTests.cs`
 (real SheetChange delivery and table-column classification) and
 `RefreshIdempotenceIntegrationTests.cs` (zero-write unchanged delta and one-write
