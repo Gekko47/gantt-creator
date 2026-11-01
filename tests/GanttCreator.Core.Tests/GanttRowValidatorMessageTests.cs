@@ -222,4 +222,132 @@ public class GanttRowValidatorMessageTests
             ],
             messages);
     }
+
+    [Fact]
+    public void A_self_reference_is_reported_as_a_cycle_not_as_a_depth_problem()
+    {
+        // The row names itself. The accurate finding is a cycle: telling the
+        // user the row "is itself a child" describes nesting that does not
+        // exist.
+        string id = NewId();
+        GanttRowDto row = Span(rowNumber: 2, id: id, parentId: id, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "ParentId forms a parent cycle: a row names itself or an ancestor as its parent.",
+            MessageFor(outcome, GanttValidationCodes.ParentCycle));
+        Assert.DoesNotContain(outcome.Issues, issue => issue.Code == GanttValidationCodes.HierarchyTooDeep);
+    }
+
+    [Fact]
+    public void A_grandchild_names_its_parent_and_the_supported_depth()
+    {
+        string top = NewId();
+        string middle = NewId();
+
+        GanttRowDto grandparent = Span(rowNumber: 2, id: top, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+        GanttRowDto parent = Span(rowNumber: 3, id: middle, parentId: top, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+        GanttRowDto child = Span(rowNumber: 4, parentId: middle, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([grandparent, parent, child]);
+
+        Assert.Equal(
+            $"ParentId '{middle}' is itself a child, which would nest beyond the supported depth of {EntityHierarchyCatalog.MaxDepth}.",
+            MessageFor(outcome, GanttValidationCodes.HierarchyTooDeep));
+    }
+
+    [Fact]
+    public void Exceeding_the_child_cap_reports_the_count_and_the_limit()
+    {
+        int overLimit = EntityHierarchyCatalog.MaxChildrenPerParent + 1;
+        string parentId = NewId();
+
+        List<GanttRowDto> rows = [Span(rowNumber: 2, id: parentId, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5))];
+        for (int i = 0; i < overLimit; i++)
+        {
+            rows.Add(Span(
+                rowNumber: 3 + i,
+                parentId: parentId,
+                start: new DateOnly(2026, 9, 1),
+                finish: new DateOnly(2026, 9, 5)));
+        }
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(rows);
+
+        Assert.Equal(
+            $"This row has {overLimit} children; at most {EntityHierarchyCatalog.MaxChildrenPerParent} are permitted.",
+            MessageFor(outcome, GanttValidationCodes.TooManyChildren));
+    }
+
+    [Fact]
+    public void An_ambiguous_parent_names_the_key_and_the_reason()
+    {
+        string duplicated = NewId();
+
+        GanttRowDto first = Span(rowNumber: 2, id: duplicated, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+        GanttRowDto second = Span(rowNumber: 3, id: duplicated, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+        GanttRowDto child = Span(rowNumber: 4, parentId: duplicated, start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([first, second, child]);
+
+        Assert.Equal(
+            $"ParentId '{duplicated}' is ambiguous because multiple rows carry that Id.",
+            MessageFor(outcome, GanttValidationCodes.ParentAmbiguous));
+    }
+
+    [Fact]
+    public void A_parent_that_may_not_own_children_is_reported_with_the_rule()
+    {
+        string milestoneId = NewId();
+        GanttRowDto milestone = new(
+            2,
+            milestoneId,
+            null,
+            null,
+            "As-Planned Milestone",
+            "Handover",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null);
+        GanttRowDto child = Span(
+            rowNumber: 3,
+            parentId: milestoneId,
+            start: new DateOnly(2026, 9, 1),
+            finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([milestone, child]);
+
+        Assert.Equal(
+            $"ParentId '{milestoneId}' must reference a type that may own children.",
+            MessageFor(outcome, GanttValidationCodes.ParentNotSpan));
+    }
+
+    [Fact]
+    public void A_parent_that_did_not_validate_is_reported_as_unusable()
+    {
+        string brokenParentId = NewId();
+        GanttRowDto brokenParent = Span(
+            rowNumber: 2,
+            id: brokenParentId,
+            start: new DateOnly(2026, 9, 5),
+            finish: new DateOnly(2026, 9, 1));
+        GanttRowDto child = Span(
+            rowNumber: 3,
+            parentId: brokenParentId,
+            start: new DateOnly(2026, 9, 1),
+            finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([brokenParent, child]);
+
+        Assert.Equal(
+            $"ParentId '{brokenParentId}' references a row that did not validate as a usable event.",
+            MessageFor(outcome, GanttValidationCodes.ParentInvalid));
+    }
 }
