@@ -1582,6 +1582,8 @@ predates the current 12-step gate and is superseded by the measured
 
 ## Known limitations
 
+- **A mutation run cannot build while Excel holds the packed add-in.** Stryker's initial build covers the solution, and the AddIn's `ExcelDnaPack` target fails with `DNA-426010896` — "Existing output .xll file ... could not be deleted. (Perhaps loaded in Excel?)" — when the packed AddIn64 `.xll` is loaded. Confirmed 2026-11-01 with `EXCEL.EXE` running. Close Excel before `mutation-gate.ps1`, `-Baseline` or any full-solution Release build; the Office-host gate has the opposite prerequisite.
+
 - **L2** — `.vs/` (Visual Studio user options) is present locally and is already covered by `.gitignore`.
 - **L3** — ~~Office fixture gap~~ **closed**. `OfficeFixture` harness exists; `OfficeFixtureTests.Excel_open_close_five_times_no_orphan` passes with no orphan `EXCEL.EXE` (5/5 Office integration tests).
 - **L12** — ~~Blame-timeout limitation~~ **closed**. `verify-office.ps1` no longer passes `--blame-hang-timeout` (which aborted the testhost ~0.2 s after start); the deadline is enforced by an external watchdog that polls the owned `dotnet test` process and, on timeout, kills the whole owned process tree (`taskkill /PID /T /F`) and re-runs the harness-owned Office-process sweep as a safety net. Cleanup is guaranteed only for Office processes positively identified by the fixture manifest or by parentage in the owned `dotnet test` tree; when neither identifies a process, it is skipped and may remain. Covered by `scripts/verify-office.Tests.ps1` (no-flag assertion + hang/timeout and prompt-pass harness cases). Gates: `scripts/verify-office.Tests.ps1` 14/14 PASS; `scripts/verify-office.ps1` 8/8 PASS (27.8 s, no orphan); PSSA 0 findings on both modified scripts.

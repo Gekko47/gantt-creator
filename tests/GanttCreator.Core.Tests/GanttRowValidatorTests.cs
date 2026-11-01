@@ -49,6 +49,22 @@ public class GanttRowValidatorTests
             dateLabelPositionText
         );
 
+    /// <summary>
+    /// The single message carried by the issue with <paramref name="code"/>.
+    /// </summary>
+    /// <remarks>
+    /// The warnings panel renders <see cref="GanttValidationIssue.Message"/>
+    /// verbatim (R5.8), so the text is part of the product contract, not a
+    /// debugging convenience. Mutation testing measured 59 of
+    /// <c>GanttRowValidator</c>'s 117 open mutants as message-string mutants
+    /// (the interpolated text replaced by <c>""</c>), and before these
+    /// assertions the test file contained exactly one <c>Message</c>
+    /// assertion in 2,000 lines. Asserting the code alone cannot notice a
+    /// blanked explanation.
+    /// </remarks>
+    private static string MessageFor(GanttValidationOutcome outcome, string code) =>
+        Assert.Single(outcome.Issues, issue => issue.Code == code).Message;
+
     [Fact]
     public void Validate_rejects_null_input_without_swallowing_programmer_error() =>
         _ = Assert.Throws<ArgumentNullException>(() => GanttRowValidator.Validate(null!));
@@ -1654,6 +1670,63 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.BadColourFormat);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.BadSortOrder);
         Assert.True(outcome.Issues.Count >= 5);
+
+        // The explanation is the user-facing part: the warnings panel shows it
+        // verbatim, so the interpolated values must actually be interpolated.
+        Assert.Equal(
+            "Id is blank or malformed; expected 'G-' plus 32 lowercase hex digits.",
+            MessageFor(outcome, GanttValidationCodes.IdMissingOrMalformed));
+        Assert.Equal(
+            "LaneId 'NOT-AN-ID' is malformed; expected 'G-' plus 32 lowercase hex digits.",
+            MessageFor(outcome, GanttValidationCodes.LaneIdMissingOrMalformed));
+        Assert.Equal("StackIndex must be zero or greater.", MessageFor(outcome, GanttValidationCodes.StackIndexNegative));
+        Assert.Equal("Start must not be after Finish.", MessageFor(outcome, GanttValidationCodes.StartAfterFinish));
+        Assert.Equal("Unknown LabelPosition 'Sideways'.", MessageFor(outcome, GanttValidationCodes.UnknownLabelPosition));
+        Assert.Equal("FillColour 'red' must be '#RRGGBB'.", MessageFor(outcome, GanttValidationCodes.BadColourFormat));
+        Assert.Equal(
+            "SortOrder 'abc' must be a non-negative integer.",
+            MessageFor(outcome, GanttValidationCodes.BadSortOrder));
+    }
+
+    [Fact]
+    public void Every_reported_issue_carries_a_non_blank_explanation()
+    {
+        // R5.8 shows Message verbatim. A mutant that replaces an interpolated
+        // message with "" leaves the user with an empty warning, and asserting
+        // the code alone cannot notice. This pins the shape for every issue
+        // this row produces, including any added later.
+        var row = new GanttRowDto(
+            7,
+            "BAD",
+            "NOT-AN-ID",
+            -1,
+            "As-Planned Activity",
+            null,
+            new DateOnly(2026, 9, 5),
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            "Sideways",
+            "red",
+            null,
+            true,
+            "abc"
+        );
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.NotEmpty(outcome.Issues);
+        Assert.All(
+            outcome.Issues,
+            issue =>
+            {
+                Assert.False(
+                    string.IsNullOrWhiteSpace(issue.Message),
+                    $"issue code '{issue.Code}' carries a blank message");
+                Assert.True(
+                    issue.Message.Length > 10,
+                    $"issue code '{issue.Code}' carries a message too short to explain anything: '{issue.Message}'");
+            });
     }
 
     [Fact]
@@ -1668,6 +1741,15 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.IdMissingOrMalformed);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.UnknownType);
         Assert.Contains(outcome.Issues, i => i.Code == GanttValidationCodes.BadSortOrder);
+
+        // The unknown value is echoed back so the user can see which cell is
+        // wrong, and the guidance names the catalogue size.
+        Assert.Equal(
+            "Unknown Type 'Widget'; use one of the 16 catalogue display names.",
+            MessageFor(outcome, GanttValidationCodes.UnknownType));
+        Assert.Equal(
+            "Id is blank or malformed; expected 'G-' plus 32 lowercase hex digits.",
+            MessageFor(outcome, GanttValidationCodes.IdMissingOrMalformed));
     }
 
     [Fact]
