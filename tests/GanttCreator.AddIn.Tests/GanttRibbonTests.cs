@@ -604,6 +604,96 @@ public class GanttRibbonTests
     }
 
     [Fact]
+    public void Every_actionable_control_carries_a_unique_keytip_and_accessible_description()
+    {
+        // R5.9 D1/D2: every actionable control is reachable by keyboard and
+        // announced by a screen reader. Excel ignores an unknown or duplicate
+        // keytip silently, so presence and uniqueness are pinned here rather
+        // than left to a live review.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+
+        List<XElement> actionable = [.. doc.Descendants()
+            .Where(element => element.Name.LocalName is "button" or "dropDown" or "checkBox" or "editBox")];
+        Assert.NotEmpty(actionable);
+
+        foreach (XElement control in actionable)
+        {
+            string id = control.Attribute("id")?.Value ?? "(missing id)";
+            Assert.False(
+                string.IsNullOrWhiteSpace(control.Attribute("keytip")?.Value),
+                $"{id} declares no keytip.");
+            Assert.False(
+                string.IsNullOrWhiteSpace(control.Attribute("screentip")?.Value),
+                $"{id} declares no screentip.");
+            Assert.False(
+                string.IsNullOrWhiteSpace(control.Attribute("supertip")?.Value),
+                $"{id} declares no supertip.");
+            Assert.InRange(control.Attribute("keytip")!.Value.Length, 1, 3);
+        }
+
+        string[] keytips = [.. actionable.Select(control => control.Attribute("keytip")!.Value)];
+        Assert.Equal(keytips.Length, keytips.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void Every_button_and_unlabelled_dropdown_carries_a_visible_label()
+    {
+        // The visible label is the control's accessible name; the screentip and
+        // supertip are its description. A button without a label is announced
+        // as an unnamed button, and a dropdown without a companion
+        // labelControl would have no visible name at all.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        foreach (XElement button in doc.Descendants(ns + "button"))
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(button.Attribute("label")?.Value),
+                $"Button {button.Attribute("id")?.Value} declares no label.");
+        }
+
+        foreach (XElement dropdown in doc.Descendants(ns + "dropDown"))
+        {
+            string? id = dropdown.Attribute("id")?.Value;
+            string? companionId = id is null ? null : "lbl" + id["ddn".Length..];
+            bool hasCompanionLabel = companionId is not null
+                && doc.Descendants(ns + "labelControl")
+                    .Any(label => label.Attribute("id")?.Value == companionId);
+            Assert.True(
+                !string.IsNullOrWhiteSpace(dropdown.Attribute("label")?.Value) || hasCompanionLabel,
+                $"Dropdown {id} has neither a label nor a companion labelControl.");
+        }
+    }
+
+    [Fact]
+    public void Ribbon_help_text_is_offline_only()
+    {
+        // R5.9 D3 / the offline invariant: no network link may appear in the
+        // ribbon help text. A supertip is local text; a URL would be a hidden
+        // network dependency. The XML namespace itself is excluded by reading
+        // attribute values only.
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+
+        foreach (XElement element in doc.Descendants())
+        {
+            foreach (string attributeName in new[] { "keytip", "screentip", "supertip", "label" })
+            {
+                string? value = element.Attribute(attributeName)?.Value;
+                if (value is null)
+                {
+                    continue;
+                }
+
+                Assert.DoesNotContain("http://", value, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("https://", value, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    [Fact]
     public void OnOpenLogClick_routes_through_the_command_boundary()
     {
         var shown = new List<string>();
@@ -1899,4 +1989,4 @@ public class GanttRibbonTests
         }
     }
 }
-
+
