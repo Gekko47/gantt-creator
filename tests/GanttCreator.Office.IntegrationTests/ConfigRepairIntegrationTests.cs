@@ -116,7 +116,18 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
 
             ConfigRepairOutcome declined = new ExcelConfigRepairer(fixture.Excel).Repair(plan, false);
             Assert.Null(declined.Refusal);
-            Assert.Equal(2, declined.ConfirmationSkippedCount);
+
+            // ConfirmationSkippedCount counts CONFIRM-REQUIRED FINDINGS, not the
+            // cells that would be rewritten: ExcelConfigRepairer returns
+            // plan.ConfirmRequiredFindings.Count when the caller declines. This
+            // fixture produces two findings — a PlotAnchorDisagreement and an
+            // IdentityDamage — and ADR-0011's safe-repair boundary classifies only
+            // IdentityDamage as ConfirmRequired; PlotAnchorDisagreement is
+            // AutoRepair because it is a deterministic, safe repair. So the plan
+            // has exactly one confirm-required finding. The single rewritten cell
+            // asserted below is a different quantity and is unaffected by this.
+            _ = Assert.Single(plan.ConfirmRequiredFindings);
+            Assert.Equal(1, declined.ConfirmationSkippedCount);
             Assert.Equal(
                 ValidId('1'),
                 Convert.ToString(second.Range.Cells[1, 1].Value2, CultureInfo.InvariantCulture),
