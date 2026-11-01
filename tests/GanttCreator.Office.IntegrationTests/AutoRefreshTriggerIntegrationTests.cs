@@ -95,9 +95,15 @@ public sealed class AutoRefreshTriggerIntegrationTests
                     return text;
                 }
             }
-            catch (COMException)
+            catch (Exception exception) when (exception is COMException or ArgumentException)
             {
                 // The expected shape is absent until the queued refresh runs.
+                // Shapes.Item(name) reports a missing name as ArgumentException
+                // ("The item with the specified name wasn't found"), not as a
+                // COMException. Catching only COMException therefore aborted the
+                // wait on its very first poll -- before the queued refresh could
+                // create the shape -- so this test could never observe a working
+                // scheduler.
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(25)).ConfigureAwait(true);
