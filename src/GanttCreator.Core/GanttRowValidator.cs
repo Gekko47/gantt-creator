@@ -58,6 +58,17 @@ public static class GanttRowValidator
 
         for (int i = 0; i < rows.Count; i++)
         {
+            // R5.11 alignment: a semantically empty row is not an entity. It
+            // produces no issue and no event, but it still occupies its measured
+            // worksheet band, so the chart renders an intentional gap and every
+            // later row keeps its own place. The strict form keeps an Excel error
+            // value (for example #N/A) as content the user must be told about.
+            if (IsSemanticallyEmptyRow.TestStrict(rows[i]))
+            {
+                perRow[i] = null;
+                continue;
+            }
+
             perRow[i] = ValidateFields(rows[i], issues, styleRegistry);
         }
 

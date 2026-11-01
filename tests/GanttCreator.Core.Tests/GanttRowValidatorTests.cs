@@ -780,6 +780,39 @@ public class GanttRowValidatorTests
     }
 
     /// <summary>
+    /// A blank row between two valid rows is SKIPPED, not an error: it produces no
+    /// issue, no event, and the valid rows keep their own worksheet row numbers so
+    /// the chart can render an intentional gap in its place (R5.11 alignment).
+    /// </summary>
+    /// <remarks>
+    /// The blank row is judged by <c>IsSemanticallyEmptyRow</c> (all four authoring
+    /// cells absent). If it were treated as an error the whole refresh would lose
+    /// the valid rows around it; if it were given an event it would plot at the
+    /// wrong row. Both failure modes are what this test discriminates.
+    /// </remarks>
+    [Fact]
+    public void A_blank_row_between_valid_rows_is_skipped_and_keeps_its_place()
+    {
+        GanttRowDto first = new(
+            1, NewId(), null, null, "As-Planned Activity", "first",
+            new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 5),
+            null, "AsPlannedActivity", null, null, null, null, null);
+        GanttRowDto blank = new(
+            2, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        GanttRowDto third = new(
+            3, NewId(), null, null, "As-Planned Activity", "third",
+            new DateOnly(2026, 9, 2), new DateOnly(2026, 9, 6),
+            null, "AsPlannedActivity", null, null, null, null, null);
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([first, blank, third]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Empty(outcome.Issues);
+        Assert.Equal(2, outcome.Events.Count);
+        Assert.Equal([1, 3], outcome.Events.Select(evt => evt.RowNumber));
+    }
+
+    /// <summary>
     /// A Critical Interval with a blank <c>ParentId</c> is a valid TOP-LEVEL row, not
     /// a blocking error.
     /// </summary>

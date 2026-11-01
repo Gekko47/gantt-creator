@@ -30,8 +30,8 @@ public class GanttRefreshOrchestratorTests
         {
             Rows =
             [
-                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
-                Row(3, null, "Not a chart type", "Invalid row", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(2, null, "Not a chart type", "Invalid row", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
@@ -45,7 +45,7 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(2, fakes.TableReadCount);
         Assert.Equal(0, fakes.TargetedTableReadCount);
         Assert.NotEmpty(fakes.Shapes.Calls);
-        Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 3);
+        Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 2);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class GanttRefreshOrchestratorTests
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
         ChangeTracker tracker = new();
-        tracker.Record(2, 4, null, "As-Planned Activity");
+        tracker.Record(1, 4, null, "As-Planned Activity");
 
         GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithChanges(tracker).Refresh();
 
@@ -66,7 +66,7 @@ public class GanttRefreshOrchestratorTests
     private static GanttRowDto[] ValidRows() =>
     [
         Row(
-            rowNumber: 2,
+            rowNumber: 1,
             id: null,
             type: "As-Planned Activity",
             description: "Design",
@@ -134,7 +134,7 @@ public class GanttRefreshOrchestratorTests
         {
             Rows =
             [
-                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
@@ -145,7 +145,7 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
 
         IReadOnlyList<HighlightTarget> reported = Assert.Single(fakes.HighlightReconciliations);
-        Assert.Contains(reported, target => target.Row == 2);
+        Assert.Contains(reported, target => target.Row == 1);
     }
 
     /// <summary>
@@ -192,7 +192,7 @@ public class GanttRefreshOrchestratorTests
         {
             Rows =
             [
-                Row(2, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, null, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithWarningHighlighter(null);
@@ -755,7 +755,7 @@ public class GanttRefreshOrchestratorTests
             Rows =
             [
                 // A blank Id is a blocking error, so the row never becomes an event.
-                Row(2, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
+                Row(1, string.Empty, "As-Planned Activity", "Design", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
         GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();

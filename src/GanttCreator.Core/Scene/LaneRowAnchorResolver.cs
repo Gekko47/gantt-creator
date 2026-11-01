@@ -109,14 +109,17 @@ public sealed record LaneRowAnchorResolution(
 /// reported defect: shapes that no longer line up with their cells.
 /// </para>
 /// <para>
-/// <b>Why the row is found by ORDINAL, not by <c>RowNumber</c> arithmetic.</b> The
-/// measured heights are positional, so the only thing an anchor needs is the row's
-/// position among the body rows. Taking the ordinal of the events in
-/// <see cref="GanttEvent.RowNumber"/> order gives that position without assuming
-/// whether a particular caller numbers its rows from one or from the header row —
-/// the canonical fixture numbers them like worksheet rows while the live reader
-/// numbers them as body indices, and an anchor that depended on the difference would
-/// be right for one and silently wrong for the other.
+/// <b>Why the row is found by <c>RowNumber</c> arithmetic.</b> Every anchoring
+/// caller numbers its events with the <b>one-based body-row index</b> the reader
+/// assigns (<c>ExcelGanttTableReader</c> converts a worksheet row to its body
+/// index), so the measured grid's row at that index is the row the event renders
+/// on. The earlier implementation used each event's POSITION in the supplied list,
+/// which is only equivalent while every body row produces an event. A blank row is
+/// skipped by the validator and a blocking-error row is excluded from the partial
+/// render, so a positional ordinal pulled every later lane one row upward — the
+/// exact misalignment this resolver exists to remove. Subtracting one from the
+/// body-row index leaves the skipped row's band empty and keeps every later row
+/// on its own measured row (R5.11 alignment).
 /// </para>
 /// <para>
 /// <b>The anchor is relative to the plot's own top.</b> A lane's absolute position is
@@ -163,18 +166,22 @@ public static class LaneRowAnchorResolver
             return Refused(LaneRowAnchorRefusal.NullGrid);
         }
 
-        // The body-row ordinal of every event: its position in row order, which is
-        // the position its measured height occupies in the grid.
+        // The measured-row ordinal of every event: its ONE-BASED body-row index
+        // minus one. A skipped row (blank, or a blocking-error row excluded from a
+        // partial render) leaves a gap in the RowNumber sequence, so its band is
+        // left empty instead of pulling every later lane upward.
         Dictionary<GanttRowId, int> ordinalById = [];
-        int ordinal = 0;
-        foreach (GanttEvent @event in events
-            .OrderBy(static candidate => candidate.RowNumber)
-            .ThenBy(static candidate => candidate.Id.Value, StringComparer.Ordinal))
+        foreach (GanttEvent @event in events)
         {
+            int ordinal = @event.RowNumber - 1;
+            if (ordinal < 0)
+            {
+                return Refused(LaneRowAnchorRefusal.RowOutsideMeasuredRows);
+            }
+
             // First wins: a duplicate id is the validator's error to report, and a
             // last-wins ordinal would make the anchor depend on input order.
             _ = ordinalById.TryAdd(@event.Id, ordinal);
-            ordinal++;
         }
 
         // Grouped exactly as LaneLayoutBuilder groups, so the keys cannot drift.
