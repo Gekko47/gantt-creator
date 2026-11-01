@@ -88,6 +88,12 @@ public sealed class ProtectionGuardFirstTests
         // content -- so it is a data mutation under ADR-0008 D4 and consults the
         // guard before its single ranged write. Listed at "Write".
         new("src/GanttCreator.Office/ExcelStyleKeyWriter.cs", "Write"),
+        // R5.11 type-change healing: the normaliser rewrites engine-hidden cells on
+        // the user's VISIBLE worksheet when a row's Type changes (StyleKey, label
+        // positions, colours, ParentId, lane/stack, sibling order), so it is a data
+        // mutation under ADR-0008 D4. Listed at "Normalise", its single entry point,
+        // which queries the target guard before any workbook or table access.
+        new("src/GanttCreator.Office/ExcelTypeChangeNormaliser.cs", "Normalise"),
         // R4.8A D2: the column-classification restorer hides and locks columns on the
         // user's VISIBLE worksheet, so it mutates user-facing presentation state and
         // consults the guard before its first write. Listed at "EnsureClassification",
