@@ -429,4 +429,51 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $streaming | Should -Match 'ForEach-Object \{ Write-Host \$_'
         }
     }
+
+    Context 'test-project set' {
+        BeforeAll {
+            . $script:gatePath
+            $script:defaultProjects = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit @())
+        }
+
+        It 'runs every host-free suite that references Core, not Core alone' {
+            # Core-only was the original setting and scored a Core mutant
+            # SURVIVED whenever only an Office or AddIn test killed it.
+            $script:defaultProjects.Count | Should -Be 3
+            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.Core\.Tests'
+            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.Office\.ContractTests'
+            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.AddIn\.Tests'
+        }
+
+        It 'excludes the live-host suite' {
+            # Office.IntegrationTests needs a live Excel host (ADR-0001).
+            ($script:defaultProjects -join ';') | Should -Not -Match 'IntegrationTests'
+        }
+
+        It 'excludes the architecture suite, which has no reference to Core' {
+            # Stryker resolves --project through the test project's
+            # ProjectReferences; Architecture.Tests deliberately has none.
+            ($script:defaultProjects -join ';') | Should -Not -Match 'Architecture\.Tests'
+        }
+
+        It 'honours an explicit override verbatim' {
+            $explicit = @('tests\One\One.csproj', 'tests\Two\Two.csproj')
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $explicit)
+            $resolved.Count | Should -Be 2
+            $resolved[0] | Should -Be 'tests\One\One.csproj'
+            $resolved[1] | Should -Be 'tests\Two\Two.csproj'
+        }
+
+        It 'POSITIVE: an override naming the live-host suite is returned unfiltered' {
+            # The override path must not silently re-apply the defaults, or a
+            # deliberate run could not include a project the defaults exclude.
+            $explicit = @('tests\GanttCreator.Office.IntegrationTests\GanttCreator.Office.IntegrationTests.csproj')
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $explicit)
+            ($resolved -join ';') | Should -Match 'IntegrationTests'
+        }
+
+        It 'passes each resolved project to Stryker as its own --test-project' {
+            $script:gateText | Should -Match "\`$arguments \+= @\('--test-project', \`$testProject\)"
+        }
+    }
 }

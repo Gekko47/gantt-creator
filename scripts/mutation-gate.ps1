@@ -52,6 +52,14 @@ param(
     [string]$Since = 'origin/main',
     [string]$Solution,
     [string]$Configuration = 'Release',
+    # The test projects Stryker runs against each mutant. Core-only was the
+    # original setting, and it silently scored a Core mutant SURVIVED whenever
+    # only an Office or AddIn test killed it. Those two suites are host-free
+    # (Moq PIA, fakes), so they are added by default. Two exclusions are
+    # deliberate: GanttCreator.Office.IntegrationTests needs a live Excel host
+    # (ADR-0001), and GanttCreator.Architecture.Tests has no ProjectReference
+    # to Core by design, so Stryker cannot resolve --project through it.
+    [string[]]$TestProjects,
     # A guard, not a tuning knob. When a long-lived branch has diverged from
     # the diff base, `--since` selects the WHOLE project: a 43-minute,
     # whole-Core mutation run with no streamed output, which reads as a hung
@@ -250,6 +258,31 @@ function Get-ChangedCoreFiles {
     return @($diff | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Resolve-TestProjects {
+    <#
+    .SYNOPSIS
+        The test projects Stryker runs against each Core mutant.
+    .DESCRIPTION
+        Core-only was the original setting, and it under-measured the suite: a
+        Core mutant killed only by an Office or AddIn test was scored SURVIVED.
+        Two exclusions are deliberate. GanttCreator.Office.IntegrationTests
+        needs a live Excel host (ADR-0001). GanttCreator.Architecture.Tests has
+        no ProjectReference to Core by design, so Stryker cannot resolve
+        --project through it.
+    #>
+    param([string]$RepoRoot, [string[]]$Explicit)
+
+    if ($null -ne $Explicit -and $Explicit.Count -gt 0) {
+        return @($Explicit)
+    }
+
+    return @(
+        (Join-Path $RepoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj')
+        (Join-Path $RepoRoot 'tests\GanttCreator.Office.ContractTests\GanttCreator.Office.ContractTests.csproj')
+        (Join-Path $RepoRoot 'tests\GanttCreator.AddIn.Tests\GanttCreator.AddIn.Tests.csproj')
+    )
+}
+
 function Assert-ChangedCodeScope {
     <#
     .SYNOPSIS
@@ -295,8 +328,8 @@ if ($PSBoundParameters.ContainsKey('Threshold')) {
 }
 
 $coreProject = Join-Path $repoRoot 'src\GanttCreator.Core\GanttCreator.Core.csproj'
-$coreTests = Join-Path $repoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
-foreach ($required in @($Solution, $coreProject, $coreTests)) {
+$TestProjects = Resolve-TestProjects -RepoRoot $repoRoot -Explicit $TestProjects
+foreach ($required in @($Solution, $coreProject) + $TestProjects) {
     if (-not (Test-Path -LiteralPath $required)) {
         throw "Required path not found: $required"
     }
@@ -331,7 +364,6 @@ $coreProjectDir = Split-Path -Parent $coreProject
 
 $arguments = @(
     '--project', $coreProject
-    '--test-project', $coreTests
     '--configuration', $Configuration
     # ONE reporter, and only one: `Json`. The gate judges the JSON report
     # file, not the console stream, so a second reporter adds nothing the
@@ -348,6 +380,11 @@ $arguments = @(
     # score is the measurement rather than a pass/fail.
     '--verbosity', 'info'
 )
+foreach ($testProject in $TestProjects) {
+    $arguments += @('--test-project', $testProject)
+}
+Write-Host ("mutation-gate: test projects ({0}):" -f $TestProjects.Count)
+$TestProjects | ForEach-Object { Write-Host "  $_" }
 if (-not $Baseline) {
     # Scope guard: a divergent branch turns `--since` into a whole-project run.
     # Surface the selected set, and refuse an implausible one before the tool
