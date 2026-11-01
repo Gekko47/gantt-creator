@@ -263,12 +263,25 @@ function Resolve-TestProjects {
     .SYNOPSIS
         The test projects Stryker runs against each Core mutant.
     .DESCRIPTION
-        Core-only was the original setting, and it under-measured the suite: a
-        Core mutant killed only by an Office or AddIn test was scored SURVIVED.
-        Two exclusions are deliberate. GanttCreator.Office.IntegrationTests
+        Core.Tests alone is the default because it is the only suite cheap
+        enough to run per mutant. Widening was tried and measured on
+        2026-11-01: with Office.ContractTests and AddIn.Tests added, one file's
+        403 mutants had still not finished after 49 minutes, against 6,687
+        mutants in 43 minutes for the whole of Core on Core.Tests alone --
+        roughly 19x the cost per mutant, extrapolating to about 13 hours for a
+        whole-Core baseline. The widened set is therefore an explicit opt-in
+        for a deliberate measurement run, never the default.
+
+        Two projects are never useful here. GanttCreator.Office.IntegrationTests
         needs a live Excel host (ADR-0001). GanttCreator.Architecture.Tests has
         no ProjectReference to Core by design, so Stryker cannot resolve
         --project through it.
+
+        The consequence is recorded rather than hidden: a Core mutant killed
+        only by an Office or AddIn test is scored SURVIVED, so the score
+        under-reports the suite. The gate exists to find untested Core
+        behaviour, and the right response to that under-report is a Core test,
+        not a slower gate.
     #>
     param([string]$RepoRoot, [string[]]$Explicit)
 
@@ -276,11 +289,7 @@ function Resolve-TestProjects {
         return @($Explicit)
     }
 
-    return @(
-        (Join-Path $RepoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj')
-        (Join-Path $RepoRoot 'tests\GanttCreator.Office.ContractTests\GanttCreator.Office.ContractTests.csproj')
-        (Join-Path $RepoRoot 'tests\GanttCreator.AddIn.Tests\GanttCreator.AddIn.Tests.csproj')
-    )
+    return @((Join-Path $RepoRoot 'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'))
 }
 
 function Assert-ChangedCodeScope {

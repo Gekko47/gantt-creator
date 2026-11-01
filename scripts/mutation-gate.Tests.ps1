@@ -436,24 +436,29 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:defaultProjects = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit @())
         }
 
-        It 'runs every host-free suite that references Core, not Core alone' {
-            # Core-only was the original setting and scored a Core mutant
-            # SURVIVED whenever only an Office or AddIn test killed it.
-            $script:defaultProjects.Count | Should -Be 3
+        It 'defaults to Core.Tests alone, because per-mutant cost is the constraint' {
+            # Measured 2026-11-01: adding Office.ContractTests and AddIn.Tests
+            # left one file's 403 mutants unfinished after 49 minutes, against
+            # 6,687 mutants in 43 minutes for the whole of Core on Core.Tests
+            # alone -- about 19x per mutant. The widened set must stay opt-in.
+            $script:defaultProjects.Count | Should -Be 1
             ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.Core\.Tests'
-            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.Office\.ContractTests'
-            ($script:defaultProjects -join ';') | Should -Match 'GanttCreator\.AddIn\.Tests'
+            ($script:defaultProjects -join ';') | Should -Not -Match 'Office\.ContractTests'
+            ($script:defaultProjects -join ';') | Should -Not -Match 'AddIn\.Tests'
         }
 
-        It 'excludes the live-host suite' {
-            # Office.IntegrationTests needs a live Excel host (ADR-0001).
-            ($script:defaultProjects -join ';') | Should -Not -Match 'IntegrationTests'
-        }
-
-        It 'excludes the architecture suite, which has no reference to Core' {
-            # Stryker resolves --project through the test project's
-            # ProjectReferences; Architecture.Tests deliberately has none.
-            ($script:defaultProjects -join ';') | Should -Not -Match 'Architecture\.Tests'
+        It 'POSITIVE: the widened set is reachable by an explicit override' {
+            # The measured-but-expensive configuration must remain runnable on
+            # purpose, or the cost finding could never be re-checked.
+            $widened = @(
+                'tests\GanttCreator.Core.Tests\GanttCreator.Core.Tests.csproj'
+                'tests\GanttCreator.Office.ContractTests\GanttCreator.Office.ContractTests.csproj'
+                'tests\GanttCreator.AddIn.Tests\GanttCreator.AddIn.Tests.csproj'
+            )
+            $resolved = @(Resolve-TestProjects -RepoRoot $script:repoRoot -Explicit $widened)
+            $resolved.Count | Should -Be 3
+            ($resolved -join ';') | Should -Match 'Office\.ContractTests'
+            ($resolved -join ';') | Should -Match 'AddIn\.Tests'
         }
 
         It 'honours an explicit override verbatim' {
