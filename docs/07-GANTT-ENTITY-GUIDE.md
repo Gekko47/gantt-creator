@@ -105,6 +105,8 @@ Renderers consume resolved scene primitives. They may translate primitives to ho
 | `Visible` | optional | Blank/true shows; false suppresses entity and its label |
 | `SortOrder` | optional | Stable explicit order before ID tie-break |
 
+**In-cell validation for `StyleKey`/`LabelPosition` (R5.9 Option B contract).** A `StyleKey` cell must be blank or name an approved, currently-defined named style from the configuration catalogue; an unknown or deleted key refuses `UnknownStyleKey` and is not materialised to the scene. A `LabelPosition` cell must be blank or one of the positions allowed for the row's `Type` per §22 (its `AllowedLabelPositions`, intersected with the style's narrowed set when a `StyleKey` is present); anything else refuses `UnknownLabelPosition`. Blank cells resolve to the type default or `Auto` cascade as before. These rules are enforced by the `Validate` command and by guard-first mutation; they do not write cells directly and they do not move data to `_GanttCreatorConfig`.
+
 The first release does not add raw X, Y, width, or height columns. Workbook style controls set shared tokens; named `StyleKey` values provide controlled exceptions. `FillColour`, `StrokeColour`, and `LabelPosition` are row-level overrides because the product explicitly requires individual entity editing.
 
 Property columns may be shown or hidden through the Ribbon's **Show Properties** control, but they remain columns on the visible user worksheet. They are never moved to `_GanttCreatorConfig`.

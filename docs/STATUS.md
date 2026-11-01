@@ -1677,11 +1677,20 @@ predates the current 12-step gate and is superseded by the measured
   acceptance states. R2.9 implementation is present, but its required Excel
   dropdown/paste acceptance still needs an evidence record; R2.10 automated
   repair coverage is present and its human Excel acceptance remains open.
-  R3.13's first full-Core mutation baseline and local verification-step
-  enablement remain open. R4.1-R4.9 and R4.11 are recorded landed; R4.10 is
-  explicitly excluded. R5.1-R5.14 implementation and automated coverage are
-  present, with their required host acceptance matrix still open; R5.10 remains
-  in scope. Native outline-handle triggering and the R5.9 property-column
-  scope decision remain unresolved. R5.15 has not started; no worksheet
-  protection is enabled. Plan files now distinguish implemented code from
+  R3.13's first full-Core mutation baseline is archived under
+  scripts/_artifacts/mutation/reports/ (118 files, 6,683 mutants, judged
+  score 76.22% against the pinned 80%; D5: archived, not gated — the
+  threshold applies from the next Core change). The local
+  mutation gate remains disabled pending a changed-code opt-in (`--since
+  origin/main`) re-enablement; see the open gate-path defect below. R4.1-R4.9
+  and R4.11 are recorded landed; R4.10 is explicitly excluded. R5.1-R5.14
+  implementation and automated coverage are present, with their required host
+  acceptance matrix still open; R5.10 remains in scope. Native outline-handle
+  triggering remains unresolved. R5.9's property-column scope decision is
+  resolved (Option B: entity-guide §3 defines Show Properties and in-cell
+  `StyleKey`/`LabelPosition` validation; implementation deferred to row
+  `R5.9a`). R5.15 feasibility is complete: live COM proof retained the
+  unprotected workflow with preventive ribbon gating and validation; ADR-0008
+  D4 refusal policy unchanged, no worksheet protection enabled.
+  Plan files now distinguish implemented code from
   closed acceptance evidence.
