@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using ExcelDna.Integration;
 using GanttCreator.Core;
@@ -23,6 +24,10 @@ namespace GanttCreator.AddIn;
 /// contract-testable outside Excel (work item R1.6).
 /// </param>
 /// <exception cref="ArgumentNullException">A source is <see langword="null"/>.</exception>
+[SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
+    Justification = "AddInHost is an Excel-DNA IExcelAddIn entry point, not a disposable type. " +
+    "Deterministic teardown runs through AutoClose, which disposes the owned GanttRefreshScheduler " +
+    "and the rolling log instead of implementing IDisposable.")]
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
     Func<IRollingLog> logSource,
@@ -42,6 +47,7 @@ public sealed class AddInHost(
 
     private IRollingLog? _log;
     private string? _sessionToken;
+    private GanttRefreshScheduler? _scheduler;
 
     /// <summary>
     /// Creates the add-in host with the production identity and log
@@ -171,6 +177,27 @@ public sealed class AddInHost(
         {
             // Intentionally empty: state-service arming degrades silently.
         }
+
+        // Arm the production auto-refresh scheduler so chart-affecting table
+        // edits trigger a debounced, silent refresh (work item R5.11). The
+        // scheduler owns its SheetChange subscription and debounce timer; it is
+        // disposed in AutoClose. A scheduler that cannot arm must never abort
+        // add-in load, so the whole step is guarded.
+        try
+        {
+            IExcelApplicationAdapter schedulerAdapter =
+                new ExcelApplicationAdapter(ExcelDnaUtil.Application);
+            ISheetChangeAnalyzer schedulerAnalyzer =
+                new ExcelSheetChangeAnalyzer(ExcelDnaUtil.Application);
+            _scheduler = new GanttRefreshScheduler(schedulerAdapter, schedulerAnalyzer);
+            _scheduler.Activate();
+        }
+#pragma warning disable CA1031
+        catch
+#pragma warning restore CA1031
+        {
+            // Intentionally empty: scheduler arming degrades silently.
+        }
     }
 
     /// <summary>
@@ -194,6 +221,20 @@ public sealed class AddInHost(
         // Reset never throws by contract (every detach failure is guarded
         // inside the subscription itself); this guard is defence in depth so
         // a failure here cannot skip steps 2-5.
+
+        // Detach the auto-refresh scheduler's SheetChange subscription and
+        // dispose its debounce timer before any other teardown, so no cell
+        // change event can fire into services mid-shutdown (work item R5.11).
+        // Covered by the CA1031 disable at the top of AutoClose.
+        try
+        {
+            _scheduler?.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: teardown degrades silently.
+        }
+
         try
         {
             RibbonStateService.Reset();

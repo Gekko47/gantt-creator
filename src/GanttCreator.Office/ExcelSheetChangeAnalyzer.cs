@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
-using Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
+using Microsoft.Office.Interop.Excel;
 
 namespace GanttCreator.Office;
 
