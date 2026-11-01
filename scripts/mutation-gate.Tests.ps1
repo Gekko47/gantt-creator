@@ -384,4 +384,49 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             }
         }
     }
+
+    Context 'changed-code scope and run visibility' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'refuses a changed set so large that --since means the whole project' {
+            # Measured 2026-11-01: a long-lived branch's diff against origin/main
+            # selected 67 Core files, so --since mutated the whole project for
+            # ~43 minutes. The guard must refuse that scope explicitly.
+            $files = @(1..31 | ForEach-Object { "src/GanttCreator.Core/File$_.cs" })
+            { Assert-ChangedCodeScope -ChangedFiles $files -MaxChangedFiles 30 } |
+                Should -Throw '*mutate the whole project*'
+        }
+
+        It 'accepts a plausibly small changed set' {
+            $files = @(1..5 | ForEach-Object { "src/GanttCreator.Core/File$_.cs" })
+            { Assert-ChangedCodeScope -ChangedFiles $files -MaxChangedFiles 30 } |
+                Should -Not -Throw
+        }
+
+        It 'checks the changed-code scope before invoking Stryker' {
+            $scopeIndex = $script:gateText.IndexOf('Assert-ChangedCodeScope -ChangedFiles', [System.StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [System.StringComparison]::Ordinal)
+            $scopeIndex | Should -BeGreaterThan -1
+            $runIndex | Should -BeGreaterThan -1
+            $scopeIndex | Should -BeLessThan $runIndex
+        }
+
+        It 'streams the Stryker run instead of buffering it until exit' {
+            # A buffered-until-exit pipeline shows nothing for a whole-Core run
+            # (measured: 43 minutes), which reads as a hung gate.
+            $script:gateText | Should -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+
+        It 'POSITIVE: a buffered-only invocation is not detected as streaming' {
+            $buffered = '$output = & dotnet-stryker @arguments 2>&1'
+            $buffered | Should -Not -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+
+        It 'POSITIVE: a streaming invocation is detected' {
+            $streaming = '$output = & dotnet-stryker @arguments 2>&1 | ForEach-Object { Write-Host $_; $_ }'
+            $streaming | Should -Match 'ForEach-Object \{ Write-Host \$_'
+        }
+    }
 }

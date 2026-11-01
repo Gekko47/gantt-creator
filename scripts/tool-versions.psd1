@@ -33,7 +33,7 @@
         DownloadUrl = 'https://github.com/rhysd/actionlint/releases/download/v{0}/actionlint_{0}_windows_amd64.zip'
     }
 
-    # Stryker.NET - the R3.13 mutation-testing tool, installed as a LOCAL
+    # Stryker.NET - the R3.13 mutation-testing tool, installed as a GLOBAL
     # `dotnet tool` by scripts/mutation-gate.ps1 (never a csproj
     # PackageReference: it is test-only and must not reach a production
     # project). Pinned here so local and CI cannot diverge (W11).

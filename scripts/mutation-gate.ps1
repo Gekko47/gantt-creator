@@ -51,7 +51,13 @@ param(
     [int]$Threshold,
     [string]$Since = 'origin/main',
     [string]$Solution,
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    # A guard, not a tuning knob. When a long-lived branch has diverged from
+    # the diff base, `--since` selects the WHOLE project: a 43-minute,
+    # whole-Core mutation run with no streamed output, which reads as a hung
+    # gate and gets interrupted. Failing fast with the count and the remedy is
+    # the honest behaviour. Raise this only with a stated reason.
+    [int]$MaxChangedFiles = 30
 )
 
 $ErrorActionPreference = 'Stop'
@@ -198,7 +204,7 @@ function Invoke-MutationJudge {
     }
 
     Write-Host ''
-    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$total killed, $survived survived, $timeout timeout, $noCoverage no-coverage) against a $Threshold% threshold."
+    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$denominator scored killed, $survived survived, $timeout timeout, $noCoverage no-coverage, $compileErrors compile-error) against a $Threshold% threshold."
 
     if ($Baseline) {
         Write-Host "mutation-gate: BASELINE archived (not judged). Report: $ReportPath"
@@ -230,6 +236,33 @@ function Invoke-MutationJudge {
 
     Write-Host 'mutation-gate: PASS'
     return $result
+}
+
+function Get-ChangedCoreFiles {
+    <#
+    .SYNOPSIS
+        The Core files the diff base would select for mutation.
+    #>
+    param([string]$Since)
+
+    $core = Join-Path $repoRoot 'src\GanttCreator.Core'
+    $diff = & git diff --name-only "$Since...HEAD" -- $core 2>$null
+    return @($diff | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Assert-ChangedCodeScope {
+    <#
+    .SYNOPSIS
+        Refuses a changed set so large that `--since` has stopped meaning
+        "changed code".
+    #>
+    param([string[]]$ChangedFiles, [int]$MaxChangedFiles)
+
+    if ($ChangedFiles.Count -gt $MaxChangedFiles) {
+        throw (
+            "The changed Core set is {0} files (limit {1}), so '--since {2}' would mutate the whole project. That is not changed-code scope and runs for tens of minutes. Use a nearer diff base (-Since <merge-base>) or run -Baseline deliberately." -f $ChangedFiles.Count, $MaxChangedFiles, $Since
+        )
+    }
 }
 
 # If dot-sourced (e.g., for testing), export the functions and return
@@ -275,8 +308,8 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 # ---------------------------------------------------------------- install
 # The tool is installed by the GATE, not by a csproj PackageReference, so it
 # is test-only and can never reach a production project.
-if (-not (Test-ToolInstalled $settings.ToolId $settings.Version)) {
-    $installedVersion = Test-ToolInstalled $settings.ToolId $settings.Version
+$installedVersion = Test-ToolInstalled $settings.ToolId $settings.Version
+if ($installedVersion -ne $settings.Version) {
     if ($null -eq $installedVersion) {
         Write-Host "mutation-gate: installing $($settings.ToolId) $($settings.Version) as a global tool..."
         & dotnet tool install --global $settings.ToolId --version $settings.Version
@@ -316,6 +349,13 @@ $arguments = @(
     '--verbosity', 'info'
 )
 if (-not $Baseline) {
+    # Scope guard: a divergent branch turns `--since` into a whole-project run.
+    # Surface the selected set, and refuse an implausible one before the tool
+    # spends tens of minutes on it.
+    $changed = Get-ChangedCoreFiles -Since $Since
+    Assert-ChangedCodeScope -ChangedFiles $changed -MaxChangedFiles $MaxChangedFiles
+    Write-Host ("mutation-gate: changed Core files ({0}):" -f $changed.Count)
+    $changed | ForEach-Object { Write-Host "  $_" }
     $arguments += @("--since:$Since", '--threshold-low', "$Threshold")
 } else {
     Write-Host 'mutation-gate: BASELINE run over the whole of Core (no --since, no threshold).'
@@ -324,7 +364,11 @@ if (-not $Baseline) {
 Write-Host "mutation-gate: dotnet-stryker $($arguments -join ' ')"
 Push-Location $coreProjectDir
 try {
-    $output = & dotnet-stryker @arguments 2>&1
+    # STREAM, do not buffer: a whole-Core run takes tens of minutes, and a
+    # captured-until-exit pipeline shows nothing for that whole time, which
+    # reads as a hung gate. Tee-Object-style streaming keeps the human informed
+    # while still collecting the text the report step echoes.
+    $output = & dotnet-stryker @arguments 2>&1 | ForEach-Object { Write-Host $_; $_ }
 }
 finally {
     Pop-Location
