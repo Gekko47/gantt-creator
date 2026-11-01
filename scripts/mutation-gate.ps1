@@ -307,6 +307,48 @@ function Assert-ChangedCodeScope {
     }
 }
 
+function Assert-ProjectDirectoryContext {
+    <#
+    .SYNOPSIS
+        Refuses to run Stryker in a directory that holds a solution file.
+    .DESCRIPTION
+        Measured on the installed dotnet-stryker 5.0.0, 2026-11-01. Two runs,
+        same `--project`, same single `--test-project`, different working
+        directory:
+
+          * repository root -> IsSolutionContext: True, SolutionPath set,
+            "Number of tests found: 3470";
+          * src/GanttCreator.Core -> IsSolutionContext: False, SolutionPath
+            null, "Number of tests found: 1823".
+
+        1,823 is the Core suite exactly (`dotnet test` on Core.Tests alone).
+        3,470 is the whole solution's tests, which drags the live-Excel
+        integration suite into the initial run; a single failure there makes
+        Stryker distrust the coverage map and ignore every mutant's tests, so
+        the report comes back with zero mutants. That is what voided the
+        SceneSnapshot probe, and it is a property of the working directory,
+        not of `--test-project`: the flag selects which projects run per
+        mutant, it does not scope discovery.
+
+        The gate already ran from the Core project directory, so the gate was
+        sound; the guard exists so a future edit cannot silently move the
+        invocation back to the root and turn a 1,823-test run into a
+        3,470-test one that reports nothing.
+    #>
+    param([string]$ProjectDirectory)
+
+    $solutions = @(
+        Get-ChildItem -LiteralPath $ProjectDirectory -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.sln', '.slnx') }
+    )
+    if ($solutions.Count -gt 0) {
+        $names = ($solutions | ForEach-Object { $_.Name }) -join ', '
+        throw (
+            "Stryker would run in '{0}', which contains the solution file(s) {1}. Stryker then discovers tests solution-wide instead of from --test-project: 3,470 tests were found from the repository root against 1,823 from the Core project directory, and one failure in the live-Excel suite voids the coverage map so every mutant is ignored. Run Stryker from the mutated project's directory." -f $ProjectDirectory, $names
+        )
+    }
+}
+
 # If dot-sourced (e.g., for testing), export the functions and return
 # Check call stack: when dot-sourced from a Pester test, the call stack
 # will contain Pester frames. The original script used this approach.
@@ -408,6 +450,11 @@ if (-not $Baseline) {
 }
 
 Write-Host "mutation-gate: dotnet-stryker $($arguments -join ' ')"
+# Discovery follows the working directory, not --test-project (see
+# Assert-ProjectDirectoryContext): from a directory holding the solution,
+# Stryker enumerates the whole solution's tests and one live-Excel failure
+# voids the run.
+Assert-ProjectDirectoryContext -ProjectDirectory $coreProjectDir
 Push-Location $coreProjectDir
 try {
     # STREAM, do not buffer: a whole-Core run takes tens of minutes, and a

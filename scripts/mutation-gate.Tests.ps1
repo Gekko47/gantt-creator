@@ -481,4 +481,57 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:gateText | Should -Match "\`$arguments \+= @\('--test-project', \`$testProject\)"
         }
     }
+
+    Context 'working-directory context (test discovery follows it, not --test-project)' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'POSITIVE: refuses a project directory that holds a solution file' {
+            # Measured on dotnet-stryker 5.0.0, 2026-11-01, same --project and
+            # same single --test-project: from the repository root Stryker
+            # reported "Number of tests found: 3470" with IsSolutionContext
+            # True; from src/GanttCreator.Core it reported 1823 with
+            # IsSolutionContext False. 1823 is Core.Tests exactly. The 3,470
+            # run pulled the live-Excel suite into the initial run and one
+            # failure there voided the coverage map, so the report came back
+            # with zero mutants.
+            $withSolution = Join-Path $TestDrive 'with-solution'
+            New-Item -ItemType Directory -Path $withSolution -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $withSolution 'GanttCreator.slnx') -Value '<Solution />'
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $withSolution } |
+                Should -Throw -ExpectedMessage '*solution-wide*'
+        }
+
+        It 'POSITIVE: refuses a .sln as well as a .slnx' {
+            $withSolution = Join-Path $TestDrive 'with-classic-solution'
+            New-Item -ItemType Directory -Path $withSolution -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $withSolution 'Legacy.sln') -Value ''
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $withSolution } |
+                Should -Throw -ExpectedMessage '*solution-wide*'
+        }
+
+        It 'accepts a project directory with no solution file' {
+            $bare = Join-Path $TestDrive 'bare-project'
+            New-Item -ItemType Directory -Path $bare -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $bare 'GanttCreator.Core.csproj') -Value '<Project />'
+
+            { Assert-ProjectDirectoryContext -ProjectDirectory $bare } | Should -Not -Throw
+        }
+
+        It 'accepts the real Core project directory, so the guard cannot block the gate' {
+            { Assert-ProjectDirectoryContext -ProjectDirectory (Join-Path $script:repoRoot 'src\GanttCreator.Core') } |
+                Should -Not -Throw
+        }
+
+        It 'checks the project directory before invoking Stryker' {
+            $guardIndex = $script:gateText.IndexOf('Assert-ProjectDirectoryContext -ProjectDirectory', [StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [StringComparison]::Ordinal)
+            $guardIndex | Should -BeGreaterThan 0
+            $runIndex | Should -BeGreaterThan 0
+            $guardIndex | Should -BeLessThan $runIndex
+        }
+    }
 }
