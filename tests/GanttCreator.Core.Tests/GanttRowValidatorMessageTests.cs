@@ -350,4 +350,122 @@ public class GanttRowValidatorMessageTests
             $"ParentId '{brokenParentId}' references a row that did not validate as a usable event.",
             MessageFor(outcome, GanttValidationCodes.ParentInvalid));
     }
+
+    [Fact]
+    public void An_excel_error_cell_names_the_field_and_the_kind_of_fault()
+    {
+        GanttRowDto row = Span(start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5)) with
+        {
+            StartCell = GanttCells.ExcelError<DateOnly?>(GanttExcelErrorCode.NotAvailable),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "Start contains an Excel error value.",
+            MessageFor(outcome, GanttValidationCodes.CellContainsExcelError));
+    }
+
+    [Fact]
+    public void An_unsupported_cell_names_the_field_and_the_column_type_rule()
+    {
+        GanttRowDto row = Span(start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5)) with
+        {
+            FillColourCell = GanttCells.Unsupported<string>(),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "FillColour contains a value unsupported by its column type.",
+            MessageFor(outcome, GanttValidationCodes.CellValueUnsupported));
+    }
+
+    [Fact]
+    public void A_negative_sibling_order_states_the_permitted_range()
+    {
+        GanttRowDto row = Span(start: new DateOnly(2026, 9, 1), finish: new DateOnly(2026, 9, 5)) with
+        {
+            SiblingOrderCell = GanttCells.Value<int?>(-1),
+        };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "SiblingOrder must be blank or a non-negative integer.",
+            MessageFor(outcome, GanttValidationCodes.BadSiblingOrder));
+    }
+
+    [Fact]
+    public void A_missing_style_key_names_the_type_that_requires_it()
+    {
+        GanttRowDto row = Span(
+            typeText: "Custom Activity",
+            start: new DateOnly(2026, 9, 1),
+            finish: new DateOnly(2026, 9, 5));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "Custom Activity requires a StyleKey.",
+            MessageFor(outcome, GanttValidationCodes.StyleKeyRequired));
+    }
+
+    [Fact]
+    public void An_unparseable_date_label_position_echoes_the_offending_text()
+    {
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            NewId(),
+            0,
+            "As-Planned Activity",
+            "Build frame",
+            new DateOnly(2026, 9, 1),
+            new DateOnly(2026, 9, 5),
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            dateLabelPositionText: "Sideways");
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "Unknown DateLabelPosition 'Sideways'.",
+            MessageFor(outcome, GanttValidationCodes.UnknownDateLabelPosition));
+    }
+
+    [Fact]
+    public void A_date_label_position_the_type_cannot_carry_is_reported_with_both_names()
+    {
+        // A milestone reads Start only, so naming the Finish date label is
+        // refused. The message must name the choice and the rule.
+        GanttRowDto row = new(
+            2,
+            NewId(),
+            null,
+            null,
+            "As-Planned Milestone",
+            "Handover",
+            new DateOnly(2026, 9, 1),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            dateLabelPositionText: nameof(GanttDateLabelPosition.Finish));
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.Equal(
+            "DateLabelPosition 'Finish' is not allowed for this Type.",
+            MessageFor(outcome, GanttValidationCodes.DateLabelNotAllowedForType));
+    }
 }
