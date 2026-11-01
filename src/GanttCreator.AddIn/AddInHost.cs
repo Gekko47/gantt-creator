@@ -187,11 +187,11 @@ public sealed class AddInHost(
 #pragma warning disable CA1031
         try
         {
-            ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(() =>
+            ExcelAsyncUtil.QueueAsMacro(() =>
             {
                 try
                 {
-                    if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+                    if (ExcelDnaUtil.Application is not null)
                     {
                         RibbonStateService.Instance.Activate();
                     }

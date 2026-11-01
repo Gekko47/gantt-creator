@@ -381,7 +381,7 @@ public class ExcelRowWarningHighlighter(
         {
             try
             {
-                SaveHighlights((Excel.Workbook)ws.Parent);
+                SaveHighlights((Workbook)ws.Parent);
             }
             catch
             {
@@ -412,7 +412,7 @@ public class ExcelRowWarningHighlighter(
 #pragma warning disable CA1031
         try
         {
-            Excel.Name? name = null;
+            Name? name = null;
             try
             {
                 name = workbook.Names.Item(_highlightsPropertyName);
@@ -484,7 +484,7 @@ public class ExcelRowWarningHighlighter(
                 h.Column is { } col ? $"{h.Row}|{col}" : $"{h.Row}|"));
             string refersTo = "=\"" + value + "\"";
 
-            Excel.Name? name = null;
+            Name? name = null;
             try
             {
                 name = workbook.Names.Item(_highlightsPropertyName);
