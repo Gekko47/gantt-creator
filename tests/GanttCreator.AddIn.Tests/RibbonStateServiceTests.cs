@@ -107,6 +107,11 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         public void ShowStatusBar(string message) => StatusBarMessages.Add(message);
 
+        public void ClearStatusBar()
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler)
         {
             ArgumentNullException.ThrowIfNull(handler);

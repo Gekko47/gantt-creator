@@ -189,6 +189,11 @@ public sealed class PlotRangeWarningTests : IDisposable
 
         public void ShowStatusBar(string message) => Messages.Add(message);
 
+        public void ClearStatusBar()
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
 
         private sealed class Subscription : IDisposable

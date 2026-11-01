@@ -251,7 +251,8 @@ internal sealed class RefreshFakes
             Identity,
             null,
             null,
-            Highlighter);
+            Highlighter,
+            null);
 
     /// <summary>Builds the orchestrator with a pending worksheet change batch.</summary>
     public GanttRefreshOrchestrator BuildOrchestratorWithChanges(ChangeTracker tracker) =>
@@ -270,6 +271,7 @@ internal sealed class RefreshFakes
             null,
             null,
             Highlighter,
+            null,
             changeTracker: tracker);
 
     /// <summary>Builds an orchestrator using the injected payload-signature cache.</summary>
@@ -289,6 +291,7 @@ internal sealed class RefreshFakes
             null,
             null,
             Highlighter,
+            null,
             shapeDeltaCache: cache,
             useDeltaCache: useDeltaCache);
 
@@ -310,7 +313,8 @@ internal sealed class RefreshFakes
             Identity,
             scope,
             null,
-            Highlighter);
+            Highlighter,
+            null);
 
     /// <summary>
     /// Builds the orchestrator with an explicit warning highlighter, so a test can prove
@@ -335,7 +339,8 @@ internal sealed class RefreshFakes
             Identity,
             null,
             null,
-            warningHighlighter);
+            warningHighlighter,
+            null);
 
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {

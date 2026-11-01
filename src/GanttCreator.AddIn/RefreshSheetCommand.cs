@@ -42,6 +42,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+            RibbonStateService.ClearStatusBar();
         }
 
         if (!outcome.Succeeded)
@@ -74,6 +75,7 @@ internal static class RefreshSheetCommand
         if (outcome.Succeeded)
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
+            RibbonStateService.ClearStatusBar();
             // Invalidate only the selection-dependent controls so their enabled
             // state re-evaluates against the post-refresh sheet state. Mirrors
             // NotifyRibbonStateChanged() on the manual refresh path, but scoped
@@ -194,6 +196,11 @@ internal static class RefreshSheetCommand
             // writes — no SpecialCells scan, no per-cell Comment read, and no stale
             // note left behind when a row is corrected.
             new ExcelRowWarningHighlighter(application),
+
+            // R5.1: heal type-dependent engine-hidden columns on Type change so
+            // switching entity type does not leave stale values the validator
+            // rejects. Runs after identity repair and before validation.
+            new ExcelTypeChangeNormaliser(application),
             shapeDeltaCache: _shapeDeltaCache,
             useDeltaCache: useDeltaCache);
 #pragma warning restore CA2000

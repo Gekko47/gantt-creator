@@ -34,19 +34,18 @@ public class GanttRefreshOrchestratorTests
                 Row(3, null, "Not a chart type", "Invalid row", new DateOnly(2024, 1, 8), new DateOnly(2024, 1, 19)),
             ],
         };
-        ChangeTracker tracker = new();
-        tracker.Record(2, 4, null, "As-Planned Activity");
-        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestratorWithChanges(tracker);
+        GanttRefreshOrchestrator orchestrator = fakes.BuildOrchestrator();
 
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
-        Assert.False(outcome.Succeeded);
-        Assert.Equal(GanttRefreshRefusal.BlockingValidationErrors, outcome.Refusal);
+        // Partial render: the valid row plots, the invalid row is skipped with a
+        // fill. The refresh succeeds; the issues are carried on the outcome for the
+        // caller to surface (warnings panel, status bar).
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
         Assert.Equal(2, fakes.TableReadCount);
         Assert.Equal(0, fakes.TargetedTableReadCount);
-        Assert.Empty(fakes.Shapes.Calls);
+        Assert.NotEmpty(fakes.Shapes.Calls);
         Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 3);
-        Assert.True(tracker.HasChanges);
     }
 
     [Fact]

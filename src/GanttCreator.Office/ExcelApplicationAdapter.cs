@@ -105,6 +105,28 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
     }
 
     /// <inheritdoc />
+    public void ClearStatusBar()
+    {
+        Excel.Application? application = _application;
+        if (application is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            // Setting StatusBar to false restores Excel's automatic status text.
+            application.StatusBar = false;
+        }
+        catch
+        {
+            // Intentionally empty: clearing the status bar is best-effort.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <inheritdoc />
     public IDisposable SubscribeWorkbookStateChanged(Action handler)
     {
         ArgumentNullException.ThrowIfNull(handler);

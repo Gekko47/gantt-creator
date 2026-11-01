@@ -97,6 +97,10 @@ public interface IExcelApplicationAdapter
     /// </remarks>
     void ShowStatusBar(string message);
 
+    /// <summary>Clears any add-in status-bar text so Excel resumes its automatic status.</summary>
+    /// <remarks>Never throws: a failure to clear loses nothing.</remarks>
+    void ClearStatusBar();
+
     /// <summary>
     /// Subscribes <paramref name="handler"/> to application-level workbook state
     /// changes: a workbook becoming active, a workbook being deactivated, and a

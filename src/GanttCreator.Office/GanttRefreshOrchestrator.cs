@@ -56,6 +56,7 @@ public sealed class GanttRefreshOrchestrator(
     IApplicationStateScope? stateScope = null,
     IStyleKeyWritePort? styleKeyWriter = null,
     IRowWarningHighlighter? rowWarningHighlighter = null,
+    ITypeChangeNormaliser? typeChangeNormaliser = null,
     ChangeTracker? changeTracker = null,
     ShapeDeltaCache? shapeDeltaCache = null,
     bool useDeltaCache = true)
@@ -124,6 +125,12 @@ public sealed class GanttRefreshOrchestrator(
     /// not to a Refresh.
     /// </remarks>
     private readonly IGanttRowIdentityRepairer? _identityRepairer = identityRepairer;
+
+    /// <summary>
+    /// Normalises type-dependent engine-hidden columns on Type change, or
+    /// <see langword="null"/> to skip the step.
+    /// </summary>
+    private readonly ITypeChangeNormaliser? _typeChangeNormaliser = typeChangeNormaliser;
 
     /// <summary>
     /// The application-state scope, or <see langword="null"/> for the no-op scope.
@@ -265,6 +272,25 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
+        // Step 5b. Normalise type-dependent engine-hidden columns so a Type
+        // change does not leave stale values the validator would reject. Writes
+        // land on the sheet, so rows are re-read afterwards — exactly as identity
+        // repair does — so validation sees the corrected values.
+        if (_typeChangeNormaliser is { } normaliser)
+        {
+            GanttTypeChangeNormaliseOutcome normalised = normaliser.Normalise();
+            // Re-read so validation sees the corrected engine-hidden cells.
+            rows = _tableReader.Read();
+            if (!rows.Succeeded)
+            {
+                GanttTableReadRefusalReason rereadRefusal =
+                    rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+                return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                    ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
+                    : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+            }
+        }
+
         // Step 6. Validate every row before derived worksheet writes or shape
         // mutation. This is required on both explicit and automatic refreshes.
         //
@@ -297,7 +323,14 @@ public sealed class GanttRefreshOrchestrator(
                 "The validation notes on the table could not be updated, so the refresh stopped before the chart was touched.");
         }
 
-        if (!validation.IsValid)
+        // Partial render: rows with blocking errors are excluded from the scene
+        // (they render blank) but every other row plots normally. Fills are still
+        // painted for the invalid rows so the user sees the current error set.
+        // validation.Events already contains only rows without blocking errors.
+        //
+        // When every row is blocked there is nothing to render: refuse before any
+        // downstream worksheet write so the existing chart and sheet are untouched.
+        if (validation.Events.Count == 0 && validation.Issues.Any(i => i.Severity == GanttValidationSeverity.Error))
         {
             return GanttRefreshOutcome.Refused(
                 GanttRefreshRefusal.BlockingValidationErrors,

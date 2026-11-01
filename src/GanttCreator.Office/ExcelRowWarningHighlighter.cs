@@ -86,6 +86,9 @@ public class ExcelRowWarningHighlighter(
     /// <summary>Pastel amber/yellow = RGB(255, 235, 170) as OLE_COLOR (0x00AAEBFF).</summary>
     private const int _olePastelAmber = 0x00AAEBFF;
 
+    /// <summary>Workbook CustomDocumentProperties key under which highlighted addresses are persisted so they survive workbook close/reopen.</summary>
+    private const string _highlightsPropertyName = "GanttCreator.RowHighlights";
+
     /// <summary>
     /// Every address previously highlighted by this instance, as
     /// <c>(Row, Column)</c> where <c>Column</c> is <see langword="null"/>
@@ -93,6 +96,9 @@ public class ExcelRowWarningHighlighter(
     /// compute the minimal diff against the current targets.
     /// </summary>
     private readonly HashSet<(int Row, int? Column)> _previousHighlights = [];
+
+    /// <summary>Set once <see cref="LoadHighlights"/> has run for the current workbook.</summary>
+    private bool _highlightsLoaded;
 
     /// <summary>Fills or clears the entire visible row of <c>tblGanttData</c> body cells.</summary>
     public GanttValidationReportOutcome HighlightRow(int rowNumber, GanttValidationSeverity severity)
@@ -368,6 +374,22 @@ public class ExcelRowWarningHighlighter(
             // Addresses in both sets are skipped — no COM call needed.
         }
 
+        // Persist the updated tracking set so highlights survive workbook close
+        // and can be reconciled (cleared) after the workbook reopens.
+#pragma warning disable CA1031
+        if (setup.Worksheet is { } ws)
+        {
+            try
+            {
+                SaveHighlights((Excel.Workbook)ws.Parent);
+            }
+            catch
+            {
+                // Best-effort: persistence failure must not block highlighting.
+            }
+        }
+#pragma warning restore CA1031
+
         return GanttValidationReportOutcome.Ok(written);
     }
 
@@ -378,6 +400,114 @@ public class ExcelRowWarningHighlighter(
             GanttValidationSeverity.Warning => _olePastelAmber,
             _ => (int)XlColorIndex.xlColorIndexNone,
         };
+
+    /// <summary>Loads previously persisted highlight addresses from a workbook-scoped defined name.</summary>
+    private void LoadHighlights(Workbook workbook)
+    {
+        if (_highlightsLoaded)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            Excel.Name? name = null;
+            try
+            {
+                name = workbook.Names.Item(_highlightsPropertyName);
+            }
+            catch
+            {
+                // Name does not exist yet — nothing to load.
+            }
+
+            if (name is null)
+            {
+                _highlightsLoaded = true;
+                return;
+            }
+
+            string? refersTo = name.RefersTo;
+            if (string.IsNullOrEmpty(refersTo))
+            {
+                _highlightsLoaded = true;
+                return;
+            }
+
+            // RefersTo is of the form ="..." — strip the leading = and surrounding quotes.
+            string value = refersTo.Trim();
+            if (value.StartsWith('='))
+            {
+                value = value[1..];
+            }
+            if (value.Length >= 2 && value.StartsWith('"') && value.EndsWith('"'))
+            {
+                value = value[1..^1];
+            }
+
+            if (string.IsNullOrEmpty(value))
+            {
+                _highlightsLoaded = true;
+                return;
+            }
+
+            _previousHighlights.Clear();
+            foreach (string entry in value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string[] parts = entry.Split('|');
+                if (parts.Length >= 2 && int.TryParse(parts[0], out int row))
+                {
+                    int? column = parts.Length >= 3 && int.TryParse(parts[2], out int col) ? col : null;
+                    _ = _previousHighlights.Add((row, column));
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort: persistence failure must not block highlighting.
+        }
+        finally
+        {
+            _highlightsLoaded = true;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Persists current highlight addresses to a workbook-scoped defined name.</summary>
+    private void SaveHighlights(Workbook workbook)
+    {
+#pragma warning disable CA1031
+        try
+        {
+            string value = string.Join(";", _previousHighlights.Select(h =>
+                h.Column is { } col ? $"{h.Row}|{col}" : $"{h.Row}|"));
+            string refersTo = "=\"" + value + "\"";
+
+            Excel.Name? name = null;
+            try
+            {
+                name = workbook.Names.Item(_highlightsPropertyName);
+            }
+            catch
+            {
+                // Name does not exist yet — add it below.
+            }
+
+            if (name is not null)
+            {
+                name.RefersTo = refersTo;
+                return;
+            }
+
+            _ = workbook.Names.Add(_highlightsPropertyName, refersTo);
+        }
+        catch
+        {
+            // Best-effort: persistence failure must not block highlighting.
+        }
+#pragma warning restore CA1031
+    }
 
     private HighlightSetup? ResolveSetup()
     {
@@ -399,6 +529,10 @@ public class ExcelRowWarningHighlighter(
         {
             return new HighlightSetup(null, null, GanttValidationReportRefusalReason.TableMissing);
         }
+
+        // Load previously persisted highlight addresses so corrections made
+        // after a close/reopen are still reconciled against the tracking set.
+        LoadHighlights(workbook);
 
         ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(worksheet);
         return protection != ProtectionGuardOutcome.NotProtected

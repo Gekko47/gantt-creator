@@ -737,6 +737,28 @@ internal class RibbonStateService
 #pragma warning restore CA1031
     }
 
+    /// <summary>Clears any add-in status-bar text so Excel resumes its automatic status.</summary>
+    /// <remarks>Called after a successful refresh so a stale refusal message cannot persist.</remarks>
+    internal static void ClearStatusBar()
+    {
+        IExcelApplicationAdapter? adapter = Instance._applicationAdapter;
+        if (adapter is null)
+        {
+            return;
+        }
+
+#pragma warning disable CA1031
+        try
+        {
+            adapter.ClearStatusBar();
+        }
+        catch
+        {
+            // Intentionally empty: clearing is best-effort.
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>
     /// Commits a user-typed plot-finish date in explicit mode. Parses the exact
     /// plot-date input (dd-MMM-yy, dd/MM/yyyy legacy, plus the bare Excel serial

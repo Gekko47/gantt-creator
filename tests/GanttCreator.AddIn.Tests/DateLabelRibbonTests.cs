@@ -115,6 +115,11 @@ public sealed class DateLabelRibbonTests : IDisposable
             // Intentionally empty: the status bar is not under test here.
         }
 
+        public void ClearStatusBar()
+        {
+            // Intentionally empty: the status bar is not under test here.
+        }
+
         public IDisposable SubscribeWorkbookStateChanged(Action handler) => new Subscription();
 
         private sealed class Subscription : IDisposable
