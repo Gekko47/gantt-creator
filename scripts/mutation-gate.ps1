@@ -336,6 +336,9 @@ $exit = $LASTEXITCODE
 $output | ForEach-Object { Write-Host $_ }
 
 # ---------------------------------------------------------------- judge
-$reportPath = Join-Path $outputDir 'mutation-report.json'
+# Stryker 5.0.0 writes its JSON report into a `reports` subdirectory under
+# --output, so the judge must read <output>/reports/mutation-report.json,
+# not <output>/mutation-report.json.
+$reportPath = Join-Path $outputDir 'reports' 'mutation-report.json'
 $result = Invoke-MutationJudge -ReportPath $reportPath -Threshold $Threshold -StrykerExitCode $exit -Baseline:$Baseline
 return $result

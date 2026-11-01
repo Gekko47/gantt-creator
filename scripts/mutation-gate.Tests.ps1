@@ -177,6 +177,14 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:gateText | Should -Match 'BASELINE'
         }
 
+        It 'reads the Stryker report from the reports subdirectory' {
+            # dotnet-stryker 5.0.0 writes <output>/reports/mutation-report.json;
+            # the gate must judge that path, not <output>/mutation-report.json
+            # (the defect this regression test exists to catch).
+            $expected = [regex]::Escape(("Join-Path " + '$outputDir' + " 'reports' 'mutation-report.json'"))
+            $script:gateText | Should -Match $expected
+        }
+
         It 'installs the tool rather than referencing it from a csproj' {
             $script:gateText | Should -Match 'dotnet tool install'
         }

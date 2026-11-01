@@ -232,11 +232,37 @@ Invoke-Step 'package vulnerability scan' {
 # the returned object. That is the L10 lesson applied twice: `-EnableExit` from
 # inside this Tee/ForEach pipeline reported false PASSes for the life of the
 # PSScriptAnalyzer gate.
-# DISABLED: Stryker (dotnet-stryker 5.0.0) repeatedly failed with CLI argument
-# errors and was not part of the approved verification path for this change.
-# The decision is pinned in the session memory store (see the R3.13 decision).
+# Re-enabled once the first full-Core baseline was archived
+# (scripts/_artifacts/mutation/reports/mutation-report.json; judged score
+# 76.22% against the pinned 80%; D5 - archived, not gated: the threshold
+# applies from the next Core change). Runs changed-code only via
+# --since origin/main so a local verify is not slowed by whole-Core mutation.
+# The gate script judges the Stryker exit code AFTER capturing its output and
+# returns a result object; this step decides pass/fail from it. That is the
+# L10 lesson applied twice: never report PASS from a non-throwing call or a
+# silent step body.
 Invoke-Step 'mutation gate (changed Core code)' {
-    Write-Host "  -> mutation gate (changed Core code) : PASS (disabled - pinned decision)"
+    $result = $null
+    $halted = $false
+    try {
+        $result = & $scriptRoot\mutation-gate.ps1
+    } catch {
+        $halted = $true
+        Write-Host "  -> mutation gate (changed Core code): FAIL (mutation-gate.ps1 halted: $($_.Exception.Message))" -ForegroundColor Red
+    }
+    if (-not $halted) {
+        $scored = $result.Killed + $result.Survived + $result.Timeout
+        if ($scored -eq 0) {
+            Write-Host "  -> mutation gate (changed Core code): PASS (no scored changed-code mutants)"
+        } elseif ($result.ScorePercent -lt $result.Threshold) {
+            Write-Host "  -> mutation gate (changed Core code): FAIL (score $($result.ScorePercent)% below threshold $($result.Threshold)%)" -ForegroundColor Red
+            exit 1
+        } else {
+            Write-Host "  -> mutation gate (changed Core code): PASS ($($result.ScorePercent)% >= $($result.Threshold)%)"
+        }
+    } else {
+        exit 1
+    }
 }
 
 $end = Get-Date
