@@ -162,47 +162,41 @@ Invoke-Step 'publish AddIn (packed XLL)' {
 }
 
 Invoke-Step 'test (OfficeIntegration excluded)' {
+    # Collect into a directory that is EMPTY for this run. The coverage step
+    # merges every file it finds, and a file left by an earlier run adds
+    # covered lines the current tree no longer has - the merged number would
+    # then describe two different builds at once.
+    $coverageRoot = Join-Path $artifacts 'coverage'
+    if (Test-Path -LiteralPath $coverageRoot) {
+        Remove-Item -LiteralPath $coverageRoot -Recurse -Force
+    }
     dotnet test $Solution -c $Configuration --no-build --no-restore `
         --filter 'Category!=OfficeIntegration' `
-        --collect:'XPlat Code Coverage' --results-directory (Join-Path $artifacts 'coverage')
+        --collect:'XPlat Code Coverage' --results-directory $coverageRoot
 }
 
-# The coverage-threshold check is intentionally permissive at R0.x. The
-# thresholds in $coverageThresholds above are the production targets; this
-# step parses the measured coverage.cobertura.xml rates and prints them next
-# to each target, visibly flagging below-target entries as warnings. It does
-# not warn-and-fail. Enforcement is enabled in R3.x when Core has real
-# tests (docs/04-TEST-STRATEGY.md).
+# The thresholds in $coverageThresholds above are the production targets from
+# docs/04-TEST-STRATEGY.md. `dotnet test` writes one cobertura file per TEST
+# PROJECT and each file holds only the classes that project executed, so a
+# package appears in several files with partial rates and no single file may
+# be compared with a threshold (the Core.Tests file alone measured Core at
+# 0.28% line). scripts/coverage-report.ps1 merges them into this run's union -
+# generated compiler sources excluded - and this step prints the merged rate
+# next to each target, flagging below-target entries. Enforcement stays
+# deferred (docs/04-TEST-STRATEGY.md): a below-target row is a warning.
 Invoke-Step 'coverage threshold check' {
     $coverageRoot = Join-Path $artifacts 'coverage'
     if (-not (Test-Path -LiteralPath $coverageRoot)) {
-        Write-Host 'coverage root not present; skipping threshold check.'
-        return
+        # The test step always creates this directory. Its absence means the
+        # collector did not run, and a threshold check over nothing proves
+        # nothing - so this is a failure, not a silent skip.
+        throw "No coverage was collected at $coverageRoot. The test step's --collect:'XPlat Code Coverage' did not run."
     }
-    $coverageFiles = Get-ChildItem -Path $coverageRoot -Recurse -Filter 'coverage.cobertura.xml'
-    if (-not $coverageFiles) {
-        Write-Host 'no coverage.cobertura.xml found; skipping threshold check.'
-        return
-    }
-    # Parse the measured line/branch rates from the cobertura XML so each
-    # target is reported next to the real number. Cobertura stores rates as
-    # invariant-culture decimal fractions (0..1) on the <package> element;
-    # the test command writes one coverage file per test project, so a
-    # package can appear in several files and the best measured rate wins.
+    $packages = @(& (Join-Path $PSScriptRoot 'coverage-report.ps1') `
+            -ReportsRoot $coverageRoot `
+            -TargetDir (Join-Path $artifacts 'coverage-merged'))
     $measured = @{}
-    foreach ($file in $coverageFiles) {
-        [xml]$xml = Get-Content -LiteralPath $file.FullName -Raw
-        foreach ($pkg in $xml.coverage.packages.package) {
-            $name = [string]$pkg.name
-            if (-not $measured.ContainsKey($name)) {
-                $measured[$name] = @{ Line = 0.0; Branch = 0.0 }
-            }
-            $lineRate = [double]$pkg.'line-rate'
-            $branchRate = [double]$pkg.'branch-rate'
-            if ($lineRate -gt $measured[$name].Line)   { $measured[$name].Line = $lineRate }
-            if ($branchRate -gt $measured[$name].Branch) { $measured[$name].Branch = $branchRate }
-        }
-    }
+    foreach ($package in $packages) { $measured[$package.Package] = $package }
     foreach ($project in $coverageThresholds.Keys) {
         $expected = $coverageThresholds[$project]
         if ($expected.Line -eq 0) { continue }
@@ -212,11 +206,11 @@ Invoke-Step 'coverage threshold check' {
             Add-Content -LiteralPath $report -Value "  $line"
             continue
         }
-        $linePct = [math]::Round($measured[$project].Line * 100, 2)
-        $branchPct = [math]::Round($measured[$project].Branch * 100, 2)
+        $linePct = [math]::Round($measured[$project].LineRate * 100, 2)
+        $branchPct = [math]::Round($measured[$project].BranchRate * 100, 2)
         $flag = ''
         if ($linePct -lt $expected.Line -or $branchPct -lt $expected.Branch) { $flag = '  <-- below target (warning)' }
-        $line = "{0}: measured line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
+        $line = "{0}: merged line {1}%, branch {2}% (target line >= {3}%, branch >= {4}%; enforcement deferred to R3.x per docs/04-TEST-STRATEGY.md){5}" -f $project, $linePct, $branchPct, $expected.Line, $expected.Branch, $flag
         Write-Host "  - $line"
         Add-Content -LiteralPath $report -Value "  $line"
     }

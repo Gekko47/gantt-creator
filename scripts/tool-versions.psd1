@@ -56,4 +56,22 @@
         # project, so this is the score the gate judges.
         ThresholdHigh = 80
     }
+
+    # ReportGenerator. Merges the per-test-project Cobertura files that
+    # `dotnet test --collect:'XPlat Code Coverage'` writes into ONE report.
+    # Without the merge no per-file number can be compared with the coverage
+    # thresholds: each file holds only the classes its own test project
+    # executed, so the Core.Tests file alone measured GanttCreator.Core at
+    # 0.28% line while the union of every collected file is ~97%. Installed as
+    # a GLOBAL `dotnet tool` by scripts/coverage-report.ps1 (never a csproj
+    # PackageReference: it is a dev tool and must not reach a production
+    # project). Pinned here so local and CI cannot diverge (W11).
+    #
+    # 5.5.12 VERIFIED against the installed CLI, not from memory:
+    # `dotnet tool install --global dotnet-reportgenerator-globaltool`
+    # reported "version '5.5.12'" and `dotnet tool list --global` agrees.
+    'dotnet-reportgenerator-globaltool' = @{
+        Version = '5.5.12'
+        ToolId  = 'dotnet-reportgenerator-globaltool'
+    }
 }

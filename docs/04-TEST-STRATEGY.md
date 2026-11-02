@@ -56,6 +56,8 @@ Initial thresholds are deliberately strict in deterministic code and realistic a
 
 Exclude only generated interop/build files and trivial assembly metadata. Never exclude a file because it is difficult to test. A threshold change requires an ADR or explicit pull-request approval with evidence.
 
+Coverage is measured from one merged report, never from a single per-project file. The test command writes one Cobertura file per test project, and each file holds only the classes that project executed, so a package appears in several files with partial rates: the Core test project's file alone reports `GanttCreator.Core` at 0.28% line, while the union of every file is ~97%. [the merge script](../scripts/coverage-report.ps1) produces that union with ReportGenerator, whose version is pinned in [the tool pin file](../scripts/tool-versions.psd1) (W11), and excludes generated compiler sources under `obj/` because output such as RegexGenerator code is machine-written and no test can reach it. The collection directory is emptied before each run: a report left by an earlier run adds covered lines the current tree no longer has, which would describe two builds at once. "Best file wins" is not an acceptable substitute - it under-reports, because a class covered only by another project's run is invisible to every file that did not execute it.
+
 Coverage is a floor, not proof. Review changed lines, branches, fault paths, and assertions. Run mutation testing on Core weekly or before release; do not burden every small local commit with a full mutation run.
 
 ## Core test catalogue
