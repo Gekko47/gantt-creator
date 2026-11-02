@@ -294,25 +294,29 @@ function Resolve-TestProjects {
     .SYNOPSIS
         The test projects Stryker runs against each Core mutant.
     .DESCRIPTION
-        Core.Tests alone is the default because it is the only suite cheap
-        enough to run per mutant. Widening was tried and measured on
-        2026-11-01: with Office.ContractTests and AddIn.Tests added, one file's
-        403 mutants had still not finished after 49 minutes, against 6,687
-        mutants in 43 minutes for the whole of Core on Core.Tests alone --
-        roughly 19x the cost per mutant, extrapolating to about 13 hours for a
-        whole-Core baseline. The widened set is therefore an explicit opt-in
-        for a deliberate measurement run, never the default.
+        Core.Tests alone is the default, so a Core mutant killed only by an
+        Office or AddIn test is scored SURVIVED and the score under-reports the
+        suite. Widening stays an explicit opt-in, but the cost figure that
+        justified it has been re-measured and corrected.
+
+        The original 2026-11-01 measurement (one file's 403 mutants unfinished
+        after 49 minutes, ~19x the per-mutant cost, extrapolating to ~13 hours
+        for a whole-Core baseline) was taken while discovery still followed the
+        working directory: a run started from a directory holding the solution
+        made Stryker enumerate every project's tests. With that defect fixed and
+        `--since` scoping the run, the widened set measured on 2026-11-02 over
+        the same 237 changed mutants as the narrow run took 7m03s against
+        3m20s -- about 2.1x, not 19x. It also killed four more mutants
+        (219/237 = 92.41% against 215/237 = 90.72%) and dropped the timeout
+        count, because Office and AddIn tests do kill Core mutants.
+
+        Making it the default is therefore an owner decision about CI runtime,
+        not a measurement question: the accuracy gain is real and now cheap.
 
         Two projects are never useful here. GanttCreator.Office.IntegrationTests
         needs a live Excel host (ADR-0001). GanttCreator.Architecture.Tests has
         no ProjectReference to Core by design, so Stryker cannot resolve
         --project through it.
-
-        The consequence is recorded rather than hidden: a Core mutant killed
-        only by an Office or AddIn test is scored SURVIVED, so the score
-        under-reports the suite. The gate exists to find untested Core
-        behaviour, and the right response to that under-report is a Core test,
-        not a slower gate.
     #>
     param([string]$RepoRoot, [string[]]$Explicit)
 
