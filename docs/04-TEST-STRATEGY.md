@@ -304,6 +304,11 @@ For every injected failure assert cleanup, preserved user content, restored appl
 - A single bounded rerun may be used only to classify an Office-hosted failure, and both attempts remain in the evidence.
 - Quarantine requires an issue, owner, expiry date, and replacement release gate. Quarantined tests do not count as passing.
 - Fix synchronization by observing state, not increasing sleep durations.
+- Never let a host-free test read ambient machine state. `ExcelDnaUtil.Application` resolves the
+  **running** Excel instance, not only a real add-in host, so a test that reaches it passes or fails
+  according to whether Excel happens to be open on the developer's machine. Inject the fact
+  explicitly or put it behind an `internal virtual` seam, and never let a production member
+  re-probe a static over a dependency that was already injected.
 
 ## Pull-request test evidence
 
