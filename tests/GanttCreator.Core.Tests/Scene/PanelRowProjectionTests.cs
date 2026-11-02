@@ -148,4 +148,71 @@ public sealed class PanelRowProjectionTests
             PanelRowProjectionRefusal.DuplicateRowNumber,
             Project(atEvent, sameRowNumber).Refusal);
     }
+
+    [Fact]
+    public void Every_schema_column_is_projected_so_a_panel_cell_reproduces_its_worksheet_value()
+    {
+        // The panel restates the table, so every approved schema column must map to
+        // the event value it stands for. A missing arm renders a blank cell that reads
+        // as an empty worksheet cell, which is why this test drives one grid column
+        // per schema field plus a column the schema does not map.
+        string[] names =
+        [
+            "Id", "Type", "Description", "Start", "Finish", "LaneId", "StackIndex",
+            "ParentId", "StyleKey", "LabelPosition", "FillColour", "StrokeColour",
+            "Visible", "SortOrder", "ApprovedNote",
+        ];
+        PanelCellGrid grid = PanelCellGrid.TryCreate(
+            [.. names.Select(name => new PanelColumn(name, 100))],
+            [10.0, 10.0],
+            18.0,
+            ["Type", "Description"]).Grid!;
+
+        GanttLabelPosition position = Enum.GetValues<GanttLabelPosition>()[0];
+        DateOnly start = new(2026, 1, 5);
+        DateOnly finish = new(2026, 1, 9);
+        GanttRowId id = GanttRowId.New();
+        GanttRowId lane = GanttRowId.New();
+        GanttRowId parent = GanttRowId.New();
+        GanttEvent full = new(
+            1, id, lane, 2, GanttEntityType.AsPlannedActivity, "work", start, finish,
+            parent, "Phase", position, "#112233", "#445566", true, 7);
+        GanttEvent blank = new(
+            2, GanttRowId.New(), null, null, GanttEntityType.AsPlannedMilestone, null, null, null,
+            null, null, null, null, null, false, null);
+
+        PanelRowProjectionResult result =
+            PanelRowProjection.TryProject([full, blank], grid, GanttDateDisplayFormat.DdMMyyyy);
+
+        Assert.Null(result.Refusal);
+        Assert.Equal(
+            [
+                id.Value,
+                EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedActivity)!.DisplayName,
+                "work",
+                GanttDateFormatting.Format(start, GanttDateDisplayFormat.DdMMyyyy),
+                GanttDateFormatting.Format(finish, GanttDateDisplayFormat.DdMMyyyy),
+                lane.Value,
+                "2",
+                parent.Value,
+                "Phase",
+                position.ToString(),
+                "#112233",
+                "#445566",
+                "TRUE",
+                "7",
+                null,
+            ],
+            result.Rows[0].Cells);
+        // Blank is legal cell data (R2.5 U2), a bool renders as the text the reader
+        // parses back, and a column with no schema mapping is null rather than an
+        // empty string.
+        Assert.Equal(
+            [
+                result.Rows[1].RowId.Value,
+                EntityTypeCatalog.GetDefinition(GanttEntityType.AsPlannedMilestone)!.DisplayName,
+                null, null, null, null, null, null, null, null, null, null, "FALSE", null, null,
+            ],
+            result.Rows[1].Cells);
+    }
 }

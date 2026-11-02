@@ -66,7 +66,15 @@ public enum ParentChildRefusalReason
     /// <summary>The move would create a parent cycle.</summary>
     Cycle = 9,
 
-    /// <summary>A <c>CriticalInterval</c> child would land on a non-span parent.</summary>
+    /// <summary>
+    /// A <c>CriticalInterval</c> child would land on a non-span parent.
+    /// <b>No planner path produces this.</b> The demote search refuses every
+    /// non-owning candidate before any span test could run, and the owning set
+    /// is exactly the span set minus <c>CriticalInterval</c>
+    /// (<c>EntityHierarchyCatalogTests</c> pins that equivalence). The member is
+    /// kept because the AddIn refusal translator maps it, and the validator
+    /// reports the underlying rule as <c>GanttValidationCodes.ParentNotSpan</c>.
+    /// </summary>
     ParentNotSpan = 10,
 }
 
@@ -440,11 +448,13 @@ public static class HierarchyMutations
                 return DemotePlan.Refused(ParentChildRefusalReason.Cycle);
             }
 
-            if (target.Type == GanttEntityType.CriticalInterval && !IsSpan(candidate.Type))
-            {
-                return DemotePlan.Refused(ParentChildRefusalReason.ParentNotSpan);
-            }
-
+            // No "a Critical Interval may only land on a span" arm is owed here.
+            // Every candidate that reaches this point passed MayOwnChildren above,
+            // and that set is exactly the span set minus Critical Interval itself,
+            // so a span test could only restate the guard that already ran and could
+            // never refuse anything. The rule is enforced one guard earlier, and it
+            // is stricter: a milestone, splitter, spacer or delineator candidate is
+            // refused regardless of the target's type.
             // The selection's content moves to sit directly beneath the new
             // parent's existing child run, so the demotion stays one
             // contiguous outline group: the run's last child's row plus one.
@@ -802,29 +812,4 @@ public static class HierarchyMutations
         return writes;
     }
 
-    /// <summary>
-    /// Whether the type is a span a <c>CriticalInterval</c> child may land on.
-    /// Mirrors the validator's span rule without duplicating its diagnostics.
-    /// </summary>
-    private static bool IsSpan(GanttEntityType type) => type switch
-    {
-        GanttEntityType.Splitter => false,
-        GanttEntityType.Spacer => false,
-        GanttEntityType.AsBuiltActivity => true,
-        GanttEntityType.AsPlannedActivity => true,
-        GanttEntityType.BaselineActivity => true,
-        GanttEntityType.CriticalInterval => false,
-        GanttEntityType.DelayEvent => true,
-        GanttEntityType.AsBuiltProcurement => true,
-        GanttEntityType.AsPlannedProcurement => true,
-        GanttEntityType.BaselineProcurement => true,
-        GanttEntityType.CustomActivity => true,
-        GanttEntityType.AsBuiltMilestone => false,
-        GanttEntityType.AsPlannedMilestone => false,
-        GanttEntityType.BaselineMilestone => false,
-        GanttEntityType.CriticalMilestone => false,
-        GanttEntityType.CustomMilestone => false,
-        GanttEntityType.Delineator => false,
-        _ => false,
-    };
 }
