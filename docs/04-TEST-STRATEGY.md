@@ -45,6 +45,8 @@ Testing must prove the domain and rendering logic without Office, then prove the
 
 ## Coverage policy
 
+**The Office and AddIn targets are ceilings for host-free tests, not floors to push past.** A large share of the uncovered lines in the Office adapters are the *bodies of their own `internal virtual` seams* - `TryFindTable`, `TryBuildColumnMap`, `TryReadBody`, `ResolveActiveBodyIndex` and the private indexer wrappers. The contract-test subclass overrides exactly those members, which is how every decision above them becomes reachable without Excel; their real COM traversal is what `verify-office.ps1` exercises on a live host. Measured example: `ExcelAddChildMutator` reached 49.4% line with its whole refusal matrix covered, and the remaining 84 lines are seam bodies. Raising that number by contract tests would mean deleting the overrides and asserting Moq against an indexer Moq cannot express, so a below-target class in this layer is not automatically a test gap - classify the uncovered lines as decisions or as seam bodies before writing a test.
+
 Initial thresholds are deliberately strict in deterministic code and realistic at external boundaries:
 
 | Project | Line | Branch | Additional gate |
