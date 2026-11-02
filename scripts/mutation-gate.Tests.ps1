@@ -534,4 +534,39 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $guardIndex | Should -BeLessThan $runIndex
         }
     }
+
+    Context 'diff-base resolution (Stryker does not understand a revspec)' {
+        BeforeAll {
+            . $script:gatePath
+        }
+
+        It 'POSITIVE: refuses a diff base that does not resolve to a commit' {
+            # Measured on the installed 5.0.0, 2026-11-02: --since:HEAD~40 gave
+            # "No branch or tag or commit found with given target HEAD~40" and
+            # Stryker then mutated the WHOLE project (6,687 mutants) while the
+            # gate still read the report as a changed-code score. Refusing up
+            # front is the only fail-closed behaviour available.
+            { Resolve-DiffBase -Since 'no-such-ref-4c1f' -RepoRoot $script:repoRoot } |
+                Should -Throw -ExpectedMessage '*Cannot resolve -Since*'
+        }
+
+        It 'resolves a branch name to a commit SHA' {
+            $resolved = Resolve-DiffBase -Since 'HEAD' -RepoRoot $script:repoRoot
+            $resolved | Should -Match '^[0-9a-f]{40}$'
+        }
+
+        It 'resolves a revspec, which Stryker itself rejects' {
+            # The regression this guard exists for: a valid git revspec that
+            # Stryker cannot use must become a SHA before the run, not after.
+            $resolved = Resolve-DiffBase -Since 'HEAD~1' -RepoRoot $script:repoRoot
+            $resolved | Should -Match '^[0-9a-f]{40}$'
+        }
+
+        It 'resolves the diff base before invoking Stryker' {
+            $resolveIndex = $script:gateText.IndexOf('$Since = Resolve-DiffBase', [StringComparison]::Ordinal)
+            $runIndex = $script:gateText.IndexOf('& dotnet-stryker @arguments', [StringComparison]::Ordinal)
+            $resolveIndex | Should -BeGreaterThan 0
+            $resolveIndex | Should -BeLessThan $runIndex
+        }
+    }
 }

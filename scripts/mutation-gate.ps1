@@ -258,6 +258,37 @@ function Get-ChangedCoreFiles {
     return @($diff | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Resolve-DiffBase {
+    <#
+    .SYNOPSIS
+        Resolves -Since to a commit SHA, or refuses the run.
+    .DESCRIPTION
+        Stryker's `--since` takes a branch, tag or commit that it resolves
+        itself; it does not understand a git revspec. Measured on the installed
+        5.0.0, 2026-11-02: `--since:HEAD~40` produced
+
+            No branch or tag or commit found with given target HEAD~40
+
+        and then mutated the WHOLE project (6,687 mutants created) while the
+        gate still read the resulting report as a changed-code score. That is
+        the worst possible failure mode for this gate -- it reports a
+        whole-project number under a changed-code label -- so the base is
+        resolved here first and the run is refused when it does not resolve.
+        Resolving to a SHA also makes every accepted spelling (`origin/main`,
+        a tag, `HEAD~40`, a short SHA) behave identically downstream.
+    #>
+    param([string]$Since, [string]$RepoRoot)
+
+    $resolved = & git -C $RepoRoot rev-parse --verify --quiet "$Since^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) {
+        throw (
+            "Cannot resolve -Since '{0}' to a commit. Stryker's --since accepts only a branch, tag or commit, and on an unresolvable target it mutates the whole project while the gate reports the result as a changed-code score. Use a branch name, a tag or a commit SHA." -f $Since
+        )
+    }
+
+    return $resolved.Trim()
+}
+
 function Resolve-TestProjects {
     <#
     .SYNOPSIS
@@ -437,6 +468,12 @@ foreach ($testProject in $TestProjects) {
 Write-Host ("mutation-gate: test projects ({0}):" -f $TestProjects.Count)
 $TestProjects | ForEach-Object { Write-Host "  $_" }
 if (-not $Baseline) {
+    # Resolve FIRST: Stryker rejects a revspec and then mutates the whole
+    # project, which would make a whole-project score look like a changed-code
+    # score. Resolving here also gives the scope guard a base git agrees with.
+    $requestedSince = $Since
+    $Since = Resolve-DiffBase -Since $Since -RepoRoot $repoRoot
+    Write-Host "mutation-gate: diff base '$requestedSince' resolved to $Since"
     # Scope guard: a divergent branch turns `--since` into a whole-project run.
     # Surface the selected set, and refuse an implausible one before the tool
     # spends tens of minutes on it.
