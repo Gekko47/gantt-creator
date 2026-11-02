@@ -859,6 +859,20 @@ public sealed class SceneBuilderTests
             SceneBuilder.TryBuild(Request(Event(1)) with { FrameTheme = null }).Refusal);
     }
 
+    [Fact]
+    public void Anchoring_without_a_measured_grid_is_refused_as_a_missing_grid()
+    {
+        // ADR-0034 D1: a live composition anchors every lane to the worksheet row it
+        // renders on. The measured grid is required for the frame regardless, so a
+        // request that asks for anchoring and supplies no grid is refused by the
+        // MISSING-GRID rule before the anchor-specific one can run - observed here
+        // rather than assumed, because the anchor branch is unreachable in that case
+        // and its guard is therefore a redundant second check.
+        Assert.Equal(
+            SceneBuilderRefusal.NullPanelGrid,
+            SceneBuilder.TryBuild(Request(Event(1)) with { AnchorLanesToRows = true, Grid = null }).Refusal);
+    }
+
 
     [Fact]
     public void Custom_activity_resolves_via_builtin_preset_when_style_is_blank()
