@@ -1334,6 +1334,22 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void A_style_key_type_keeps_a_supplied_colour_when_no_registry_is_given()
+    {
+        // Pre-R2.9 compatibility path: with no registry the validator cannot
+        // resolve the named style, so it preserves the sheet's colour instead of
+        // refusing it. Without that early return the capability check would run
+        // with a null style definition, read the capability as None, and turn a
+        // perfectly good colour into a ColourNotAllowedForType error.
+        GanttValidationOutcome outcome = GanttRowValidator.Validate(
+            [ValidSpan(typeText: "Custom Activity", styleKey: "MyStyle", fillColourText: "#12ab9F")]);
+
+        Assert.True(outcome.IsValid);
+        _ = Assert.Single(outcome.Events);
+        Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
+    }
+
+    [Fact]
     public void A_retired_label_position_is_reported_and_never_coerced()
     {
         // ADR-0029 D6 (owner ruling 2026-09-30): a stored "Above"/"Below" is
