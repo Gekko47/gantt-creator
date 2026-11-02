@@ -391,4 +391,306 @@ public sealed class ExcelAddChildMutatorTests
         Assert.Equal(AddChildMutationRefusalReason.InsertRefused, outcome.Refusal);
         Assert.Empty(written);
     }
+
+    /// <summary>
+    /// Every refusal the adapter owns, driven through one parameterised graph so a
+    /// new arm cannot ship unexercised. The knobs exist because the shared
+    /// <c>Build</c> helper above is deliberately a single happy-path graph; making
+    /// it carry ten optional behaviours would obscure the tests that use it.
+    /// </summary>
+    [Fact]
+    public void A_null_id_factory_is_a_programming_error()
+    {
+        Variant variant = Variant.Build();
+
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => variant.Mutator.AddChild(GanttEntityType.AsBuiltActivity, null!));
+
+        Assert.Equal("nextId", thrown.ParamName);
+        variant.Inserter.Verify(
+            i => i.Insert(It.IsAny<GanttEntityType>(), It.IsAny<Func<GanttRowId>>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(ProtectionGuardOutcome.SheetProtected)]
+    [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected)]
+    public void Any_active_sheet_refusal_is_reported_as_target_protected(ProtectionGuardOutcome outcome)
+    {
+        Variant variant = Variant.Build(guardOutcome: outcome);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.TargetProtected, result.Refusal);
+        Assert.Empty(variant.WrittenCells);
+    }
+
+    [Fact]
+    public void An_active_sheet_guard_without_a_workbook_is_reported_as_no_active_workbook()
+    {
+        Variant variant = Variant.Build(guardOutcome: ProtectionGuardOutcome.NoActiveWorkbook);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.NoActiveWorkbook, result.Refusal);
+    }
+
+    [Fact]
+    public void An_absent_application_is_refused_as_no_active_workbook()
+    {
+        Variant variant = Variant.Build(applicationPresent: false);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.NoActiveWorkbook, result.Refusal);
+        Assert.Empty(variant.WrittenCells);
+    }
+
+    [Fact]
+    public void A_workbook_without_the_data_table_is_refused()
+    {
+        Variant variant = Variant.Build(tablePresent: false);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.TableMissing, result.Refusal);
+    }
+
+    [Fact]
+    public void A_table_missing_a_required_column_is_refused()
+    {
+        Variant variant = Variant.Build(completeColumns: false);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.TableMissing, result.Refusal);
+    }
+
+    [Fact]
+    public void A_protected_target_sheet_is_refused_as_target_protected()
+    {
+        Variant variant = Variant.Build(targetOutcome: ProtectionGuardOutcome.SheetProtected);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.TargetProtected, result.Refusal);
+        variant.Inserter.Verify(
+            i => i.Insert(It.IsAny<GanttEntityType>(), It.IsAny<Func<GanttRowId>>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_target_guard_without_a_workbook_is_refused_as_no_active_workbook()
+    {
+        Variant variant = Variant.Build(targetOutcome: ProtectionGuardOutcome.NoActiveWorkbook);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.NoActiveWorkbook, result.Refusal);
+    }
+
+    [Fact]
+    public void A_selection_on_the_header_row_is_refused_as_outside_the_table()
+    {
+        Variant variant = Variant.Build(activeRow: 1);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.SelectionOutsideTable, result.Refusal);
+    }
+
+    [Fact]
+    public void A_selection_below_the_last_body_row_is_refused_as_outside_the_table()
+    {
+        // bodyIndex resolves to 2 from the active cell, but the body has one row.
+        Variant variant = Variant.Build(activeRow: 3, listRowCount: 3);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.SelectionOutsideTable, result.Refusal);
+    }
+
+    [Fact]
+    public void A_table_body_that_cannot_be_read_is_refused_as_table_missing()
+    {
+        Variant variant = Variant.Build(bodyPresent: false);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.TableMissing, result.Refusal);
+    }
+
+    /// <summary>
+    /// A row whose Type cell cannot be parsed still reaches the planner, which
+    /// refuses it as a parent that cannot own children. This test pins what the
+    /// adapter actually does; the comment records the rough edge rather than
+    /// pretending the refusal names the real cause.
+    /// </summary>
+    /// <remarks>
+    /// An unreadable Type surfaces as <see cref="AddChildRefusalReason.ParentCannotOwnChildren"/>,
+    /// so the message the user sees talks about the row's type not owning children
+    /// rather than about the cell being unreadable. It refuses either way and nothing
+    /// is written, which is why this is recorded as a wording issue for the
+    /// translator rather than fixed here.
+    /// </remarks>
+    [Fact]
+    public void An_unreadable_type_cell_is_refused_by_the_planner_and_nothing_is_written()
+    {
+        Variant variant = Variant.Build(rowType: "Not A Type");
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildRefusalReason.ParentCannotOwnChildren, result.PlanRefusal);
+        Assert.Empty(variant.WrittenCells);
+        variant.Inserter.Verify(
+            i => i.Insert(It.IsAny<GanttEntityType>(), It.IsAny<Func<GanttRowId>>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_missing_row_inserter_is_refused_as_insert_refused()
+    {
+        Variant variant = Variant.Build(inserterPresent: false);
+
+        AddChildMutationOutcome result = variant.Add();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AddChildMutationRefusalReason.InsertRefused, result.Refusal);
+        Assert.Empty(variant.WrittenCells);
+    }
+
+    /// <summary>The parameterisable graph the refusal tests drive.</summary>
+    private sealed record Variant(
+        TestableMutator Mutator,
+        List<(int Row, int Column, object? Value)> WrittenCells,
+        Mock<IGanttRowInserter> Inserter)
+    {
+        /// <summary>Runs one add using the child id the tests expect.</summary>
+        /// <returns>The outcome.</returns>
+        public AddChildMutationOutcome Add() =>
+            Mutator.AddChild(GanttEntityType.AsBuiltActivity, () => GanttRowId.Parse(ChildId));
+
+        /// <summary>Builds the graph with one knob per refusal arm.</summary>
+        /// <param name="guardOutcome">The active-sheet guard outcome.</param>
+        /// <param name="targetOutcome">The target-sheet guard outcome.</param>
+        /// <param name="applicationPresent">Whether an application object was supplied.</param>
+        /// <param name="tablePresent">Whether the sheet reports the data table.</param>
+        /// <param name="completeColumns">Whether every schema column is present.</param>
+        /// <param name="bodyPresent">Whether the table reports a body.</param>
+        /// <param name="inserterPresent">Whether a row inserter was supplied.</param>
+        /// <param name="activeRow">The active cell's worksheet row.</param>
+        /// <param name="listRowCount">The table's list-row count.</param>
+        /// <param name="rowType">The body row's Type text.</param>
+        /// <returns>The variant.</returns>
+        public static Variant Build(
+            ProtectionGuardOutcome guardOutcome = ProtectionGuardOutcome.NotProtected,
+            ProtectionGuardOutcome targetOutcome = ProtectionGuardOutcome.NotProtected,
+            bool applicationPresent = true,
+            bool tablePresent = true,
+            bool completeColumns = true,
+            bool bodyPresent = true,
+            bool inserterPresent = true,
+            int activeRow = 2,
+            int listRowCount = 1,
+            string rowType = "As-Built Activity")
+        {
+            List<(int Row, int Column, object? Value)> written = [];
+            Mock<Excel.Application> application = new();
+            Mock<Excel.Workbook> workbook = new();
+            Mock<Excel.Sheets> sheets = new();
+            Mock<Excel.Worksheet> worksheet = new();
+            Mock<Excel.ListObjects> listObjects = new();
+            Mock<Excel.ListObject> table = new();
+            Mock<Excel.ListColumns> listColumns = new();
+            Mock<Excel.ListRows> listRows = new();
+            Mock<Excel.Range> tableRange = new();
+            Mock<Excel.Range> dataBodyRange = new();
+            Mock<Excel.Range> bodyRows = new();
+            Mock<Excel.Range> activeCell = new();
+            int columnCount = GanttTableSchema.Default.Columns.Count;
+            Mock<Excel.ListColumn>[] columns = new Mock<Excel.ListColumn>[columnCount];
+            for (int index = 0; index < columnCount; index++)
+            {
+                int captured = index;
+                columns[index] = new Mock<Excel.ListColumn>();
+                _ = columns[index]
+                    .Setup(c => c.Name)
+                    .Returns(completeColumns
+                        ? GanttTableSchema.Default.Columns[captured].Name
+                        : "NotAColumn");
+            }
+
+            _ = application.Setup(a => a.ActiveWorkbook).Returns(workbook.Object);
+            _ = workbook.Setup(w => w.Sheets).Returns(sheets.Object);
+            _ = worksheet.Setup(w => w.ListObjects).Returns(listObjects.Object);
+            _ = table.Setup(t => t.ListColumns).Returns(listColumns.Object);
+            _ = table.Setup(t => t.ListRows).Returns(listRows.Object);
+            _ = table.Setup(t => t.Range).Returns(tableRange.Object);
+            _ = table.Setup(t => t.DataBodyRange).Returns(dataBodyRange.Object);
+            _ = listRows.Setup(r => r.Count).Returns(listRowCount);
+            _ = tableRange.Setup(r => r.Row).Returns(1);
+            _ = activeCell.Setup(r => r.Row).Returns(activeRow);
+            _ = listColumns.Setup(c => c.Count).Returns(columnCount);
+
+#pragma warning disable CA1814 // COM interop requires a rectangular SAFEARRAY.
+            object?[,] matrix = new object?[1, columnCount];
+#pragma warning restore CA1814
+            for (int index = 0; index < columnCount; index++)
+            {
+                matrix[0, index] = string.Empty;
+            }
+
+            int Column(string name) => GanttTableSchema.Default.Columns
+                .Select((column, index) => (column, index))
+                .First(pair => pair.column.Name == name).index;
+
+            matrix[0, Column("Id")] = ParentId;
+            matrix[0, Column("Type")] = rowType;
+            matrix[0, Column("SiblingOrder")] = 0;
+
+            _ = dataBodyRange.Setup(r => r.Value2).Returns(matrix);
+            _ = bodyRows.Setup(r => r[It.IsAny<int>()]).Returns((Excel.Range)dataBodyRange.Object);
+            _ = dataBodyRange.Setup(r => r.Rows).Returns(bodyRows.Object);
+
+            Mock<IWorksheetProtectionGuard> guard = new();
+            _ = guard.Setup(g => g.Query()).Returns(guardOutcome);
+            _ = guard.Setup(g => g.QueryTarget(It.IsAny<Excel.Worksheet>())).Returns(targetOutcome);
+
+            Mock<IGanttRowInserter> inserter = new();
+            _ = inserter
+                .Setup(i => i.Insert(It.IsAny<GanttEntityType>(), It.IsAny<Func<GanttRowId>>()))
+                .Returns(GanttRowInsertOutcome.Ok(2));
+
+            TestableMutator mutator = new(
+                applicationPresent ? application.Object : null,
+                guard.Object,
+                inserterPresent ? inserter.Object : null,
+                null,
+                (sheetsArg, index) => tablePresent ? worksheet.Object : new object(),
+                (listObjectsArg, index) => table.Object,
+                (columnsArg, index) => columns[index - 1].Object,
+                tableArg => listRows.Object,
+                rowsArg => listRowCount,
+                tableArg => tableRange.Object,
+                tableArg => bodyPresent ? dataBodyRange.Object : null,
+                rangeArg => bodyRows.Object,
+                (rangeArg, index) => dataBodyRange.Object,
+                (rangeArg, index) => dataBodyRange.Object,
+                rangeArg => matrix,
+                (range, payload) => written.Add((0, 0, payload)),
+                applicationArg => activeCell.Object,
+                tableArg => true,
+                rangeArg => rangeArg == tableRange.Object ? 1 : activeRow);
+
+            return new Variant(mutator, written, inserter);
+        }
+    }
 }
