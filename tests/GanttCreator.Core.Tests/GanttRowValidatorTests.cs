@@ -1299,6 +1299,41 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
+    public void A_delineator_style_cannot_widen_the_types_own_label_set()
+    {
+        // A1: a delineator's corner set is the floor for its description label.
+        // A custom style may narrow within those corners but must never offer a
+        // position the corner-label builder cannot render, so the validator
+        // INTERSECTS the style's set with the type's. A style that offers only a
+        // position the type excludes must therefore still be refused; an
+        // Intersect-to-Union mutation would accept it.
+        IReadOnlySet<GanttLabelPosition> typeSet = EntityTypeCatalog
+            .GetDefinition(GanttEntityType.Delineator)!
+            .AllowedLabelPositions;
+        GanttLabelPosition disallowed = Enum
+            .GetValues<GanttLabelPosition>()
+            .First(position => !typeSet.Contains(position));
+
+        var style = new GanttStyleDefinition(
+            "DelineatorStyle",
+            new HashSet<GanttLabelPosition> { disallowed },
+            EntityColourCapability.Stroke);
+        var registry = new GanttStyleRegistry([style]);
+        GanttRowDto row = ValidSpan(
+            typeText: "Delineator",
+            styleKey: "DelineatorStyle",
+            labelPositionText: disallowed.ToString());
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row], registry);
+
+        GanttValidationIssue issue = Assert.Single(
+            outcome.Issues,
+            i => i.Code == GanttValidationCodes.LabelNotAllowedForType);
+        Assert.Equal("LabelPosition", issue.Field);
+        Assert.Equal($"LabelPosition '{disallowed}' is not allowed for this Type.", issue.Message);
+    }
+
+    [Fact]
     public void A_retired_label_position_is_reported_and_never_coerced()
     {
         // ADR-0029 D6 (owner ruling 2026-09-30): a stored "Above"/"Below" is
