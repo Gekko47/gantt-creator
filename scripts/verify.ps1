@@ -28,7 +28,13 @@
 [CmdletBinding()]
 param(
     [string]$Solution = 'GanttCreator.slnx',
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    # The diff base the mutation step judges changed Core code against. The
+    # default is the integration branch, which is right for CI. On a long-lived
+    # branch the diff against that base exceeds the gate's 30-file scope guard,
+    # so the gate refuses to run at all and step 15 can never be exercised; this
+    # lets a branch-final run use a nearer base without weakening the default.
+    [string]$MutationSince = 'origin/main'
 )
 
 # Coverage thresholds from docs/04-TEST-STRATEGY.md.
@@ -245,7 +251,10 @@ Invoke-Step 'mutation gate (changed Core code)' {
     $result = $null
     $halted = $false
     try {
-        $result = & $scriptRoot\mutation-gate.ps1
+        # The base is passed explicitly so CI keeps judging against the
+        # integration branch while a long-lived branch can name a nearer one.
+        Write-Host "  -> mutation gate: diff base $MutationSince"
+        $result = & $scriptRoot\mutation-gate.ps1 -Since $MutationSince
     } catch {
         $halted = $true
         Write-Host "  -> mutation gate (changed Core code): FAIL (mutation-gate.ps1 halted: $($_.Exception.Message))" -ForegroundColor Red

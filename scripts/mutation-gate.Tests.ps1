@@ -568,5 +568,13 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $resolveIndex | Should -BeGreaterThan 0
             $resolveIndex | Should -BeLessThan $runIndex
         }
+
+        It 'lets verify.ps1 forward a nearer diff base, defaulting to the integration branch' {
+            # On a long-lived branch the origin/main diff exceeds the scope guard,
+            # so step 15 can never run unless the base is overridable. The default
+            # must stay origin/main so CI keeps judging the integration branch.
+            $script:verifyText | Should -Match "\`$MutationSince = 'origin/main'"
+            $script:verifyText | Should -Match 'mutation-gate\.ps1 -Since \$MutationSince'
+        }
     }
 }
