@@ -955,6 +955,33 @@ public sealed class LabelPlannerTests
         Assert.Equal(LabelPlanner.SuppressedNoSpaceCode, warning.Code);
     }
 
+    [Theory]
+    // Same lane, different slots: a stack sibling, exempt from blocking (ADR-0033 D2).
+    [InlineData(2, 0, 2, 1, true)]
+    // Same lane, same slot: a genuine collision that still blocks.
+    [InlineData(2, 0, 2, 0, false)]
+    // Different lane: blocks even when the slot differs.
+    [InlineData(2, 0, 3, 1, false)]
+    // Unknown identities on either side always block: the conservative direction.
+    [InlineData(2, 0, null, 1, false)]
+    [InlineData(null, 0, 2, 1, false)]
+    [InlineData(2, null, 2, 1, false)]
+    [InlineData(2, 0, 2, null, false)]
+    public void A_stack_sibling_is_only_the_same_lane_in_a_different_slot(
+        int? occupantLane,
+        int? occupantStack,
+        int? laneOrder,
+        int? stackIndex,
+        bool expected)
+    {
+        // The exemption is deliberately narrow: BOTH identities must be known and the
+        // lanes must match while the slots differ. A same-slot occupant, a cross-lane
+        // neighbour, and any occupant whose identity is unknown all still block.
+        LabelOccupant occupant = new(new RectD(100, 20, 10, 10), occupantLane, occupantStack);
+
+        Assert.Equal(expected, occupant.IsStackSiblingOf(laneOrder, stackIndex));
+    }
+
     private static LabelRequest Request(
         RectD shape,
         string text,
