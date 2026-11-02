@@ -907,6 +907,54 @@ public sealed class LabelPlannerTests
         Assert.Equal("#FFFFFF", result.Primitive!.Style.TextColour!.ToString());
     }
 
+    [Fact]
+    public void Every_planner_refusal_has_a_positive_case()
+    {
+        // Each case is a dependency the planner must refuse rather than tolerate: a
+        // half-built request would otherwise produce a label measured from nothing.
+        LabelRequest valid = Request(Shape(100, 20, 50), "abcde");
+
+        Assert.Equal(
+            LabelRefusal.NullRequest,
+            LabelPlanner.TryPlan(null, _labelMetrics).Refusal);
+        Assert.Equal(
+            LabelRefusal.NullDependency,
+            LabelPlanner.TryPlan(valid with { Event = null! }, _labelMetrics).Refusal);
+        Assert.Equal(
+            LabelRefusal.NullDependency,
+            LabelPlanner.TryPlan(valid with { TextStyle = null! }, _labelMetrics).Refusal);
+        Assert.Equal(
+            LabelRefusal.MissingMetrics,
+            LabelPlanner.TryPlan(valid with { Metrics = null! }, _labelMetrics).Refusal);
+        Assert.Equal(
+            LabelRefusal.NullMetrics,
+            LabelPlanner.TryPlan(valid, null).Refusal);
+        Assert.Equal(
+            LabelRefusal.InvalidPosition,
+            LabelPlanner.TryPlan(valid with { ResolvedPosition = (GanttLabelPosition)999 }, _labelMetrics).Refusal);
+        Assert.Equal(
+            LabelRefusal.BlankRole,
+            LabelPlanner.TryPlan(valid with { Role = "  " }, _labelMetrics).Refusal);
+    }
+
+    [Fact]
+    public void A_corner_position_is_declined_by_the_planner_so_the_delineator_places_it()
+    {
+        // A delineator date label names a §24 corner (TopLeft … BottomRight). Those
+        // are not members of the §22 cascade, so the planner declines every candidate
+        // and suppresses with the no-gap code, and DateLabelBuilder places the corner
+        // label itself. This pins the boundary: the planner must never quietly map a
+        // corner onto an external side.
+        LabelPlanCreationOutcome outcome = PlanOutcome(
+            Request(Shape(100, 20, 200), "abcde", GanttLabelPosition.TopLeft));
+
+        Assert.Null(outcome.Refusal);
+        Assert.Null(outcome.Result!.Primitive);
+        Assert.False(outcome.Result.WasTruncated);
+        SceneWarning warning = Assert.Single(outcome.Result.Warnings);
+        Assert.Equal(LabelPlanner.SuppressedNoSpaceCode, warning.Code);
+    }
+
     private static LabelRequest Request(
         RectD shape,
         string text,

@@ -371,6 +371,41 @@ public sealed class CriticalOverlayBuilderTests
         Assert.Equal(first.Bounds, third.Bounds);
     }
 
+    [Fact]
+    public void Refuses_a_request_with_a_null_dependency()
+    {
+        // A built request always carries its event and style; a null here is a caller
+        // bug, and the refusal names it rather than throwing later in the geometry.
+        CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
+            new CriticalOverlayRequest(null!, _style, 8, SlotCentreY),
+            _scale);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(CriticalOverlayRefusal.NullDependency, outcome.Refusal);
+    }
+
+    [Fact]
+    public void An_interval_wholly_outside_the_plotted_range_warns_instead_of_drawing()
+    {
+        // The whole interval sits after the plot finishes, so there is no bar to draw.
+        // It is reported with the outside-plot warning rather than throwing from the
+        // date mapping or emitting a zero-width rectangle nobody explains.
+        CriticalOverlayCreationOutcome outcome = CriticalOverlayBuilder.TryBuild(
+            new CriticalOverlayRequest(
+                ChildOn(new DateOnly(2024, 3, 1), new DateOnly(2024, 3, 5)),
+                _style,
+                8,
+                SlotCentreY
+            ),
+            _scale
+        );
+
+        Assert.True(outcome.Succeeded);
+        Assert.Null(outcome.Result!.Primitive);
+        SceneWarning warning = Assert.Single(outcome.Result.Warnings);
+        Assert.Equal(CriticalOverlayBuilder.OutsidePlotCode, warning.Code);
+    }
+
     private static CriticalOverlayCreationOutcome Build(
         int startDay,
         int finishDay,

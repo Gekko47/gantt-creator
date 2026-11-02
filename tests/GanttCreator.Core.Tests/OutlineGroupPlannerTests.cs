@@ -270,4 +270,24 @@ public sealed class OutlineGroupPlannerTests
     {
         Assert.Throws<ArgumentNullException>(() => OutlineGroupPlanner.Plan(null!));
     }
+
+    /// <summary>
+    /// A group compares by value, child sequence included. The planner's
+    /// order-independence claim is only meaningful if two plans built from the same
+    /// hierarchy compare equal, which the synthesised record equality would not do
+    /// because it compares <see cref="OutlineGroup.ChildRowNumbers"/> by reference.
+    /// </summary>
+    [Fact]
+    public void A_group_compares_by_value_including_its_child_sequence()
+    {
+        OutlineGroup first = new(2, [3, 4]);
+        OutlineGroup sameValue = new(2, [3, 4]);
+        OutlineGroup differentParent = new(5, [3, 4]);
+        OutlineGroup differentChildren = new(2, [4, 3]);
+
+        Assert.Equal(first, sameValue);
+        Assert.Equal(first.GetHashCode(), sameValue.GetHashCode());
+        Assert.NotEqual(first, differentParent);
+        Assert.NotEqual(first, differentChildren);
+    }
 }

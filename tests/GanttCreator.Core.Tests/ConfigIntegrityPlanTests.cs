@@ -110,4 +110,37 @@ public sealed class ConfigIntegrityPlanTests
     {
         Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Classify(null!));
     }
+
+    [Fact]
+    public void Empty_is_a_plan_with_no_findings_in_any_classification()
+    {
+        // The plan a clean workbook produces. It must be empty per classification
+        // rather than merely empty overall, or "nothing to repair" and "nothing I
+        // could classify" would look the same to a caller.
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Empty();
+
+        Assert.Empty(plan.Findings);
+        Assert.Empty(plan.AutoRepairFindings);
+        Assert.Empty(plan.ConfirmRequiredFindings);
+        Assert.Empty(plan.RefusedFindings);
+        Assert.Empty(plan.QuarantinedFindings);
+    }
+
+    [Theory]
+    [InlineData(GanttCatalogues.TypesTableName, ConfigRepairClassification.AutoRepair)]
+    [InlineData(GanttCatalogues.MetricsTableName, ConfigRepairClassification.AutoRepair)]
+    [InlineData(GanttCatalogues.StylesTableName, ConfigRepairClassification.ConfirmRequired)]
+    public void Corrupt_catalogue_damage_is_classified_by_the_table_it_names(
+        string tableName,
+        ConfigRepairClassification expected)
+    {
+        // The code-owned catalogues can be rebuilt from Core, so they auto-repair;
+        // the styles table carries user rows, so rebuilding it needs confirmation.
+        var finding = new ConfigIntegrityFinding(
+            ConfigIntegrityFindingKind.CatalogueTableCorrupt,
+            "corrupt",
+            tableName);
+
+        Assert.Equal(expected, ConfigIntegrityPlan.Classify(finding));
+    }
 }

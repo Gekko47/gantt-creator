@@ -818,4 +818,69 @@ public sealed class DelineatorBuilderTests
             DelineatorGroupRefusal.NullRequest,
             DelineatorLayout.TryBuildGroup(new DelineatorGroupRequest([], 2.0), Scale()).Refusal);
     }
+
+    [Fact]
+    public void A_group_refuses_members_that_disagree_on_chart_bounds()
+    {
+        // A member whose chart bounds differ would be drawn from the first member's
+        // geometry and silently land in the wrong place.
+        DelineatorRequest first = Req(Event());
+
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentBounds,
+            DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest(
+                    [first, first with { ChartBounds = new RectD(0, 0, 500, 400) }], 2.0),
+                Scale()).Refusal);
+    }
+
+    [Fact]
+    public void A_group_refuses_members_that_disagree_on_the_line_extents()
+    {
+        // LineTopPt and LineBottomPt are the §24 override for a line that starts or
+        // ends short of the plot edge. Two members of one group must agree on them,
+        // or one line drawn from the first member misrepresents the others.
+        DelineatorRequest first = Req(Event());
+
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentBounds,
+            DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest([first, first with { LineBottomPt = 5.0 }], 2.0),
+                Scale()).Refusal);
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentBounds,
+            DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest([first, first with { LineTopPt = 5.0 }], 2.0),
+                Scale()).Refusal);
+    }
+
+    [Fact]
+    public void A_group_refuses_members_that_disagree_on_the_label_gap()
+    {
+        // The gap fixes where the stacked labels sit relative to the line, so two
+        // members with different gaps would produce one stack for two rows.
+        DelineatorRequest first = Req(Event());
+
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentLabelSeam,
+            DelineatorLayout.TryBuildGroup(
+                new DelineatorGroupRequest([first, first with { LabelGapPt = first.LabelGapPt + 1 }], 2.0),
+                Scale()).Refusal);
+    }
+
+    [Fact]
+    public void A_group_refuses_a_negative_or_non_finite_stack_gap()
+    {
+        // The gap is a measurement, so it is validated like every other one: a
+        // negative gap would stack labels upwards out of the chart, and a non-finite
+        // one would produce NaN geometry nothing downstream reports.
+        DelineatorRequest single = Req(Event());
+
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentLabelSeam,
+            DelineatorLayout.TryBuildGroup(new DelineatorGroupRequest([single], -1.0), Scale()).Refusal);
+        Assert.Equal(
+            DelineatorGroupRefusal.InconsistentLabelSeam,
+            DelineatorLayout.TryBuildGroup(new DelineatorGroupRequest([single], double.NaN), Scale()).Refusal);
+    }
 }
