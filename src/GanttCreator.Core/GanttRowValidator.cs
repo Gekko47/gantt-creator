@@ -647,10 +647,10 @@ public static class GanttRowValidator
         // StyleKeyUnknown and receives no colour-capability finding.
         string? fill = fillBlocked
             ? null
-            : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, styleRegistry is not null, Add);
+            : ValidateColour(row.FillColourText, isFill: true, type, definition, styleDefinition, Add);
         string? stroke = strokeBlocked
             ? null
-            : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, styleRegistry is not null, Add);
+            : ValidateColour(row.StrokeColourText, isFill: false, type, definition, styleDefinition, Add);
 
         // SortOrder: blank or invariant non-negative int.
         int? sortOrder = null;
@@ -709,7 +709,6 @@ public static class GanttRowValidator
         GanttEntityType? type,
         EntityTypeDefinition? definition,
         GanttStyleDefinition? styleDefinition,
-        bool styleRegistryProvided,
         Action<string, string, GanttValidationSeverity, string> add)
     {
         if (text is null || type is null || definition is null)
@@ -729,14 +728,13 @@ public static class GanttRowValidator
             return null;
         }
 
-        // Preserve the pre-R2.9 compatibility path when no registry was
-        // supplied. With a registry, a style-key type resolves strictly from
-        // its selected named style.
-        if (definition.RequiresStyleKey && !styleRegistryProvided)
-        {
-            return text.ToUpperInvariant();
-        }
-
+        // No "no registry" case is owed here: `styleDefinition` is assigned in
+        // exactly one place -- the registry lookup in the caller -- so it can
+        // only be non-null when a registry was supplied, and a style-key type
+        // with no registry already returned at the guard above. The pre-R2.9
+        // compatibility behaviour is therefore that guard: the colour is
+        // dropped rather than validated. Mutation testing marked the old
+        // compatibility return `NoCoverage` for the same reason.
         EntityColourCapability capability = definition.RequiresStyleKey
             ? styleDefinition?.ColourCapability ?? EntityColourCapability.None
             : definition.ColourCapability;

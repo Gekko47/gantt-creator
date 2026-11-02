@@ -1334,18 +1334,19 @@ public class GanttRowValidatorTests
     }
 
     [Fact]
-    public void A_style_key_type_keeps_a_supplied_colour_when_no_registry_is_given()
+    public void A_style_key_type_without_a_registry_drops_the_colour_instead_of_refusing_it()
     {
-        // Pre-R2.9 compatibility path: with no registry the validator cannot
-        // resolve the named style, so it preserves the sheet's colour instead of
-        // refusing it. Without that early return the capability check would run
-        // with a null style definition, read the capability as None, and turn a
-        // perfectly good colour into a ColourNotAllowedForType error.
+        // Compatibility mode: with no registry the validator cannot resolve the
+        // named style, so it neither checks the colour against a capability nor
+        // refuses it — the event is simply left without one. Recorded explicitly
+        // because "no error" and "colour kept" are different behaviours, and only
+        // the first is true here.
         GanttValidationOutcome outcome = GanttRowValidator.Validate(
             [ValidSpan(typeText: "Custom Activity", styleKey: "MyStyle", fillColourText: "#12ab9F")]);
 
         Assert.True(outcome.IsValid);
-        _ = Assert.Single(outcome.Events);
+        GanttEvent @event = Assert.Single(outcome.Events);
+        Assert.Null(@event.FillColour);
         Assert.DoesNotContain(outcome.Issues, i => i.Code == GanttValidationCodes.ColourNotAllowedForType);
     }
 
