@@ -337,15 +337,10 @@ public static class GanttRowValidator
                 // engine-generated and hidden, and R4.7B derives the render lane in
                 // Core. `LaneOrdering.LaneKey` gives a null lane a row-scoped key.
             }
-            else if (isSplitterOrSpacer || isDelineator)
-            {
-                Add(
-                    "LaneId",
-                    GanttValidationCodes.NotUsedByType,
-                    GanttValidationSeverity.Warning,
-                    "LaneId is not used by this Type and is ignored for geometry."
-                );
-            }
+            // No "not used by this Type" arm here. ClassifyCellState already
+            // emits it for a non-empty cell on a lane-irrelevant type and
+            // reports the field as blocked, so this chain is only entered for a
+            // relevant type or an empty cell.
             else if (!GanttRowId.TryParse(row.LaneId, out GanttRowId? laneParsed) || laneParsed is null)
             {
                 Add(
@@ -371,15 +366,8 @@ public static class GanttRowValidator
                 // stack from row/parent-child position, so a blank cell is correct
                 // rather than missing.
             }
-            else if (isSplitterOrSpacer || isDelineator)
-            {
-                Add(
-                    "StackIndex",
-                    GanttValidationCodes.NotUsedByType,
-                    GanttValidationSeverity.Warning,
-                    "StackIndex is not used by this Type and is ignored for geometry."
-                );
-            }
+            // Same reason as LaneId above: ClassifyCellState owns the
+            // "not used by this Type" report and the blocked flag.
             else if (row.StackIndex.Value < 0)
             {
                 Add(
@@ -402,29 +390,11 @@ public static class GanttRowValidator
         {
             switch (definition.DateMode)
             {
+                // EntityDateMode.None reads neither date, so ClassifyCellState
+                // has already reported any supplied Start or Finish as
+                // NotUsedByType and blocked it; the clearing below handles the
+                // geometry side. Nothing else is owed here.
                 case EntityDateMode.None:
-                    if (!startBlocked && start is not null)
-                    {
-                        Add(
-                            "Start",
-                            GanttValidationCodes.NotUsedByType,
-                            GanttValidationSeverity.Warning,
-                            "Start is not used by this Type and is ignored for geometry."
-                        );
-                        start = null;
-                    }
-
-                    if (!finishBlocked && finish is not null)
-                    {
-                        Add(
-                            "Finish",
-                            GanttValidationCodes.NotUsedByType,
-                            GanttValidationSeverity.Warning,
-                            "Finish is not used by this Type and is ignored for geometry."
-                        );
-                        finish = null;
-                    }
-
                     break;
                 case EntityDateMode.StartFinish:
                     if (!startBlocked && start is null)
@@ -461,17 +431,6 @@ public static class GanttRowValidator
                             GanttValidationSeverity.Error,
                             "Start is the single date for this Type and is required."
                         );
-                    }
-
-                    if (!finishBlocked && finish is not null)
-                    {
-                        Add(
-                            "Finish",
-                            GanttValidationCodes.NotUsedByType,
-                            GanttValidationSeverity.Warning,
-                            "Finish is not used by this Type and is ignored for geometry."
-                        );
-                        finish = null;
                     }
 
                     break;
@@ -535,19 +494,9 @@ public static class GanttRowValidator
                 _ = GanttRowId.TryParse(parentText, out parentId);
             }
         }
-        else if (!parentBlocked && parentText is not null)
-        {
-            Add(
-                "ParentId",
-                GanttValidationCodes.NotUsedByType,
-                GanttValidationSeverity.Warning,
-                "ParentId is not used by this Type and is ignored for geometry."
-            );
-            if (GanttRowId.TryParse(parentText, out GanttRowId? parentParsed) && parentParsed is not null)
-            {
-                parentId = parentParsed;
-            }
-        }
+        // No "not used by this Type" arm here either: a supplied ParentId on a
+        // type the hierarchy matrix excludes is non-empty and irrelevant, so
+        // ClassifyCellState has already reported it and blocked it.
 
         // StyleKey: a type whose catalogue row requires one (Custom Activity,
         // Custom Milestone) demands it; a supplied key must resolve when the
