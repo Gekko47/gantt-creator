@@ -143,7 +143,7 @@ public class ExcelRowWarningHighlighter(
 
         // Batch write: set Interior.Color on the entire row range in one COM call
         // instead of one call per cell (18+ → 1).
-        Excel.Range rowRange = setup.Body.Rows[rowNumber];
+        Excel.Range rowRange = GetRowRange(setup.Body, rowNumber);
         rowRange.Interior.Color = color;
 
         return GanttValidationReportOutcome.Ok(setup.Body.Columns.Count);
@@ -233,7 +233,7 @@ public class ExcelRowWarningHighlighter(
             if (setup.Body is not null && rowNumber >= 1 && rowNumber <= setup.Body.Rows.Count)
             {
                 // Batch clear: set Interior.Color on the entire row range in one COM call.
-                Excel.Range rowRange = setup.Body.Rows[rowNumber];
+                Excel.Range rowRange = GetRowRange(setup.Body, rowNumber);
                 rowRange.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
                 cleared = setup.Body.Columns.Count;
             }
@@ -321,7 +321,7 @@ public class ExcelRowWarningHighlighter(
                     // Whole-row clear: batch write on the row range.
                     if (row >= 1 && row <= setup.Body.Rows.Count)
                     {
-                        Excel.Range rowRange = setup.Body.Rows[row];
+                        Excel.Range rowRange = GetRowRange(setup.Body, row);
                         rowRange.Interior.Color = (int)XlColorIndex.xlColorIndexNone;
                         _ = _previousHighlights.Remove((row, null));
                         written += setup.Body.Columns.Count;
@@ -354,7 +354,7 @@ public class ExcelRowWarningHighlighter(
                 if (target.Column is null)
                 {
                     // Whole-row fill: batch write on the row range.
-                    Excel.Range rowRange = setup.Body.Rows[target.Row];
+                    Excel.Range rowRange = GetRowRange(setup.Body, target.Row);
                     rowRange.Interior.Color = color;
                     _ = _previousHighlights.Add((target.Row, null));
                     written += setup.Body.Columns.Count;
@@ -452,13 +452,18 @@ public class ExcelRowWarningHighlighter(
                 return;
             }
 
+            // The persisted form is row|column for a cell and row| for a whole
+            // row, so the column is the second field. Reading a third field (as
+            // this did) silently reloaded every cell highlight as a whole-row
+            // one, and the first reconcile after a reopen then cleared the whole
+            // row instead of the single cell.
             _previousHighlights.Clear();
             foreach (string entry in value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 string[] parts = entry.Split('|');
                 if (parts.Length >= 2 && int.TryParse(parts[0], out int row))
                 {
-                    int? column = parts.Length >= 3 && int.TryParse(parts[2], out int col) ? col : null;
+                    int? column = int.TryParse(parts[1], out int col) ? col : null;
                     _ = _previousHighlights.Add((row, column));
                 }
             }
@@ -550,7 +555,21 @@ public class ExcelRowWarningHighlighter(
                 ? GanttValidationReportRefusalReason.NoActiveWorkbook
                 : GanttValidationReportRefusalReason.TargetProtected);
 
-    private static bool TryFindTable(
+    /// <summary>
+    /// Finds the data table by walking the sheets and each sheet's tables by
+    /// one-based index through <see cref="GetSheetAt"/> and <see cref="GetTableAt(ListObjects, int)"/>.
+    /// </summary>
+    /// <remarks>
+    /// Index traversal rather than <c>foreach</c> is deliberate: the class documents
+    /// these two seams as the only way it touches the Excel collections, and a COM
+    /// collection enumerator cannot be stubbed through an expression tree. The index
+    /// walk also avoids the <c>GetEnumerator</c> cast the old loop needed.
+    /// </remarks>
+    /// <param name="sheets">The workbook's sheets collection.</param>
+    /// <param name="worksheet">The sheet holding the data table, when found.</param>
+    /// <param name="table">The data table, when found.</param>
+    /// <returns><see langword="true"/> when the data table was found.</returns>
+    private bool TryFindTable(
         Sheets sheets,
         out Worksheet? worksheet,
         out ListObject? table)
@@ -560,16 +579,20 @@ public class ExcelRowWarningHighlighter(
 
         try
         {
-            foreach (object? sheet in sheets)
+            int sheetCount = sheets.Count;
+            for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
             {
-                if (sheet is not Worksheet ws)
+                if (GetSheetAt(sheets, sheetIndex) is not Worksheet ws)
                 {
                     continue;
                 }
 
-                foreach (ListObject listObject in ws.ListObjects)
+                ListObjects listObjects = ws.ListObjects;
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
-                    if (string.Equals(listObject.Name, "tblGanttData",
+                    ListObject listObject = GetTableAt(listObjects, tableIndex);
+                    if (string.Equals(listObject.Name, GanttTableSchema.TableName,
                             StringComparison.OrdinalIgnoreCase))
                     {
                         worksheet = ws;
@@ -607,6 +630,9 @@ public class ExcelRowWarningHighlighter(
 
     /// <summary>Returns the list column at the one-based index. Test seam over the COM parameterised <c>ListColumns.Item</c> property.</summary>
     internal virtual ListColumn GetTableAt(ListColumns columns, int index) => columns[index];
+
+    /// <summary>Returns the one-based body row's range. Test seam over the COM parameterised <c>Range.Rows[row]</c> property.</summary>
+    internal virtual Excel.Range GetRowRange(Excel.Range body, int rowNumber) => body.Rows[rowNumber];
 
     /// <summary>Returns the cell at the one-based body row and one-based table-column index. Test seam over the COM <c>Range.Cells[row, column]</c> indexer.</summary>
     internal virtual Excel.Range? GetCellRange(Excel.Range? body, int rowNumber, int columnIndex)
