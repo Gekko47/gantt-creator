@@ -658,6 +658,46 @@ public class GanttRowValidatorTests
         Assert.Contains(outcome.Issues, i => i.Field == "Finish" && i.Code == GanttValidationCodes.NotUsedByType);
     }
 
+    [Fact]
+    public void A_zero_sort_order_is_valid_and_kept()
+    {
+        // The rule is "blank or a non-negative integer", so zero is the first
+        // legitimate position. A `<= 0` mutant would reject a valid row.
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([ValidSpan(sortOrder: "0")]);
+
+        Assert.True(outcome.IsValid);
+        Assert.Equal(0, Assert.Single(outcome.Events).SortOrder);
+    }
+
+    [Fact]
+    public void A_zero_sibling_order_is_valid()
+    {
+        // Same rule for the engine-maintained SiblingOrder: zero means "first
+        // sibling", which the mutation gate must not turn into an error.
+        GanttRowDto row = ValidSpan() with { SiblingOrderCell = GanttCells.Value<int?>(0) };
+
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([row]);
+
+        Assert.True(outcome.IsValid);
+        _ = Assert.Single(outcome.Events);
+    }
+
+    [Theory]
+    [InlineData("#9aA000")]
+    [InlineData("#000009")]
+    [InlineData("#00000a")]
+    [InlineData("#00000A")]
+    public void A_hex_colour_accepts_the_digit_and_letter_boundaries(string supplied)
+    {
+        // IsHexColour accepts 0-9, a-f and A-F, and it reads the raw cell text
+        // before the normaliser upper-cases it, so all three ranges are live at
+        // their boundary characters.
+        GanttValidationOutcome outcome = GanttRowValidator.Validate([ValidSpan(fillColourText: supplied)]);
+
+        Assert.True(outcome.IsValid);
+        _ = Assert.Single(outcome.Events);
+    }
+
     /// <summary>
     /// A blank <c>LaneId</c> is the normal state of a user-authored row and must not
     /// be a blocking error.
