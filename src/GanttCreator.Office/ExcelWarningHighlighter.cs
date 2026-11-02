@@ -146,7 +146,21 @@ public class ExcelWarningHighlighter(
 #pragma warning restore CA1031
     }
 
-    private static bool TryFindTable(
+    /// <summary>
+    /// Finds the data table by walking the sheets and each sheet's tables by
+    /// one-based index through <see cref="GetSheetAt"/> and
+    /// <see cref="GetTableAt(ListObjects, int)"/>.
+    /// </summary>
+    /// <remarks>
+    /// Index traversal keeps every Excel collection access behind a seam the
+    /// contract tests can substitute; a COM collection enumerator cannot be stubbed
+    /// through an expression tree.
+    /// </remarks>
+    /// <param name="sheets">The workbook's sheets collection.</param>
+    /// <param name="worksheet">The sheet holding the data table, when found.</param>
+    /// <param name="table">The data table, when found.</param>
+    /// <returns><see langword="true"/> when the data table was found.</returns>
+    private bool TryFindTable(
         Sheets sheets,
         out Worksheet? worksheet,
         out ListObject? table)
@@ -156,16 +170,20 @@ public class ExcelWarningHighlighter(
 
         try
         {
-            foreach (object? sheet in sheets)
+            int sheetCount = sheets.Count;
+            for (int sheetIndex = 1; sheetIndex <= sheetCount; sheetIndex++)
             {
-                if (sheet is not Worksheet ws)
+                if (GetSheetAt(sheets, sheetIndex) is not Worksheet ws)
                 {
                     continue;
                 }
 
-                foreach (ListObject listObject in ws.ListObjects)
+                ListObjects listObjects = ws.ListObjects;
+                int tableCount = listObjects.Count;
+                for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
-                    if (string.Equals(listObject.Name, "tblGanttData",
+                    ListObject listObject = GetTableAt(listObjects, tableIndex);
+                    if (string.Equals(listObject.Name, GanttTableSchema.TableName,
                             StringComparison.OrdinalIgnoreCase))
                     {
                         worksheet = ws;
@@ -184,7 +202,7 @@ public class ExcelWarningHighlighter(
         return false;
     }
 
-    private static bool TryBuildColumnMap(
+    private bool TryBuildColumnMap(
         ListObject table,
         out int[]? columnMap)
     {
@@ -237,10 +255,17 @@ public class ExcelWarningHighlighter(
         return -1;
     }
 
-    private static ListColumn GetTableAt(ListColumns columns, int index) =>
-        columns[index];
+    /// <summary>Returns the sheet at the one-based index. Test seam over the COM parameterised <c>Sheets.Item</c> property.</summary>
+    internal virtual object GetSheetAt(Sheets sheets, int index) => sheets[index];
 
-    private static Excel.Range? GetCellRange(Excel.Range? body, int rowNumber, int columnIndex)
+    /// <summary>Returns the list object at the one-based index. Test seam over the COM parameterised <c>ListObjects.Item</c> property.</summary>
+    internal virtual ListObject GetTableAt(ListObjects listObjects, int index) => listObjects[index];
+
+    /// <summary>Returns the list column at the one-based index. Test seam over the COM parameterised <c>ListColumns.Item</c> property.</summary>
+    internal virtual ListColumn GetTableAt(ListColumns columns, int index) => columns[index];
+
+    /// <summary>Returns the cell at the one-based body row and one-based table-column index. Test seam over the COM <c>Range.Cells[row, column]</c> indexer.</summary>
+    internal virtual Excel.Range? GetCellRange(Excel.Range? body, int rowNumber, int columnIndex)
     {
         if (body is null)
         {

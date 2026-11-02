@@ -235,13 +235,13 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
         }
     }
 
-    private static int FindColumnIndex(Excel.ListObject table, string name)
+    private int FindColumnIndex(Excel.ListObject table, string name)
     {
         Excel.ListColumns columns = table.ListColumns;
         int count = columns.Count;
         for (int index = 1; index <= count; index++)
         {
-            if (string.Equals(columns[index].Name, name, StringComparison.Ordinal))
+            if (string.Equals(GetColumnAt(columns, index).Name, name, StringComparison.Ordinal))
             {
                 return index - 1;
             }
@@ -298,6 +298,8 @@ public class ExcelTypeChangeNormaliser(object? application, IWorksheetProtection
     internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
 
     internal virtual Excel.ListObject GetTableAt(Excel.ListObjects objects, int index) => objects[index];
+
+    internal virtual Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => columns[index];
 }
 
 /// <summary>Catalog access for type metadata used by the normaliser.</summary>
