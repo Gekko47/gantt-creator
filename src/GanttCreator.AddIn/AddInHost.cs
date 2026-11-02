@@ -31,7 +31,7 @@ namespace GanttCreator.AddIn;
 public sealed class AddInHost(
     Func<AddInIdentity> identitySource,
     Func<IRollingLog> logSource,
-    Func<IExcelApplicationAdapter>? applicationAdapterSource = null) : IExcelAddIn
+    Func<IExcelApplicationAdapter?>? applicationAdapterSource = null) : IExcelAddIn
 {
     private readonly Func<AddInIdentity> _identitySource =
         identitySource ?? throw new ArgumentNullException(nameof(identitySource));
@@ -41,8 +41,10 @@ public sealed class AddInHost(
 
     // Defaults to the production ExcelDnaUtil.Application probe; injectable
     // so the AutoClose teardown order is contract-testable outside Excel
-    // (work item R1.6).
-    private readonly Func<IExcelApplicationAdapter> _applicationAdapterSource =
+    // (work item R1.6). A source may return null, meaning "the host has not
+    // exposed an application yet"; RibbonStateService.Activate re-probes for it
+    // later rather than being handed an adapter that can never see one.
+    private readonly Func<IExcelApplicationAdapter?> _applicationAdapterSource =
         applicationAdapterSource ?? DefaultApplicationAdapterSource;
 
     private IRollingLog? _log;
@@ -139,12 +141,16 @@ public sealed class AddInHost(
 
         // Arm the Ribbon state service in a separate guarded step so that
         // this runs even when log creation, LogOpen, or SetLog failed above.
-        // ExcelDnaUtil.Application returns null outside a live Excel host, so
-        // the adapter reports "not determinable" (which keeps the previous
-        // value) instead of throwing; the state service never writes a log
-        // record, so the one-record contract above holds. Any failure from
-        // ExcelDnaUtil.Application or RibbonStateService is swallowed here so
-        // it never escapes AutoOpen.
+        // The default source yields no adapter when Excel-DNA has not exposed
+        // an application yet; the service then reports "not determinable"
+        // (which keeps the previous value) and retries on the next Activate.
+        // Note that ExcelDnaUtil.Application is NOT null merely because the
+        // process is not an Excel add-in host: it resolves the running Excel
+        // instance, so it is also non-null in a test process started while
+        // Excel happens to be open. Nothing here may depend on that difference.
+        // The state service never writes a log record, so the one-record
+        // contract above holds. Any failure from ExcelDnaUtil.Application or
+        // RibbonStateService is swallowed here so it never escapes AutoOpen.
         try
         {
             RibbonStateService.Instance.SetApplicationAdapter(
@@ -335,14 +341,22 @@ public sealed class AddInHost(
     }
 
     /// <summary>
-    /// The production application-adapter source: the Excel application
-    /// object supplied by the Excel-DNA host. Outside a live Excel host the
-    /// probe returns null, so the adapter reports "not determinable" and
-    /// subscribes no events.
+    /// The production application-adapter source: an adapter over the Excel
+    /// application object supplied by the Excel-DNA host.
     /// </summary>
-    /// <returns>The live application adapter for this Excel session.</returns>
-    private static IExcelApplicationAdapter DefaultApplicationAdapterSource() =>
-        new ExcelApplicationAdapter(ExcelDnaUtil.Application);
+    /// <remarks>
+    /// Returns null rather than an adapter built over a null application when
+    /// Excel-DNA has not exposed the application yet. That null is what lets
+    /// <see cref="RibbonStateService.Activate"/> tell "nothing injected yet" from
+    /// "injected", and adopt the application once the ribbon <c>onLoad</c> or the
+    /// queued fallback runs.
+    /// </remarks>
+    /// <returns>The live application adapter, or null when the host supplied none.</returns>
+    private static IExcelApplicationAdapter? DefaultApplicationAdapterSource()
+    {
+        object? application = ExcelDnaUtil.Application;
+        return application is null ? null : new ExcelApplicationAdapter(application);
+    }
 
     private static AddInIdentity DefaultIdentitySource()
     {

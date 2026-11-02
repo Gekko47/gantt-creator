@@ -160,14 +160,22 @@ public class AddInHostTests
     public void AutoOpen_arms_the_ribbon_state_service_without_changing_the_one_record_contract()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        // Inject the "no application" adapter explicitly. The DEFAULT source
+        // probes ExcelDnaUtil.Application, which resolves the running Excel
+        // instance and is therefore non-null whenever Excel happens to be open
+        // on the machine; the Diagnostics assertion below would then read that
+        // workbook's fact instead of the "not determinable" one it is about.
+        var host = new AddInHost(
+            () => TestIdentity,
+            () => log,
+            () => new ExcelApplicationAdapter(null));
 
         try
         {
             host.AutoOpen();
 
             var service = RibbonStateService.Instance;
-            // Outside a live Excel host the workbook fact is not determinable,
+            // With no application object the workbook fact is not determinable,
             // so the Diagnostics gate keeps its initial false value; the
             // capturing log exposes a path, so the Open-log gate is enabled.
             Assert.False(service.GetEnabled(RibbonControlIds.Diagnostics));

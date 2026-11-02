@@ -334,6 +334,41 @@ public sealed class RibbonStateServiceTests : IDisposable
     }
 
     [Fact]
+    public void Activate_keeps_an_injected_adapter_even_when_the_host_application_is_live()
+    {
+        // Regression (2026-11-02). Activate used to re-probe
+        // ExcelDnaUtil.Application unconditionally and replace whatever adapter
+        // had been injected. That probe resolves the RUNNING Excel instance, so
+        // simply having Excel open on the machine replaced the fake with a real
+        // adapter over the developer's workbook: SubscribeCount read 0, the
+        // captured facts came from that workbook, and 12 tests went red without
+        // any source change. An injected adapter is authoritative.
+        var service = new HostApplicationRibbonStateService(new object());
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        service.SetApplicationAdapter(adapter);
+
+        service.Activate();
+
+        Assert.Same(adapter, service.GetApplicationAdapter());
+        Assert.Equal(1, adapter.SubscribeCount);
+    }
+
+    [Fact]
+    public void Activate_adopts_the_host_application_when_no_adapter_was_injected()
+    {
+        // The other half of the same contract. AddInHost injects no adapter when
+        // Excel-DNA has not exposed an application yet (AutoOpen can run first),
+        // so Activate must supply one once the application becomes available;
+        // the ribbon onLoad and the queued fallback both rely on that.
+        var service = new HostApplicationRibbonStateService(new object());
+        Assert.Null(service.GetApplicationAdapter());
+
+        service.Activate();
+
+        Assert.IsType<ExcelApplicationAdapter>(service.GetApplicationAdapter());
+    }
+
+    [Fact]
     public void A_workbook_state_change_captures_once_and_invalidates_once()
     {
         var adapter = new FakeApplicationAdapter { WorkbookFact = false };
@@ -1221,6 +1256,17 @@ public sealed class RibbonStateServiceTests : IDisposable
         var service = new RibbonStateService();
 
         Assert.False(service.ShowThemeSettingsDialog());
+    }
+
+    /// <summary>
+    /// Test double that supplies a fixed host application object instead of
+    /// querying <c>ExcelDnaUtil.Application</c>. The production probe resolves
+    /// whichever Excel instance is running, so a test that used it would pass or
+    /// fail according to the developer's machine rather than the code.
+    /// </summary>
+    private sealed class HostApplicationRibbonStateService(object? hostApplication) : RibbonStateService
+    {
+        internal override object? ResolveHostApplication() => hostApplication;
     }
 
     /// <summary>

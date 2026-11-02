@@ -312,6 +312,14 @@ internal class RibbonStateService
     /// <param name="adapter">The application adapter, or null when unavailable.</param>
     internal void SetApplicationAdapter(IExcelApplicationAdapter? adapter) => _applicationAdapter = adapter;
 
+    /// <summary>
+    /// Returns the adapter <see cref="Activate"/> would subscribe, for test
+    /// verification only. A test asserts the adapter it injected survives
+    /// activation; that is the contract that keeps the suite independent of
+    /// whatever Excel instance the machine happens to have open.
+    /// </summary>
+    internal IExcelApplicationAdapter? GetApplicationAdapter() => _applicationAdapter;
+
     /// <summary>Coalesces a successful command/configuration write into the automatic refresh queue.</summary>
     internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleRefresh();
 
@@ -1760,18 +1768,27 @@ internal class RibbonStateService
     /// </summary>
     internal void Activate()
     {
-        // ExcelDnaUtil.Application may be null during AddInHost.AutoOpen
-        // (before Excel-DNA has fully initialized) but is available by the
-        // time the ribbon onLoad fires. Re-probe here so the SheetChange
-        // subscription and table reader use a live application object.
+        // Adopt the host's application object, but ONLY when no adapter is
+        // present. The application object may be unavailable during
+        // AddInHost.AutoOpen (Excel-DNA has not finished initialising) and
+        // available by the time the ribbon onLoad or the queued fallback fires;
+        // AddInHost therefore injects no adapter in that case, and this re-probe
+        // supplies the late-arriving one.
         //
-        // Only when a live application exists: outside an Excel host the
-        // static is null, and replacing the adapter unconditionally would
-        // clobber an explicitly injected adapter (the unit-test fakes) with
-        // one built over nothing, silently disabling every subscription.
-        if (ExcelDna.Integration.ExcelDnaUtil.Application is not null)
+        // An adapter that IS present is authoritative. Re-probing
+        // unconditionally used to replace it, which was wrong twice over: on the
+        // live path it discarded an adapter the host had deliberately injected,
+        // and in a test process running alongside Excel it replaced the test
+        // fake with a real adapter over the *developer's open workbook*, making
+        // the AddIn suite pass or fail depending on whether Excel happened to be
+        // running on the machine.
+        if (_applicationAdapter is null)
         {
-            SetApplicationAdapter(new ExcelApplicationAdapter(ExcelDna.Integration.ExcelDnaUtil.Application));
+            object? application = ResolveHostApplication();
+            if (application is not null)
+            {
+                SetApplicationAdapter(new ExcelApplicationAdapter(application));
+            }
         }
 
         SubscribeToWorkbookStateChanges();
@@ -1780,6 +1797,17 @@ internal class RibbonStateService
         LoadPlotSettingsFromWorkbook();
         Refresh();
     }
+
+    /// <summary>
+    /// Resolves the live Excel application object for
+    /// <see cref="Activate"/>'s late re-probe. A seam, not a direct call,
+    /// because <c>ExcelDnaUtil.Application</c> resolves the *running* Excel
+    /// instance even from a process that never loaded the add-in: a test that
+    /// asserted on the production probe's result would silently depend on
+    /// whether Excel was open on the machine.
+    /// </summary>
+    /// <returns>The live application object, or null when the host supplied none.</returns>
+    internal virtual object? ResolveHostApplication() => ExcelDna.Integration.ExcelDnaUtil.Application;
 
     /// <summary>
     /// Captures a fresh snapshot from the injected sources and invalidates the
