@@ -150,4 +150,43 @@ public sealed class SizePresetTests
             .First(setting => setting.Key == "SizePreset");
         Assert.Same(SizePresets.ByKey(stored.DefaultValue), SizePresets.Default);
     }
+
+    /// <summary>
+    /// The catalogue validator reports every way a preset can be wrong. The shipped
+    /// catalogue is sound by construction, so without the supplied-collection
+    /// overload these failure arms could never run and a future preset edit would
+    /// meet an untested tripwire.
+    /// </summary>
+    [Fact]
+    public void The_catalogue_validator_reports_each_way_a_preset_can_be_wrong()
+    {
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset(" ", "Blank", 100, 50, SizeOrientation.Landscape)]),
+            failure => failure.Contains("blank key", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("ZeroWidth", "Zero", 0, 50, SizeOrientation.Portrait)]),
+            failure => failure.Contains("width must be finite and positive", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("NegativeHeight", "Negative", 100, -1, SizeOrientation.Landscape)]),
+            failure => failure.Contains("height must be finite and positive", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("WrongPortrait", "Wrong", 100, 50, SizeOrientation.Portrait)]),
+            failure => failure.Contains("declared portrait but is wider than tall", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("WrongLandscape", "Wrong", 50, 100, SizeOrientation.Landscape)]),
+            failure => failure.Contains("declared landscape but is not wider than tall", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue(
+            [
+                new SizePreset("Shared", "One", 100, 50, SizeOrientation.Landscape),
+                new SizePreset("Shared", "Two", 100, 50, SizeOrientation.Landscape),
+            ]),
+            failure => failure.Contains("share a key", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void The_catalogue_validator_refuses_a_null_collection()
+    {
+        Assert.Throws<ArgumentNullException>(() => SizePresets.ValidateCatalogue(null!));
+    }
 }

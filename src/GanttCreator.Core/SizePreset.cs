@@ -127,11 +127,28 @@ public static class SizePresets
     /// An orientation contradicting the dimensions would let a caller label a
     /// 16:9 chart "portrait", so the pair is checked rather than trusted.
     /// </remarks>
-    public static IReadOnlyList<string> ValidateCatalogue()
+    public static IReadOnlyList<string> ValidateCatalogue() => ValidateCatalogue(All);
+
+    /// <summary>
+    /// Validates a supplied preset collection against the rules the shipped
+    /// catalogue is held to.
+    /// </summary>
+    /// <param name="presets">The presets to validate.</param>
+    /// <returns>The validation failures; empty when the collection is sound.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="presets"/> is null.</exception>
+    /// <remarks>
+    /// Exposed so the rules are testable. The shipped catalogue is sound by
+    /// construction, so the parameterless overload can never report anything and the
+    /// tripwire itself would stay unexercised until a preset was edited wrongly in a
+    /// commit that no test guards.
+    /// </remarks>
+    public static IReadOnlyList<string> ValidateCatalogue(IEnumerable<SizePreset> presets)
     {
+        ArgumentNullException.ThrowIfNull(presets);
+        SizePreset[] catalogue = [.. presets];
         List<string> failures = [];
 
-        foreach (SizePreset preset in All)
+        foreach (SizePreset preset in catalogue)
         {
             if (string.IsNullOrWhiteSpace(preset.Key))
             {
@@ -160,7 +177,7 @@ public static class SizePresets
             }
         }
 
-        if (All.Select(static preset => preset.Key).Distinct(StringComparer.Ordinal).Count() != All.Count)
+        if (catalogue.Select(static preset => preset.Key).Distinct(StringComparer.Ordinal).Count() != catalogue.Length)
         {
             failures.Add("Two presets share a key.");
         }
