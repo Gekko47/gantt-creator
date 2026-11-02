@@ -1002,4 +1002,72 @@ public sealed class HierarchyMutationsTests
             [new SiblingOrderWrite(b, 0), new SiblingOrderWrite(a, 1)],
             plan.SiblingOrderWrites);
     }
+
+    /// <summary>
+    /// Mutation testing found the promote planner's `SelectionUnknown` and
+    /// `TypeCannotBeChild` arms unexecuted and its null-argument guards unpinned:
+    /// removing either guard left every test green.
+    /// </summary>
+    [Fact]
+    public void Promoting_a_row_that_is_not_in_the_table_is_refused()
+    {
+        GanttRowId present = NewId();
+
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent([Row(1, present)], NewId());
+
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
+
+    [Fact]
+    public void Promoting_a_type_that_can_never_be_a_child_is_refused()
+    {
+        GanttRowId splitter = NewId();
+        GanttRowId parent = NewId();
+
+        // A Splitter carrying a ParentId is a validation error, so the planner is
+        // the second line of defence and must refuse it by type rather than plan a
+        // promotion the later rules cannot express.
+        PromotePlan plan = HierarchyMutations.PlanPromoteToParent(
+            [Row(1, parent), Row(2, splitter, GanttEntityType.Splitter, parent)],
+            splitter);
+
+        Assert.Equal(ParentChildRefusalReason.TypeCannotBeChild, plan.Refusal);
+    }
+
+    [Fact]
+    public void Promotion_refuses_a_null_row_list()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanPromoteToParent(null!, NewId()));
+
+        Assert.Equal("rows", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Promotion_refuses_a_null_selection()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanPromoteToParent([Row(1, NewId())], null!));
+
+        Assert.Equal("selectedId", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Demotion_refuses_a_null_selection()
+    {
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => HierarchyMutations.PlanDemoteToChild([Row(1, NewId())], null!));
+
+        Assert.Equal("selectedId", thrown.ParamName);
+    }
+
+    [Fact]
+    public void Demoting_a_row_that_is_not_in_the_table_is_refused()
+    {
+        GanttRowId present = NewId();
+
+        DemotePlan plan = HierarchyMutations.PlanDemoteToChild([Row(1, present)], NewId());
+
+        Assert.Equal(ParentChildRefusalReason.SelectionUnknown, plan.Refusal);
+    }
 }

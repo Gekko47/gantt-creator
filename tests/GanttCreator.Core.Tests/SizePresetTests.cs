@@ -157,12 +157,52 @@ public sealed class SizePresetTests
     /// overload these failure arms could never run and a future preset edit would
     /// meet an untested tripwire.
     /// </summary>
+    /// <summary>
+    /// The display names are user-visible: the Ribbon menu shows them, so they are
+    /// contract, not decoration. Mutation testing found them unpinned - the catalogue
+    /// tests only compared keys and dimensions.
+    /// </summary>
+    [Fact]
+    public void Each_preset_carries_the_display_name_the_ribbon_shows()
+    {
+        Assert.Equal("A4 (portrait)", SizePresets.A4Portrait.DisplayName);
+        Assert.Equal("A4 (landscape)", SizePresets.A4Landscape.DisplayName);
+        Assert.Equal("Presentation 16:9", SizePresets.Presentation16x9.DisplayName);
+        Assert.Equal("Presentation 4:3", SizePresets.Presentation4x3.DisplayName);
+    }
+
+    /// <summary>
+    /// The shipped presets cover both orientation rules, so a catalogue edit that
+    /// flipped one would be caught by the parameterless validator as well as by the
+    /// supplied-collection overload.
+    /// </summary>
+    [Fact]
+    public void The_shipped_catalogue_declares_dimensions_its_orientations_agree_with()
+    {
+        Assert.Equal(
+            SizeOrientation.Portrait,
+            SizePresets.A4Portrait.WidthPt < SizePresets.A4Portrait.HeightPt
+                ? SizeOrientation.Portrait
+                : SizeOrientation.Landscape);
+        Assert.Equal(
+            SizeOrientation.Landscape,
+            SizePresets.Presentation16x9.WidthPt > SizePresets.Presentation16x9.HeightPt
+                ? SizeOrientation.Landscape
+                : SizeOrientation.Portrait);
+    }
+
     [Fact]
     public void The_catalogue_validator_reports_each_way_a_preset_can_be_wrong()
     {
         Assert.Contains(
             SizePresets.ValidateCatalogue([new SizePreset(" ", "Blank", 100, 50, SizeOrientation.Landscape)]),
             failure => failure.Contains("blank key", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("ZeroHeight", "Zero", 100, 0, SizeOrientation.Landscape)]),
+            failure => failure.Contains("height must be finite and positive", StringComparison.Ordinal));
+        Assert.Contains(
+            SizePresets.ValidateCatalogue([new SizePreset("Square", "Square", 100, 100, SizeOrientation.Landscape)]),
+            failure => failure.Contains("declared landscape but is not wider than tall", StringComparison.Ordinal));
         Assert.Contains(
             SizePresets.ValidateCatalogue([new SizePreset("ZeroWidth", "Zero", 0, 50, SizeOrientation.Portrait)]),
             failure => failure.Contains("width must be finite and positive", StringComparison.Ordinal));
@@ -187,6 +227,11 @@ public sealed class SizePresetTests
     [Fact]
     public void The_catalogue_validator_refuses_a_null_collection()
     {
-        Assert.Throws<ArgumentNullException>(() => SizePresets.ValidateCatalogue(null!));
+        // The parameter name is the assertion, not just the exception type: the
+        // guard is what names the caller's mistake, and without it the failure
+        // surfaces from the collection expression with a different name.
+        ArgumentNullException thrown = Assert.Throws<ArgumentNullException>(
+            () => SizePresets.ValidateCatalogue(null!));
+        Assert.Equal("presets", thrown.ParamName);
     }
 }

@@ -114,9 +114,14 @@ public static class SizePresets
     /// </summary>
     /// <param name="key">The stored key.</param>
     /// <returns>The preset, or <see langword="null"/> when the key is unknown.</returns>
+    /// <remarks>
+    /// No null fast path: <see cref="string.Equals(string?, string?, StringComparison)"/>
+    /// is false for a null key, so the lookup already returns null. The explicit
+    /// <c>key is null ? null : ...</c> that used to sit here could not change any
+    /// result and left a mutation-gate survivor that no test could ever kill.
+    /// </remarks>
     public static SizePreset? ByKey(string? key) =>
-        key is null ? null : All.FirstOrDefault(preset =>
-            string.Equals(preset.Key, key, StringComparison.Ordinal));
+        All.FirstOrDefault(preset => string.Equals(preset.Key, key, StringComparison.Ordinal));
 
     /// <summary>
     /// Validates the declared catalogue: keys unique, dimensions finite and

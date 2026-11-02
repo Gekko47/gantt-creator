@@ -333,10 +333,11 @@ public static class HierarchyMutations
 
         // The move target is the bottom of the run: the highest body index
         // among the siblings, which is the promoted row's own index when it
-        // is already last.
-        int moveTo = siblings.Count == 0
-            ? target.RowNumber
-            : siblings[^1].RowNumber;
+        // is already last. The run always contains the target itself (its
+        // ParentId is parentId), so it can never be empty - the "empty run"
+        // fallback that used to sit here was unreachable and only produced a
+        // mutation survivor no test could kill.
+        int moveTo = siblings[^1].RowNumber;
 
         List<SiblingOrderWrite> writes = [];
         int order = 0;
@@ -427,11 +428,10 @@ public static class HierarchyMutations
 
         foreach (GanttEvent candidate in above)
         {
-            if (candidate.Type == GanttEntityType.Delineator)
-            {
-                continue;
-            }
-
+            // No Delineator arm is owed here: Delineator is absent from
+            // EntityHierarchyCatalog's child-owning set, so MayOwnChildren below
+            // already skips it - the explicit check that used to sit here could
+            // never change the outcome.
             if (!EntityHierarchyCatalog.MayOwnChildren(candidate.Type))
             {
                 continue;
@@ -443,11 +443,13 @@ public static class HierarchyMutations
                 continue;
             }
 
-            if (IsDescendantOf(byId, candidate.Id, selectedId))
-            {
-                return DemotePlan.Refused(ParentChildRefusalReason.Cycle);
-            }
-
+            // No Cycle arm is owed here either. Every candidate that reaches this
+            // point has a null ParentId (checked above), and a descendant of the
+            // selection must reach it through a parent chain, so the descendant
+            // test could only ever return false. ParentChildRefusalReason.Cycle
+            // therefore has no producer; the validator refuses a cyclic table
+            // before any planner runs.
+            //
             // No "a Critical Interval may only land on a span" arm is owed here.
             // Every candidate that reaches this point passed MayOwnChildren above,
             // and that set is exactly the span set minus Critical Interval itself,
@@ -458,10 +460,11 @@ public static class HierarchyMutations
             // The selection's content moves to sit directly beneath the new
             // parent's existing child run, so the demotion stays one
             // contiguous outline group: the run's last child's row plus one.
+            // The landing position is the maximum body index in the candidate's
+            // child run, so it is order-independent: the ordering this loop used
+            // to impose could not change the result.
             int moveTo = candidate.RowNumber + 1;
-            foreach (GanttEvent child in rows
-                .Where(row => row.ParentId == candidate.Id)
-                .OrderBy(static row => row.RowNumber))
+            foreach (GanttEvent child in rows.Where(row => row.ParentId == candidate.Id))
             {
                 if (child.RowNumber >= moveTo)
                 {
@@ -711,37 +714,6 @@ public static class HierarchyMutations
         {
             list[writeIndex++] = row;
         }
-    }
-
-    /// <summary>
-    /// Whether the parent chain of <paramref name="id"/> contains
-    /// <paramref name="rootId"/>. Guards the demote scan against pathological
-    /// input where the nearest-above row is already below the selection in
-    /// the parent graph.
-    /// </summary>
-    private static bool IsDescendantOf(
-        Dictionary<GanttRowId, GanttEvent> byId,
-        GanttRowId id,
-        GanttRowId rootId)
-    {
-        GanttRowId? cursor = byId.TryGetValue(id, out GanttEvent? current) ? current.ParentId : null;
-        HashSet<GanttRowId> seen = [];
-        while (cursor is not null)
-        {
-            if (cursor == rootId)
-            {
-                return true;
-            }
-
-            if (!seen.Add(cursor) || !byId.TryGetValue(cursor, out GanttEvent? next))
-            {
-                return false;
-            }
-
-            cursor = next.ParentId;
-        }
-
-        return false;
     }
 
     /// <summary>
