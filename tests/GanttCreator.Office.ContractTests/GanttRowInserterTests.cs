@@ -799,6 +799,7 @@ public class GanttRowInserterTests
     [InlineData(true, 3, 3)]   // middle body row
     [InlineData(true, 4, 0)]   // LAST body row appends rather than inserting below itself
     [InlineData(false, 2, 0)]  // active cell outside the table: append
+    [InlineData(true, 6, 0)]   // table still active, but the cell is PAST the last body row
     public void An_in_table_active_cell_inserts_below_it_and_an_outside_one_appends(
         bool tableActive,
         int activeRow,
@@ -1361,6 +1362,48 @@ public class GanttRowInserterTests
         graph.Workbook.VerifyGet(w => w.Sheets, Times.Never);
     }
 
+    /// <summary>
+    /// A workbook-level "not protected" answer does not clear the sheet the table is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The refusal no existing test reached.</b> Every other test in this file sets
+    /// only <c>Query()</c>, and a protected answer there refuses before the workbook is
+    /// even opened — so the target-sheet check that runs AFTER the table is found had
+    /// never fired in a test. The two are not the same question: <c>Query()</c> answers
+    /// for the workbook, while the table lives on one sheet, and a user can protect that
+    /// one sheet (or the whole structure) without the workbook-level query objecting.
+    /// </para>
+    /// <para>
+    /// The assertions are ordered as the product's guarantee: the refusal names the
+    /// right reason, and NOTHING was written — no row added, no cell value set. A test
+    /// that only checked the refusal would pass even if the insert had already landed.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ProtectionGuardOutcome.SheetProtected, GanttRowInsertRefusalReason.TargetProtected)]
+    [InlineData(ProtectionGuardOutcome.WorkbookStructureProtected, GanttRowInsertRefusalReason.TargetProtected)]
+    [InlineData(ProtectionGuardOutcome.NoActiveWorkbook, GanttRowInsertRefusalReason.NoActiveWorkbook)]
+    public void Insert_refuses_a_protected_target_even_when_the_workbook_query_is_clear(
+        ProtectionGuardOutcome targetOutcome,
+        GanttRowInsertRefusalReason expected)
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+        _ = guard.Setup(g => g.QueryTarget(It.IsAny<object?>())).Returns(targetOutcome);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(expected, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+        guard.Verify(g => g.QueryTarget(It.IsAny<object?>()), Times.Once);
+    }
+
     [Fact]
     public void Insert_returns_table_missing_when_no_table_is_found()
     {
@@ -1368,6 +1411,45 @@ public class GanttRowInserterTests
         _ = graph.ListObjects.SetupGet(l => l.Count).Returns(0);
         var guard = new Mock<IWorksheetProtectionGuard>();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.TableMissing, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+    }
+
+    /// <summary>
+    /// A table missing a required header refuses rather than writing into a guessed cell.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The column map is built by NAME, so a table a user has hand-edited — one column
+    /// renamed, or a schema column deleted — has no cell the adapter can honestly write
+    /// to. Guessing by position would put the row's <c>Type</c> into whatever column
+    /// happens to sit third, which is a silent data corruption rather than a refusal.
+    /// </para>
+    /// <para>
+    /// The reason is <see cref="GanttRowInsertRefusalReason.TableMissing"/> because from
+    /// the adapter's point of view there is no usable table: the table it needs is
+    /// defined by its headers, not by its name. The assertions also prove nothing was
+    /// written, which is the part a refusal-only test would miss.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Insert_returns_table_missing_when_a_required_column_is_absent()
+    {
+        var graph = new Graph();
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        // Rename one schema column so the header-name map cannot resolve it.
+        int typeIndex = Array.FindIndex(graph.Columns, column => column.Object.Name == "Type");
+        Assert.True(typeIndex >= 0, "the fixture no longer has a Type column");
+        _ = graph.Columns[typeIndex].SetupGet(column => column.Name).Returns("NotATypeColumn");
 
         GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
             GanttEntityType.AsPlannedActivity,
