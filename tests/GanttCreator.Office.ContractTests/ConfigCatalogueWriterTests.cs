@@ -789,6 +789,113 @@ public class ConfigCatalogueWriterTests
         Assert.Equal("Fill, Stroke, Hatch", row[13]);
     }
 
+    /// <summary>
+    /// A built-in preset's theme edit reaches that preset's own row.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The branch no test reached.</b> Every existing theme test either edits only
+    /// the chrome colours or adds a CUSTOM style, so the writer always took the
+    /// "no edit for this preset" arm and rebuilt the row from the catalogue. The arm
+    /// that overwrites a built-in preset's colours — the one the Theme dialog's
+    /// built-in tabs actually drive — had never run in a test.
+    /// </para>
+    /// <para>
+    /// The row is located by its key rather than by position, because the styles table
+    /// also carries the user's custom rows and a positional assertion would pass while
+    /// reading the wrong row.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WriteTheme_applies_a_built_in_edit_and_takes_an_editable_dash()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit(
+                "DefaultDelineator",
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: "#FFFFFF",
+                StrokeDash: GanttStrokeDash.Dash)],
+            new Dictionary<string, double>());
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.Equal(ConfigWriteOutcome.Ok(), outcome);
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        int index = styles.Body.FindIndex(
+            row => string.Equals(row[0] as string, "DefaultDelineator", StringComparison.Ordinal));
+        Assert.True(index >= 0, "the styles table has no DefaultDelineator row");
+
+        object?[] row = styles.Body[index];
+        Assert.Equal("#112233", row[2]);
+        Assert.Equal("#445566", row[3]);
+        Assert.Equal("#FFFFFF", row[7]);
+        Assert.Equal("Dash", row[14]);
+    }
+
+    /// <summary>
+    /// A dash edit for a style whose dash is code-owned REFUSES the whole request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Refused, not trimmed — and that is the opposite of what I expected.</b> I wrote
+    /// this test expecting the writer to discard the dash and keep the colours; the run
+    /// came back <c>ThemeValidationFailed</c>. The request validator is the single
+    /// authority (<see cref="GanttStyleDashPolicy.IsUserEditable"/> is its only consumer
+    /// besides the reader), and it refuses rather than silently dropping a value the
+    /// caller asked for: a theme edit that carries a line type the reader exact-matches
+    /// against a code-owned preset would otherwise be accepted and then quietly not
+    /// applied, which is the "promised a change and discarded it" defect the policy
+    /// exists to prevent.
+    /// </para>
+    /// <para>
+    /// The cost of that rule is recorded rather than hidden: the writer's own
+    /// <c>IsUserEditable</c> ternary therefore has an arm no request can reach, because
+    /// only the delineator can arrive carrying a dash. The assertion here is on the
+    /// refusal plus the untouched row, which is the behaviour a caller can observe.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void WriteTheme_refuses_a_dash_for_a_style_whose_dash_is_not_editable()
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        GanttStylePreset preset = GanttCatalogues.StylePresets.First(
+            candidate => string.Equals(candidate.StyleKey, "AsPlannedActivity", StringComparison.Ordinal));
+        Assert.False(GanttStyleDashPolicy.IsUserEditable(preset.StyleKey));
+        Assert.NotEqual(GanttStrokeDash.LongDash, preset.StrokeDash);
+
+        var request = new ThemeEditRequest(
+            [new ThemeStyleEdit(
+                preset.StyleKey,
+                FillColour: "#112233",
+                StrokeColour: "#445566",
+                TextColour: string.Empty,
+                StrokeDash: GanttStrokeDash.LongDash)],
+            new Dictionary<string, double>());
+
+        var outcome = ConfigGraph.BuildWriter(fake).WriteTheme(request);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(ConfigWriteRefusalReason.ThemeValidationFailed, outcome.Refusal);
+
+        // Nothing was written: the row still carries the code-owned preset's values.
+        ConfigSheetFake.TableFake styles = Assert.Single(
+            fake.Tables, t => t.CurrentName == GanttCatalogues.StylesTableName);
+        int index = styles.Body.FindIndex(
+            row => string.Equals(row[0] as string, preset.StyleKey, StringComparison.Ordinal));
+        Assert.True(index >= 0, "the styles table has no row for " + preset.StyleKey);
+
+        object?[] row = styles.Body[index];
+        Assert.Equal(preset.FillColour, row[2]);
+        Assert.Equal(preset.StrokeDash.ToString(), row[14]);
+    }
+
     [Fact]
     public void WriteTheme_create_writes_the_carried_pattern_and_sizes()
     {
