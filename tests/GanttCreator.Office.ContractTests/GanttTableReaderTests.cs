@@ -66,7 +66,10 @@ public class GanttTableReaderTests
             Func<Excel.ListColumns, int, Excel.ListColumn>? columnAt = null,
             Func<Excel.Workbook, bool>? date1904 = null,
             Func<Excel.Range, object?>? bodyValues = null,
-            IExcelDateSystemConverter? dateSystemConverter = null
+            IExcelDateSystemConverter? dateSystemConverter = null,
+            Func<Excel.Range, int>? bodyFirstRow = null,
+            Func<Excel.Range, int>? bodyRowCount = null,
+            Func<Excel.Range, int, Excel.Range>? bodyRow = null
         )
             : base(application, dateSystemConverter)
         {
@@ -75,6 +78,9 @@ public class GanttTableReaderTests
             ColumnAt = columnAt ?? ((_, _) => throw new InvalidOperationException("should not be called"));
             Date1904 = date1904 ?? (_ => throw new InvalidOperationException("should not be called"));
             BodyValue = bodyValues ?? (_ => throw new InvalidOperationException("should not be called"));
+            BodyFirstRow = bodyFirstRow ?? (_ => throw new InvalidOperationException("should not be called"));
+            BodyRowCount = bodyRowCount ?? (_ => throw new InvalidOperationException("should not be called"));
+            BodyRow = bodyRow ?? ((_, _) => throw new InvalidOperationException("should not be called"));
         }
 
         public Func<Excel.Sheets, int, object> SheetAt { get; }
@@ -82,8 +88,17 @@ public class GanttTableReaderTests
         public Func<Excel.ListColumns, int, Excel.ListColumn> ColumnAt { get; }
         public Func<Excel.Workbook, bool> Date1904 { get; }
         public Func<Excel.Range, object?> BodyValue { get; }
+        public Func<Excel.Range, int> BodyFirstRow { get; }
+        public Func<Excel.Range, int> BodyRowCount { get; }
+        public Func<Excel.Range, int, Excel.Range> BodyRow { get; }
 
         internal override bool GetDate1904(Excel.Workbook workbook) => Date1904(workbook);
+
+        internal override int GetBodyFirstRow(Excel.Range body) => BodyFirstRow(body);
+
+        internal override int GetBodyRowCount(Excel.Range body) => BodyRowCount(body);
+
+        internal override Excel.Range GetBodyRow(Excel.Range body, int index) => BodyRow(body, index);
 
         internal override object GetSheetAt(Excel.Sheets sheets, int index) => SheetAt(sheets, index);
 
@@ -621,5 +636,208 @@ public class GanttTableReaderTests
         Assert.Equal("G-clean", cleanRow.Id);
         Assert.Equal(new DateOnly(2023, 1, 6), cleanRow.Start);
         Assert.Equal(2, cleanRow.StackIndex);
+    }
+
+    // ---- Read(IReadOnlyList<int>): the delta read the ChangeTracker drives ----
+
+    /// <summary>
+    /// A reader wired for the worksheet-row overload: a real table and column map,
+    /// with the body span reported by the fixture rather than by COM.
+    /// </summary>
+    private static TestableReader DeltaReader(
+        Mock<Excel.Application> application,
+        Mock<Excel.Workbook> workbook,
+        TableGraph table,
+        Func<Excel.Range, object?> bodyValues,
+        int firstBodyRow = 4,
+        int bodyRowCount = 3)
+    {
+        SheetGraph sheet = new(table);
+        Mock<Excel.Sheets> sheets = CreateSheetsMock([sheet]);
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+        Excel.Range rowRange = new Mock<Excel.Range>().Object;
+        return new TestableReader(
+            application.Object,
+            sheetAt: (_, _) => sheet.Worksheet.Object,
+            tableAt: (_, _) => table.Table.Object,
+            columnAt: (_, index) => table.ColumnAt(index),
+            date1904: _ => false,
+            bodyValues: bodyValues,
+            bodyFirstRow: _ => firstBodyRow,
+            bodyRowCount: _ => bodyRowCount,
+            bodyRow: (_, _) => rowRange);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_refuses_without_an_application_object()
+    {
+        GanttTableReadOutcome outcome = new TestableReader(null).Read([5]);
+
+        Assert.Equal(GanttTableReadRefusalReason.NoActiveWorkbook, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_refuses_without_an_active_workbook()
+    {
+        Mock<Excel.Application> application = new();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns((Excel.Workbook)null!);
+
+        GanttTableReadOutcome outcome = new TestableReader(application.Object).Read([5]);
+
+        Assert.Equal(GanttTableReadRefusalReason.NoActiveWorkbook, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_refuses_an_unsupported_date_system()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        SheetGraph sheet = new(table);
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+        Mock<Excel.Sheets> sheets = CreateSheetsMock([sheet]);
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+
+        TestableReader reader = new(
+            application.Object,
+            sheetAt: (_, _) => sheet.Worksheet.Object,
+            tableAt: (_, _) => table.Table.Object,
+            columnAt: (_, index) => table.ColumnAt(index),
+            date1904: _ => true);
+
+        Assert.Equal(GanttTableReadRefusalReason.DateSystemUnsupported, reader.Read([5]).Refusal);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_refuses_when_the_table_is_missing()
+    {
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+        SheetGraph sheet = new();
+        Mock<Excel.Sheets> sheets = CreateSheetsMock([sheet]);
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheets.Object);
+
+        TestableReader reader = new(
+            application.Object,
+            sheetAt: (_, _) => sheet.Worksheet.Object,
+            date1904: _ => false);
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, reader.Read([5]).Refusal);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_refuses_when_a_required_header_is_missing()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, ["Id"]);
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => throw new InvalidOperationException("the body must not be read"));
+
+        GanttTableReadOutcome outcome = reader.Read([5]);
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_returns_empty_when_the_table_has_no_body()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        table.WithNoBody();
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => throw new InvalidOperationException("the body must not be read"));
+
+        GanttTableReadOutcome outcome = reader.Read([5]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Empty(outcome.Rows);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_returns_empty_for_an_empty_selection()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => throw new InvalidOperationException("the body must not be read"));
+
+        Assert.Empty(reader.Read([]).Rows);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_reads_only_the_requested_worksheet_rows()
+    {
+        // The body starts at worksheet row 4, so rows 5 and 6 are body indexes 2 and
+        // 3. The read must translate, not treat the numbers as body offsets.
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => BodyMatrix(FullRow(id: "G-aaaa")),
+            firstBodyRow: 4,
+            bodyRowCount: 3);
+
+        GanttTableReadOutcome outcome = reader.Read([5, 6]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([2, 3], outcome.Rows.Select(row => row.RowNumber));
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_skips_numbers_outside_the_body_span()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => BodyMatrix(FullRow(id: "G-aaaa")),
+            firstBodyRow: 4,
+            bodyRowCount: 3);
+
+        // 1 is above the body and 99 is past its end; neither may widen the read.
+        Assert.Empty(reader.Read([1, 99]).Rows);
+    }
+
+    [Fact]
+    public void Read_by_row_numbers_skips_a_row_the_host_reports_no_values_for()
+    {
+        TableGraph table = new(GanttTableSchema.TableName, SchemaHeaders());
+        Mock<Excel.Application> application = new();
+        Mock<Excel.Workbook> workbook = new();
+
+        TestableReader reader = DeltaReader(
+            application,
+            workbook,
+            table,
+            _ => null,
+            firstBodyRow: 4,
+            bodyRowCount: 3);
+
+        Assert.Empty(reader.Read([5]).Rows);
     }
 }

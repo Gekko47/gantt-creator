@@ -138,8 +138,8 @@ public class ExcelGanttTableReader(
 
         // rowNumbers are worksheet row numbers. Convert to body-row indexes
         // (1-based within DataBodyRange) using the table's first body row.
-        int firstBodyRow = body.Row;
-        int bodyRowCount = body.Rows.Count;
+        int firstBodyRow = GetBodyFirstRow(body);
+        int bodyRowCount = GetBodyRowCount(body);
         List<GanttRowDto> rows = new List<GanttRowDto>(rowNumbers.Count);
 
         foreach (int worksheetRowNumber in rowNumbers)
@@ -150,7 +150,7 @@ public class ExcelGanttTableReader(
                 continue;
             }
 
-            Excel.Range rowRange = body.Rows[bodyRowIndex];
+            Excel.Range rowRange = GetBodyRow(body, bodyRowIndex);
             object? rawRow = GetBodyValues(rowRange);
             List<object?[]> matrixRows = ExcelValue2Matrix.ReadRows(rawRow);
             if (matrixRows.Count == 0)
@@ -431,4 +431,28 @@ public class ExcelGanttTableReader(
     /// <param name="body">The table body range.</param>
     /// <returns>The <c>Value2</c> payload.</returns>
     internal virtual object? GetBodyValues(Excel.Range body) => body.Value2;
+
+    /// <summary>
+    /// Reads the body range's first worksheet row. Test seam over the COM
+    /// <c>Range.Row</c> property.
+    /// </summary>
+    /// <param name="body">The table body range.</param>
+    /// <returns>The one-based worksheet row of the body's first row.</returns>
+    internal virtual int GetBodyFirstRow(Excel.Range body) => body.Row;
+
+    /// <summary>
+    /// Reads the body range's row count. Test seam over <c>Range.Rows.Count</c>.
+    /// </summary>
+    /// <param name="body">The table body range.</param>
+    /// <returns>The number of body rows.</returns>
+    internal virtual int GetBodyRowCount(Excel.Range body) => body.Rows.Count;
+
+    /// <summary>
+    /// Returns one body row by its one-based index. Test seam over the COM
+    /// parameterised <c>Range.Rows.Item</c> property.
+    /// </summary>
+    /// <param name="body">The table body range.</param>
+    /// <param name="index">The one-based body-row index.</param>
+    /// <returns>The row range.</returns>
+    internal virtual Excel.Range GetBodyRow(Excel.Range body, int index) => body.Rows[index];
 }
