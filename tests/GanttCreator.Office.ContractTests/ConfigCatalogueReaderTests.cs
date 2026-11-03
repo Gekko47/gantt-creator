@@ -116,6 +116,44 @@ public class ConfigCatalogueReaderTests
     }
 
     /// <summary>
+    /// A number or a boolean typed into a TEXT catalogue cell is drift, not a crash.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why these arms matter even though the columns are textual.</b> The catalogue's
+    /// text columns are compared with <c>CellMatches</c>, whose switch has arms for
+    /// <c>double</c>, <c>bool</c> and an <c>IFormattable</c> fallback. Only the string and
+    /// null arms were covered, because the writer always stores text there. A user can
+    /// still type <c>TRUE</c> or a number into those cells by hand, and the reader's job
+    /// is to report that as catalogue drift so the remedy (Repair configuration) is
+    /// offered — not to throw out of <c>Convert</c> or to accept the row because the
+    /// value was "close".
+    /// </para>
+    /// <para>
+    /// The three cases are the three non-text arms: a boolean, an invariant-formatted
+    /// double, and an integer that falls through to <c>Convert.ToString</c>. The
+    /// unmodified round trip in this file is the positive control.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(12.5)]
+    [InlineData(7)]
+    [InlineData(null)]
+    public void Read_refuses_when_a_text_catalogue_cell_holds_a_non_text_value(object? cellValue)
+    {
+        var fake = new ConfigSheetFake();
+        _ = ConfigGraph.BuildWriter(fake).Write();
+
+        int row = IndexOfStyleRow(fake, "AsPlannedActivity");
+        fake.Tables[1].Body[row][1] = cellValue;
+
+        var outcome = ConfigGraph.BuildReader(fake).Read();
+
+        Assert.Equal(ConfigReadOutcome.Refused(ConfigReadRefusalReason.CatalogueMismatch), outcome);
+    }
+
+    /// <summary>
     /// Returns the index of a built-in style's row in the written styles
     /// table.
     /// </summary>

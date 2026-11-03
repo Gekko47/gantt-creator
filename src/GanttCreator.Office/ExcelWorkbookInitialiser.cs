@@ -565,19 +565,49 @@ public class ExcelWorkbookInitialiser(
     /// created on <paramref name="target"/>. No-op when the name does not exist.
     /// </summary>
     /// <param name="target">The Gantt worksheet.</param>
-    private static void RollBackPlotAnchorName(Worksheet target)
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is not <c>static</c> any more.</b> The name lookup is the
+    /// <c>Names.Item</c> parameterised property — the same COM shape as
+    /// <c>Sheets.Item</c> and <c>ListObjects.Item</c>, which this class already exposes
+    /// as <c>internal virtual</c> seams for exactly this reason. It was the one such
+    /// call in the rollback path that was made inline, so the TypeOptions rollback could
+    /// not be exercised at all: the refusing path threw a <see cref="NullReferenceException"/>
+    /// under a Moq proxy, which is neither the production outcome nor the one the
+    /// <c>COMException</c> catch models.
+    /// </para>
+    /// <para>
+    /// The lookup is also null-tolerant now. Excel throws for a name that does not exist
+    /// (caught below), but the documented contract is "no-op when the name does not
+    /// exist", and a null answer is that case rather than an exception.
+    /// </para>
+    /// </remarks>
+    private void RollBackPlotAnchorName(Worksheet target)
     {
         try
         {
             Names names = target.Names;
-            Name name = names.Item(
-                GanttWorkbookContract.PlotAnchorDefinedName);
-            name.Delete();
+            Name? name = FindName(names, GanttWorkbookContract.PlotAnchorDefinedName);
+            name?.Delete();
         }
         catch (System.Runtime.InteropServices.COMException)
         {
             // The defined name may not exist; nothing to roll back.
         }
+    }
+
+    /// <summary>
+    /// Returns the sheet-scoped defined name with the given text, or
+    /// <see langword="null"/> when the sheet carries none. Test seam over the COM
+    /// parameterised <c>Names.Item</c> property.
+    /// </summary>
+    /// <param name="names">The worksheet's sheet-scoped names.</param>
+    /// <param name="nameText">The defined name to resolve.</param>
+    /// <returns>The resolved name, or <see langword="null"/>.</returns>
+    internal virtual Name? FindName(Names names, string nameText)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        return names.Item(nameText);
     }
 
     /// <summary>

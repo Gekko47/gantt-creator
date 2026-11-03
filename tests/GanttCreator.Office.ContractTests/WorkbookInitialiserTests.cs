@@ -437,6 +437,27 @@ public class WorkbookInitialiserTests
         public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
     }
 
+    /// <summary>
+    /// A materialiser that refuses, so the initialiser's TypeOptions rollback runs.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why this fake had to exist.</b> Every existing test injected
+    /// <see cref="StubTypeOptionsMaterialiser"/>, which always succeeds — so the
+    /// refusal arm that rolls back the plot anchor, the configuration sheet, the data
+    /// table AND the header row had never executed in a test. It is the last mutation
+    /// the create path performs, so it is the one where a missing rollback would leave
+    /// the user with a table and a very-hidden sheet behind a refusal that says
+    /// nothing was written.
+    /// </remarks>
+    private sealed class RefusingTypeOptionsMaterialiser(TypeOptionsRefusalReason reason)
+        : ITypeOptionsMaterialiser
+    {
+        public TypeOptionsMaterialiseOutcome Materialise() =>
+            TypeOptionsMaterialiseOutcome.Refused(reason);
+
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
+    }
+
     private sealed class TestableInitialiser : ExcelWorkbookInitialiser
     {
         public TestableInitialiser(
@@ -447,8 +468,13 @@ public class WorkbookInitialiserTests
             Func<Excel.Range, string> usedRangeAddressAt,
             Func<Excel.Worksheet, int> pivotTableCountAt,
             IConfigCatalogueWriter catalogueWriter,
-            IWorksheetProtectionGuard? protectionGuard = null)
-            : base(application, catalogueWriter, protectionGuard, new StubTypeOptionsMaterialiser())
+            IWorksheetProtectionGuard? protectionGuard = null,
+            ITypeOptionsMaterialiser? typeOptions = null)
+            : base(
+                application,
+                catalogueWriter,
+                protectionGuard,
+                typeOptions ?? new StubTypeOptionsMaterialiser())
         {
             SheetAt = sheetAt;
             TableAt = tableAt;
@@ -510,6 +536,21 @@ public class WorkbookInitialiserTests
             => ColumnAt(columns, index);
 
         internal override Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+        /// <summary>
+        /// The sheet-scoped name the rollback resolves, or <see langword="null"/> for a
+        /// sheet that carries no plot-anchor name.
+        /// </summary>
+        public Excel.Name? RollbackName { get; set; }
+
+        /// <summary>The defined-name text the rollback asked for, or null if never asked.</summary>
+        public string? RollbackNameText { get; private set; }
+
+        internal override Excel.Name? FindName(Excel.Names names, string nameText)
+        {
+            RollbackNameText = nameText;
+            return RollbackName;
+        }
     }
 
     /// <summary>The workbook-level graph: application, workbook, sheets, worksheet function.</summary>
@@ -653,7 +694,8 @@ public class WorkbookInitialiserTests
         public TestableInitialiser BuildWithWriter(
             WorksheetGraph? activeSheet,
             IConfigCatalogueWriter catalogueWriter,
-            IWorksheetProtectionGuard? protectionGuard = null)
+            IWorksheetProtectionGuard? protectionGuard = null,
+            ITypeOptionsMaterialiser? typeOptions = null)
         {
             _ = Workbook.SetupGet(w => w.ActiveSheet)
                 .Returns(activeSheet is null ? new object() : activeSheet.Worksheet.Object);
@@ -681,7 +723,8 @@ public class WorkbookInitialiserTests
                     graphs.Single(g => ReferenceEquals(g.Worksheet.Object, target))
                         .PivotTableCount,
                 catalogueWriter: catalogueWriter,
-                protectionGuard: protectionGuard);
+                protectionGuard: protectionGuard,
+                typeOptions: typeOptions);
             WireColumnPresentationFor(graphs, initialiser);
             return initialiser;
         }
@@ -936,6 +979,134 @@ public class WorkbookInitialiserTests
         // satisfy the count above while still handing the user an altered sheet. This
         // asserts the observable state the user is left with: no column is hidden.
         Assert.DoesNotContain(active.HiddenStates, hidden => hidden);
+    }
+
+    /// <summary>
+    /// A catalogue-writer refusal is reported with ITS OWN reason, not a catch-all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Six refusal reasons, one mapping, previously one test.</b> Only
+    /// <c>TargetProtected</c> was covered; the other five arms existed so that a user
+    /// whose Initialise failed is told what actually happened. The switch's own comment
+    /// states the point: "A catch-all 'everything else is TargetProtected' would tell
+    /// the user their sheet is protected when the actual cause was a missing config
+    /// sheet, an unpreservable catalogue, or a host write failure."
+    /// </para>
+    /// <para>
+    /// A missing configuration sheet maps to <c>ConfigSheetExists</c> rather than to a
+    /// write failure because the remedy is different: the user must remove the sheet
+    /// that is in the way, not try the write again.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ConfigWriteRefusalReason.NoActiveWorkbook, InitialiseRefusalReason.NoActiveWorkbook)]
+    [InlineData(ConfigWriteRefusalReason.ConfigSheetMissing, InitialiseRefusalReason.ConfigSheetExists)]
+    [InlineData(ConfigWriteRefusalReason.CataloguePreservationInvalid, InitialiseRefusalReason.CatalogueDrift)]
+    [InlineData(ConfigWriteRefusalReason.HostRejected, InitialiseRefusalReason.CatalogueWriteFailed)]
+    [InlineData(ConfigWriteRefusalReason.ThemeValidationFailed, InitialiseRefusalReason.CatalogueWriteFailed)]
+    public void A_catalogue_refusal_is_reported_with_its_own_reason(
+        ConfigWriteRefusalReason reason,
+        InitialiseRefusalReason expected)
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Refused(reason));
+
+        var outcome = graph.BuildWithWriter(active, writer.Object).Initialise();
+
+        Assert.Equal(WorkbookInitialiseOutcome.Refused(expected), outcome);
+    }
+
+    /// <summary>
+    /// A TypeOptions refusal rolls back EVERY mutation, including the plot anchor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The last rollback path, and the one nothing could reach.</b> The type-options
+    /// materialisation is the final mutation of the create path: by then the header row,
+    /// the data table, the configuration sheet and the plot-anchor defined name have all
+    /// been written. Its refusal must undo all four, or a refusal that promises no
+    /// mutation hands the user a table, a very-hidden sheet and a stale defined name.
+    /// </para>
+    /// <para>
+    /// It was unreachable because every test injected a materialiser that always
+    /// succeeds; the fake above exists to make the arm executable.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(TypeOptionsRefusalReason.NoActiveWorkbook, InitialiseRefusalReason.NoActiveWorkbook)]
+    [InlineData(TypeOptionsRefusalReason.TargetProtected, InitialiseRefusalReason.TargetProtected)]
+    public void A_type_options_refusal_rolls_back_every_mutation_and_names_its_reason(
+        TypeOptionsRefusalReason reason,
+        InitialiseRefusalReason expected)
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        var anchorName = new Mock<Excel.Name>();
+        TestableInitialiser initialiser = graph.BuildWithWriter(
+            active,
+            writer.Object,
+            typeOptions: new RefusingTypeOptionsMaterialiser(reason));
+        initialiser.RollbackName = anchorName.Object;
+
+        var outcome = initialiser.Initialise();
+
+        Assert.Equal(WorkbookInitialiseOutcome.Refused(expected), outcome);
+
+        // The three mutations that outlive the refusal if they are not undone: the
+        // plot-anchor defined name (which the next Initialise would treat as a live
+        // anchor), the configuration sheet (a very-hidden sheet in the user's workbook)
+        // and the table (a real tblGanttData).
+        Assert.Equal(GanttWorkbookContract.PlotAnchorDefinedName, initialiser.RollbackNameText);
+        anchorName.Verify(n => n.Delete(), Times.Once);
+        config.Worksheet.Verify(w => w.Delete(), Times.Once);
+        active.Table.Verify(t => t.Delete(), Times.Once);
+    }
+
+    /// <summary>
+    /// A rollback on a sheet that carries no plot-anchor name is a no-op, not a throw.
+    /// </summary>
+    /// <remarks>
+    /// The documented contract of the rollback is "no-op when the name does not exist".
+    /// Excel reports that case as a <c>COMException</c>, but the adapter also resolves
+    /// the name through its own seam, which answers null — and a null must reach the
+    /// same no-op rather than escape as a
+    /// <see cref="NullReferenceException"/> from inside a failure handler.
+    /// </remarks>
+    [Fact]
+    public void A_rollback_when_the_plot_anchor_name_is_absent_deletes_nothing_and_does_not_throw()
+    {
+        var active = BlankActiveSheet();
+        var config = new WorksheetGraph(GanttWorkbookContract.ConfigSheetName);
+        var graph = new WorkbookGraph(active);
+        graph.EnqueueCreated(config);
+        var writer = new Mock<IConfigCatalogueWriter>();
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+
+        TestableInitialiser initialiser = graph.BuildWithWriter(
+            active,
+            writer.Object,
+            typeOptions: new RefusingTypeOptionsMaterialiser(TypeOptionsRefusalReason.TargetProtected));
+        initialiser.RollbackName = null;
+
+        var outcome = initialiser.Initialise();
+
+        Assert.Equal(
+            WorkbookInitialiseOutcome.Refused(InitialiseRefusalReason.TargetProtected),
+            outcome);
+
+        // The lookup was still attempted; it simply resolved nothing to delete.
+        Assert.Equal(GanttWorkbookContract.PlotAnchorDefinedName, initialiser.RollbackNameText);
+        config.Worksheet.Verify(w => w.Delete(), Times.Once);
     }
 
     /// <summary>

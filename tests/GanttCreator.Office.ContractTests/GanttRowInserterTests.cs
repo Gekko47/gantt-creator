@@ -1404,6 +1404,37 @@ public class GanttRowInserterTests
         guard.Verify(g => g.QueryTarget(It.IsAny<object?>()), Times.Once);
     }
 
+    /// <summary>
+    /// An application with no active workbook refuses before touching the sheet.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the protection story. The guard's answer is
+    /// <c>NotProtected</c>, so the refusal comes from the adapter's own workbook check —
+    /// the arm the existing tests could not reach because the fixture always supplied a
+    /// workbook. Nothing may be read from the sheet either: the assertion on
+    /// <c>AddRowCalls</c> and the written value is what distinguishes "refused" from
+    /// "refused after writing".
+    /// </remarks>
+    [Fact]
+    public void Insert_returns_no_active_workbook_when_the_host_reports_none()
+    {
+        var graph = new Graph();
+        // The interop assembly declares ActiveWorkbook non-nullable; "no workbook" is
+        // the host's own answer at shutdown and at start-up, so the null is deliberate.
+        _ = graph.Application.SetupGet(a => a.ActiveWorkbook).Returns((Excel.Workbook)null!);
+        var guard = new Mock<IWorksheetProtectionGuard>();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(guard.Object).Insert(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.New);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.NoActiveWorkbook, outcome.Refusal);
+        Assert.Equal(0, graph.AddRowCalls);
+        Assert.Null(graph.WrittenValue);
+    }
+
     [Fact]
     public void Insert_returns_table_missing_when_no_table_is_found()
     {
