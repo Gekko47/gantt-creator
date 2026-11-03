@@ -79,7 +79,7 @@ public class AddInHostTests
     public void AutoOpen_writes_exactly_one_open_record_with_all_identifiers()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
 
         host.AutoOpen();
 
@@ -95,7 +95,7 @@ public class AddInHostTests
         // still write its open record; the ribbon onLoad is the production path
         // that arms the scheduler in a real session.
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
 
         Exception? thrown = Record.Exception(host.AutoOpen);
 
@@ -107,7 +107,7 @@ public class AddInHostTests
     public void AutoClose_writes_exactly_one_close_record_and_disposes_the_log()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
 
         host.AutoClose();
@@ -148,7 +148,7 @@ public class AddInHostTests
         // The open/close pair of one load must be correlatable: AutoClose
         // writes the session token captured from the identity AutoOpen logged.
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
 
         host.AutoClose();
@@ -196,7 +196,7 @@ public class AddInHostTests
     public void AutoClose_resets_the_ribbon_state_service()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
 
         host.AutoClose();
@@ -212,7 +212,7 @@ public class AddInHostTests
     public void AutoClose_resets_diagnostics_singleton_after_disposing_the_log()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         DiagnosticsService.Reset();
 
         try
@@ -239,7 +239,7 @@ public class AddInHostTests
     public void AutoOpen_wires_the_log_into_the_diagnostics_service()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         DiagnosticsService.Reset();
 
         try
@@ -258,7 +258,7 @@ public class AddInHostTests
     public void AutoClose_without_AutoOpen_writes_nothing_and_does_not_throw()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
 
         host.AutoClose();
 
@@ -296,7 +296,7 @@ public class AddInHostTests
     public void AutoClose_log_write_failure_never_throws_and_still_disposes()
     {
         var log = new ThrowingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
 
         var exception = Record.Exception(host.AutoClose);
@@ -309,7 +309,7 @@ public class AddInHostTests
     public void Second_AutoClose_is_a_no_op_and_never_throws()
     {
         var log = new CapturingLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
         host.AutoClose();
 
@@ -480,6 +480,23 @@ public class AddInHostTests
         }
     }
 
+    /// <summary>
+    /// An add-in host whose application adapter is FIXED, so arming the Ribbon state
+    /// service cannot adopt whatever Excel instance happens to be running.
+    /// </summary>
+    /// <remarks>
+    /// The production default source probes <c>ExcelDnaUtil.Application</c>, which
+    /// resolves the running Excel instance — so a test process started while Excel
+    /// is open would arm the state service against the developer's workbook, attach a
+    /// real COM event connection, and make this file's outcome depend on the machine.
+    /// Passing an adapter over no application keeps every assertion here about the
+    /// host's own behaviour.
+    /// </remarks>
+    /// <param name="logSource">Supplies the rolling log for the session.</param>
+    /// <returns>The host.</returns>
+    private static AddInHost Host(Func<IRollingLog> logSource) =>
+        new(() => TestIdentity, logSource, () => new ExcelApplicationAdapter(null));
+
     private static T? ReadPrivateField<T>(object obj, string fieldName)
     {
         var field = typeof(AddInHost).GetField(fieldName,
@@ -491,7 +508,7 @@ public class AddInHostTests
     public void AutoClose_dispose_failure_never_throws_and_clears_log()
     {
         var log = new ThrowingDisposeLog();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
         host.AutoOpen();
 
         var exception = Record.Exception(host.AutoClose);
@@ -567,7 +584,7 @@ public class AddInHostTests
         DiagnosticsService.Reset();
         CommandBoundary.Reset();
         RibbonStateService.Reset();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
 
         try
         {
@@ -608,7 +625,7 @@ public class AddInHostTests
         DiagnosticsService.Reset();
         CommandBoundary.Reset();
         RibbonStateService.Reset();
-        var host = new AddInHost(() => TestIdentity, () => log);
+        var host = Host(() => log);
 
         try
         {
@@ -646,9 +663,7 @@ public class AddInHostTests
         DiagnosticsService.Reset();
         CommandBoundary.Reset();
         RibbonStateService.Reset();
-        var host = new AddInHost(
-            () => TestIdentity,
-            () => ++loadCycle == 1 ? firstLog : secondLog);
+        var host = Host(() => ++loadCycle == 1 ? firstLog : secondLog);
 
         try
         {
@@ -690,7 +705,7 @@ public class AddInHostTests
             DiagnosticsService.Reset();
             CommandBoundary.Reset();
             RibbonStateService.Reset();
-            var host = new AddInHost(() => TestIdentity, () => log);
+            var host = Host(() => log);
 
             try
             {
