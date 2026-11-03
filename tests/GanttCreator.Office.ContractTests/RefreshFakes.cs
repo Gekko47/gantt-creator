@@ -33,6 +33,18 @@ internal sealed class RefreshFakes
     /// <summary>Whether the table read refuses.</summary>
     public bool TableReadRefused { get; set; }
 
+    /// <summary>
+    /// The refusal the FIRST table read reports, or <see langword="null"/> for
+    /// <see cref="GanttTableReadRefusalReason.TableMissing"/>.
+    /// </summary>
+    /// <remarks>
+    /// The first read has its own refusal mapping in the orchestrator — an unsupported
+    /// 1904 workbook is a table-read refusal with its own message, not a missing table —
+    /// and a fake that could only produce one reason made every other message
+    /// unreachable.
+    /// </remarks>
+    public GanttTableReadRefusalReason? FirstReadRefusal { get; set; }
+
     /// <summary>Whether the configuration read refuses.</summary>
     public bool ConfigReadRefused { get; set; }
 
@@ -228,6 +240,37 @@ internal sealed class RefreshFakes
     /// <summary>Whether the table re-read performed after identity repair refuses.</summary>
     public bool TableReadRefusedAfterRepair { get; set; }
 
+    /// <summary>
+    /// The refusal the fake table reader reports on every read AFTER the first.
+    /// </summary>
+    /// <remarks>
+    /// Settable so a test can distinguish the two distinct re-read steps — the one after
+    /// identity repair and the one after type-change normalisation — and can drive each
+    /// to a different refusal. Both steps map a failed re-read onto the same two
+    /// refusals, but only the reasons are shared; the code paths are separate, so a test
+    /// that could only produce <see cref="GanttTableReadRefusalReason.TableMissing"/>
+    /// would leave the no-workbook arm of the normalisation path unproven.
+    /// </remarks>
+    public GanttTableReadRefusalReason RereadRefusalReason { get; set; } =
+        GanttTableReadRefusalReason.TableMissing;
+
+    /// <summary>Whether the StyleKey write refuses.</summary>
+    public bool StyleKeyWriteRefused { get; set; }
+
+    /// <summary>How many StyleKey cells the fake writer reports as written.</summary>
+    public int StyleKeyCellsWritten { get; set; }
+
+    /// <summary>How many rows the last StyleKey plan asked to write.</summary>
+    /// <remarks>
+    /// Recorded from the plan rather than derived from the rows, so "the planner had
+    /// nothing to do" and "the orchestrator skipped the write" stay distinguishable
+    /// claims. Deriving it would make the assertion a restatement of the planner.
+    /// </remarks>
+    public int StyleKeyPlanWriteCount { get; private set; }
+
+    /// <summary>How many times the type-change normaliser was asked to run.</summary>
+    public int NormaliseCount { get; private set; }
+
     /// <summary>How many times the table reader was called.</summary>
     public int TableReadCount { get; private set; }
 
@@ -342,6 +385,60 @@ internal sealed class RefreshFakes
             warningHighlighter,
             null);
 
+    /// <summary>
+    /// Builds the orchestrator with ONLY the type-change normaliser wired.
+    /// </summary>
+    /// <remarks>
+    /// One optional collaborator at a time, so a test that observes an extra table read
+    /// can attribute it to the normaliser rather than to any other step that also
+    /// re-reads.
+    /// </remarks>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestratorWithTypeChangeNormaliser() =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            columnPresentation: null,
+
+            // Identity repair is deliberately OMITTED. It re-reads the table too, so a
+            // wired identity repairer would consume the injected re-read refusal first
+            // and leave the normalisation path unproven — the test would pass through a
+            // different branch than the one it names.
+            identityRepairer: null,
+            stateScope: null,
+            styleKeyWriter: null,
+            rowWarningHighlighter: Highlighter,
+            typeChangeNormaliser: new FakeTypeChangeNormaliser(this));
+
+    /// <summary>
+    /// Builds the orchestrator with ONLY the StyleKey writer wired.
+    /// </summary>
+    /// <returns>The composed orchestrator.</returns>
+    public GanttRefreshOrchestrator BuildOrchestratorWithStyleKeyWriter() =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            columnPresentation: null,
+            identityRepairer: null,
+            stateScope: null,
+            styleKeyWriter: new FakeStyleKeyWriter(this),
+            rowWarningHighlighter: Highlighter,
+            typeChangeNormaliser: null);
+
     private sealed class FakeTableReader(RefreshFakes owner) : IGanttTableReader
     {
         public GanttTableReadOutcome Read()
@@ -356,14 +453,15 @@ internal sealed class RefreshFakes
             {
                 if (owner.TableReadRefusedAfterRepair)
                 {
-                    return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+                    return GanttTableReadOutcome.Refused(owner.RereadRefusalReason);
                 }
 
                 return GanttTableReadOutcome.Ok(owner.RowsAfterRepair ?? owner.Rows);
             }
 
             return owner.TableReadRefused
-                ? GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing)
+                ? GanttTableReadOutcome.Refused(
+                    owner.FirstReadRefusal ?? GanttTableReadRefusalReason.TableMissing)
                 : GanttTableReadOutcome.Ok(owner.Rows);
         }
 
@@ -582,6 +680,41 @@ internal sealed class RefreshFakes
             return owner.IdentityRefused
                 ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
                 : GanttRowIdentityRepairOutcome.Ok(0);
+        }
+    }
+
+    /// <summary>A type-change normaliser that records that it ran.</summary>
+    /// <remarks>
+    /// The step takes no input and reports only a count, so there is nothing else to
+    /// model. What matters to the orchestrator is that the write happened at all and
+    /// that the rows are re-read afterwards, which is what the tests assert.
+    /// </remarks>
+    private sealed class FakeTypeChangeNormaliser(RefreshFakes owner) : ITypeChangeNormaliser
+    {
+        public GanttTypeChangeNormaliseOutcome Normalise()
+        {
+            owner.Steps.Add("Normalise");
+            owner.NormaliseCount++;
+            return new GanttTypeChangeNormaliseOutcome(0);
+        }
+    }
+
+    /// <summary>A StyleKey writer that records the plan it was asked to write.</summary>
+    /// <remarks>
+    /// <c>WriteCount</c> comes from the plan, not from a settable field, so a test can
+    /// tell "the planner found nothing to write" from "the orchestrator never called the
+    /// writer" without either assertion restating the other.
+    /// </remarks>
+    private sealed class FakeStyleKeyWriter(RefreshFakes owner) : IStyleKeyWritePort
+    {
+        public StyleKeyWriteOutcome Write(StyleKeyWritePlan plan)
+        {
+            owner.Steps.Add("StyleKey");
+            owner.StyleKeyPlanWriteCount = plan.WriteCount;
+
+            return owner.StyleKeyWriteRefused
+                ? StyleKeyWriteOutcome.Refused(StyleKeyWriteRefusalReason.WriteFailed)
+                : StyleKeyWriteOutcome.Ok(owner.StyleKeyCellsWritten, plan.WriteCount);
         }
     }
 

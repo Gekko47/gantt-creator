@@ -209,7 +209,8 @@ public class GanttRefreshOrchestratorTests
         string type,
         string description,
         DateOnly? start,
-        DateOnly? finish) =>
+        DateOnly? finish,
+        string? styleKey = null) =>
         new(
             rowNumber,
             id ?? NewId(),
@@ -220,7 +221,7 @@ public class GanttRefreshOrchestratorTests
             start,
             finish,
             parentId: null,
-            styleKey: null,
+            styleKey: styleKey,
             labelPositionText: null,
             fillColourText: null,
             strokeColourText: null,
@@ -1094,5 +1095,252 @@ public class GanttRefreshOrchestratorTests
             fakes.Outline,
             fakes.Factory,
             fakes.Shapes));
+    }
+
+    /// <summary>
+    /// A present type-change normaliser forces a re-read before validation.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why the re-read is asserted, not merely the call.</b> The normaliser WRITES
+    /// engine-hidden cells to the sheet. Validating the snapshot taken at step 1 would
+    /// then judge the values the normaliser just corrected, so a row whose stale
+    /// hidden cell is now right would still be refused — the same defect identity
+    /// repair had. The step ordering is the claim: normalise, then read, then validate.
+    /// </remarks>
+    [Fact]
+    public void A_type_change_normaliser_is_followed_by_a_reread_before_validation()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.NormaliseCount);
+
+        // The re-read is the step IMMEDIATELY after the normalise, because the point of
+        // it is that validation sees the corrected cells and nothing in between can move
+        // the boundary. Counting reads would not say that: this pipeline reads the table
+        // a third time on the render path.
+        int normaliseAt = fakes.Steps.IndexOf("Normalise");
+        Assert.True(normaliseAt >= 0, "Normalise never ran; steps=" + string.Join(", ", fakes.Steps));
+        Assert.True(
+            normaliseAt + 1 < fakes.Steps.Count
+                && string.Equals(fakes.Steps[normaliseAt + 1], "Read", StringComparison.Ordinal),
+            "expected the read straight after Normalise; steps=" + string.Join(", ", fakes.Steps));
+    }
+
+    /// <summary>
+    /// The re-read after normalisation reports a missing workbook as exactly that.
+    /// </summary>
+    /// <remarks>
+    /// The second arm of the re-read refusal. It exists because the two refusals have
+    /// different user remedies — open a workbook versus find the table — and collapsing
+    /// them into one message sends the user looking for a workbook they already have.
+    /// </remarks>
+    [Fact]
+    public void A_reread_after_normalisation_with_no_workbook_refuses_as_no_active_workbook()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TableReadRefusedAfterRepair = true,
+            RereadRefusalReason = GanttTableReadRefusalReason.NoActiveWorkbook,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        // The normaliser must have RUN for this refusal to be the re-read's. Without
+        // this, a first read that refused for the same reason would satisfy the
+        // assertion, and the branch under test would stay unproven.
+        Assert.True(
+            fakes.NormaliseCount == 1,
+            "normaliser never ran: refusal=" + outcome.Refusal + " reads=" + fakes.TableReadCount
+                + " steps=" + string.Join(",", fakes.Steps));
+        Assert.Equal(GanttRefreshRefusal.NoActiveWorkbook, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>The re-read after normalisation reports a missing table as exactly that.</summary>
+    [Fact]
+    public void A_reread_after_normalisation_with_no_table_refuses_as_a_table_miss()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TableReadRefusedAfterRepair = true,
+            RereadRefusalReason = GanttTableReadRefusalReason.TableMissing,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.Equal(1, fakes.NormaliseCount);
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A dangling <c>StyleKey</c> is healed on the SAME refresh, not the next one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The whole reason <c>ApplyStyleKeyToEvents</c> exists.</b> The validated events
+    /// carry the key read from column K at step 1. When that key names a style the user
+    /// has deleted, validation reports a warning and keeps the raw value, the planner
+    /// heals the cell to the type's code-owned default, and the scene then resolves the
+    /// key carried by the EVENT. Without the mirror the scene sees
+    /// <c>StyleThatWasDeleted</c> and the build refuses
+    /// <see cref="SceneBuilderRefusal.UnresolvableStyle"/> — so a user who tidied up
+    /// their styles would have to press Refresh twice, with the first press appearing to
+    /// fail.
+    /// </para>
+    /// <para>
+    /// The assertion is therefore on the refresh SUCCEEDING with the healed key, plus
+    /// the writer's own count reaching the outcome. A test asserting only that the
+    /// writer was called would pass with the mirror removed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_dangling_style_key_is_healed_and_rendered_in_the_same_refresh()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Planned Activity",
+                    description: "Design",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19),
+                    styleKey: "StyleThatWasDeleted"),
+            ],
+            StyleKeyCellsWritten = 1,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.StyleKeyPlanWriteCount);
+        Assert.Equal(1, outcome.StyleKeyCellsWritten);
+        Assert.NotEmpty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A 1904-date-system workbook is refused as unreadable, naming the date system.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is <see cref="GanttRefreshRefusal.TableMissing"/> because a workbook
+    /// the add-in cannot date is a workbook whose table it cannot read, but the MESSAGE
+    /// has to name the real cause: telling the user the table is missing sends them
+    /// looking for a table that is there.
+    /// </remarks>
+    [Fact]
+    public void A_1904_workbook_is_refused_with_the_date_system_named()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            TableReadRefused = true,
+            FirstReadRefusal = GanttTableReadRefusalReason.DateSystemUnsupported,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
+        Assert.Contains("1904", outcome.Message!, StringComparison.Ordinal);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A row already carrying its type's default style key costs no write at all.
+    /// </summary>
+    /// <remarks>
+    /// The empty-plan early return, and a product guarantee rather than an optimisation:
+    /// writing the value that is already in the cell marks the workbook dirty on every
+    /// Refresh for no change. The counterweight to the healing test above.
+    /// </remarks>
+    [Fact]
+    public void A_style_key_already_matching_its_type_is_not_written()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Planned Activity",
+                    description: "Design",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19),
+                    styleKey: "AsPlannedActivity"),
+            ],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(0, fakes.StyleKeyPlanWriteCount);
+        Assert.Equal(0, outcome.StyleKeyCellsWritten);
+    }
+
+    /// <summary>
+    /// A refused <c>StyleKey</c> write reports the <c>Duration</c> cells that already
+    /// landed, and mutates no shape.
+    /// </summary>
+    /// <remarks>
+    /// The refusal happens after the Duration write, so reporting zero worksheet writes
+    /// would tell the user their sheet was untouched when it was not — the workbook
+    /// would be dirty for a reason the refresh denied.
+    /// </remarks>
+    [Fact]
+    public void A_refused_style_key_write_reports_the_duration_cells_already_written()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            StyleKeyWriteRefused = true,
+            DurationCellsWritten = 3,
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithStyleKeyWriter().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.StyleKeyWriteRefused, outcome.Refusal);
+        Assert.Equal(3, outcome.DurationCellsWritten);
+        Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A scene-build refusal stops before any shape write and reports the reason.
+    /// </summary>
+    /// <remarks>
+    /// The scene build sits between the worksheet writes and the first shape write, so
+    /// it is the step where a careless reordering first becomes visible. The row uses
+    /// <c>As-Built Activity</c>, whose style the fake registry does not carry, which is
+    /// exactly the <see cref="SceneBuilderRefusal.UnresolvableStyle"/> input a
+    /// hand-edited workbook produces.
+    /// </remarks>
+    [Fact]
+    public void A_scene_build_refusal_reports_that_the_chart_was_not_rebuilt()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows =
+            [
+                Row(
+                    rowNumber: 1,
+                    id: null,
+                    type: "As-Built Activity",
+                    description: "Install",
+                    start: new DateOnly(2024, 1, 8),
+                    finish: new DateOnly(2024, 1, 19)),
+            ],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.Equal(GanttRefreshRefusal.SceneBuildRefused, outcome.Refusal);
+        Assert.Empty(fakes.Shapes.Calls);
     }
 }
