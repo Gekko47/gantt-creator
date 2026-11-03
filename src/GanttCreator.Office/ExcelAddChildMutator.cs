@@ -330,12 +330,29 @@ public class ExcelAddChildMutator(
         out AddChildMutationRefusalReason? refusal)
     {
         refusal = null;
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? failedIndex);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(
+            body,
+            columnMap,
+            out int? failedIndex,
+            out int? unparseableTypeIndex);
         if (events is null)
         {
             refusal = failedIndex == selectedIndex
                 ? AddChildMutationRefusalReason.SelectionOutsideTable
                 : AddChildMutationRefusalReason.TableInvalid;
+            return null;
+        }
+
+        // The SELECTED row's type decides whether the child may be added, and a
+        // projected event can only carry the enum's default when the cell was
+        // unreadable. Refusing here is what keeps "this cell cannot be read" from
+        // reaching the planner as "this row's type cannot own children", which is a
+        // different statement with a different remedy. An unreadable type on any
+        // OTHER row is left alone: the planner reads only the parent's and the child
+        // type, so another row's cell changes nothing about this decision.
+        if (unparseableTypeIndex == selectedIndex)
+        {
+            refusal = AddChildMutationRefusalReason.SelectedRowTypeUnreadable;
             return null;
         }
 
@@ -400,7 +417,11 @@ public class ExcelAddChildMutator(
             return false;
         }
 
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? _);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(
+            body,
+            columnMap,
+            out int? _,
+            out int? _);
         if (events is null)
         {
             return false;

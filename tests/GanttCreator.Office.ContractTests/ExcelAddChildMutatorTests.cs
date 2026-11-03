@@ -529,27 +529,27 @@ public sealed class ExcelAddChildMutatorTests
     }
 
     /// <summary>
-    /// A row whose Type cell cannot be parsed still reaches the planner, which
-    /// refuses it as a parent that cannot own children. This test pins what the
-    /// adapter actually does; the comment records the rough edge rather than
-    /// pretending the refusal names the real cause.
+    /// A selected row whose Type cell cannot be parsed is refused for exactly that:
+    /// the cell is unreadable. It is not reported as a row that cannot own children.
     /// </summary>
     /// <remarks>
-    /// An unreadable Type surfaces as <see cref="AddChildRefusalReason.ParentCannotOwnChildren"/>,
-    /// so the message the user sees talks about the row's type not owning children
-    /// rather than about the cell being unreadable. It refuses either way and nothing
-    /// is written, which is why this is recorded as a wording issue for the
-    /// translator rather than fixed here.
+    /// The two statements have different remedies. "This row cannot have children"
+    /// tells the user to pick a different row, when the row was fine and its Type cell
+    /// was not; it also hides a data defect behind a legitimate refusal. The refusal is
+    /// the mutator's own (<see cref="AddChildMutationRefusalReason.SelectedRowTypeUnreadable"/>)
+    /// rather than a planner one, because the planner never learns that the cell was
+    /// unreadable — a projected event can only carry the enum's default.
     /// </remarks>
     [Fact]
-    public void An_unreadable_type_cell_is_refused_by_the_planner_and_nothing_is_written()
+    public void A_selected_row_whose_type_cell_is_unreadable_is_refused_as_exactly_that()
     {
         Variant variant = Variant.Build(rowType: "Not A Type");
 
         AddChildMutationOutcome result = variant.Add();
 
         Assert.False(result.Succeeded);
-        Assert.Equal(AddChildRefusalReason.ParentCannotOwnChildren, result.PlanRefusal);
+        Assert.Equal(AddChildMutationRefusalReason.SelectedRowTypeUnreadable, result.Refusal);
+        Assert.Null(result.PlanRefusal);
         Assert.Empty(variant.WrittenCells);
         variant.Inserter.Verify(
             i => i.Insert(It.IsAny<GanttEntityType>(), It.IsAny<Func<GanttRowId>>()), Times.Never);

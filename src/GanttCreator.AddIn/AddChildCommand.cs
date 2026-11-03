@@ -80,6 +80,8 @@ internal static class AddChildCommand
                 "Select the parent row in the Gantt table, then add the child.",
             AddChildMutationRefusalReason.TableInvalid =>
                 "Gantt Creator could not read the table, so no child was added. Repair the configuration and try again.",
+            AddChildMutationRefusalReason.SelectedRowTypeUnreadable =>
+                "Gantt Creator could not read the selected row's Type cell, so it cannot tell whether that row can have children. Enter a valid Type in the row, then add the child again.",
             AddChildMutationRefusalReason.InsertRefused =>
                 "Gantt Creator could not add the row, so no child was added. Try again; if it keeps failing, see the Diagnostics dialog.",
             AddChildMutationRefusalReason.WriteFailed =>

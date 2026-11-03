@@ -841,7 +841,11 @@ public class ExcelParentChildMutator(
         out ParentChildMutationRefusalReason? refusal)
     {
         refusal = null;
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? failedIndex);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(
+            body,
+            columnMap,
+            out int? failedIndex,
+            out int? _);
         if (events is null)
         {
             refusal = failedIndex == selectedIndex

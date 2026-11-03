@@ -27,6 +27,20 @@ public enum AddChildMutationRefusalReason
 
     /// <summary>The host refused a planned cell write.</summary>
     WriteFailed = 6,
+
+    /// <summary>
+    /// The SELECTED row's <c>Type</c> cell could not be parsed, so whether it may own
+    /// children is unknown.
+    /// </summary>
+    /// <remarks>
+    /// Its own member rather than <see cref="TableInvalid"/>, and emphatically not a
+    /// planner refusal, because the three say different things and have different
+    /// remedies: this one means "read this cell", <see cref="TableInvalid"/> means "the
+    /// table is unreadable", and the planner's <c>ParentCannotOwnChildren</c> means "this
+    /// row's type is known and cannot own children". Reporting the last for the first
+    /// told the user to pick a different row when the row was fine and the cell was not.
+    /// </remarks>
+    SelectedRowTypeUnreadable = 7,
 }
 
 /// <summary>

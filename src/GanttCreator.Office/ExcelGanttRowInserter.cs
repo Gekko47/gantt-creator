@@ -716,7 +716,11 @@ public class ExcelGanttRowInserter(
         }
 
         List<object?[]> body = ReadBody(table);
-        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(body, columnMap, out int? _);
+        List<GanttEvent>? events = ExcelGanttRowProjection.ProjectRows(
+            body,
+            columnMap,
+            out int? _,
+            out int? _);
         if (events is null)
         {
             return;

@@ -86,6 +86,23 @@ public sealed class AddChildCommandTests
     }
 
     [Fact]
+    public void An_unreadable_selected_type_names_the_cell_rather_than_the_row()
+    {
+        // The remedy differs: this message tells the user to fix a CELL. The
+        // planner's "that row cannot have children" tells them to pick another row,
+        // which is wrong when the row was fine and its Type was not.
+        Mock<IAddChildMutator> mutator = MutatorWith(
+            AddChildMutationOutcome.Refused(AddChildMutationRefusalReason.SelectedRowTypeUnreadable));
+        List<string> presented = [];
+
+        AddChildCommand.Run(mutator.Object, FixedId, presented.Add, GanttEntityType.AsBuiltActivity);
+
+        string message = Assert.Single(presented);
+        Assert.Contains("Type cell", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("cannot have children", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_capacity_refusal_names_the_limit()
     {
         Mock<IAddChildMutator> mutator = MutatorWith(
