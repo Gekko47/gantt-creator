@@ -55,7 +55,7 @@ Roadmap revision 12 (21 October 2026) adds the R5.6a–R5.6e rows, and the three
 
 Read the [implementation-guide manifest](work-items/IMPLEMENTATION-PLAN.md), the current [work item](work-items/), and [STATUS](STATUS.md); use scoped live symbol queries, narrowing truncated results. A symbol outline is only a locator; treat it as navigation aid, not as compiler or reference evidence — verify any finding against current source.
 From the repository root: `pwsh ./scripts/check-md-links.ps1` checks links, not semantic accuracy.
-After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`.
+After staging intended changes: `pwsh ./scripts/verify-quick.ps1`; after committing with a clean tree: `pwsh ./scripts/verify.ps1`. `verify.ps1` runs the changed-code mutation gate as its step 13 via [`mutation-gate.ps1`](../scripts/mutation-gate.ps1); on a long-lived branch the gate halts when `--since origin/main` spans more than 30 Core files, and the sanctioned remedy is `pwsh ./scripts/verify.ps1 -MutationSince <nearer merge-base>` (recorded in R3.13), never a threshold change.
 Live Office checks are separate: `pwsh ./scripts/verify-office.ps1` when required; see [verification policy](05-GIT-QUALITY.md).
 Update this map in the same change as mapped responsibilities, entry points, test locations or commands; inspect working-tree edits before relying on it.
 [Implementation plan](work-items/REPO-MAP-navigation.md). No persistent symbol cache or automatic freshness checker is installed.

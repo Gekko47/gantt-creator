@@ -1,6 +1,6 @@
 # ADR-0043 — The live chart title is an owned textbox shape, not a reserved-row cell
 
-- **Status**: Proposed (owner approved the direction 2026-10-17; awaiting implementation)
+- **Status**: Accepted (implemented: owned title textbox added by `GanttRefreshOrchestrator`; workbook schema 17; status corrected 2026-11-03)
 - **Date**: 2026-10-17
 - **Context**: R5.6b ships the Chart title dialog writing the `ChartTitle`/`ShowTitle`
   settings. The owner further requires the live title to render in a textbox shape in

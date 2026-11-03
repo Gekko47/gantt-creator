@@ -1,6 +1,6 @@
 # ADR-0046 — Every chart border is one uniform soft grey
 
-- **Status**: Proposed (owner approved direction 2026-10-20)
+- **Status**: Accepted (implemented: `MajorGridStroke` and `MinorGridStroke` both `#D9D9D9` in `GanttCatalogues`; status corrected 2026-11-03)
 - **Date**: 2026-10-20
 - **Work item**: R5.6a (named style presets) / R5.6 (style and theme settings)
 - **Supersedes/amends**: amends the entity guide's §6 colour-token table (`MajorGridStroke`); amends ADR-0045 D2's token-authority rule only in the value the authority carries

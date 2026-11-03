@@ -1,6 +1,6 @@
 # ADR-0044 — A named style carries a stroke dash pattern
 
-- **Status**: Proposed (owner approved direction 2026-10-19)
+- **Status**: Accepted (implemented: `GanttStrokeDash` through the style column 14, `ExcelShapeWriter.MapDashStyle` and the theme editor; status corrected 2026-11-03)
 - **Date**: 2026-10-19
 - **Work item**: R5.6a (named style presets)
 - **Supersedes/amends**: nothing; extends ADR-0009 (style capability schema) and ADR-0007 D7 (catalogue token authority)

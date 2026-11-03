@@ -1,6 +1,6 @@
 # ADR-0048 - The live chart's border encloses the visible data table
 
-- **Status**: Proposed (owner reported the symptom 2026-10-21)
+- **Status**: Accepted (implemented: `ChartFrameGeometry`'s union of the chart and the measured table, consumed by `FrameBandsBuilder`; status corrected 2026-11-03)
 - **Date**: 2026-10-21
 - **Work item**: R5.6e (the chart frame encloses the table)
 - **Amends**: ADR-0043 D1 (the live title's placement); ADR-0030 D4/D5 (the live sheet's reserved rows)

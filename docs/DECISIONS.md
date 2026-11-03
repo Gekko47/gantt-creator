@@ -45,12 +45,14 @@
 | ADR-0039 | The month period label steps down MMM → MM when the band is too narrow | Superseded by ADR-0040 | 2026-10-09 | [`adr/0039-period-label-fit-ladder.md`](adr/0039-period-label-fit-ladder.md) |
 | ADR-0040 | The Month period-label format is the user's explicit choice (MM or MMM) | Accepted (amended 2026-10-10 by ADR-0041) | 2026-10-09 | [`adr/0040-period-label-format-selection.md`](adr/0040-period-label-format-selection.md) |
 | ADR-0041 | Period-label visibility is measured-fit, so MM shows where MMM does not | Accepted | 2026-10-10 | [`adr/0041-period-label-measured-fit.md`](adr/0041-period-label-measured-fit.md) |
-| ADR-0043 | The live chart title is an owned textbox shape, not a reserved-row cell | Proposed (owner approved direction 2026-10-17) | 2026-10-17 | [`adr/0043-live-title-textbox.md`](adr/0043-live-title-textbox.md) |
-| ADR-0044 | A named style carries a stroke dash pattern, in a new appended column | Proposed (owner approved direction 2026-10-19) | 2026-10-19 | [`adr/0044-style-stroke-dash.md`](adr/0044-style-stroke-dash.md) |
-| ADR-0045 | The chart chrome colours are persisted, editable settings | Proposed (owner approved direction 2026-10-19) | 2026-10-19 | [`adr/0045-chart-chrome-colours.md`](adr/0045-chart-chrome-colours.md) |
-| ADR-0046 | Every chart border is one uniform soft grey (`MajorGridStroke` = `#D9D9D9`) | Proposed (owner approved direction 2026-10-20) | 2026-10-20 | [`adr/0046-uniform-chart-borders.md`](adr/0046-uniform-chart-borders.md) |
-| ADR-0047 | The live chart's geometry must stay on the sheet: the title occupies the reserved row, the frame is clamped at its top, and the workbook's metrics drive the row heights | Proposed (owner reported the symptom 2026-10-21) | 2026-10-21 | [`adr/0047-chart-geometry-stays-on-the-sheet.md`](adr/0047-chart-geometry-stays-on-the-sheet.md) |
-| ADR-0048 | The live chart's border encloses the visible data table, drawn on the union of the chart and the measured table | Proposed (owner reported the symptom 2026-10-21) | 2026-10-21 | [`adr/0048-chart-frame-encloses-the-table.md`](adr/0048-chart-frame-encloses-the-table.md) |
+| ADR-0042 | Destructive commands offer a session-scoped "don't ask again" opt-out, amending ADR-0008 D3 | Accepted | 2026-10-13 | [`adr/0042-destructive-confirmation-opt-out.md`](adr/0042-destructive-confirmation-opt-out.md) |
+| ADR-0043 | The live chart title is an owned textbox shape, not a reserved-row cell | Accepted | 2026-10-17 | [`adr/0043-live-title-textbox.md`](adr/0043-live-title-textbox.md) |
+| ADR-0044 | A named style carries a stroke dash pattern, in a new appended column | Accepted | 2026-10-19 | [`adr/0044-style-stroke-dash.md`](adr/0044-style-stroke-dash.md) |
+| ADR-0045 | The chart chrome colours are persisted, editable settings | Accepted | 2026-10-19 | [`adr/0045-chart-chrome-colours.md`](adr/0045-chart-chrome-colours.md) |
+| ADR-0046 | Every chart border is one uniform soft grey (`MajorGridStroke` = `#D9D9D9`) | Accepted | 2026-10-20 | [`adr/0046-uniform-chart-borders.md`](adr/0046-uniform-chart-borders.md) |
+| ADR-0047 | The live chart's geometry must stay on the sheet: the title occupies the reserved row, the frame is clamped at its top, and the workbook's metrics drive the row heights | Accepted | 2026-10-21 | [`adr/0047-chart-geometry-stays-on-the-sheet.md`](adr/0047-chart-geometry-stays-on-the-sheet.md) |
+| ADR-0048 | The live chart's border encloses the visible data table, drawn on the union of the chart and the measured table | Accepted | 2026-10-21 | [`adr/0048-chart-frame-encloses-the-table.md`](adr/0048-chart-frame-encloses-the-table.md) |
+| ADR-0049 | A delineator carries a user-authored named style whose width overrides the chart-wide metric | Accepted | 2026-10-28 | [`adr/0049-delineator-named-style.md`](adr/0049-delineator-named-style.md) |
 | ADR-0050 | Empty live chart and coalesced automatic refresh | Accepted | 2026-10-31 | [`adr/0050-empty-live-chart-and-coalesced-refresh.md`](adr/0050-empty-live-chart-and-coalesced-refresh.md) |
 | ADR-0051 | Retain the unprotected worksheet; add-in-owned protection is not adopted | Accepted | 2026-11-01 | [`adr/0051-retain-unprotected-worksheet.md`](adr/0051-retain-unprotected-worksheet.md) |
 
@@ -74,6 +76,8 @@ referenced from ADR-0030, ADR-0033, ADR-0034 and ADR-0035, and from the roadmap,
 no `adr/0031-*.md` or `adr/0032-*.md` exists. They are therefore absent from this
 index: an index row must link to a readable record, and inventing one would fabricate
 a decision. This gap is reported, not filled.
+
+**Six index rows said "Proposed" for decisions the code had already shipped (corrected 2026-11-03).** ADR-0043 through ADR-0048 were indexed as `Proposed (owner approved direction …)` / `Proposed (owner reported the symptom …)`, which recorded the governance state when they were authored, not the state of the tree. Each is implemented and exercised: 0043 by `GanttRefreshOrchestrator`'s owned title textbox and `GanttSchemaVersion` 17; 0044 by `GanttStrokeDash` through `ExcelShapeWriter.MapDashStyle`, the style column 14 and the theme dialog; 0045 by `GanttChartChrome`'s settings keys; 0046 by `GanttCatalogues`' `MajorGridStroke`/`MinorGridStroke` both `#D9D9D9`; 0047 by `FrameBandsBuilder`/`SceneBuilder` refusing a band above row 1; 0048 by `ChartFrameGeometry`'s union of chart and measured table. Their statuses are now `Accepted`. Two rows were also **missing entirely** and are added: **ADR-0042** (session-scoped destructive-confirmation opt-out — cited in `CommandBoundary.Dialog`, `ConfirmationSession` and `RemoveCommand`) and **ADR-0049** (the R5.7 delineator named style). Both files existed on disk and were implemented; only the index was stale, which is the same class of drift ADR-0036/0037 corrected here on 2026-10-03.
 
 ## ADR template
 

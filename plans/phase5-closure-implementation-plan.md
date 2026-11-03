@@ -17,6 +17,23 @@ plus [`mutation-gate.ps1`](../scripts/mutation-gate.ps1),
 [`verify.ps1`](../scripts/verify.ps1), and
 [`verify-office.ps1`](../scripts/verify-office.ps1).
 
+> **Status of this plan, 2026-11-03.** Stages 0, 1 and 6 are complete; 2, 3
+> and 5 are complete for everything automation can reach; Stage 7 is closed as
+> measured, no-change. Evidence lives in [`docs/STATUS.md`](../docs/STATUS.md)
+> under "Consolidated gate state, 2026-11-03", not here — this file stays a
+> plan. **Stage 2**: the scheduler-to-render loop, the empty live render and
+> invalid-entry recovery are exercised by `AutoRefreshTriggerIntegrationTests`,
+> `InitialiseSheetIntegrationTests` and `ValidationReporterIntegrationTests`.
+> **Stage 3**: the trigger/non-trigger matrix is covered by contract and live
+> tests; the native `+`/`-` **event** probe is the one item still open, because
+> it needs a human click that no agent can perform. **Stage 4**: the automated
+> halves pass; the live R5.8/R5.10 rows remain human evidence. **Stage 5**:
+> `R5.9a` exists, the presentation delta landed, `verify-office.ps1` now passes
+> (56/56, 2026-11-03) and `verify.ps1` passes with `-MutationSince f5cc838~1`
+> (89.87% on 237 changed mutants); the **accessibility review** was explicitly
+> deferred by the owner on 2026-11-03 ("not concerned about accessibility at
+> this stage"), which is a decision, not a silent omission.
+
 ## Verified drift findings this plan must reconcile
 
 1. **`R5.9a` does not exist.** R5.9's Option B decision table, the roadmap

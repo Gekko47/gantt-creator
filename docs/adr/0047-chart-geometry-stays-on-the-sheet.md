@@ -1,6 +1,6 @@
 # ADR-0047 - The live chart's geometry must stay on the sheet
 
-- **Status**: Proposed (owner reported the symptom 2026-10-21)
+- **Status**: Accepted (implemented: `FrameBandsBuilder`/`SceneBuilder` refuse a band above row 1 and the reserved-row title geometry; status corrected 2026-11-03)
 - **Date**: 2026-10-21
 - **Work item**: R5.6d (theme dialog and chrome fixes)
 - **Amends**: ADR-0030 D4/D5 (the live sheet's reserved rows); ADR-0043 (the live title's placement)

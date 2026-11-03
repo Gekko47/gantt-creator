@@ -1,6 +1,6 @@
 # ADR-0045 — The chart chrome colours are persisted, editable settings
 
-- **Status**: Proposed (owner approved direction 2026-10-19)
+- **Status**: Accepted (implemented: `GanttChartChrome` role-to-setting keys, written and read through the theme edit path; status corrected 2026-11-03)
 - **Date**: 2026-10-19
 - **Work item**: R5.6a (named style presets) / R5.6 (style and theme settings)
 - **Supersedes/amends**: nothing; extends ADR-0007 D7 (catalogue token authority) and ADR-0014 (chart title settings)
