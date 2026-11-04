@@ -32,13 +32,13 @@ internal static class RefreshSheetCommand
     /// The session's arming memory (ADR-0055). It must outlive one orchestrator, because the live
     /// composition builds a new one for every refresh.
     /// </summary>
+    /// <remarks>
+    /// Kept even though the live composition does not arm yet: the measured host behaviour
+    /// (see <c>ProtectionArmingIntegrationTests</c>) shows that a protected sheet refuses shape
+    /// creation, shape movement and table-row insertion, so arming cannot be switched back on until
+    /// the refresh and every structural command open a release window around their writes.
+    /// </remarks>
     private static readonly ProtectionArmingState _protectionArming = ProtectionArmingState.Shared;
-
-    /// <summary>
-    /// The session's protection-ownership flag, shared with every adapter's guard so the add-in's
-    /// own protection does not block its own writes.
-    /// </summary>
-    private static readonly ProtectionOwnershipSource _protectionOwnership = ProtectionOwnershipSource.Shared;
 
     internal static void ResetDeltaCache() => _shapeDeltaCache.Invalidate();
 
@@ -263,19 +263,16 @@ internal static class RefreshSheetCommand
             new ExcelTypeChangeNormaliser(application),
             shapeDeltaCache: _shapeDeltaCache,
             useDeltaCache: useDeltaCache,
-            trace: trace,
+            trace: trace);
 
-            // ADR-0055: the refresh arms the add-in's own protection before it writes, and claims
-            // ownership only of protection this session applied. Both the ownership flag and the
-            // arming memory are session state, not per-refresh state, because a new orchestrator is
-            // built for every pass; the arming policy itself is a collaborator so the orchestrator
-            // holds no protection mutation of its own.
-            protectionOwnership: _protectionOwnership,
-            protectionArming: new WorksheetProtectionArming(
-                new ExcelWorksheetProtectionPort(application),
-                shapeWriter,
-                _protectionArming,
-                trace));
+        // ADR-0055 is NOT armed here, deliberately. Measured live on 2026-11-04: with the sheet
+        // protected for the interface only, a cell write lands but Shapes.AddShape and Shape.Left
+        // raise "The specified value is out of range" and a table-row insert is refused -- so
+        // arming protection at this point breaks every refresh and every row command. The policy,
+        // the port, the ownership flag and the arming memory are all in place and contract-tested;
+        // what is missing is the release window around the writes, which needs the owner's ruling
+        // because it costs two host calls per refresh (ADR-0055's "no extra step" rule).
+        // ProtectionArmingIntegrationTests records the measurement.
     }
 #pragma warning restore CA2000
 }

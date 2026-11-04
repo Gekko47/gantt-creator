@@ -63,15 +63,46 @@ reference establishes four facts that the design has to obey:
    the shape writer's own guard refuses a protected sheet (so the back-fill can only run while the
    sheet is released). `ProtectionArmingState` records that the arming is in force, so a refresh that
    follows one reads a bool instead of re-arming; the add-in invalidates it when the active workbook
-   changes, which is the one event that can make it wrong. Between a reopen and that refresh the
-   sheet stays fully protected, which is the state the user asked for (unlocked data columns still
-   accept typing; shapes cannot be dragged).
+   changes, which is the one event that can make it wrong.
+
+   **REVISED 2026-11-04 after the live measurement below: arming is currently NOT wired into the live
+   refresh.** The once-per-session assumption this clause was built on is false, so re-enabling it
+   needs a decision this ADR cannot make on its own (see "Measured host behaviour").
 6. **Unlock is transient at the reconciler and suspended at the scheduler.** "Unlock shape" acts
    only on a selected, provably-owned shape: it unprotects the sheet and clears that shape's
    `Locked`. Automatic refresh is **suspended** for as long as anything is unlocked, so a manual
    edit is not lost to an unrelated cell edit; an explicit Refresh, or a "Lock shapes" command,
    re-protects, re-locks and re-asserts the shape's geometry — reverting the manual edit, exactly
    as ruled.
+
+## Measured host behaviour (2026-11-04, live Excel 16.0.20527.20112 x64)
+
+`ProtectionArmingIntegrationTests` protects a real sheet with `DrawingObjects`, `Contents` and
+`UserInterfaceOnly` and then performs the writes a refresh makes. Everything below is observed, not
+inferred:
+
+| operation | sheet unprotected | sheet protected (UI-only) |
+|---|---|---|
+| write a cell (`Range.Value2`) | ok | **ok** |
+| `Shapes.AddShape` (create a bar) | ok | **COMException, "The specified value is out of range"** |
+| `Shape.Left = …` (move a shape) | ok | **ArgumentException, same message** |
+| insert a table row (`ListRows.Add`) | ok | **refused: `RowWriteRefused`** |
+| `Shape.Locked = true` on an owned shape | ok | **ok** |
+| `Unprotect()` then create + insert | — | **ok** |
+| `Protect()` again, then write a cell | — | **ok** |
+
+So `UserInterfaceOnly` exempts **cells only** in this host: the drawing-object lock blocks every
+shape write and the contents lock blocks the row insert. The consequence is that a refresh cannot
+run with the sheet protected, and neither can Add activity, Add child, Promote, Demote, Move or
+Delete. The design that can work is a **release window**: unprotect immediately before the write
+phase, re-protect immediately after, on every path — which costs two host calls per pass and is
+therefore the owner's call, because clause D1's brief said the feature must not add a step to the
+automatic refresh. Until that ruling, `RefreshSheetCommand` deliberately does not construct the
+arming, so the feature is dormant in the product while every part of it stays contract-tested.
+
+Two further facts from the same run: a workbook protected by an earlier session refuses a command
+that runs before the first refresh (`TargetProtected`), because ownership is only established by a
+refresh; and the "out of range" message names no cause, so the log line matters more than the text.
 
 ## Why not an exemption set
 
