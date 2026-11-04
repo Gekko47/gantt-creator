@@ -149,6 +149,32 @@ public sealed class ProtectionGuardFirstTests
     ];
 
     /// <summary>
+    /// Mutating Office files that must <em>not</em> consult the guard before their first
+    /// mutation, with the reason each one is exempt.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a declared exception list, not an oversight list. ADR-0008 D4 requires every
+    /// mutating adapter to consult protection before it writes, and the check for that runs in
+    /// <see cref="ProtectionOrderViolations"/> over <see cref="MutatingAdapters"/>. A file named
+    /// here still has to be discovered as a mutator (its mutation shape is in
+    /// <see cref="DataMutationPatterns"/>) — it simply cannot satisfy the ordering rule.
+    /// </para>
+    /// <para>
+    /// ADR-0055's protection adapter is the only member. Its job is to apply and remove the
+    /// worksheet protection the guard reads: re-applying <c>UserInterfaceOnly</c> after a reopen
+    /// is possible only on an already-protected sheet, and the guard refuses a protected sheet by
+    /// design, so asking the guard first would make the recovery path unreachable. The policy that
+    /// keeps this safe lives one layer up — the orchestrator decides when to arm, and it only ever
+    /// arms the sheet the add-in itself owns.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] ProtectionControlAdapters =
+    [
+        "src/GanttCreator.Office/ExcelWorksheetProtectionPort.cs",
+    ];
+
+    /// <summary>
     /// Mutating adapters that still use their own read-only protection probes
     /// (<c>ProtectContents</c>/<c>ProtectStructure</c>) rather than the shared
     /// guard port. ADR-0008 D4 wants the port; this declared set is the
@@ -304,6 +330,11 @@ public sealed class ProtectionGuardFirstTests
         // to guard; its implementation consults the shared guard and is registered
         // above as a mutating adapter.
         "src/GanttCreator.Office/IStyleKeyWritePort.cs",
+        // ADR-0055: the worksheet-protection port's interface. A declaration plus two
+        // outcome types - no interop proxy, no statement, nothing to guard. Its
+        // implementation is the one declared protection-control adapter, which cannot
+        // consult the guard for the reason recorded on ProtectionControlAdapters.
+        "src/GanttCreator.Office/IWorksheetProtectionPort.cs",
     ];
 
     /// <summary>
@@ -337,6 +368,11 @@ public sealed class ProtectionGuardFirstTests
         "Names.Add(",
         "names.Add(",
         "_catalogueWriter.Write(",
+        // ADR-0055: applying and removing worksheet protection changes workbook state just as
+        // surely as a cell write, so the discovery rule must see it. Adding the shape here is
+        // what forces the two protection files to be classified deliberately.
+        ".Protect(",
+        ".Unprotect(",
         "AddComment(",
         "Comment.Text(",
         "comment.Text(",
@@ -427,7 +463,9 @@ public sealed class ProtectionGuardFirstTests
 
         var violations = ClassificationViolations(
             sources,
-            MutatingAdapters.Select(adapter => adapter.RelativePath).ToArray(),
+            MutatingAdapters.Select(adapter => adapter.RelativePath)
+                .Concat(ProtectionControlAdapters)
+                .ToArray(),
             NoDataMutationOfficeFiles);
 
         Assert.True(
@@ -442,7 +480,9 @@ public sealed class ProtectionGuardFirstTests
 
         var violations = DiscoveryViolations(
             sources,
-            MutatingAdapters.Select(adapter => adapter.RelativePath).ToArray());
+            MutatingAdapters.Select(adapter => adapter.RelativePath)
+                .Concat(ProtectionControlAdapters)
+                .ToArray());
 
         Assert.True(
             violations.Count == 0,
