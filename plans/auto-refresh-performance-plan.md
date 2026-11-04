@@ -230,6 +230,137 @@ is not worth the milliseconds.
 Depends on P1, so it is not re-measured here. The first pass stays dominated by
 create-time COM work.
 
+## Round-trip budget and the post-P1′ optimisation set (2026-11-04)
+
+Where the time actually goes, per COM round trip (RT), derived from the code and the
+within-session measurements. Reads on a held RCW measure ≈0.03–0.1 ms; **writes** ≈0.5–1.2 ms
+(the host re-layouts); **collection walks** (`Sheets`, `ListObjects`, `Shapes[i]`) ≈0.2–0.5 ms
+per step. That asymmetry is the fact the whole plan now rests on.
+
+**Fixed per refresh (every change type)**
+
+| Work | Round trips | Measured |
+|---|---|---|
+| Application-state scope (5 settings + selection capture/restore) | ~10–12 | inside `post` 0.3–4.5 ms |
+| Table read (one bulk `Value2`) + config read | 2 bulk + walks | `read` 4–24 ms |
+| Outline / duration / StyleKey / heights / measure | ~15–25 | `sheet` 1.4–7.6 + `measure` 4.5–39 ms |
+| `ListOwned`: `Shapes[i]` + `Name` + `AlternativeText` per shape | **3 × N ≈ 258** | ~5–15 ms |
+| `GeometryMatches` per unchanged candidate: resolve + lookup + tag + placement + 4 box reads | ~10 × unchanged | reads only, cheap |
+
+**Per changed primitive**
+
+| Path | Round trips | Of which writes | Measured |
+|---|---|---|---|
+| Move (P1′) | guard 1–2 + resolve ~6 + lookup 1 + tag 1 + box 4 + placement 1 ≈ **14–16** | 5 | 8.0–10.4 ms |
+| Full update | + style ~10–15 + text ~8–12 ≈ **30–40** | ~20 | 6.7 ms marginal at scale; 16–20 ms in small batches |
+| Create | AddShape + placement + style + text + tag stamp ≈ 25–35 | ~22 | — |
+| Delete | resolve + lookup + tag + `Delete` ≈ 10 | 1 | — |
+
+**Z-order pass (when order changed):** resolve + lookup + `ZOrder` per shape ≈ 2–3 RT/shape,
+one write each → 0.6–2.7 ms/shape → **50–230 ms per pass**. On a manual refresh it is
+~60–215 ms of the ~1–3.6 s.
+
+**Redundant work the budget exposes**
+
+1. `ResolveShapes` re-walks `Sheets` → `ListObjects` → guard → `Shapes` on **every**
+   Create/Update/UpdateGeometry/Delete/`GeometryMatches`/`ApplyZOrder` call — ~6 RT,
+   two of them collection walks, per primitive, for a target that cannot change mid-refresh
+   (`EnableEvents` is off).
+2. `ApplyPlacement` writes `Placement = xlMove` unconditionally on every update, including
+   the 85 shapes that already report `xlMove`.
+3. `ListOwned` reads the ownership tag for **every** shape on the sheet, including user
+   shapes whose names cannot parse as ours.
+4. `ApplyZOrder` re-resolves and re-looks-up every name the update loop just held.
+5. Not material, recorded for completeness: `Enum.IsDefined` and `Kind.ToString()` per
+   primitive (µs), 3 × SHA-256 per primitive on commit (µs), band tracing (5 reads on
+   band-named shapes only), `SelectBodyCell` (2 RT once per command), JSON boxing none
+   (serialisation is hash-input only).
+
+### O1 — One resolution and one guard per reconcile
+
+- **Sketch:** `IShapeWritePort` gains a batch scope (`using var batch =
+  writer.BeginBatch()` in `ShapeReconciler.Reconcile`); the writer resolves `Shapes` and
+  queries the guard once and reuses them for every operation in the batch. `FindShapeByName`
+  stays per primitive (names change); the batch ends on dispose or on the first refusal.
+- **Expected saving:** removes ~6 RT (2 walks) per primitive → **1.5–3 ms per primitive**;
+  a 42-primitive relocation pass **60–120 ms**, a 6–12 primitive pass **10–35 ms**, and the
+  z-order preflight's resolution **25–60 ms** on reordering passes.
+- **Fidelity risk:** low. Same proxies, same checks, once. `Shapes` is a live collection
+  proxy, so creates/deletes inside the batch do not stale it; the guard cannot change
+  mid-refresh with events off. Keep the per-target check (R4.8 D3) — it just runs once.
+- **Validation:** within one session, all-move passes should fall from 8–12 ms/primitive
+  toward **4–6 ms**, and `zorderms`/shape from 0.7–2.0 toward **0.4–1.0**.
+
+### O2 — Reuse shape proxies into the z-order pass
+
+- **Sketch:** the batch keeps `Dictionary<string, Excel.Shape>` of proxies it already
+  resolved; `ApplyZOrder` uses it, falling back to the indexed lookup for misses; `Delete`
+  removes the entry.
+- **Expected saving:** one lookup per shape ≈ **20–50 ms** on a reordering pass (overlaps
+  O1's preflight saving; count once).
+- **Fidelity risk:** low; the dictionary is batch-scoped, not cached across refreshes.
+
+### O3 — Skip the placement write when the shape already reports `xlMove`
+
+- **Sketch:** read `Placement` (one cheap read) before writing; skip when already
+  `xlMove`. `GeometryMatches` already reads it, so the reconciler can also pass
+  "placement verified" for the skip candidates.
+- **Expected saving:** ~0.5–1 ms per primitive on warm passes (every shape is `xlMove`
+  after the first heal) → **20–40 ms** on a 42-primitive pass.
+- **Fidelity risk:** none — an idempotent write skipped only when the read proves it. The
+  first refresh after the rule changed still heals legacy `xlMoveAndSize` shapes.
+
+### O4 — `ListOwned`: read the tag only for names that can be ours
+
+- **Sketch:** check the name's `<rowId>:<role>` shape (a string test, no COM) before
+  reading `AlternativeText`; keep the phase-0 inventory logging for chart-shaped names.
+- **Expected saving:** ~1 read × N non-ours shapes ≈ **1–3 ms** per refresh. Small; do it
+  with O1, not alone.
+- **Fidelity risk:** none — a name that cannot parse as ours can never carry our tag, and
+  the tag read for candidates is unchanged (R9.4 keeps its evidence).
+
+### O5 — P2 revisited: minimal z-order moves (the rejection is withdrawn)
+
+- The original P2 rejection assumed reads and writes cost the same. The zero-write passes
+  disprove that: 87 shapes verify in ~20 ms, so a read is ~0.03–0.1 ms while a `ZOrder`
+  command is a write at ~0.6–2.7 ms. Reading position to avoid writes is now **worth it**.
+- **Sketch:** `ListOwned` already walks `Shapes[i].Name` front-to-back — that walk IS the
+  live z-order. Compare it with the desired order, find the longest already-correct
+  suffix/prefix, and issue `ZOrder` only for the shapes outside it; a create still forces
+  the full pass (existing rule).
+- **Expected saving:** a pass where 2–4 primitives moved: **50–90 ms → 10–15 ms**. A full
+  reorder (manual refresh) is unchanged.
+- **Fidelity risk:** medium — the minimal-move algorithm must provably converge; the plan's
+  original acceptance (fake's recorded call list plus an order simulation) is the gate.
+- **Validation:** `zorderms` on small-reorder passes; the order-simulation test.
+
+### Not proposed (checked and rejected)
+
+- **Appearance-level write scoping** — unchanged rejection (R4.7 D5: `null` means
+  "leave the host alone", so an un-applied part cannot be proven).
+- **Caching the owned set** across refreshes — R9.4's tag-edit scenario; `ListOwned`'s
+  reads stay.
+- **Config cache (P3)** — unchanged correctness rejection; the config read is one bulk
+  call inside `read`.
+- **ScreenUpdating / event reentrancy** — already correct: the ADR-0020 scope disables
+  events for the whole refresh, so the pipeline's own writes never re-enter the scheduler,
+  and `ScreenUpdating=false` batches the repaint. Nothing to gain.
+- **Selection/activation churn** — `SelectBodyCell` is 2 RT once per command; the scope's
+  selection restore is 1 `Range.Select()`. Immaterial.
+
+### Expected effect (within-session, quiet host)
+
+| Pass | today | +O1/O3 | +O1/O3/O5 |
+|---|---|---|---|
+| date edit (1–3 primitives) | 8–12 ms write | **3–5 ms** | 3–5 ms |
+| relocation (39–42 primitives) | 257–335 ms | **120–200 ms** | **80–140 ms** |
+| small reorder (2–4 moved) | 150–250 ms | 100–180 ms | **60–100 ms** |
+| zero-write | 17–34 ms | 17–34 ms | 17–34 ms |
+| manual refresh | 0.9–3.6 s | ~0.7–2.8 s | ~0.7–2.8 s |
+
+Every figure is a within-session comparison; cross-session averages stay unusable because
+the host factor (1.5–3.5×) dwarfs the code's effect.
+
 ## Explicitly not done, and why
 
 - **Skipping the outline level reads** when the hierarchy looks unchanged:
