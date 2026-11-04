@@ -346,6 +346,24 @@ public static class GanttCatalogues
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.MajorGrid), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.MajorGrid)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.YearHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.YearHeader)),
         new(GanttChartChrome.SettingKeyFor(GanttChartChromeRole.PeriodHeader), GanttChartChrome.DefaultHexFor(GanttChartChromeRole.PeriodHeader)),
+
+        // Schema version 22 (ADR-0055). `ProtectGanttSheet` records that the add-in
+        // OWNS protection of the visible Gantt worksheet, and is also the user's
+        // switch for the feature.
+        //
+        // Ownership has to be recorded, because the guard cannot otherwise tell its
+        // own protection from the user's: a protected sheet refuses every write
+        // (ADR-0008 D4), so protecting the sheet to lock the chart shapes would make
+        // the add-in refuse to refresh the very worksheet it protects. `FALSE` means
+        // the add-in neither protects nor re-protects, and the sheet behaves exactly
+        // as it did before this key existed.
+        //
+        // The sheet is protected with `DrawingObjects:=true` (without it `Shape.Locked`
+        // is inert), `Contents:=true` (locked cells, so the schema's `IsLocked` columns
+        // stay read-only) and `UserInterfaceOnly:=true` (so code may still write), and
+        // deliberately with NO password: this is accidental-edit prevention, not
+        // security, and a password we do not store could never be re-entered.
+        new("ProtectGanttSheet", "TRUE"),
     ];
 
     private static readonly Dictionary<string, Func<GanttStylePreset>> _resolvers = new(StringComparer.Ordinal)

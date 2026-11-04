@@ -357,11 +357,12 @@ public class GanttConfigCatalogueTests
     }
 
     [Fact]
-    public void Settings_contains_exactly_the_25_approved_keys()
+    public void Settings_contains_exactly_the_26_approved_keys()
     {
         // R5.6a added the six chart-chrome colour keys (schema version 20),
-        // taking 19 to 25.
-        Assert.Equal(25, GanttCatalogues.Settings.Count);
+        // taking 19 to 25. ADR-0055 added ProtectGanttSheet (schema version
+        // 22), taking 25 to 26.
+        Assert.Equal(26, GanttCatalogues.Settings.Count);
         Assert.Equal(
             SettingsKeys,
             GanttCatalogues.Settings.Select(setting => setting.Key).ToArray());
@@ -395,6 +396,7 @@ public class GanttConfigCatalogueTests
         "MajorGridColour",
         "YearHeaderColour",
         "PeriodHeaderColour",
+        "ProtectGanttSheet",
     ];
 
     [Fact]
@@ -932,11 +934,30 @@ public class GanttConfigCatalogueTests
     /// them. A version-18 workbook carries the older hash and is reported as
     /// a mismatch; the remedy is Initialise (ADR-0029 D6, no migration).
     /// </para>
+    /// <para>
+    /// <b>Advanced to 22 by ADR-0055</b>: <c>tblGanttSettings</c> gains the
+    /// <c>ProtectGanttSheet</c> key and the schema seed line moves from 21 to
+    /// 22, so both halves of the hashed text change. A version-21 workbook
+    /// carries the older hash and is reported as a mismatch; the remedy is
+    /// Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
     private const string PinnedFirstReleaseHash =
-        "9c2a1db8b6d919c1a1537fa483985ff9742c1f2781a51d68f34180db0ed2a039";
+        "67e350aa307eed5e768bbe6a57812d86b7352ad5c2f7ad3bb57877b5832f7087";
 
+    /// <remarks>
+    /// Asserted with the full hash in the failure message rather than through
+    /// <c>Assert.Equal</c>, whose string-diff output truncates at 48 characters
+    /// and leaves the reader unable to copy the new value. The comparison is
+    /// still ordinal and exact.
+    /// </remarks>
     [Fact]
-    public void The_first_release_catalogue_hash_is_pinned() =>
-        Assert.Equal(PinnedFirstReleaseHash, GanttCatalogues.ComputeCatalogueHash());
+    public void The_first_release_catalogue_hash_is_pinned()
+    {
+        string actual = GanttCatalogues.ComputeCatalogueHash();
+        Assert.True(
+            string.Equals(actual, PinnedFirstReleaseHash, StringComparison.Ordinal),
+            "The catalogue hash is now " + actual + " — update PinnedFirstReleaseHash only with the "
+                + "schema ADR that moved it.");
+    }
 }

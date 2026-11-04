@@ -75,7 +75,8 @@ public class GanttSchemaVersionTests
         // StrokeDash column (the style's line dash pattern). The column is
         // appended at the end of the row, so every existing column index is
         // unchanged. No migration (ADR-0029 D6); Initialise is the remedy.
-        Assert.Equal(21, GanttSchemaVersion.CurrentSchemaVersion);
+        // 22 adds `ProtectGanttSheet` (ADR-0055).
+        Assert.Equal(22, GanttSchemaVersion.CurrentSchemaVersion);
     }
 
     [Fact]

@@ -199,6 +199,18 @@ public static class GanttSchemaVersion
     /// (ADR-0029 D6): a version-18 workbook reports a mismatch and the remedy
     /// is Initialise.
     /// </para>
+    /// <para>
+    /// <b>Version 22 is ADR-0055's add-in-owned worksheet protection.</b>
+    /// <c>tblGanttSettings</c> gains <c>ProtectGanttSheet</c>, which records
+    /// that the add-in owns the protection of the visible Gantt worksheet and
+    /// doubles as the user's switch for the feature. The key is required
+    /// because the guard refuses every write to a protected worksheet
+    /// (ADR-0008 D4): without a record of ownership, protecting the sheet to
+    /// lock the chart shapes and refreshing it would be mutually exclusive. A
+    /// version-21 workbook's settings table lacks the row, so its stored
+    /// catalogue hash no longer matches and it reports a mismatch; the remedy
+    /// is Initialise (ADR-0029 D6, no migration).
+    /// </para>
     /// </remarks>
-    public const int CurrentSchemaVersion = 21;
+    public const int CurrentSchemaVersion = 22;
 }
