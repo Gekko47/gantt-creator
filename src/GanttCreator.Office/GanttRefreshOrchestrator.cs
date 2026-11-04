@@ -63,7 +63,8 @@ public sealed class GanttRefreshOrchestrator(
     ShapeDeltaCache? shapeDeltaCache = null,
     bool useDeltaCache = true,
     Action<string>? trace = null,
-    ProtectionOwnershipSource? protectionOwnership = null)
+    ProtectionOwnershipSource? protectionOwnership = null,
+    WorksheetProtectionArming? protectionArming = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -105,6 +106,19 @@ public sealed class GanttRefreshOrchestrator(
     /// as it always has.
     /// </remarks>
     private readonly ProtectionOwnershipSource? _protectionOwnership = protectionOwnership;
+
+    /// <summary>
+    /// The policy that applies the add-in's own protection, or <see langword="null"/> when this
+    /// caller does not arm protection at all (ADR-0055).
+    /// </summary>
+    /// <remarks>
+    /// The policy lives in <see cref="WorksheetProtectionArming"/> rather than here: this class is the
+    /// pipeline, and the arming is the one place in the add-in that mutates protection state, so it is
+    /// the file the architecture gate classifies as the protection-control adapter. The state it
+    /// carries across passes is a session object, because the live composition builds a new
+    /// orchestrator for every refresh.
+    /// </remarks>
+    private readonly WorksheetProtectionArming? _protectionArming = protectionArming;
 
     /// <summary>
     /// The setting key that records whether the add-in owns the Gantt worksheet's protection
@@ -252,13 +266,28 @@ public sealed class GanttRefreshOrchestrator(
                 "The Gantt Creator configuration could not be read from the hidden configuration sheet.");
         }
 
-        // Step 2b. Record protection ownership from the configuration just read (ADR-0055), so the
+        // Step 2b. Arm the add-in's own protection, BEFORE the guard below, because arming is what
+        // makes the guard's authorisation true for the sheet it protects. It runs once per session:
+        // the state object says whether it is already in force, so a refresh that follows one just
+        // reads a bool. It cannot refuse the refresh — a chart that renders without the lock is the
+        // previous behaviour and is strictly better than no chart at all — so a refused write is
+        // recorded and retried next pass.
+        bool protects = ProtectsGanttSheet(config);
+        _protectionArming?.Arm(protects);
+
+        // Step 2c. Record protection ownership from the configuration just read (ADR-0055), so the
         // guard below can authorise the add-in's own protection instead of refusing the worksheet
         // it protected in order to lock the chart shapes. This is a field assignment, not a host
         // call: the setting travelled with the read at step 2.
+        //
+        // Ownership is claimed only for protection this session actually applied. A sheet the USER
+        // protected is still theirs: arming it either succeeded (the add-in now owns it) or was
+        // refused — typically by a password we do not have — and in the second case claiming
+        // ownership would turn the existing, actionable TargetProtected refusal into a host error
+        // halfway through the write.
         if (_protectionOwnership is { } ownership)
         {
-            ownership.Set(ProtectsGanttSheet(config));
+            ownership.Set(protects && (_protectionArming?.IsArmed ?? true));
         }
 
         // Step 3. The mutation boundary, consulted before any write. A protected

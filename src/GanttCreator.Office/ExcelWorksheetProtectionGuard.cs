@@ -56,14 +56,23 @@ public class ExcelWorksheetProtectionGuard(
     private readonly Excel.Application? _application = application as Excel.Application;
 
     /// <summary>
-    /// The ownership fact, or <see langword="null"/> when none is configured.
+    /// The ownership fact.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Read as a field, never fetched: ADR-0055 requires the ownership decision to add no host
     /// call to the refresh, so the answer is handed in once and read here as many times as the
     /// guard is asked.
+    /// </para>
+    /// <para>
+    /// A caller that supplies nothing gets <see cref="ProtectionOwnershipSource.Shared"/>, because
+    /// every adapter in this assembly constructs its own guard and the fact is a property of the
+    /// session, not of the adapter. That source starts <see langword="false"/>, so a guard built
+    /// outside the add-in — a test, a tool — behaves exactly as it did before ADR-0055.
+    /// </para>
     /// </remarks>
-    private readonly IProtectionOwnershipSource? _ownershipSource = ownershipSource;
+    private readonly IProtectionOwnershipSource _ownershipSource =
+        ownershipSource ?? ProtectionOwnershipSource.Shared;
 
     /// <inheritdoc />
     public ProtectionGuardOutcome Query()
@@ -135,7 +144,7 @@ public class ExcelWorksheetProtectionGuard(
     /// </para>
     /// </remarks>
     private ProtectionGuardOutcome ProtectedOutcome(Excel._Worksheet worksheet) =>
-        !IsWorksheetProtected(worksheet) || _ownershipSource?.AddInOwnsProtection == true
+        !IsWorksheetProtected(worksheet) || _ownershipSource.AddInOwnsProtection
             ? ProtectionGuardOutcome.NotProtected
             : ProtectionGuardOutcome.SheetProtected;
 

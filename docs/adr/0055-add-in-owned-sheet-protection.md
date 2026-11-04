@@ -39,19 +39,33 @@ reference establishes four facts that the design has to obey:
    authorised"), and adding a member would demand an audit of every one of them for no behavioural
    difference. The enum's documentation states the widened meaning.
 
+   Ownership is claimed only for protection **this session applied**. `ProtectionArmingState`
+   carries that fact, and the refresh sets the ownership flag to `protects && armed`. A sheet the
+   *user* protected is therefore still theirs: arming it either succeeds (the add-in then owns it)
+   or is refused — typically by a password we do not have — and in the second case the existing,
+   actionable `TargetProtected` refusal is kept rather than replaced by a host error halfway
+   through a write.
+
    `ProtectDrawingObjects` is deliberately **not** part of the authorisation test. It describes the
    lock's behaviour, not whose protection this is, and requiring it would refuse writes to a sheet
    we own whose shape flag had been lost — exactly the state a refresh must repair. The ownership
    fact reaches the guard through `IProtectionOwnershipSource`, set from the configuration the
    refresh has already read, so the decision costs **no host call**; a guard that read the
    configuration itself would add a second config read to every command and every refresh.
-4. **Owned shapes are locked.** `Locked = msoTrue` joins the ADR-0019 ownership stamp on create,
-   and the existing `ListOwned` walk back-fills it once on shapes created before this change.
-5. **Refresh re-arms protection before it writes.** Because `UserInterfaceOnly` does not survive a
-   reopen, the first refresh after a reopen unprotects and re-protects with the three flags. This is
-   why no workbook-open hook is required: between the reopen and that refresh the sheet is fully
-   protected, which is the state the user asked for (unlocked data columns still accept typing;
-   shapes cannot be dragged).
+4. **Owned shapes are locked.** `Locked = true` joins the ADR-0019 ownership stamp on create, and
+   `IShapeWritePort.LockOwnedShapes()` is the one-time back-fill for shapes created before this
+   change. It is a separate operation rather than something `ListOwned` does, because `ListOwned`
+   runs on every refresh and reading `Locked` once per shape per pass would cost more than the write
+   it avoids. `Shape.Locked` is a `Boolean` on this PIA, not an `MsoTriState`.
+5. **Refresh arms protection before it writes, once per session.** The order is
+   **read → release (if protected) → lock the shapes → protect**, because `UserInterfaceOnly` does not
+   survive a reopen (so a sheet protected in an earlier session still refuses our writes) and because
+   the shape writer's own guard refuses a protected sheet (so the back-fill can only run while the
+   sheet is released). `ProtectionArmingState` records that the arming is in force, so a refresh that
+   follows one reads a bool instead of re-arming; the add-in invalidates it when the active workbook
+   changes, which is the one event that can make it wrong. Between a reopen and that refresh the
+   sheet stays fully protected, which is the state the user asked for (unlocked data columns still
+   accept typing; shapes cannot be dragged).
 6. **Unlock is transient at the reconciler and suspended at the scheduler.** "Unlock shape" acts
    only on a selected, provably-owned shape: it unprotects the sheet and clears that shape's
    `Locked`. Automatic refresh is **suspended** for as long as anything is unlocked, so a manual
@@ -82,13 +96,20 @@ flag.
   opened and never refreshed stays fully protected. Accepted: that is the desired user-visible
   state.
 - The `Shape.Locked` back-fill is a one-time write per shape and must not repeat once locked.
+- The arming memory is **process state, not workbook state**: a second Excel instance, or the same
+  workbook reached by another add-in process, re-arms on its first refresh. That is the honest
+  reading of "we applied this protection", and it is why the memory is invalidated rather than
+  trusted across a workbook change.
 
 ## Validation
 
 Contract tests: the guard authorises ours and refuses the user's; `ProtectDrawingObjects == false`
-refuses; the re-arm is idempotent and runs once per refresh; `Locked` is set on create; the back-fill
-touches only unlocked shapes; unlock refuses a user shape and clears only the selected owned one;
-the scheduler does not schedule while unlocked.
+refuses; a refresh locks before it protects and arms once per session, not once per pass; an
+already-protected sheet is released before it is protected again; a refused protection write keeps
+the chart and leaves the arming unmarked; an opt-out workbook is never protected and an opt-out after
+arming releases it; `Locked` is set on create; the back-fill touches only tagged shapes; unlock
+refuses a user shape and clears only the selected owned one; the scheduler does not schedule while
+unlocked.
 
 Live gate (required — the feature is almost entirely host behaviour): shapes cannot be selected,
 dragged or deleted while protected; the add-in can still create, move, resize, delete, z-order and

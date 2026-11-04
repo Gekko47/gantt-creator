@@ -38,6 +38,19 @@ public sealed class ProtectionOwnershipSource : IProtectionOwnershipSource
 {
     private volatile bool _addInOwnsProtection;
 
+    /// <summary>
+    /// The Excel session's single ownership flag, used by every guard constructed without an
+    /// explicit source.
+    /// </summary>
+    /// <remarks>
+    /// One add-in runs in one Excel session and protects at most one visible Gantt worksheet at a
+    /// time, while roughly two dozen adapters each construct their own guard; threading this
+    /// instance through every one of those call sites would be noise with no behavioural gain. A
+    /// test that needs isolation passes its own instance, which the guard's constructor accepts.
+    /// It starts <see langword="false"/>, so nothing changes for a caller that never sets it.
+    /// </remarks>
+    public static ProtectionOwnershipSource Shared { get; } = new();
+
     /// <inheritdoc />
     public bool AddInOwnsProtection => _addInOwnsProtection;
 

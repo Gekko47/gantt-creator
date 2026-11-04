@@ -80,6 +80,15 @@ internal sealed class RefreshFakes
     /// <summary>Whether the protection guard reports a protected target.</summary>
     public ProtectionGuardOutcome Protection { get; set; } = ProtectionGuardOutcome.NotProtected;
 
+    /// <summary>The protection port the refresh's arming step writes through (ADR-0055).</summary>
+    public FakeWorksheetProtectionPort SheetProtection { get; } = new();
+
+    /// <summary>
+    /// The cross-refresh arming memory, shared by every orchestrator a test builds over these fakes,
+    /// which is what the live composition does with a new orchestrator per refresh.
+    /// </summary>
+    public ProtectionArmingState SheetProtectionArming { get; } = new();
+
     /// <summary>Whether the panel measurement refuses.</summary>
     public bool MeasurementRefused { get; set; }
 
@@ -352,6 +361,34 @@ internal sealed class RefreshFakes
             null,
             Highlighter,
             null);
+
+    /// <summary>Builds the orchestrator with the ADR-0055 arming step wired.</summary>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
+    /// <returns>The composed orchestrator.</returns>
+    /// <remarks>
+    /// The ownership source and the arming memory are deliberately the fakes' shared instances:
+    /// arming is a session fact that outlives one orchestrator, so a test that wants to see the
+    /// second pass has to build a second orchestrator over the same memory.
+    /// </remarks>
+    public GanttRefreshOrchestrator BuildOrchestratorWithProtection(Action<string>? trace = null) =>
+        new(
+            TableReader,
+            ConfigReader,
+            Guard,
+            Panel,
+            Duration,
+            RowHeights,
+            Outline,
+            Factory,
+            Shapes,
+            ColumnPresentation,
+            Identity,
+            null,
+            null,
+            Highlighter,
+            null,
+            trace: trace,
+            protectionArming: new WorksheetProtectionArming(SheetProtection, Shapes, SheetProtectionArming, trace));
 
     /// <summary>Builds the orchestrator with a pending worksheet change batch.</summary>
     public GanttRefreshOrchestrator BuildOrchestratorWithChanges(ChangeTracker tracker) =>

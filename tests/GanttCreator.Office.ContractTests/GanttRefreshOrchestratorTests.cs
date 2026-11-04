@@ -1554,4 +1554,137 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(GanttRefreshRefusal.SceneBuildRefused, outcome.Refusal);
         Assert.Empty(fakes.Shapes.Calls);
     }
+
+    /// <summary>
+    /// The arming step locks the owned shapes BEFORE it protects the sheet, and protects it once.
+    /// </summary>
+    /// <remarks>
+    /// The order is the assertion, not the call count: a shape created before ADR-0055 is still
+    /// unlocked, and once the sheet is protected the back-fill cannot write it back, so a
+    /// protect-then-lock sequence would leave exactly the shapes this feature exists for still
+    /// draggable. The port's own callback observes what had already run at the moment of
+    /// <c>Protect</c>, because two fakes' call lists cannot be compared for relative order.
+    /// </remarks>
+    [Fact]
+    public void A_refresh_locks_the_owned_shapes_before_it_protects_the_sheet()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        bool lockedBeforeProtect = false;
+        fakes.SheetProtection.OnProtect = () => lockedBeforeProtect = fakes.Shapes.LockOwnedShapesCallCount == 1;
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.True(lockedBeforeProtect, "the sweep had not run when Protect was called");
+        Assert.Equal(["Read", "Protect"], fakes.SheetProtection.Calls);
+        Assert.True(fakes.SheetProtectionArming.IsArmed);
+    }
+
+    /// <summary>
+    /// The second refresh over the same workbook does not re-arm, because arming is a session fact.
+    /// </summary>
+    /// <remarks>
+    /// A re-arm per pass would be an unprotect plus a protect on every automatic refresh — the extra
+    /// step the owner ruled out. The two orchestrators here model the live composition, which builds
+    /// a new one per refresh and shares only the state object.
+    /// </remarks>
+    [Fact]
+    public void A_second_refresh_does_not_re_arm_the_protection()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+
+        Assert.Equal(1, fakes.SheetProtection.ProtectCount);
+        Assert.Equal(1, fakes.Shapes.LockOwnedShapesCallCount);
+    }
+
+    /// <summary>
+    /// A sheet that was already protected is released before it is protected again, because
+    /// <c>UserInterfaceOnly</c> does not survive a reopen.
+    /// </summary>
+    [Fact]
+    public void An_already_protected_sheet_is_unprotected_before_it_is_reprotected()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.SheetProtection.State = new WorksheetProtectionState(ContentsProtected: true, ShapesProtected: true);
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(["Read", "Unprotect", "Protect"], fakes.SheetProtection.Calls);
+    }
+
+    /// <summary>
+    /// A workbook that opts out is never protected and never swept, so the feature costs it nothing.
+    /// </summary>
+    /// <remarks>
+    /// Absent means on, which is the catalogue default, so the opt-out has to be asserted
+    /// explicitly: a test that omitted the key would pass on a pipeline that ignored the setting.
+    /// </remarks>
+    [Fact]
+    public void A_workbook_that_opts_out_is_never_protected()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            Settings = new Dictionary<string, string> { ["ProtectGanttSheet"] = "FALSE" },
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Empty(fakes.SheetProtection.Calls);
+        Assert.Equal(0, fakes.Shapes.LockOwnedShapesCallCount);
+        Assert.False(fakes.SheetProtectionArming.IsArmed);
+    }
+
+    /// <summary>
+    /// A refused protection write loses the lock, not the chart, and leaves the arming unmarked.
+    /// </summary>
+    /// <remarks>
+    /// Two separate claims. The refresh still rendering is the product decision — no chart at all is
+    /// worse than a correct chart the user can drag. Staying unarmed is what makes the next pass
+    /// retry instead of assuming a lock that was never applied, and the trace is the only evidence
+    /// the user can act on, so it is asserted rather than assumed.
+    /// </remarks>
+    [Fact]
+    public void A_refused_protection_write_keeps_the_chart_and_leaves_the_arming_unmarked()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        fakes.SheetProtection.ProtectRefusal = ProtectionWriteRefusal.HostRejected;
+        List<string> traces = [];
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection(traces.Add).Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.False(fakes.SheetProtectionArming.IsArmed);
+        Assert.Contains(
+            traces,
+            line => line.Contains("protect refused=HostRejected", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Turning the setting off after it has been armed releases the add-in's protection.
+    /// </summary>
+    /// <remarks>
+    /// The setting is both the ownership record and the user's switch (ADR-0055 D2), so an opt-out
+    /// that only stopped future arming would leave the sheet locked against the user's explicit
+    /// choice for the rest of the session.
+    /// </remarks>
+    [Fact]
+    public void Turning_the_setting_off_after_arming_releases_the_protection()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
+        fakes.Settings = new Dictionary<string, string> { ["ProtectGanttSheet"] = "FALSE" };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(1, fakes.SheetProtection.UnprotectCount);
+        Assert.False(fakes.SheetProtectionArming.IsArmed);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
+    }
 }

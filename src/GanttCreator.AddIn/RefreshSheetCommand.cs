@@ -28,7 +28,30 @@ internal static class RefreshSheetCommand
 {
     private static readonly ShapeDeltaCache _shapeDeltaCache = new();
 
+    /// <summary>
+    /// The session's arming memory (ADR-0055). It must outlive one orchestrator, because the live
+    /// composition builds a new one for every refresh.
+    /// </summary>
+    private static readonly ProtectionArmingState _protectionArming = ProtectionArmingState.Shared;
+
+    /// <summary>
+    /// The session's protection-ownership flag, shared with every adapter's guard so the add-in's
+    /// own protection does not block its own writes.
+    /// </summary>
+    private static readonly ProtectionOwnershipSource _protectionOwnership = ProtectionOwnershipSource.Shared;
+
     internal static void ResetDeltaCache() => _shapeDeltaCache.Invalidate();
+
+    /// <summary>
+    /// Forgets that protection is armed, so the next refresh re-arms it.
+    /// </summary>
+    /// <remarks>
+    /// Called when the active workbook changes. The workbook the user switched to may be protected
+    /// from an earlier session, whose <c>UserInterfaceOnly</c> did not survive the reopen, so it
+    /// refuses this add-in's writes until protection is re-applied. It is also called before the
+    /// next refresh after the user opts out, so the release path runs.
+    /// </remarks>
+    internal static void ResetProtectionArming() => _protectionArming.Invalidate();
 
     /// <summary>Runs the production refresh in the current Excel session.</summary>
     internal static void RunForExcel()
@@ -178,6 +201,12 @@ internal static class RefreshSheetCommand
         // and never throws, so a logging failure cannot abort a refresh.
         Action<string> trace = CommandBoundary.Instance.WriteTechnicalRecord;
 
+        // Constructed once and shared: the arming policy locks the owned shapes through the same
+        // writer the reconciliation uses (ADR-0055), so both must see the same guard and the same
+        // trace sink.
+        ExcelShapeWriter shapeWriter =
+            new(application, new ExcelWorksheetProtectionGuard(application), trace);
+
         return new GanttRefreshOrchestrator(
             new ExcelGanttTableReader(application),
             new ExcelConfigCatalogueReader(application),
@@ -199,7 +228,7 @@ internal static class RefreshSheetCommand
             // font binaries by scripts/gen-font-advances.py and committed as data,
             // so the measurement stays deterministic and Office-free.
             new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
-            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application), trace),
+            shapeWriter,
 
             // R4.8A D2's two remaining preflight steps, supplied here so the
             // orchestrator runs them. Both are optional in the constructor, which is
@@ -234,7 +263,19 @@ internal static class RefreshSheetCommand
             new ExcelTypeChangeNormaliser(application),
             shapeDeltaCache: _shapeDeltaCache,
             useDeltaCache: useDeltaCache,
-            trace: trace);
+            trace: trace,
+
+            // ADR-0055: the refresh arms the add-in's own protection before it writes, and claims
+            // ownership only of protection this session applied. Both the ownership flag and the
+            // arming memory are session state, not per-refresh state, because a new orchestrator is
+            // built for every pass; the arming policy itself is a collaborator so the orchestrator
+            // holds no protection mutation of its own.
+            protectionOwnership: _protectionOwnership,
+            protectionArming: new WorksheetProtectionArming(
+                new ExcelWorksheetProtectionPort(application),
+                shapeWriter,
+                _protectionArming,
+                trace));
     }
 #pragma warning restore CA2000
 }

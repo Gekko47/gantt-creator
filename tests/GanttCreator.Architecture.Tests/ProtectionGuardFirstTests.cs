@@ -172,6 +172,13 @@ public sealed class ProtectionGuardFirstTests
     private static readonly string[] ProtectionControlAdapters =
     [
         "src/GanttCreator.Office/ExcelWorksheetProtectionPort.cs",
+        // ADR-0055: the arming policy. Same declared exception and the same reason: the guard
+        // refuses a protected worksheet, and releasing then re-applying protection is the recovery
+        // path for exactly that state (a sheet protected in an earlier session, without the
+        // UserInterfaceOnly that does not survive a reopen). A guard-first rule would make the
+        // recovery unreachable. It touches COM only through IWorksheetProtectionPort and
+        // IShapeWritePort, so the policy itself is contract-tested without a host.
+        "src/GanttCreator.Office/WorksheetProtectionArming.cs",
     ];
 
     /// <summary>
@@ -340,6 +347,10 @@ public sealed class ProtectionGuardFirstTests
         // guard. It exists precisely so the ownership decision costs the refresh no
         // round trip, which is why it must stay a plain in-memory flag.
         "src/GanttCreator.Office/ProtectionOwnershipSource.cs",
+        // ADR-0055: the arming memory beside it. Same reasoning - one volatile boolean
+        // and no interop type - and it must stay that way: arming is a session fact, and
+        // a host call here would be the per-refresh round trip the design forbids.
+        "src/GanttCreator.Office/ProtectionArmingState.cs",
     ];
 
     /// <summary>

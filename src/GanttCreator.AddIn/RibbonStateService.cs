@@ -2984,6 +2984,11 @@ internal class RibbonStateService
     {
         _refreshScheduler?.CancelPendingRefresh();
         RefreshSheetCommand.ResetDeltaCache();
+
+        // ADR-0055: the workbook the user has switched to may be protected from an earlier session,
+        // whose UserInterfaceOnly did not survive the reopen. Forgetting the arming makes the next
+        // refresh release and re-apply the protection on the sheet it actually has.
+        RefreshSheetCommand.ResetProtectionArming();
         _lastSuccessfulSceneWarnings = [];
         _currentValidationIssues = [];
         _lastSuccessfulRenderAtUtc = null;
