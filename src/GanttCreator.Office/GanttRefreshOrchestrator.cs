@@ -598,7 +598,10 @@ public sealed class GanttRefreshOrchestrator(
                 panelGrid.Columns.Sum(column => column.WidthPt),
                 reservedRowHeightPt);
             titleRequest = new OfficeShapeRequest(
-                PrimitiveId: "ChartTitle",
+                // One authority for the name: the writer's ownership scan pre-filters on
+                // it (O4), so a second literal here would silently make the title read
+                // as an unowned shape the moment either string changed.
+                PrimitiveId: ExcelShapeWriter.ChartTitlePrimitiveId,
                 Kind: OfficeShapeKind.TextBox,
                 Geometry: new OfficeShapeGeometry(Bounds: titleBounds),
                 ZLayer: ZLayer.Frame,

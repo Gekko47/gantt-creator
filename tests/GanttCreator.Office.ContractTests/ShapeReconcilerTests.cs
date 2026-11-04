@@ -554,4 +554,66 @@ public class ShapeReconcilerTests
             ["chart:background", "row-1:bar", "row-1:label"],
             Assert.Single(port.ZOrderLists));
     }
+
+    /// <summary>
+    /// A reconcile opens exactly one write batch and disposes it (ADR-0054, O1).
+    /// </summary>
+    /// <remarks>
+    /// The batch is what hoists the worksheet/table resolution and the workbook guard
+    /// out of the per-shape path, so it must wrap the verification reads, the plan and
+    /// the z-order pass — and it must close even when the pass walks several operations.
+    /// </remarks>
+    [Fact]
+    public void A_reconcile_opens_one_batch_and_disposes_it()
+    {
+        var port = new FakeShapeWritePort().Owned("row-1:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest([Request("row-2:bar", 40d), Request("row-1:bar")]));
+
+        Assert.True(outcome.Succeeded, $"Refusal={outcome.Refusal}; failure={outcome.Failure}");
+        Assert.Equal(1, port.BatchesStarted);
+        Assert.Equal(1, port.BatchesDisposed);
+    }
+
+    /// <summary>
+    /// The batch is disposed on the refusal path too (ADR-0054, O1).
+    /// </summary>
+    /// <remarks>
+    /// A refusal returns from the middle of the plan. Without a scoped dispose the batch
+    /// would stay open and the next refresh would throw on "batches do not nest", which
+    /// is a far worse failure than the refusal itself.
+    /// </remarks>
+    [Fact]
+    public void A_refused_operation_still_disposes_the_batch()
+    {
+        var port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+        _ = port.Refusals.TryAdd("Update:row-2:bar", ShapeWriteRefusal.HostRejected);
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest([Request("row-1:bar"), Request("row-2:bar"), Request("row-3:bar")]));
+
+        Assert.Equal(ShapeReconcileRefusal.OperationRefused, outcome.Refusal);
+        Assert.Equal(1, port.BatchesStarted);
+        Assert.Equal(1, port.BatchesDisposed);
+    }
+
+    /// <summary>
+    /// A blocked refresh opens no batch, because it issues no host call at all (D3).
+    /// </summary>
+    [Fact]
+    public void A_blocked_refresh_opens_no_batch()
+    {
+        var port = new FakeShapeWritePort().Owned("row-1:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest([Request("row-1:bar")], HasBlockingErrors: true));
+
+        Assert.Equal(ShapeReconcileRefusal.BlockingErrors, outcome.Refusal);
+        Assert.Equal(0, port.BatchesStarted);
+        Assert.Equal(0, port.BatchesDisposed);
+    }
 }

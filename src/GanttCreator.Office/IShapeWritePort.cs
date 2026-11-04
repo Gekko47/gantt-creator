@@ -203,6 +203,34 @@ public interface IShapeWritePort
     ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request);
 
     /// <summary>
+    /// Begins a reconciliation batch, in which the target worksheet and the protection
+    /// guard are resolved ONCE for every operation until the returned scope is disposed.
+    /// </summary>
+    /// <returns>The batch scope; disposing it ends the batch.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why.</b> Resolving the target walks <c>Sheets</c> and <c>ListObjects</c> and queries
+    /// the protection guard -- about six round trips, two of them collection walks, on the
+    /// expensive side of this port's cost model. That work was repeated for every create,
+    /// update, geometry move, delete, geometry check and z-order preflight, so a 42-primitive
+    /// relocation paid it 42 times for a target that cannot change while the batch runs
+    /// (ADR-0020 disables events for the whole refresh).
+    /// </para>
+    /// <para>
+    /// <b>What a batch does NOT change.</b> Each operation still validates its request, still
+    /// authorises itself against the shape's ownership tag, and still resolves the shape by
+    /// name -- a name can appear or disappear inside a batch when a create or delete runs.
+    /// Only the target and the guard are hoisted, and the guard's per-target check still runs
+    /// once (R4.8 D3), just not once per shape.
+    /// </para>
+    /// <para>
+    /// Batches do not nest. A caller that opens one twice is a defect and is refused rather
+    /// than silently sharing state.
+    /// </para>
+    /// </remarks>
+    IDisposable BeginBatch();
+
+    /// <summary>
     /// Reports whether the live shape already matches the request's GEOMETRY and
     /// PLACEMENT, so a payload-equality skip can be verified against the host instead of
     /// trusted.

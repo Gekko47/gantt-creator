@@ -225,6 +225,18 @@ public static partial class ShapeReconciler
             return new ShapeReconcileOutcome(ShapeReconcileRefusal.BlockingErrors, _emptyPlan, null, 0);
         }
 
+        // One batch for the whole reconcile: the target shapes collection and the
+        // workbook guard are resolved once, and every proxy that a pass obtains is
+        // reused by the next (ADR-0054). The verification reads, the plan execution
+        // and the z-order pass all run inside it, so a move plans and writes against
+        // one resolved collection instead of resolving it per operation.
+        //
+        // Nothing about correctness moves: every operation still validates its own
+        // request, still confirms the ownership tag before writing, and still refuses
+        // with the same outcome. The batch only removes the repeat calls that returned
+        // the same answer.
+        using IDisposable batch = writer.BeginBatch();
+
         IReadOnlyList<string> owned = request.Owned ?? writer.ListOwned();
         ShapeDeltaSnapshot? previous = request.PreviousSnapshot;
         bool cacheMatchesOwned = previous is not null

@@ -276,6 +276,11 @@ one write each → 0.6–2.7 ms/shape → **50–230 ms per pass**. On a manual 
    band-named shapes only), `SelectBodyCell` (2 RT once per command), JSON boxing none
    (serialisation is hash-input only).
 
+**Status: O1–O5 shipped 2026-11-04 as [ADR-0054](../docs/adr/0054-refresh-round-trip-budget.md).**
+Contract-tested without a host (Office 1295, AddIn 656, Architecture 120 green). The live gate
+is `Not run`: a host session is needed to confirm the within-session ratios, and no session was
+available during the change. The sketches below are kept as the design record.
+
 ### O1 — One resolution and one guard per reconcile
 
 - **Sketch:** `IShapeWritePort` gains a batch scope (`using var batch =
@@ -318,6 +323,12 @@ one write each → 0.6–2.7 ms/shape → **50–230 ms per pass**. On a manual 
   with O1, not alone.
 - **Fidelity risk:** none — a name that cannot parse as ours can never carry our tag, and
   the tag read for candidates is unchanged (R9.4 keeps its evidence).
+- **Shipped with the assumption enforced, not assumed.** The scan accepts exactly two forms:
+  a role-derived `<ownerId>:<role>` and the chart title, whose identifier is now the single
+  constant `ExcelShapeWriter.ChartTitlePrimitiveId`. `Validate` refuses any other identifier
+  (`ShapeWriteRefusal.UnsupportedIdentifierForm`), so a shape a refresh could never recognise
+  is never created — previously the pre-filter would have made such a shape silently
+  un-updatable instead.
 
 ### O5 — P2 revisited: minimal z-order moves (the rejection is withdrawn)
 
@@ -348,15 +359,15 @@ one write each → 0.6–2.7 ms/shape → **50–230 ms per pass**. On a manual 
 - **Selection/activation churn** — `SelectBodyCell` is 2 RT once per command; the scope's
   selection restore is 1 `Range.Select()`. Immaterial.
 
-### Expected effect (within-session, quiet host)
+### Expected effect (within-session, quiet host) — the shape O1–O5 were built to produce
 
-| Pass | today | +O1/O3 | +O1/O3/O5 |
-|---|---|---|---|
-| date edit (1–3 primitives) | 8–12 ms write | **3–5 ms** | 3–5 ms |
-| relocation (39–42 primitives) | 257–335 ms | **120–200 ms** | **80–140 ms** |
-| small reorder (2–4 moved) | 150–250 ms | 100–180 ms | **60–100 ms** |
-| zero-write | 17–34 ms | 17–34 ms | 17–34 ms |
-| manual refresh | 0.9–3.6 s | ~0.7–2.8 s | ~0.7–2.8 s |
+| Pass | pre-O | O1/O3/O5 shipped |
+|---|---|---|
+| date edit (1–3 primitives) | 8–12 ms write | **3–5 ms** |
+| relocation (39–42 primitives) | 257–335 ms | **80–140 ms** |
+| small reorder (2–4 moved) | 150–250 ms | **60–100 ms** |
+| zero-write | 17–34 ms | 17–34 ms |
+| manual refresh | 0.9–3.6 s | ~0.7–2.8 s |
 
 Every figure is a within-session comparison; cross-session averages stay unusable because
 the host factor (1.5–3.5×) dwarfs the code's effect.

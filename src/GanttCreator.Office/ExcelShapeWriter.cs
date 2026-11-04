@@ -62,6 +62,100 @@ public class ExcelShapeWriter(
     /// <summary>Optional diagnostic sink for the splitter band's live geometry.</summary>
     private readonly Action<string>? _trace = trace;
 
+    /// <summary>Whether a reconciliation batch is open (ADR-0054).</summary>
+    private bool _batchActive;
+
+    /// <summary>
+    /// The shapes collection resolved once for the open batch, or <see langword="null"/>
+    /// outside a batch or after a refused resolution.
+    /// </summary>
+    private Excel.Shapes? _batchShapes;
+
+    /// <summary>
+    /// Shape proxies resolved during the open batch, keyed by exact name. A name can still
+    /// appear or disappear inside a batch (creates and deletes), so this is a memo of
+    /// successful lookups, not an authoritative list.
+    /// </summary>
+    private Dictionary<string, Excel.Shape>? _batchProxies;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Opening a batch hoists the two costs that do not depend on the shape: the worksheet
+    /// and table resolution (walks <c>Sheets</c> and <c>ListObjects</c>, then the guard's
+    /// per-target check) and the leading protection query. Everything that DOES depend on
+    /// the shape -- validation, the ownership tag, the name lookup -- still runs per
+    /// operation.
+    /// </remarks>
+    public IDisposable BeginBatch()
+    {
+        if (_batchActive)
+        {
+            throw new InvalidOperationException(
+                "A shape-write batch is already open. Batches do not nest, because the inner "
+                + "scope would release the resolution the outer one is still using.");
+        }
+
+        _batchActive = true;
+        _batchShapes = null;
+        _batchProxies = new Dictionary<string, Excel.Shape>(StringComparer.Ordinal);
+        return new BatchScope(this);
+    }
+
+    /// <summary>Ends a batch and releases the proxies it was holding.</summary>
+    private sealed class BatchScope(ExcelShapeWriter owner) : IDisposable
+    {
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            owner._batchActive = false;
+            owner._batchShapes = null;
+            owner._batchProxies = null;
+        }
+    }
+
+    /// <summary>Remembers a resolved proxy for the rest of the batch, when one is open.</summary>
+    /// <param name="name">The exact shape name.</param>
+    /// <param name="shape">The resolved shape, or <see langword="null"/>.</param>
+    /// <returns>The shape, so a lookup can return it directly.</returns>
+    private Excel.Shape? Remember(string name, Excel.Shape? shape)
+    {
+        if (shape is not null && _batchProxies is not null)
+        {
+            _batchProxies[name] = shape;
+        }
+
+        return shape;
+    }
+
+    /// <summary>
+    /// Maps a protection outcome to the refusal a mutating operation returns, or
+    /// <see langword="null"/> when the target is writable.
+    /// </summary>
+    /// <param name="protection">The outcome of the guard consultation.</param>
+    /// <returns>The refusal, or <see langword="null"/> when the write may proceed.</returns>
+    /// <remarks>
+    /// Only the mapping lives here. The consultation itself stays visible in each entry
+    /// point, because ADR-0008 D4's architecture gate inspects the entry method's own tokens
+    /// and exists precisely because a guard once sat in a helper nothing reached.
+    /// </remarks>
+    private static ShapeWriteOutcome? RefusalFor(ProtectionGuardOutcome protection) =>
+        protection == ProtectionGuardOutcome.NotProtected
+            ? null
+            : ShapeWriteOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? ShapeWriteRefusal.NoActiveWorkbook
+                    : ShapeWriteRefusal.TargetProtected);
+
+    /// <summary>Reads a shape's placement. Test seam over the COM property.</summary>
+    /// <param name="shape">The live shape.</param>
+    /// <returns>The host's placement for the shape.</returns>
+    internal virtual Excel.XlPlacement ReadPlacement(Excel.Shape shape) => shape.Placement;
+
+    /// <summary>Reads a shape's one-based z-order position. Test seam over the COM property.</summary>
+    /// <param name="shape">The live shape.</param>
+    /// <returns>The host's position, where 1 is the front-most shape.</returns>
+    internal virtual int GetZOrderPosition(Excel.Shape shape) => shape.ZOrderPosition;
+
     /// <summary>
     /// The longest primitive identifier this adapter will hand to the host as a
     /// shape name.
@@ -107,13 +201,12 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
+        // reconcile batch the target was already checked when it was resolved and events are
+        // off for the whole pass, so the repeated query can only return the same answer.
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
-            return ShapeWriteOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? ShapeWriteRefusal.NoActiveWorkbook
-                    : ShapeWriteRefusal.TargetProtected);
+            return guardRefusal;
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
@@ -173,6 +266,9 @@ public class ExcelShapeWriter(
         ShapeWriteOutcome stamped = ApplyOwnershipOrDiscard(created, request.PrimitiveId);
         if (stamped.Succeeded)
         {
+            // The new shape is a valid proxy for the rest of the batch: the geometry check
+            // and the z-order preflight would otherwise look it up again (ADR-0054).
+            _ = Remember(request.PrimitiveId, created);
             TraceBandShape("create", created, request.PrimitiveId, before: null);
         }
 
@@ -205,13 +301,12 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(invalid!.Value);
         }
 
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
+        // reconcile batch the target was already checked when it was resolved and events are
+        // off for the whole pass, so the repeated query can only return the same answer.
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
-            return ShapeWriteOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? ShapeWriteRefusal.NoActiveWorkbook
-                    : ShapeWriteRefusal.TargetProtected);
+            return guardRefusal;
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
@@ -250,9 +345,16 @@ public class ExcelShapeWriter(
 
         // Heal a shape created before the placement rule changed (see Create), and
         // keep the host from resizing this one on the next row visibility or height
-        // change. This runs on every update, so an existing workbook converts itself
-        // on the next Refresh without a rebuild of its shapes.
-        ApplyPlacement(existing);
+        // change. Every update used to write `Placement` unconditionally -- a host write
+        // per shape, most of them writing the value the shape already held. One cheap read
+        // now decides, so the write happens only on the first pass after the rule changed
+        // (or for a shape a user re-anchored), and an existing workbook still heals itself
+        // without a rebuild of its shapes (ADR-0054).
+        if (ReadPlacement(existing) != Excel.XlPlacement.xlMove)
+        {
+            ApplyPlacement(existing);
+        }
+
         TraceBandShape(applyAppearance ? "update" : "move", existing, request.PrimitiveId, bandBefore);
 
         // The move-only path stops here. Everything below writes generated appearance
@@ -320,13 +422,12 @@ public class ExcelShapeWriter(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
 
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
+        // reconcile batch the target was already checked when it was resolved and events are
+        // off for the whole pass, so the repeated query can only return the same answer.
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
-            return ShapeWriteOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? ShapeWriteRefusal.NoActiveWorkbook
-                    : ShapeWriteRefusal.TargetProtected);
+            return guardRefusal;
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
@@ -349,6 +450,14 @@ public class ExcelShapeWriter(
         }
 
         existing.Delete();
+
+        // A deleted name must not be served from the batch memo afterwards: a later create
+        // in the same batch legitimately reuses it.
+        if (_batchProxies is not null)
+        {
+            _ = _batchProxies.Remove(primitiveId);
+        }
+
         return ShapeWriteOutcome.Ok();
     }
 
@@ -378,7 +487,13 @@ public class ExcelShapeWriter(
                 continue;
             }
 
-            bool ownedTag = CarriesOwnershipTagFor(shape, name);
+            // Read the tag only for a name this writer could have created (O4). The
+            // alternative-text read is a host round trip; a name outside our own two
+            // shapes cannot be one of ours, so the read buys nothing for it. The proof
+            // is in CouldBeOwnedName, and the tag comparison stays exactly as it was
+            // for every name that passes this test -- including the recompute that
+            // makes a user's renamed copy of one of our shapes fail ownership.
+            bool ownedTag = CouldBeOwnedName(name) && CarriesOwnershipTagFor(shape, name);
             if (ownedTag)
             {
                 owned.Add(name);
@@ -485,13 +600,12 @@ public class ExcelShapeWriter(
     {
         ArgumentNullException.ThrowIfNull(backToFront);
 
-        ProtectionGuardOutcome protection = _protectionGuard.Query();
-        if (protection != ProtectionGuardOutcome.NotProtected)
+        // ADR-0008 D4's first statement, before any workbook access. ADR-0054: inside a
+        // reconcile batch the target was already checked when it was resolved and events are
+        // off for the whole pass, so the repeated query can only return the same answer.
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
         {
-            return ShapeWriteOutcome.Refused(
-                protection == ProtectionGuardOutcome.NoActiveWorkbook
-                    ? ShapeWriteRefusal.NoActiveWorkbook
-                    : ShapeWriteRefusal.TargetProtected);
+            return guardRefusal;
         }
 
         Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
@@ -546,13 +660,52 @@ public class ExcelShapeWriter(
         // order was. Forward order would produce its exact reverse. This is still
         // the single deterministic pass R4.5 D2 requires: no BringToFront, and no
         // per-shape call outside this method.
-        for (int index = resolved.Count - 1; index >= 0; index--)
+        //
+        // O5 (ADR-0054): only the shapes that are actually out of order are moved. The
+        // BACK-TO-FRONT prefix of the desired order whose live positions already decrease
+        // is already correct and stays put; the remainder is pushed to the back in
+        // front-to-back order, which lands it in exactly the desired order behind the
+        // prefix. A read costs ~0.03-0.1 ms and a ZOrder command is a write at 0.6-2.7 ms,
+        // so reading N positions to skip most of the writes is a large win, and a pass
+        // whose order is already correct now issues no writes at all.
+        //
+        // "Position" is one-based with 1 as the FRONT-most shape, so a correct
+        // back-to-front ordering has strictly DECREASING positions as the index advances.
+        // Reading that direction wrong is not a performance bug: it would accept a
+        // front-anchored run as ordered and leave the chart mis-stacked, which is why the
+        // comparison is pinned by tests in both directions.
+        int bound = 0;
+        int previousPosition = 0;
+        for (int index = 0; index < resolved.Count; index++)
+        {
+            int position = GetZOrderPosition(resolved[index]);
+            if (position <= 0)
+            {
+                // The host did not report a usable position (a test double, or a shape the
+                // host will not describe). Fall back to the full pass rather than trust a
+                // partial order: the pass is absolute and always converges.
+                bound = 0;
+                break;
+            }
+
+            if (index > 0 && position >= previousPosition)
+            {
+                bound = index;
+                break;
+            }
+
+            previousPosition = position;
+            bound = index + 1;
+        }
+
+        for (int index = resolved.Count - 1; index >= bound; index--)
         {
             resolved[index].ZOrder(MsoZOrderCmd.msoSendToBack);
         }
 
         return ShapeWriteOutcome.Ok();
     }
+
     /// <summary>
     /// Resolves the worksheet whose <c>Shapes</c> collection the renderer owns.
     /// </summary>
@@ -568,6 +721,14 @@ public class ExcelShapeWriter(
     /// </remarks>
     private Excel.Shapes? ResolveShapes(out ShapeWriteOutcome? refusal)
     {
+        // Resolved once per batch: the target cannot change while a refresh runs, because
+        // ADR-0020's scope disables events for the whole pass (ADR-0054).
+        if (_batchShapes is not null)
+        {
+            refusal = null;
+            return _batchShapes;
+        }
+
         Excel.Application? application = _application;
         if (application is null)
         {
@@ -613,9 +774,15 @@ public class ExcelShapeWriter(
             return null;
         }
 
+        if (_batchActive)
+        {
+            _batchShapes = shapes;
+        }
+
         refusal = null;
         return shapes;
     }
+
     /// <summary>
     /// Validates a request before any host call, so a bad request never reaches Excel.
     /// </summary>
@@ -627,6 +794,17 @@ public class ExcelShapeWriter(
         if (string.IsNullOrWhiteSpace(request.PrimitiveId))
         {
             refusal = ShapeWriteRefusal.BlankIdentifier;
+            return false;
+        }
+
+        // The ownership scan reads a shape's tag only when its name could be one of ours
+        // (ListOwned + CouldBeOwnedName, ADR-0054 O4), so a name outside those forms would
+        // be written and then never recognised -- an un-updatable, un-deletable shape. The
+        // form is enforced here rather than assumed, at the one place a name reaches the
+        // host.
+        if (!CouldBeOwnedName(request.PrimitiveId))
+        {
+            refusal = ShapeWriteRefusal.UnsupportedIdentifierForm;
             return false;
         }
 
@@ -702,6 +880,52 @@ public class ExcelShapeWriter(
 
     private static bool IsUsablePoint(PointD? point) =>
         point is { } value && double.IsFinite(value.X) && double.IsFinite(value.Y);
+
+    /// <summary>
+    /// The primitive identifier of the chart title shape, the one owned shape whose name
+    /// is not role-derived.
+    /// </summary>
+    /// <remarks>
+    /// Declared here, next to <see cref="CouldBeOwnedName"/>, and consumed by
+    /// <c>GanttRefreshOrchestrator</c>, because the ownership scan is only sound while
+    /// every name this writer can create is enumerated in one place. Two literals with
+    /// the same text would let a rename of the title silently make the title look
+    /// unowned on every refresh.
+    /// </remarks>
+    public const string ChartTitlePrimitiveId = "ChartTitle";
+
+    /// <summary>
+    /// Whether a worksheet shape name could be one this writer created, and so needs its
+    /// ownership tag compared.
+    /// </summary>
+    /// <param name="name">The live shape name, already known not to be blank.</param>
+    /// <returns><see langword="true"/> when the name is one of our two possible forms.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is a name test and not a tag test.</b> Reading <c>AlternativeText</c>
+    /// is a host round trip, and <see cref="ListOwned"/> pays it once per shape on the
+    /// sheet — most of which are a user's drawings and annotations that can never be
+    /// ours. Skipping the read for those names is worth roughly one round trip per
+    /// non-chart shape (O4).
+    /// </para>
+    /// <para>
+    /// <b>Why it is sound.</b> There are exactly two sources of a name this writer
+    /// stamps. A scene primitive is named by <c>ScenePrimitive.CreateId</c>, which
+    /// always emits <c>"{ownerId}:{role}"</c> and refuses a blank role, so it always
+    /// contains a colon. The chart title is the single fixed identifier,
+    /// <see cref="ChartTitlePrimitiveId"/>. A name outside both forms cannot be a shape
+    /// this writer created, therefore cannot carry this writer's tag, therefore cannot
+    /// be owned — the skipped read could only ever have returned <see langword="false"/>.
+    /// A user's renamed copy of one of our shapes is still excluded, because ownership
+    /// is recomputed from the <em>live</em> name.
+    /// </para>
+    /// </remarks>
+    internal static bool CouldBeOwnedName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return name.Contains(':', StringComparison.Ordinal)
+            || string.Equals(name, ChartTitlePrimitiveId, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Determines whether a shape's alternative text is the ownership tag for
@@ -1131,6 +1355,13 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+        // Inside a batch the same name is looked up by the geometry check, the update and
+        // the z-order pass; one indexed lookup serves all three (ADR-0054).
+        if (_batchProxies is not null && _batchProxies.TryGetValue(name, out Excel.Shape? cached))
+        {
+            return cached;
+        }
+
         // The host's name indexer is the fast path: one lookup instead of a scan of
         // every shape with a COM `Name` read per shape. That scan was O(N) here and
         // this method is called once per create, update and delete, plus once per
@@ -1144,7 +1375,7 @@ public class ExcelShapeWriter(
         {
             if (GetShapeByExactName(shapes, name) is { } resolved)
             {
-                return resolved;
+                return Remember(name, resolved);
             }
         }
         catch (Exception exception) when (exception is ArgumentException or COMException or InvalidOperationException)
@@ -1168,7 +1399,7 @@ public class ExcelShapeWriter(
             Excel.Shape? shape = GetShapeAt(shapes, index);
             if (shape is not null && string.Equals(shape.Name, name, StringComparison.Ordinal))
             {
-                return shape;
+                return Remember(name, shape);
             }
         }
 

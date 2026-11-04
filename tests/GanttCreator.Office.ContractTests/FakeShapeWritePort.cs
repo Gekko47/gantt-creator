@@ -281,6 +281,54 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         return ShapeWriteOutcome.Ok();
     }
 
+    /// <summary>How many shape-write batches the caller opened.</summary>
+    public int BatchesStarted { get; private set; }
+
+    /// <summary>How many of those batches were disposed.</summary>
+    /// <remarks>
+    /// Paired with <see cref="BatchesStarted"/> this is how a test proves the reconcile
+    /// disposes its batch on every exit path — including the refusal path that returns
+    /// early from the middle of a plan. A leaked batch is not observable through
+    /// <see cref="Calls"/>, so without this counter the guarantee would be untestable.
+    /// </remarks>
+    public int BatchesDisposed { get; private set; }
+
+    private int _batchDepth;
+
+    /// <summary>
+    /// Opens the adapter's batch scope. The fake models the real contract: batches do not
+    /// nest, and a scope disposes exactly once.
+    /// </summary>
+    /// <returns>The scope that ends the batch.</returns>
+    public IDisposable BeginBatch()
+    {
+        if (_batchDepth > 0)
+        {
+            throw new InvalidOperationException("A shape-write batch is already open. Batches do not nest.");
+        }
+
+        BatchesStarted++;
+        _batchDepth++;
+        return new BatchScope(this);
+    }
+
+    private sealed class BatchScope(FakeShapeWritePort owner) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                throw new InvalidOperationException("A shape-write batch was disposed twice.");
+            }
+
+            _disposed = true;
+            owner.BatchesDisposed++;
+            owner._batchDepth--;
+        }
+    }
+
     /// <summary>
     /// Whether the shape the host holds under this name carries the ownership tag
     /// for that same identifier — the fake's model of the adapter's

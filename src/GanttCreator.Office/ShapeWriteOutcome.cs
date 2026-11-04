@@ -106,6 +106,21 @@ public enum ShapeWriteRefusal
 
     /// <summary>The host refused or rejected the write.</summary>
     HostRejected = 9,
+
+    /// <summary>
+    /// The primitive identifier is not in a form this writer creates, so a shape written
+    /// under it could not be recognised as owned on the next refresh.
+    /// </summary>
+    /// <remarks>
+    /// Recognising ownership means recognising the <em>name</em> first: `ListOwned` reads
+    /// the alternative-text tag only for a name that could be one of ours (ADR-0054, O4),
+    /// because a tag read per user drawing is a host round trip that cannot ever match. That
+    /// optimisation is only sound while every name the writer creates is in one of the two
+    /// enumerated forms, so the form is enforced here — at the single point a name is handed
+    /// to the host — instead of assumed. Refusing is the safe direction: an accepted
+    /// out-of-form name would produce a shape no refresh can ever update or delete.
+    /// </remarks>
+    UnsupportedIdentifierForm = 10,
 }
 
 /// <summary>The typed result of one shape-write operation.</summary>
