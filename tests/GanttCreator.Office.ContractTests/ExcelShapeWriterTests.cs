@@ -150,6 +150,10 @@ public class ExcelShapeWriterTests
             // it is modelled with a backing store: the assertion is that the adapter
             // placed the shape with xlMove, not that Moq accepted a set.
             _ = mock.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
+
+            // ADR-0055: `Locked` is written by the ownership stamp, so it needs a backing
+            // store for the same reason Placement does.
+            _ = mock.SetupProperty(s => s.Locked, false);
             _ = mock.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => name = value);
             _ = mock.SetupGet(s => s.Name).Returns(() => name);
             _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
@@ -1249,6 +1253,10 @@ public class ExcelShapeWriterTests
         // Seeded with the host's default so a test can prove the update HEALS a shape
         // created before the placement rule changed.
         _ = shape.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
+
+        // ADR-0055: a shape the host already holds is UNLOCKED until the back-fill runs, so a
+        // test can tell "locked from birth" from "locked by the one-time sweep".
+        _ = shape.SetupProperty(s => s.Locked, false);
         _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
         _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
         _ = shape.SetupGet(s => s.AlternativeText).Returns(() => currentAlternativeText);
@@ -1733,5 +1741,40 @@ public class ExcelShapeWriterTests
 
         // One read for the candidate, none for the user's shape.
         Assert.Equal(1, writer.AlternativeTextReads);
+    }
+
+    /// <summary>
+    /// ADR-0055: a created shape is locked from birth, so the user cannot drag it.
+    /// </summary>
+    [Fact]
+    public void Create_locks_the_shape_it_creates()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        Assert.True(writer.Create(RectangleRequest()).Succeeded);
+
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.True(created.Locked);
+    }
+
+    /// <summary>
+    /// ADR-0055's one-time back-fill: only tagged shapes are locked, and a user's shape that
+    /// shares a name is left unlocked because ownership is proved by the tag, not the name.
+    /// </summary>
+    [Fact]
+    public void LockOwnedShapes_locks_only_the_shapes_the_add_in_owns()
+    {
+        Excel.Shape owned = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        Excel.Shape alreadyLocked = NewShape("row-2:bar", ShapeOwnershipTag.ForPrimitiveId("row-2:bar"));
+        alreadyLocked.Locked = true;
+        Excel.Shape userShape = NewShape("row-1:label", "a note the user typed");
+        var writer = new TestableWriter(
+            ActiveApplication().Object, ClearGuard().Object, owned, alreadyLocked, userShape);
+
+        Assert.True(writer.LockOwnedShapes().Succeeded);
+
+        Assert.True(owned.Locked);
+        Assert.True(alreadyLocked.Locked);
+        Assert.False(userShape.Locked);
     }
 }

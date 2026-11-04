@@ -351,6 +351,26 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         return [.. _owned];
     }
 
+    /// <summary>How many owned shapes the last <see cref="LockOwnedShapes"/> call locked.</summary>
+    public int LockedShapeCount { get; private set; }
+
+    /// <summary>How many times <see cref="LockOwnedShapes"/> was called.</summary>
+    public int LockOwnedShapesCallCount { get; private set; }
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome LockOwnedShapes()
+    {
+        LockOwnedShapesCallCount++;
+        Calls.Add("LockOwnedShapes");
+        if (Refusals.TryGetValue("LockOwnedShapes", out ShapeWriteRefusal? refusal) && refusal is { } reason)
+        {
+            return ShapeWriteOutcome.Refused(reason);
+        }
+
+        LockedShapeCount = _owned.Count;
+        return ShapeWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Identifiers whose live geometry has drifted from the last write — the model of a
     /// host that moved or resized a shape on its own (a row insert, a hidden row, a user

@@ -203,6 +203,27 @@ public interface IShapeWritePort
     ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request);
 
     /// <summary>
+    /// Locks every shape this add-in owns, so the user cannot drag or delete it (ADR-0055).
+    /// </summary>
+    /// <returns>The same typed result the other write operations return.</returns>
+    /// <remarks>
+    /// <para>
+    /// A create stamps <c>Locked</c> already; this is the one-time back-fill for shapes created
+    /// before the rule existed. It is deliberately a separate operation rather than something
+    /// <see cref="ListOwned"/> does, because <see cref="ListOwned"/> runs on every refresh and
+    /// ADR-0055 forbids adding a step there: reading <c>Locked</c> once per shape per pass would
+    /// cost more than the write it avoids. This runs when protection is armed — once per
+    /// workbook — and from the Lock command.
+    /// </para>
+    /// <para>
+    /// Ownership is proved by the tag, exactly as <see cref="Delete"/> and <see cref="Update"/>
+    /// prove it, so a user's shape that happens to share a name is never locked. The write is
+    /// conditional: a shape already locked is read and left alone.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome LockOwnedShapes();
+
+    /// <summary>
     /// Begins a reconciliation batch, in which the target worksheet and the protection
     /// guard are resolved ONCE for every operation until the returned scope is disposed.
     /// </summary>

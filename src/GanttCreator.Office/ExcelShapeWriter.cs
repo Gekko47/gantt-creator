@@ -521,6 +521,60 @@ public class ExcelShapeWriter(
     }
 
     /// <inheritdoc />
+    public ShapeWriteOutcome LockOwnedShapes()
+    {
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        {
+            return guardRefusal;
+        }
+
+        Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
+        if (shapes is null)
+        {
+            return refusal!;
+        }
+
+        int count = GetShapeCount(shapes);
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.Shape? shape = GetShapeAt(shapes, index);
+            if (shape is null)
+            {
+                continue;
+            }
+
+            string name = shape.Name;
+            if (string.IsNullOrWhiteSpace(name) || !CouldBeOwnedName(name))
+            {
+                continue;
+            }
+
+            // The tag, not the name, is the ownership proof -- the same rule Delete and Update
+            // follow, so a user's shape that shares a name is left unlocked.
+            if (!CarriesOwnershipTagFor(shape, name))
+            {
+                continue;
+            }
+
+            if (!ReadLocked(shape))
+            {
+                ApplyLock(shape);
+            }
+        }
+
+        return ShapeWriteOutcome.Ok();
+    }
+
+    /// <summary>Reads a shape's lock state. Test seam over the COM property.</summary>
+    /// <param name="shape">The live shape.</param>
+    /// <returns>The host's lock state.</returns>
+    internal virtual bool ReadLocked(Excel.Shape shape) => shape.Locked;
+
+    /// <summary>Locks a shape. Test seam over the COM property.</summary>
+    /// <param name="shape">The live shape.</param>
+    internal virtual void ApplyLock(Excel.Shape shape) => shape.Locked = true;
+
+    /// <inheritdoc />
     public bool GeometryMatches(OfficeShapeRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -992,6 +1046,13 @@ public class ExcelShapeWriter(
     {
         shape.Name = primitiveId;
         shape.AlternativeText = ShapeOwnershipTag.ForPrimitiveId(primitiveId);
+
+        // ADR-0055: an owned shape is locked by default, so the user cannot drag it out of place
+        // by accident. `Locked` is inert until the worksheet is protected, which the refresh arms
+        // separately; writing it here costs one property call on a path that already writes two,
+        // and it means a new shape is locked from birth rather than on a later sweep.
+        // The PIA types this property as Boolean, not MsoTriState.
+        shape.Locked = true;
         return ShapeWriteOutcome.Ok();
     }
 
