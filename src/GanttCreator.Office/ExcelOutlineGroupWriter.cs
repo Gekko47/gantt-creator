@@ -17,6 +17,10 @@ namespace GanttCreator.Office;
 /// The protection guard, consulted first per ADR-0008 D4 because this adapter
 /// mutates.
 /// </param>
+/// <param name="trace">
+/// Optional diagnostic sink for every outline span written, or <see langword="null"/>
+/// for no trace. The production sink degrades internally and must not throw.
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>Body rows map to worksheet rows.</b> The plan works in
@@ -27,11 +31,13 @@ namespace GanttCreator.Office;
 /// </para>
 /// <para>
 /// <b>Collapse state is preserved.</b> The reset pass only clears rows that are
-/// currently grouped and no longer planned, and the group pass only writes the
-/// planned grouping. Rows already at <c>TopLevelOutlineLevel</c> are left alone:
-/// writing their level re-evaluates the outline and re-expands every collapsed
-/// group. A collapsed parent therefore stays collapsed across a <c>Refresh</c>
-/// instead of being re-expanded under the user.
+/// currently grouped and no longer planned, and the group pass only writes a span
+/// that is not already at the child level. Rows already at
+/// <c>TopLevelOutlineLevel</c>, and spans that already carry
+/// <c>ChildOutlineLevel</c>, are left alone: writing their level re-evaluates the
+/// outline, may re-expand every collapsed group, and moves every
+/// <c>xlMoveAndSize</c> shape over the span. A collapsed parent therefore stays
+/// collapsed across a <c>Refresh</c> instead of being re-expanded under the user.
 /// </para>
 /// <para>
 /// The <c>internal virtual</c> seams isolate the COM parameterised properties for
@@ -41,10 +47,25 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelOutlineGroupWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IOutlineGroupPort
+    IWorksheetProtectionGuard? protectionGuard = null,
+    Action<string>? trace = null) : IOutlineGroupPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>
+    /// Optional diagnostic sink for every outline span this adapter writes, or
+    /// <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// Writing a body row's outline level re-evaluates the group, and Excel may
+    /// un-hide its rows while doing so; a collapse/expand hides or shows those rows
+    /// outright. Either way every <c>xlMoveAndSize</c> chart shape over the span is
+    /// moved or resized by the host. The lines name the spans this adapter touched,
+    /// so a live log can tie a stale shape to the exact outline write. The production
+    /// sink is the rolling log and must not throw.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
 
     /// <summary>The outline level of a row that is not inside any group.</summary>
     internal const int TopLevelOutlineLevel = 1;
@@ -142,6 +163,9 @@ public class ExcelOutlineGroupWriter(
             if (SetRowHidden(range, hidden))
             {
                 written++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline collapse body-row={bodyRow} hidden={hidden}"));
             }
         }
 
@@ -261,16 +285,50 @@ public class ExcelOutlineGroupWriter(
             if (UngroupRange(worksheet, firstWorksheetRow, first, last))
             {
                 ungrouped++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline ungroup body-rows={first}-{last}"));
             }
         }
 
         int applied = 0;
         foreach (OutlineGroup group in plan.Groups)
         {
-            if (group.ChildRowNumbers.Count > 0
-                && Group(worksheet, firstWorksheetRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
+            if (group.ChildRowNumbers.Count == 0)
+            {
+                continue;
+            }
+
+            // A span whose every row already carries the child level is not
+            // rewritten. Writing the level again is the same re-evaluation the reset
+            // pass above deliberately avoids on top-level rows: the host may treat
+            // it as a grouping change, and the grouped rows are exactly the ones a
+            // collapsed group hides. Measured 2026-11-03: a no-op Refresh re-groups the
+            // same two rows every time, and that write is a shape-moving side effect
+            // the delta cache cannot see. Rebuilding the hierarchy is still the rule --
+            // a span that is new, resized, or moved is written because at least one of
+            // its rows is not at the child level yet.
+            bool alreadyGrouped = true;
+            foreach (int childRowNumber in group.ChildRowNumbers)
+            {
+                if (currentLevels.GetValueOrDefault(childRowNumber) != ChildOutlineLevel)
+                {
+                    alreadyGrouped = false;
+                    break;
+                }
+            }
+
+            if (alreadyGrouped)
+            {
+                continue;
+            }
+
+            if (Group(worksheet, firstWorksheetRow, group.ChildRowNumbers[0], group.ChildRowNumbers[^1]))
             {
                 applied++;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.outline group body-rows={group.ChildRowNumbers[0]}-{group.ChildRowNumbers[^1]}"));
             }
         }
 

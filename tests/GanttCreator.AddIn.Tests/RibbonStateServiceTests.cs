@@ -1035,9 +1035,15 @@ public sealed class RibbonStateServiceTests : IDisposable
     /// </summary>
     private sealed class FakePanelGridMeasurementPort(PanelCellGrid grid) : IPanelGridMeasurementPort
     {
-        public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+        public PanelGridOutcome Measure(
+            IReadOnlyList<string> includedColumns,
+            IReadOnlyList<double>? bodyRowHeightsPt = null)
         {
             ArgumentNullException.ThrowIfNull(includedColumns);
+
+            // The width display only needs the column widths, so the supplied body heights
+            // are irrelevant here and the fixed grid is returned either way.
+            _ = bodyRowHeightsPt;
             return PanelGridOutcome.Ok(grid);
         }
     }

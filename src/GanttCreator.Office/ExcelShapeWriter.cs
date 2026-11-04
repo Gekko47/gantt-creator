@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -15,6 +17,11 @@ namespace GanttCreator.Office;
 /// no-active-workbook refusal with no mutation.
 /// </param>
 /// <param name="protectionGuard">The shared read-only workbook-protection guard.</param>
+/// <param name="trace">
+/// Optional diagnostic sink for the splitter band's live geometry around a write, or
+/// <see langword="null"/> for no trace. Bounded to that one primitive so the cost is
+/// a handful of property reads per Refresh; the production sink must not throw.
+/// </param>
 /// <remarks>
 /// <para>
 /// ADR-0008 D4: the protection guard is the first read-only check, before any
@@ -45,11 +52,15 @@ namespace GanttCreator.Office;
 /// </remarks>
 public class ExcelShapeWriter(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IShapeWritePort
+    IWorksheetProtectionGuard? protectionGuard = null,
+    Action<string>? trace = null) : IShapeWritePort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>Optional diagnostic sink for the splitter band's live geometry.</summary>
+    private readonly Action<string>? _trace = trace;
 
     /// <summary>
     /// The longest primitive identifier this adapter will hand to the host as a
@@ -122,6 +133,17 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
+        // The host must not own the shape's SIZE. Excel creates shapes with
+        // Placement = xlMoveAndSize, which ties the displayed height to the rows the
+        // shape spans: hiding, un-hiding or re-heighting one of those rows resizes the
+        // shape behind the renderer's back, and the scene's height never reaches the
+        // screen. Measured 2026-11-03: the scene declared the splitter band at 18pt on
+        // every refresh while the live band was four rows tall in one state and a line
+        // in another. xlMove keeps the one host behaviour the renderer depends on --
+        // an inserted worksheet row still moves the shape with its cell -- and removes
+        // the resizing.
+        ApplyPlacement(created);
+
         // R4.6. The style is written on the create path for the same reason the
         // text is: it is generated output the scene owns, and a shape created in
         // the host's default accent colour with the resolved colours never
@@ -148,7 +170,13 @@ public class ExcelShapeWriter(
         // already IS the scene's order. ApplyZOrder is the single authoritative
         // pass, and it establishes the final order independently of whatever
         // order the host happened to be in.
-        return ApplyOwnershipOrDiscard(created, request.PrimitiveId);
+        ShapeWriteOutcome stamped = ApplyOwnershipOrDiscard(created, request.PrimitiveId);
+        if (stamped.Succeeded)
+        {
+            TraceBandShape("create", created, request.PrimitiveId, before: null);
+        }
+
+        return stamped;
     }
 
     /// <inheritdoc />
@@ -198,10 +226,18 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
         }
 
+        string? bandBefore = DescribeBandShape(existing, request.PrimitiveId);
         if (!ApplyGeometry(existing, request.Kind, request.Geometry))
         {
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.InvalidGeometry);
         }
+
+        // Heal a shape created before the placement rule changed (see Create), and
+        // keep the host from resizing this one on the next row visibility or height
+        // change. This runs on every update, so an existing workbook converts itself
+        // on the next Refresh without a rebuild of its shapes.
+        ApplyPlacement(existing);
+        TraceBandShape("update", existing, request.PrimitiveId, bandBefore);
 
         // R4.4: a text box's CONTENT is owned generated data, exactly as its
         // geometry is, so an update re-applies it. Without this, a refresh that
@@ -301,6 +337,7 @@ public class ExcelShapeWriter(
 
         List<string> owned = [];
         int count = GetShapeCount(shapes);
+        int inventoryLogged = 0;
         for (int index = 1; index <= count; index++)
         {
             Excel.Shape? shape = GetShapeAt(shapes, index);
@@ -310,9 +347,29 @@ public class ExcelShapeWriter(
             }
 
             string name = shape.Name;
-            if (!string.IsNullOrWhiteSpace(name) && CarriesOwnershipTagFor(shape, name))
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            bool ownedTag = CarriesOwnershipTagFor(shape, name);
+            if (ownedTag)
             {
                 owned.Add(name);
+            }
+
+            // Phase-0 inventory: a chart-shaped shape that is NOT owned, or any
+            // splitter band, is logged once per shape per refresh. Names carry the
+            // chart's own "<rowId>:<role>" form, so a shape the reconciler cannot see
+            // (an untagged band from an older build) is identifiable here rather than
+            // inferred from the pixels. Bounded to 40 lines so a heavily annotated
+            // sheet cannot flood the log.
+            if (inventoryLogged < 40
+                && (name.Contains("plitter", StringComparison.OrdinalIgnoreCase)
+                    || (!ownedTag && name.Contains(':', StringComparison.Ordinal))))
+            {
+                TraceInventoryShape(shape, name, ownedTag);
+                inventoryLogged++;
             }
         }
 
@@ -320,6 +377,81 @@ public class ExcelShapeWriter(
         // rather than of the host's z-order, which R4.5 and R4.7 both mutate.
         owned.Sort(StringComparer.Ordinal);
         return owned;
+    }
+
+    /// <inheritdoc />
+    public bool GeometryMatches(OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.Geometry is null || !TryGetBoundingBox(request.Geometry, out RectD desired))
+        {
+            return false;
+        }
+
+        Excel.Shapes? shapes = ResolveShapes(out _);
+        if (shapes is null)
+        {
+            return false;
+        }
+
+        Excel.Shape? shape = FindShapeByName(shapes, request.PrimitiveId);
+        if (shape is null || !CarriesOwnershipTagFor(shape, request.PrimitiveId))
+        {
+            return false;
+        }
+
+        // Placement is part of the match. A shape still on the host's default
+        // xlMoveAndSize can be resized by a row-visibility change at any moment, so
+        // skipping it would preserve exactly the drift this verification exists to
+        // catch; the rewrite re-places it with xlMove.
+        return shape.Placement == Excel.XlPlacement.xlMove
+            && MatchesLive(shape.Left, desired.X)
+            && MatchesLive(shape.Top, desired.Y)
+            && MatchesLive(shape.Width, desired.Width)
+            && MatchesLive(shape.Height, desired.Height);
+    }
+
+    /// <summary>The tolerance for a live-versus-scene geometry comparison, in points.</summary>
+    /// <remarks>
+    /// The host stores geometry as <see cref="float"/> and the scene snaps to display
+    /// precision at the port boundary, so exact equality would test rounding rather than
+    /// geometry. One hundredth of a point is far below anything Excel can show and far
+    /// above the <see cref="float"/> rounding.
+    /// </remarks>
+    internal const double GeometryMatchTolerancePt = 0.01;
+
+    /// <summary>Compares one live host value to the scene's expected point value.</summary>
+    private static bool MatchesLive(float actual, double expected) =>
+        Math.Abs(actual - GeometryMath.SnapToDisplayPrecision(expected)) <= GeometryMatchTolerancePt;
+
+    /// <summary>
+    /// Derives the bounding box a shape of this kind occupies, exactly as
+    /// <see cref="ApplyGeometry"/> writes it.
+    /// </summary>
+    /// <param name="geometry">The scene geometry.</param>
+    /// <param name="bounds">The bounding box, when the geometry carries one.</param>
+    /// <returns><see langword="true"/> when a bounding box could be derived.</returns>
+    private static bool TryGetBoundingBox(OfficeShapeGeometry geometry, out RectD bounds)
+    {
+        if (geometry.Bounds is { } rect)
+        {
+            bounds = rect;
+            return true;
+        }
+
+        if (geometry.From is { } from && geometry.To is { } to)
+        {
+            bounds = new RectD(
+                Math.Min(from.X, to.X),
+                Math.Min(from.Y, to.Y),
+                Math.Abs(to.X - from.X),
+                Math.Abs(to.Y - from.Y));
+            return true;
+        }
+
+        bounds = default;
+        return false;
     }
 
     /// <inheritdoc />
@@ -693,6 +825,10 @@ public class ExcelShapeWriter(
     /// <param name="geometry">The scene geometry, in points.</param>
     /// <returns><see langword="true"/> when every member was written.</returns>
     /// <remarks>
+    /// <b>See <see cref="ApplyPlacement"/> for why the shape is placed with
+    /// <c>xlMove</c> and not <c>xlMoveAndSize</c>.</b>
+    /// </remarks>
+    /// <remarks>
     /// <para>
     /// R4.1 D3: this is the <em>only</em> place a scene point becomes a host
     /// <c>Single</c>, via <c>GeometryMath.SnapToDisplayPrecision</c>. A caller
@@ -765,6 +901,97 @@ public class ExcelShapeWriter(
                 return false;
         }
     }
+
+    /// <summary>
+    /// Places the shape so the host keeps it attached to its cell but never resizes it
+    /// with the row.
+    /// </summary>
+    /// <param name="shape">The shape to place.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why <c>xlMove</c> and not the host's default <c>xlMoveAndSize</c>.</b> The
+    /// scene owns the geometry, so the host resizing a shape is the renderer losing
+    /// control of its own output. Excel creates shapes with <c>xlMoveAndSize</c>, which
+    /// ties the displayed height to the rows the shape spans, so hiding, un-hiding or
+    /// re-heighting a row inside that span resizes the shape without any scene change.
+    /// Measured 2026-11-03: the scene declared the splitter band at 18pt on every
+    /// refresh while the live band was four rows tall in one state and a thin line in
+    /// another — a rewritten 18pt rect did not survive a row-visibility change.
+    /// </para>
+    /// <para>
+    /// <c>xlMove</c> preserves the single host behaviour the row inserter depends on:
+    /// an inserted worksheet row still moves the shape down with its cell (measured
+    /// 2026-10-03, <c>scripts/probe-rowinsert-anchoring.ps1</c> measured the move; the
+    /// sizing half is what this removes). Placement is re-applied on every update, so a
+    /// workbook whose shapes were created under the old rule heals on its next Refresh.
+    /// </para>
+    /// </remarks>
+    private static void ApplyPlacement(Excel.Shape shape) =>
+        shape.Placement = Excel.XlPlacement.xlMove;
+
+    /// <summary>Whether the identifier names a splitter band primitive.</summary>
+    /// <param name="primitiveId">The stable primitive identifier.</param>
+    /// <returns><see langword="true"/> for a splitter band.</returns>
+    private static bool IsSplitterBand(string primitiveId) =>
+        primitiveId.EndsWith(":splitter-band", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Describes the band's live placement and geometry before a write, or
+    /// <see langword="null"/> when this shape is not traced.
+    /// </summary>
+    /// <param name="shape">The live shape.</param>
+    /// <param name="primitiveId">The stable primitive identifier.</param>
+    /// <returns>The description, or null.</returns>
+    private string? DescribeBandShape(Excel.Shape shape, string primitiveId) =>
+        _trace is null || !IsSplitterBand(primitiveId) ? null : BandGeometry(shape);
+
+    /// <summary>
+    /// Writes the band's live placement and geometry around one create or update, so a
+    /// live log can tell "the host ignored the height we wrote" from "the scene asked
+    /// for the wrong height".
+    /// </summary>
+    /// <param name="action">The write kind, for the log.</param>
+    /// <param name="shape">The live shape after the write.</param>
+    /// <param name="primitiveId">The stable primitive identifier.</param>
+    /// <param name="before">The description captured before the write, or null.</param>
+    private void TraceBandShape(string action, Excel.Shape shape, string primitiveId, string? before)
+    {
+        if (_trace is null || !IsSplitterBand(primitiveId))
+        {
+            return;
+        }
+
+        _trace(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.shape write={action} id={primitiveId} before=[{before ?? "n/a"}] after=[{BandGeometry(shape)}]"));
+    }
+
+    /// <summary>
+    /// Logs one inventory line for a chart-shaped or untagged shape, so an artifact the
+    /// reconciler cannot see is identifiable rather than inferred from the pixels.
+    /// </summary>
+    /// <param name="shape">The live shape.</param>
+    /// <param name="name">The shape's name.</param>
+    /// <param name="ownedTag">Whether the shape carries a valid ownership tag.</param>
+    private void TraceInventoryShape(Excel.Shape shape, string name, bool ownedTag)
+    {
+        if (_trace is null)
+        {
+            return;
+        }
+
+        _trace(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.shape inventory name={name} owned={ownedTag} place={shape.Placement} l={shape.Left:0.###} t={shape.Top:0.###} w={shape.Width:0.###} h={shape.Height:0.###}"));
+    }
+
+    /// <summary>Formats a shape's placement, top and height as one invariant fragment.</summary>
+    /// <param name="shape">The live shape.</param>
+    /// <returns>The fragment.</returns>
+    private static string BandGeometry(Excel.Shape shape) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"place={shape.Placement} t={shape.Top:0.###} h={shape.Height:0.###}");
 
     // ---- Test seams (internal virtual, per the ExcelWorkbookInitialiser pattern) ----
 
@@ -878,6 +1105,37 @@ public class ExcelShapeWriter(
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+        // The host's name indexer is the fast path: one lookup instead of a scan of
+        // every shape with a COM `Name` read per shape. That scan was O(N) here and
+        // this method is called once per create, update and delete, plus once per
+        // shape in the ApplyZOrder preflight, so a full refresh cost O(N^2) name
+        // reads (~6,400 at 80 shapes, ~10^6 at 1,000).
+        //
+        // A missing name RAISES (0x800A03EC) rather than returning null, which is why
+        // the scan existed. Catching the miss here keeps the "null means absent"
+        // contract for every caller, and a miss is rare compared with a hit.
+        try
+        {
+            if (GetShapeByExactName(shapes, name) is { } resolved)
+            {
+                return resolved;
+            }
+        }
+        catch (Exception exception) when (exception is ArgumentException or COMException or InvalidOperationException)
+        {
+            // The host reports a missing name by RAISING, and the type depends on the call
+            // site. Measured on Excel 16.0 x64, 2026-11-03 (owner session `s6aea0f5a`):
+            // `Shapes.Item("row:missing")` raised
+            // `System.ArgumentException: The item with the specified name wasn't found.`
+            // (0x80070057) — which crashed `Create`'s already-exists check before this was
+            // caught. `COMException` and `InvalidOperationException` are the other
+            // encodings the interop boundary produces. All three are the documented miss.
+            return null;
+        }
+
+        // The index resolved nothing without raising. A miss normally raises, so this is
+        // the degraded path (a test double, or a host whose indexer behaves differently);
+        // the scan keeps the "null means absent" contract for every caller.
         int count = GetShapeCount(shapes);
         for (int index = 1; index <= count; index++)
         {
@@ -889,6 +1147,22 @@ public class ExcelShapeWriter(
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves a shape through the host's name indexer. Test seam over the
+    /// parameterised COM property, which cannot be expressed in a Moq expression
+    /// (CS0855); overrides model both the hit and the raising miss.
+    /// </summary>
+    /// <param name="shapes">The worksheet's shapes collection.</param>
+    /// <param name="name">The exact shape name.</param>
+    /// <returns>The shape when the host found it.</returns>
+    /// <exception cref="COMException">Raised by the host when no shape carries the name.</exception>
+    internal virtual Excel.Shape? GetShapeByExactName(Excel.Shapes shapes, string name)
+    {
+        ArgumentNullException.ThrowIfNull(shapes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return shapes.Item(name);
     }
 
     /// <summary>

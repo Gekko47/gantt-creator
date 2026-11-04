@@ -1,3 +1,4 @@
+using System.Globalization;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -51,10 +52,36 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
     /// <summary>Gets whether normalisation completed.</summary>
     public bool Succeeded => Refusal is null;
 
+    /// <summary>
+    /// The body rows' heights as this pass measured them, in body order; empty when the
+    /// pass wrote any body row or refused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the caller gets them back.</b> The panel measurement runs immediately after
+    /// this normalisation and needs exactly these figures -- each body row's height in
+    /// points -- so reading them again is one COM read per row of the same value the
+    /// normaliser has just taken. Handing them over removes that second walk.
+    /// </para>
+    /// <para>
+    /// <b>Why only when nothing was written.</b> The list is the sheet's state as the
+    /// normaliser found it. A pass that wrote a height has changed that state, so the
+    /// measurement is no longer a measurement of the sheet as it now is, and returning it
+    /// would make the caller reuse data this refresh has just replaced. In that case the
+    /// list is empty and the measurement reads the host, which is what it did before.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<double> BodyHeightsPt { get; init; } = [];
+
     /// <summary>Creates a successful outcome.</summary>
     /// <param name="rowsWritten">How many rows were written.</param>
+    /// <param name="bodyHeightsPt">
+    /// The body heights measured by this pass, or <see langword="null"/> when the pass
+    /// wrote a body row or when the caller does not measure the panel.
+    /// </param>
     /// <returns>The successful outcome.</returns>
-    public static RowHeightNormalisationOutcome Ok(int rowsWritten) => new(rowsWritten, null);
+    public static RowHeightNormalisationOutcome Ok(int rowsWritten, IReadOnlyList<double>? bodyHeightsPt = null) =>
+        new(rowsWritten, null) { BodyHeightsPt = bodyHeightsPt ?? [] };
 
     /// <summary>Creates a refusal.</summary>
     /// <param name="refusal">The refusal reason.</param>
@@ -77,6 +104,11 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
 /// The protection guard, consulted first per ADR-0008 D4 because this adapter
 /// mutates.
 /// </param>
+/// <param name="trace">
+/// Optional diagnostic sink for each body-row height written, or
+/// <see langword="null"/> for no trace. The production sink degrades internally and
+/// must not throw.
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>Why this is the add-in's job.</b> The lane height is the measured row height,
@@ -91,14 +123,16 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
 /// would mark the workbook dirty on every Refresh.
 /// </para>
 /// <para>
-/// <b>Why a hidden row's state is restored.</b> A
-/// <c>RowHeight</c> write un-hides an outline-collapsed
-/// row on a live host, and this pass runs after the
-/// outline pass on every Refresh, so an unrestored write
-/// re-expands every collapsed group whose rows are off the
-/// height token. The row's hidden state is read before
-/// the write and put back after it, so normalising the
-/// height leaves the collapse presentation untouched.
+/// <b>Why a hidden row is not written at all.</b> A hidden row reports <c>0pt</c>,
+/// which never equals the token, so the plan wanted to write the token into it on
+/// every Refresh. A <c>RowHeight</c> write un-hides an outline-collapsed row on a
+/// live host, and the restore re-hides it -- but every <c>xlMoveAndSize</c> chart
+/// shape over that row is moved and resized by the host in between, and the round
+/// trip is not perfectly reversible. Measured 2026-11-03: a collapsed two-row group
+/// was written on every refresh while the delta cache skipped the splitter band in
+/// the same run, and the band grew a row taller each time until a manual Refresh
+/// rewrote it. A hidden row is therefore skipped; it is normalised on the first
+/// Refresh after it is expanded, when it measures greater than zero.
 /// </para>
 /// <para>
 /// <b>COM ownership.</b> The <c>Application</c>, <c>Workbook</c>, <c>Worksheet</c>,
@@ -115,10 +149,25 @@ public sealed record RowHeightNormalisationOutcome(int RowsWritten, RowHeightNor
 /// </remarks>
 public class ExcelRowHeightNormaliser(
     object? application,
-    IWorksheetProtectionGuard? protectionGuard = null) : IRowHeightNormalisationPort
+    IWorksheetProtectionGuard? protectionGuard = null,
+    Action<string>? trace = null) : IRowHeightNormalisationPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IWorksheetProtectionGuard _protectionGuard = protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
+
+    /// <summary>
+    /// Optional diagnostic sink for each body-row height this adapter writes, or
+    /// <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// A <c>RowHeight</c> write un-hides an outline-collapsed row before the hidden
+    /// flag is restored, and that round trip makes Excel move and resize every
+    /// <c>xlMoveAndSize</c> shape over the row. The line names the body row, the
+    /// target height, and whether the row was hidden, so a live log can tie a stale
+    /// chart shape to the exact write that disturbed it. The production sink is the
+    /// rolling log and must not throw.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
 
     /// <inheritdoc />
     public RowHeightNormalisationOutcome Normalise(
@@ -128,7 +177,8 @@ public class ExcelRowHeightNormaliser(
         double headerHeightPt,
         double reservedRowHeightPt,
         double paddingRowHeightPt,
-        double anchorRowHeightPt)
+        double anchorRowHeightPt,
+        IReadOnlyList<string?>? typeTexts = null)
     {
         Excel.Application? application = _application;
         Excel.Workbook? workbook = application?.ActiveWorkbook;
@@ -250,24 +300,47 @@ public class ExcelRowHeightNormaliser(
             return RowHeightNormalisationOutcome.Ok(written);
         }
 
-        // Each row's KIND is read from its own Type cell, because the height policy
-        // differs by kind: a Splitter follows `SplitterPt` and a Spacer `SpacerPt`,
-        // never the managed height. Passing every row as MeasuredRowKind.Managed --
-        // as this did -- meant a splitter or spacer row was dragged to the managed
-        // height on the very Refresh that was supposed to restore the sheet, so the
-        // section header and the blank separator were permanently the wrong height and
-        // no lane could line up with its row.
+        // Each row's KIND decides its height policy: a Splitter follows `SplitterPt`
+        // and a Spacer `SpacerPt`, never the managed height. Passing every row as
+        // MeasuredRowKind.Managed -- as this did -- meant a splitter or spacer row was
+        // dragged to the managed height on the very Refresh that was supposed to
+        // restore the sheet, so the section header and the blank separator were
+        // permanently the wrong height and no lane could line up with its row.
         //
-        // The Type column is resolved ONCE, before the row loop. KindOfRow used to
-        // re-run TryGetTypeColumn for every row, so a body of N rows walked the
-        // ListColumns collection N times over COM before any cell was even read, on
-        // the exact path that already walks N rows of heights.
+        // The Type TEXT comes from the caller when it supplies one -- the refresh
+        // orchestrator passes the column it bulk-read moments earlier -- and only a
+        // caller that does not supply it pays for the COM read. Before this the
+        // adapter read that cell once per body row even though the table reader had
+        // just read the whole body, Type included, in a single Value2 call: N extra
+        // parameterised reads on the hot path of every refresh.
         //
+        // When the column does have to be read, it is resolved ONCE before the loop.
+        // KindOfRow used to re-run TryGetTypeColumn for every row, so a body of N rows
+        // walked the ListColumns collection N times over COM before any cell was read.
+        //
+        // A supplied list that is shorter than the body is not an error: the tail
+        // falls back to the column, so a partial projection can never mis-classify a
+        // structural row into the managed height.
+        int suppliedCount = typeTexts?.Count ?? 0;
+        bool needsColumn = suppliedCount < rowCount;
+
         // The boolean is deliberately discarded: a false here means the Type column
-        // could not be located, and `typeColumn` is then null, which KindOfRow
+        // could not be located, and `typeColumn` is then null, which KindOfText
         // already treats as "every row is Managed". Branching here would need a
         // second outcome for a condition that has no different handling.
-        _ = TryGetTypeColumn(table, out Excel.Range? typeColumn);
+        Excel.Range? typeColumn = null;
+        if (needsColumn)
+        {
+            _ = TryGetTypeColumn(table, out typeColumn);
+        }
+
+        MeasuredRowKind KindAt(int index)
+        {
+            return typeTexts is not null && index <= suppliedCount
+                ? KindOfText(typeTexts[index - 1])
+                : KindOfRow(typeColumn, index);
+        }
+
         List<MeasuredRowHeight> measured = [];
         for (int index = 1; index <= rowCount; index++)
         {
@@ -277,7 +350,7 @@ public class ExcelRowHeightNormaliser(
                     RowHeightNormalisationRefusalReason.InvalidMeasurement);
             }
 
-            measured.Add(new MeasuredRowHeight(index, height, KindOfRow(typeColumn, index)));
+            measured.Add(new MeasuredRowHeight(index, height, KindAt(index)));
         }
 
         RowHeightNormalisationPlan? plan = RowHeightNormaliser.Plan(
@@ -291,6 +364,18 @@ public class ExcelRowHeightNormaliser(
                 RowHeightNormalisationRefusalReason.InvalidMeasurement);
         }
 
+        // The heights measured above are the sheet's current body heights. They stay
+        // current only while this pass writes none of them, so they are handed back to
+        // the caller -- the panel measurement runs next and needs exactly these figures.
+        // A pass that writes a body row returns an empty list instead: the sheet has
+        // changed, and reusing the pre-write measurement would be reusing data this
+        // refresh has just replaced.
+        double[] measuredHeights = new double[measured.Count];
+        for (int index = 0; index < measured.Count; index++)
+        {
+            measuredHeights[index] = measured[index].CurrentHeightPt;
+        }
+
         int writtenAfterBody = 0;
         foreach (RowHeightNormalisation decision in plan.Rows)
         {
@@ -299,25 +384,46 @@ public class ExcelRowHeightNormaliser(
                 continue;
             }
 
-            // A RowHeight write un-hides an outline-collapsed row
-            // (measured on a live Excel 16.0 host), and this pass
-            // runs after the outline pass on every Refresh, so an
-            // unrestored write re-expands every collapsed group
-            // whose rows are off-token. The row's hidden state is
-            // read before the write and put back after it, so the
-            // height is normalised without touching the collapse
-            // presentation.
+            // A HIDDEN row is not written at all, and this is the fix for the
+            // measured shape-drift defect (2026-11-03).
+            //
+            // A hidden row's RowHeight reads as 0, which never equals the token, so
+            // the plan wants to write the token into it on EVERY Refresh. The write
+            // un-hides the row (measured on a live Excel 16.0 host), and the restore
+            // re-hides it -- but every `xlMoveAndSize` chart shape over the row is
+            // moved and resized by the host in between, and the round trip is not
+            // perfectly reversible: the live log showed a collapsed two-row group
+            // writing 0 -> 18 on every refresh while the delta cache skipped the
+            // splitter band in the very same run, and the band grew a row taller each
+            // time until a manual Refresh rewrote it.
+            //
+            // Skipping the write is correct rather than merely cheaper. "0pt" here is
+            // a measurement of the DISPLAY, not a wrong height to repair; the row's
+            // stored height is untouched by it being hidden, and the row is normalised
+            // on the first Refresh after it is expanded (measured > 0 then). A hidden
+            // row also cannot be seen, so "the sheet and the chart disagree about how
+            // tall row N is" has no visible consequence while it is collapsed.
             bool wasHidden = ReadHidden(targetRow);
-            targetRow.RowHeight = target;
             if (wasHidden)
             {
-                targetRow.Hidden = true;
+                _trace?.Invoke(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.rowheight body-row={decision.RowNumber} structural={decision.IsStructuralRow} target={target:0.###} skipped=hidden"));
+                continue;
             }
+
+            targetRow.RowHeight = target;
+
+            _trace?.Invoke(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.rowheight body-row={decision.RowNumber} structural={decision.IsStructuralRow} target={target:0.###} hidden=False"));
 
             writtenAfterBody++;
         }
 
-        return RowHeightNormalisationOutcome.Ok(written + writtenAfterBody);
+        return RowHeightNormalisationOutcome.Ok(
+            written + writtenAfterBody,
+            writtenAfterBody == 0 ? measuredHeights : null);
     }
 
     /// <summary>
@@ -564,8 +670,21 @@ public class ExcelRowHeightNormaliser(
     /// row's own type never asked for.
     /// </remarks>
     private MeasuredRowKind KindOfRow(Excel.Range? typeColumn, int index) =>
-        typeColumn is not null
-        && ReadTypeCellText(typeColumn, index) is { } text
+        typeColumn is null ? MeasuredRowKind.Managed : KindOfText(ReadTypeCellText(typeColumn, index));
+
+    /// <summary>
+    /// Maps one <c>Type</c> cell's text to the height policy its row follows.
+    /// </summary>
+    /// <param name="text">The cell's text, or <see langword="null"/> when it is blank or unreadable.</param>
+    /// <returns>The row kind; <see cref="MeasuredRowKind.Managed"/> for anything else.</returns>
+    /// <remarks>
+    /// Split out from <see cref="KindOfRow"/> so a caller that already holds the text
+    /// -- the refresh orchestrator, which passes the bulk-read column -- reaches the
+    /// same decision without a COM read at all. The parse and the switch are the whole
+    /// contract; the only difference between the two paths is where the text came from.
+    /// </remarks>
+    private static MeasuredRowKind KindOfText(string? text) =>
+        text is not null
         && EntityTypeCatalog.TryParse(text, out GanttEntityType parsed)
             ? parsed switch
             {

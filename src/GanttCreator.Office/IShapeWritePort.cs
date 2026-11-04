@@ -174,6 +174,35 @@ public interface IShapeWritePort
     /// </remarks>
     ShapeWriteOutcome Update(OfficeShapeRequest request);
 
+    /// <summary>
+    /// Reports whether the live shape already matches the request's GEOMETRY and
+    /// PLACEMENT, so a payload-equality skip can be verified against the host instead of
+    /// trusted.
+    /// </summary>
+    /// <param name="request">The scene's desired shape.</param>
+    /// <returns>
+    /// <see langword="true"/> when the owned shape for the identifier carries the
+    /// request's bounding box and is placed with <c>xlMove</c>; <see langword="false"/>
+    /// for an absent, unowned, moved, resized, or still <c>xlMoveAndSize</c> shape.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why geometry can be verified when text and style cannot.</b> R4.7 D5 rejected
+    /// a full property diff because a <see langword="null"/> text colour or font means
+    /// "leave the host alone", so intent is unobservable after a write. Geometry has no
+    /// such member: the scene states four absolute numbers, so comparing the host's four
+    /// numbers to them cannot be ambiguous. Without this check the delta cache's
+    /// payload signature proves what the SCENE wanted, not what the HOST holds — and the
+    /// host moves and resizes <c>xlMoveAndSize</c> shapes whenever rows are inserted,
+    /// hidden, shown, or re-heighted.
+    /// </para>
+    /// <para>
+    /// Cheap by design: one indexed name lookup and five property reads per unchanged
+    /// shape, against a full update that costs one or more writes per shape.
+    /// </para>
+    /// </remarks>
+    bool GeometryMatches(OfficeShapeRequest request);
+
     /// <summary>Deletes one owned shape by its scene identifier.</summary>
     /// <param name="primitiveId">The stable scene primitive identifier.</param>
     /// <returns>

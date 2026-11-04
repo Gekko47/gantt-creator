@@ -85,8 +85,13 @@ public class GanttRowInserterTests
             double headerHeightPt,
             double reservedRowHeightPt,
             double paddingRowHeightPt,
-            double anchorRowHeightPt)
+            double anchorRowHeightPt,
+            IReadOnlyList<string?>? typeTexts = null)
         {
+            // The inserter does not supply Type texts -- it has an inserted row, not a
+            // table read -- so the parameter is accepted and ignored here, exactly as the
+            // adapter treats a null list.
+            _ = typeTexts;
             PaddingRowHeightPt = paddingRowHeightPt;
             AnchorRowHeightPt = anchorRowHeightPt;
             if (ThrowsComException)

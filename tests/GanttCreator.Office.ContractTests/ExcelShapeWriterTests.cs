@@ -145,6 +145,11 @@ public class ExcelShapeWriterTests
             TestableWriter owner = this;
             string name = string.Empty;
             string alternativeText = string.Empty;
+
+            // Placement is a real write on the create path and a gettable property, so
+            // it is modelled with a backing store: the assertion is that the adapter
+            // placed the shape with xlMove, not that Moq accepted a set.
+            _ = mock.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
             _ = mock.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => name = value);
             _ = mock.SetupGet(s => s.Name).Returns(() => name);
             _ = mock.SetupSet(s => s.AlternativeText = It.IsAny<string>())
@@ -179,6 +184,18 @@ public class ExcelShapeWriterTests
         }
     }
 
+    /// <summary>
+    /// A writer whose name indexer the test drives directly, so the honest
+    /// "the host raises for a missing name" behaviour can be proved without a host.
+    /// </summary>
+    /// <param name="lookup">The indexed lookup to perform.</param>
+    private sealed class LookupWriter(Func<Excel.Shapes, string, Excel.Shape?> lookup)
+        : ExcelShapeWriter(ActiveApplication().Object, ClearGuard().Object)
+    {
+        internal override Excel.Shape? GetShapeByExactName(Excel.Shapes shapes, string name) =>
+            lookup(shapes, name);
+    }
+
     private static Mock<IWorksheetProtectionGuard> ClearGuard()
     {
         var guard = new Mock<IWorksheetProtectionGuard>();
@@ -203,6 +220,122 @@ public class ExcelShapeWriterTests
         double width = 100,
         double height = 30) =>
         new(id, OfficeShapeKind.Rectangle, new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)), ZLayer.ActivityBody);
+
+    /// <summary>
+    /// A missing name resolves to <see langword="null"/>, not an escaping COM error.
+    /// </summary>
+    /// <remarks>
+    /// The indexed lookup is the O(1) replacement for the O(N) name scan, and the host
+    /// reports "no such shape" by raising rather than returning null. Every caller
+    /// (create's already-exists check, update, delete, the z-order preflight) depends on
+    /// the null contract, so the miss is pinned here.
+    /// </remarks>
+    /// <remarks>
+    /// <b>Measured encodings.</b> Excel 16.0 x64 raises
+    /// <see cref="ArgumentException"/> ("The item with the specified name wasn't found.",
+    /// 0x80070057) from <c>Shapes.Item(name)</c>; <see cref="InvalidOperationException"/>
+    /// and <see cref="System.Runtime.InteropServices.COMException"/> are the other shapes
+    /// the interop boundary produces. Every one of them is the miss, and an escaping
+    /// exception crashed `Create`'s already-exists check in a live session.
+    /// </remarks>
+    [Fact]
+    public void A_name_the_host_reports_as_missing_resolves_to_null()
+    {
+        var writer = new LookupWriter((_, _) => throw new ArgumentException("The item with the specified name wasn't found."));
+
+        Assert.Null(writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>A miss encoded as an operation-invalid exception is the same miss.</summary>
+    [Fact]
+    public void A_miss_reported_as_invalid_operation_resolves_to_null()
+    {
+        var writer = new LookupWriter((_, _) => throw new InvalidOperationException("The specified name is not defined."));
+
+        Assert.Null(writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>A name the host resolves is returned by the indexed lookup.</summary>
+    [Fact]
+    public void A_name_the_host_resolves_is_returned_by_the_indexed_lookup()
+    {
+        Excel.Shape expected = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new LookupWriter((_, _) => expected);
+
+        Assert.Same(expected, writer.FindShapeByName(new Mock<Excel.Shapes>().Object, "row-1:bar"));
+    }
+
+    /// <summary>
+    /// Verified skip compares the live box and placement against the scene, and refuses
+    /// to match a shape the host has moved or left on its default placement.
+    /// </summary>
+    /// <remarks>
+    /// The signature only proves the payload is unchanged. This is the check that makes
+    /// skipping safe when the host itself moved the shape: a row insert, a hidden row or
+    /// a user drag shows up here as a mismatch and forces the rewrite.
+    /// </remarks>
+    [Fact]
+    public void Geometry_matches_only_when_the_box_and_placement_match()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest();
+
+        // A fresh shape sits at 0,0 on the host's default placement.
+        Assert.False(writer.GeometryMatches(request));
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.True(writer.GeometryMatches(request));
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+
+        // The host moves it, as a row insert would.
+        existing.Top = 21f;
+        Assert.False(writer.GeometryMatches(request));
+
+        // The box is right but the placement is not, so it must still be rewritten.
+        existing.Top = 20f;
+        existing.Placement = Excel.XlPlacement.xlMoveAndSize;
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// A created shape is placed with <c>xlMove</c>, so the host moves it with its cell
+    /// but never resizes it when a row it spans is hidden, shown, or re-heighted.
+    /// </summary>
+    /// <remarks>
+    /// The scene owns the geometry. The host's default <c>xlMoveAndSize</c> tied the
+    /// displayed height to the rows the shape spans, and the measured consequence was a
+    /// splitter band at 18pt in the scene that rendered four rows tall in one state and
+    /// a thin line in another. The insert behaviour the row inserter relies on is the
+    /// MOVE half, which <c>xlMove</c> keeps.
+    /// </remarks>
+    [Fact]
+    public void Create_places_the_shape_with_move_not_move_and_size()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest());
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.Equal(Excel.XlPlacement.xlMove, created.Placement);
+    }
+
+    /// <summary>
+    /// An update re-places a shape created under the old rule, so an existing workbook
+    /// heals on its next Refresh instead of needing its shapes rebuilt.
+    /// </summary>
+    [Fact]
+    public void An_update_replaces_a_move_and_size_placement_with_move()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest());
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+    }
 
     [Fact]
     public void Create_writes_the_primitive_id_as_the_shape_name_and_the_tag_as_the_alternative_text()
@@ -1062,6 +1195,10 @@ public class ExcelShapeWriterTests
         float currentWidth = 0f;
         float currentHeight = 0f;
         var shape = new Mock<Excel.Shape>();
+
+        // Seeded with the host's default so a test can prove the update HEALS a shape
+        // created before the placement rule changed.
+        _ = shape.SetupProperty(s => s.Placement, Excel.XlPlacement.xlMoveAndSize);
         _ = shape.SetupGet(s => s.Name).Returns(() => currentName);
         _ = shape.SetupSet(s => s.Name = It.IsAny<string>()).Callback<string>(value => currentName = value);
         _ = shape.SetupGet(s => s.AlternativeText).Returns(() => currentAlternativeText);

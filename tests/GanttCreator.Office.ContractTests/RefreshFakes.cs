@@ -103,8 +103,29 @@ internal sealed class RefreshFakes
     /// <summary>Whether the outline write refuses.</summary>
     public bool OutlineRefused { get; set; }
 
+    /// <summary>
+    /// How many outline groups the fake reports as applied, so a test can prove that a
+    /// structural outline write forces a full shape update.
+    /// </summary>
+    public int OutlineGroupsApplied { get; set; }
+
+    /// <summary>How many stale outline groups the fake reports as cleared.</summary>
+    public int OutlineRowsUngrouped { get; set; }
+
     /// <summary>Whether the row-height normalisation refuses.</summary>
     public bool RowHeightRefused { get; set; }
+
+    /// <summary>
+    /// How many row heights the fake reports as written, so a test can prove that a
+    /// structural height write forces a full shape update.
+    /// </summary>
+    public int RowHeightsWritten { get; set; }
+
+    /// <summary>
+    /// The body heights the fake normaliser reports as the ones it measured, so a test can
+    /// prove the orchestrator passes them to the panel measurement.
+    /// </summary>
+    public IReadOnlyList<double> RowHeightBodyHeights { get; set; } = [];
 
     /// <summary>The managed-row target the orchestrator last passed, or null if never called.</summary>
     public double? LastManagedHeightPt { get; set; }
@@ -143,6 +164,18 @@ internal sealed class RefreshFakes
     /// </summary>
     public double? LastAnchorRowHeightPt { get; set; }
 
+    /// <summary>
+    /// The <c>Type</c> texts the orchestrator last handed to the height normaliser, or
+    /// <see langword="null"/> when it supplied none.
+    /// </summary>
+    /// <remarks>
+    /// Recorded rather than discarded for the same reason as the height targets: the
+    /// whole point of passing the bulk-read column is that the normaliser does not read
+    /// it again, and a fake that dropped the argument could not distinguish a caller
+    /// that passes the texts from one that does not.
+    /// </remarks>
+    public IReadOnlyList<string?>? LastTypeTexts { get; set; }
+
     /// <summary>Whether the reconciliation refuses on its first operation.</summary>
     public bool ReconcileRefused { get; set; }
 
@@ -174,6 +207,17 @@ internal sealed class RefreshFakes
     /// that reaches the port.
     /// </summary>
     public IReadOnlyList<string> LastMeasuredColumns => PanelFake.LastMeasuredColumns;
+
+    /// <summary>
+    /// The body heights the orchestrator handed to the panel measurement, or
+    /// <see langword="null"/> when it supplied none.
+    /// </summary>
+    /// <remarks>
+    /// Surfaces the measurement fake's record so a test can prove the orchestrator
+    /// reuses the heights its own normalisation just measured instead of making the
+    /// measurement read every body row again.
+    /// </remarks>
+    public IReadOnlyList<double>? LastMeasuredBodyHeightsPt => PanelFake.LastBodyHeightsPt;
 
     /// <summary>
     /// The concrete panel fake, for the tests that assert on what it recorded.
@@ -217,6 +261,18 @@ internal sealed class RefreshFakes
 
     /// <summary>Whether the row-identity repair refuses.</summary>
     public bool IdentityRefused { get; set; }
+
+    /// <summary>
+    /// How many Id cells the fake repairer reports as written. Zero models the normal
+    /// case, in which the orchestrator must not re-read the whole table.
+    /// </summary>
+    public int IdentityRepairedCount { get; set; }
+
+    /// <summary>
+    /// How many engine-hidden cells the fake type-change normaliser reports as written.
+    /// Zero models a no-op pass.
+    /// </summary>
+    public int TypeCellsWritten { get; set; }
 
     /// <summary>
     /// The rows the table reader returns AFTER identity repair has run, or
@@ -318,7 +374,13 @@ internal sealed class RefreshFakes
             changeTracker: tracker);
 
     /// <summary>Builds an orchestrator using the injected payload-signature cache.</summary>
-    public GanttRefreshOrchestrator BuildOrchestratorWithDeltaCache(ShapeDeltaCache cache, bool useDeltaCache = true) =>
+    /// <param name="cache">The cache to consult and commit.</param>
+    /// <param name="useDeltaCache">Whether this run may skip unchanged payload writes.</param>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
+    public GanttRefreshOrchestrator BuildOrchestratorWithDeltaCache(
+        ShapeDeltaCache cache,
+        bool useDeltaCache = true,
+        Action<string>? trace = null) =>
         new(
             TableReader,
             ConfigReader,
@@ -336,7 +398,8 @@ internal sealed class RefreshFakes
             Highlighter,
             null,
             shapeDeltaCache: cache,
-            useDeltaCache: useDeltaCache);
+            useDeltaCache: useDeltaCache,
+            trace: trace);
 
     /// <summary>Builds the orchestrator with a specific application-state scope.</summary>
     /// <param name="scope">The scope to record against.</param>
@@ -534,10 +597,23 @@ internal sealed class RefreshFakes
         /// </summary>
         public IReadOnlyList<string> LastMeasuredColumns { get; private set; } = [];
 
-        public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+        /// <summary>
+        /// The body heights the orchestrator handed over, or <see langword="null"/> when it
+        /// supplied none.
+        /// </summary>
+        /// <remarks>
+        /// Recorded so a test can prove the orchestrator reuses the heights its own
+        /// normalisation just measured instead of making this port read every row again.
+        /// </remarks>
+        public IReadOnlyList<double>? LastBodyHeightsPt { get; private set; }
+
+        public PanelGridOutcome Measure(
+            IReadOnlyList<string> includedColumns,
+            IReadOnlyList<double>? bodyRowHeightsPt = null)
         {
             owner.Steps.Add("Measure");
             LastMeasuredColumns = includedColumns;
+            LastBodyHeightsPt = bodyRowHeightsPt;
             if (owner.MeasurementRefused)
             {
                 return PanelGridOutcome.Refused(PanelGridRefusalReason.TableMissing);
@@ -631,9 +707,15 @@ internal sealed class RefreshFakes
             double header,
             double reservedRow,
             double paddingRow,
-            double anchorRow)
+            double anchorRow,
+            IReadOnlyList<string?>? typeTexts = null)
         {
             owner.Steps.Add("RowHeights");
+
+            // The texts are recorded, not discarded: passing the bulk-read column is the
+            // whole point of this parameter, and only a fake that keeps it can prove the
+            // orchestrator supplies it.
+            owner.LastTypeTexts = typeTexts;
 
             // The targets are recorded, not discarded. This fake previously
             // ignored all three arguments and returned Ok(0), so it could not fail on
@@ -657,7 +739,7 @@ internal sealed class RefreshFakes
 
             return owner.RowHeightRefused
                 ? RowHeightNormalisationOutcome.Refused(RowHeightNormalisationRefusalReason.TargetProtected)
-                : RowHeightNormalisationOutcome.Ok(0);
+                : RowHeightNormalisationOutcome.Ok(owner.RowHeightsWritten, owner.RowHeightBodyHeights);
         }
     }
 
@@ -679,7 +761,7 @@ internal sealed class RefreshFakes
             owner.Steps.Add("Identity");
             return owner.IdentityRefused
                 ? GanttRowIdentityRepairOutcome.Refused(GanttRowIdentityRepairRefusalReason.WriteFailed)
-                : GanttRowIdentityRepairOutcome.Ok(0);
+                : GanttRowIdentityRepairOutcome.Ok(owner.IdentityRepairedCount);
         }
     }
 
@@ -695,7 +777,7 @@ internal sealed class RefreshFakes
         {
             owner.Steps.Add("Normalise");
             owner.NormaliseCount++;
-            return new GanttTypeChangeNormaliseOutcome(0);
+            return new GanttTypeChangeNormaliseOutcome(owner.TypeCellsWritten);
         }
     }
 
@@ -748,7 +830,7 @@ internal sealed class RefreshFakes
             owner.Steps.Add("Outline");
             return owner.OutlineRefused
                 ? OutlineGroupOutcome.Refused(OutlineGroupRefusalReason.TargetProtected)
-                : OutlineGroupOutcome.Ok(0, 0);
+                : OutlineGroupOutcome.Ok(owner.OutlineGroupsApplied, owner.OutlineRowsUngrouped);
         }
 
         public OutlineCollapseOutcome SetCollapsed(OutlineCollapseDirection direction)

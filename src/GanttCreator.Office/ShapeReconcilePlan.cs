@@ -167,4 +167,22 @@ public sealed record ShapeReconcileOutcome(
     /// <see langword="false"/>: a blocked refresh must not touch a single shape.
     /// </remarks>
     public bool MutatedAnyShape => CompletedCount > 0;
+
+    /// <summary>
+    /// Gets whether the z-order pass ran, so a caller can separate the per-shape writes
+    /// from the single ordering pass when profiling.
+    /// </summary>
+    /// <remarks>
+    /// The pass is skipped when the desired order equals the last applied order, which is
+    /// a whole-collection operation (one lookup and one host command per shape) and can
+    /// dominate a refresh. Reporting it here keeps that cost visible in the log without
+    /// adding a second timing seam.
+    /// </remarks>
+    public bool ZOrderApplied { get; init; }
+
+    /// <summary>
+    /// Gets how long the z-order pass took, in milliseconds, so the profile can separate
+    /// the ordering cost from the per-shape writes.
+    /// </summary>
+    public double ZOrderMilliseconds { get; init; }
 }

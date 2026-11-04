@@ -173,14 +173,21 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
         columnMap = null;
         IReadOnlyList<GanttTableColumn> schema = GanttTableSchema.Default.Columns;
         int[] map = new int[schema.Count];
-        Dictionary<string, int> byName = new(StringComparer.Ordinal);
 
-        ListColumns columns = table.ListColumns;
-        int columnCount = columns.Count;
-        for (int index = 1; index <= columnCount; index++)
+        Dictionary<string, int>? byName = TryReadHeaderNamesInOneCall(table);
+        if (byName is null)
         {
-            ListColumn column = columns[index];
-            byName[column.Name] = index;
+            // A header the bulk payload cannot express as text (a numeric or blank header
+            // cell, where the table's own column name and the cell value can differ) falls
+            // back to the column names -- exactly the map this built before.
+            byName = new Dictionary<string, int>(StringComparer.Ordinal);
+            ListColumns columns = table.ListColumns;
+            int columnCount = columns.Count;
+            for (int index = 1; index <= columnCount; index++)
+            {
+                ListColumn column = columns[index];
+                byName[column.Name] = index;
+            }
         }
 
         for (int schemaIndex = 0; schemaIndex < schema.Count; schemaIndex++)
@@ -203,6 +210,73 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
 
         columnMap = map;
         return true;
+    }
+
+    /// <summary>
+    /// Reads the table's header row in ONE bulk <c>Value2</c> call and maps each header
+    /// text to its one-based table-column index.
+    /// </summary>
+    /// <param name="table">The Gantt data table.</param>
+    /// <returns>
+    /// The map, or <see langword="null"/> when the header cannot be read this way and the
+    /// caller must read the table's column names individually.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why one call.</b> This runs on every worksheet change, because the change's
+    /// answer decides whether an automatic refresh is scheduled. The per-column
+    /// <c>ListColumn.Name</c> reads it replaces cost one COM round trip each, so a paste
+    /// that raises many change events paid for the whole column collection each time.
+    /// The header row IS the column names, so the map is built from the same authority.
+    /// </para>
+    /// <para>
+    /// A payload that is not a single row of non-empty text returns
+    /// <see langword="null"/> rather than a partial map: the caller then reads the
+    /// column names, so a sheet Excel names differently from its header cells is handled
+    /// by the old path instead of being guessed at.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, int>? TryReadHeaderNamesInOneCall(ListObject table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+
+        try
+        {
+            Microsoft.Office.Interop.Excel.Range? header = table.HeaderRowRange;
+            if (header is null)
+            {
+                return null;
+            }
+
+            object? raw = header.Value2;
+            List<object?[]> rows = ExcelValue2Matrix.ReadRows(raw);
+            if (rows.Count != 1 || rows[0].Length == 0)
+            {
+                return null;
+            }
+
+            Dictionary<string, int> byName = new(StringComparer.Ordinal);
+            for (int index = 0; index < rows[0].Length; index++)
+            {
+                if (rows[0][index] is not string name || name.Length == 0)
+                {
+                    return null;
+                }
+
+                byName[name] = index + 1;
+            }
+
+            return byName;
+        }
+#pragma warning disable CA1031
+        catch
+        {
+            // A dead or disconnected proxy is the same answer as an unreadable header:
+            // fall back to the per-column read, which fails the same way if the host is
+            // genuinely gone. The caller treats a null map as "names unavailable".
+            return null;
+        }
+#pragma warning restore CA1031
     }
 
     internal static bool TryParseRange(string address, out int firstRow, out int lastRow, out int firstColumn, out int lastColumn)

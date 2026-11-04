@@ -54,9 +54,14 @@ internal static class MoveDownCommand
             // nothing and leaves the selection where it is. A selection
             // failure degrades to "cursor stays put", exactly as the
             // add-row command's selection move does.
+            //
+            // The CELL is selected, not the row's full width: the move rotates
+            // content, so the address the user was on now holds the neighbour's
+            // activity, and selecting the whole row would keep the row but throw
+            // away the column the user was working in.
             if (outcome.MovedToRowNumber is { } movedTo)
             {
-                SelectMovedRow(selector, movedTo);
+                SelectMovedCell(selector, movedTo);
             }
 
             // R5.4 D11-amended: a content rotation leaves the chart
@@ -98,19 +103,19 @@ internal static class MoveDownCommand
     }
 
     /// <summary>
-    /// Moves the selection onto the moved row, degrading to no selection
-    /// change when the host refuses. A selection failure must never turn a
+    /// Moves the selection onto the moved row's cell in the user's column, degrading to
+    /// no selection change when the host refuses. A selection failure must never turn a
     /// completed move into a user-visible error or escape into Excel.
     /// </summary>
     /// <param name="selector">The selection port.</param>
     /// <param name="bodyIndex">The moved row's new one-based body index.</param>
-    private static void SelectMovedRow(IInsertedRowSelector selector, int bodyIndex)
+    private static void SelectMovedCell(IInsertedRowSelector selector, int bodyIndex)
     {
         // CA1031: a host selection failure is outside command behaviour.
 #pragma warning disable CA1031
         try
         {
-            selector.SelectBodyRow(bodyIndex);
+            selector.SelectBodyCell(bodyIndex);
         }
         catch
         {

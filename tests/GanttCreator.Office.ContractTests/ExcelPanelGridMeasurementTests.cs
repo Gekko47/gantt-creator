@@ -53,8 +53,12 @@ public class ExcelPanelGridMeasurementTests
         // each row's own height, so a mixed body produces a mixed list.
         internal override int GetBodyRowCount(Excel.Range body) => bodyRowHeights.Count;
 
+        /// <summary>How many body rows the adapter asked the host to read.</summary>
+        public int BodyRowReads { get; private set; }
+
         internal override Excel.Range? GetBodyRowAt(Excel.Range body, int index)
         {
+            BodyRowReads++;
             if (index < 1 || index > bodyRowHeights.Count)
             {
                 return null;
@@ -329,6 +333,66 @@ public class ExcelPanelGridMeasurementTests
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Equal([12d, 24d, 15d], outcome.Grid?.RowHeightsPt);
         Assert.Equal(51d, outcome.Grid?.TotalRowHeightPt);
+    }
+
+    /// <summary>
+    /// Body heights the caller has already measured are used as-is, with no per-row read.
+    /// </summary>
+    /// <remarks>
+    /// The host deliberately reports different heights from the ones supplied, so a grid
+    /// carrying the supplied figures cannot have come from the host: the supplied list is
+    /// both used and the only source read. The normalisation that runs just before this
+    /// measurement is the caller in production, and its figures are the sheet's heights
+    /// only while it wrote none of them -- the condition it enforces before returning
+    /// them.
+    /// </remarks>
+    [Fact]
+    public void A_body_measured_by_the_caller_is_used_without_reading_the_rows()
+    {
+        FakeTable table = TableReporting(64d, 12d, [12d, 24d, 15d]);
+        var measurement = new TestableMeasurement(
+            ActiveApplication().Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt);
+
+        PanelGridOutcome outcome = measurement.Measure([ColumnName], [18d, 18d, 18d]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([18d, 18d, 18d], outcome.Grid?.RowHeightsPt);
+        Assert.Equal(0, measurement.BodyRowReads);
+    }
+
+    /// <summary>
+    /// A supplied body whose length does not match the live body falls back to reading.
+    /// </summary>
+    /// <remarks>
+    /// The list comes from a normalisation that ran moments earlier; a sheet that has
+    /// gained or lost a row since then would make a shorter list silently shift every row
+    /// after the gap. The live count is therefore the test, and a mismatch reads rather
+    /// than guessing.
+    /// </remarks>
+    [Fact]
+    public void A_supplied_body_of_the_wrong_length_falls_back_to_reading_the_rows()
+    {
+        FakeTable table = TableReporting(64d, 12d, [12d, 24d, 15d]);
+        var measurement = new TestableMeasurement(
+            ActiveApplication().Object,
+            table.Table,
+            table.Column,
+            table.BodyRowHeights,
+            table.HeaderRowHeight,
+            table.OriginTopPt,
+            table.OriginLeftPt);
+
+        PanelGridOutcome outcome = measurement.Measure([ColumnName], [18d, 18d]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([12d, 24d, 15d], outcome.Grid?.RowHeightsPt);
+        Assert.Equal(3, measurement.BodyRowReads);
     }
 
     /// <summary>

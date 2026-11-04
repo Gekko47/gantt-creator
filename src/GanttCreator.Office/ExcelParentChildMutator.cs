@@ -313,20 +313,25 @@ public class ExcelParentChildMutator(
 
         // The content move rewrites every column of every row in the
         // moved window, full width.
+        int movedTo = plan.MoveToBodyIndex!.Value;
         ParentChildMutationOutcome window = WriteRows(table, body, fromIndex, toIndex, bodyIndex);
         if (!window.Succeeded)
         {
             return window;
         }
 
+        // R5.4 D9 extended: the promoted row's content now sits at the BOTTOM of its
+        // former sibling run, so the address the user was on holds a different activity.
+        // The new index is reported so the command can put the selection back on the
+        // promoted row, in the column the user was working in.
         if (outsideCells.Count == 0)
         {
-            return window;
+            return window with { MovedToRowNumber = movedTo };
         }
 
         ParentChildMutationOutcome outside = WriteCells(table, columnMap, outsideCells, bodyIndex);
         return outside.Succeeded
-            ? ParentChildMutationOutcome.Ok(window.CellsWritten + outside.CellsWritten, bodyIndex)
+            ? ParentChildMutationOutcome.Ok(window.CellsWritten + outside.CellsWritten, bodyIndex) with { MovedToRowNumber = movedTo }
             : outside;
     }
 
@@ -435,6 +440,7 @@ public class ExcelParentChildMutator(
 
         // The content move rewrites every column of every row in the moved
         // window, full width.
+        int movedTo = plan.MoveToBodyIndex!.Value;
         ParentChildMutationOutcome window = WriteRows(table, body, toIndex, fromIndex, bodyIndex);
         if (!window.Succeeded)
         {
@@ -442,14 +448,18 @@ public class ExcelParentChildMutator(
         }
 
         List<(int RowIndex, string ColumnName, object? Value)> singles = [.. outsideCells, .. rehomeCells];
+
+        // R5.4 D9 extended: the demoted row's content now sits beneath the new parent's
+        // child run, so the address the user was on holds a different activity. The new
+        // index is reported so the command can put the selection back on the demoted row.
         if (singles.Count == 0)
         {
-            return window;
+            return window with { MovedToRowNumber = movedTo };
         }
 
         ParentChildMutationOutcome outside = WriteCells(table, columnMap, singles, bodyIndex);
         return outside.Succeeded
-            ? ParentChildMutationOutcome.Ok(window.CellsWritten + outside.CellsWritten, bodyIndex)
+            ? ParentChildMutationOutcome.Ok(window.CellsWritten + outside.CellsWritten, bodyIndex) with { MovedToRowNumber = movedTo }
             : outside;
     }
 

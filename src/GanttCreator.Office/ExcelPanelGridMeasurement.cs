@@ -51,7 +51,9 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
     private readonly Excel.Application? _application = application as Excel.Application;
 
     /// <inheritdoc />
-    public PanelGridOutcome Measure(IReadOnlyList<string> includedColumns)
+    public PanelGridOutcome Measure(
+        IReadOnlyList<string> includedColumns,
+        IReadOnlyList<double>? bodyRowHeightsPt = null)
     {
         ArgumentNullException.ThrowIfNull(includedColumns);
 
@@ -123,25 +125,43 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
         // "first row's height" case is a plain number that passes every check while
         // describing a body most of which is taller. Reading the rows removes the
         // ambiguity instead of detecting it.
+        //
+        // The caller may hand the heights over instead. The row-height normalisation that
+        // runs immediately before this measurement has already read every one of them,
+        // and when that pass wrote nothing its readings are still the sheet's state, so
+        // reading them again is one COM read per body row for a value the caller holds.
+        // The list is used only when its length matches the LIVE body row count: anything
+        // else -- a list from a sheet that has since gained or lost a row -- falls back to
+        // reading, so a stale or partial list can never be laid out as if it were the
+        // sheet. A supplied height that is non-finite or negative is refused by
+        // `PanelCellGrid.TryCreate`, exactly as a read one would be.
         List<double> rowHeights = [];
         if (table.DataBodyRange is { } body)
         {
-            for (int rowIndex = 1; rowIndex <= GetBodyRowCount(body); rowIndex++)
+            int bodyRowCount = GetBodyRowCount(body);
+            if (bodyRowHeightsPt is { Count: > 0 } supplied && supplied.Count == bodyRowCount)
             {
-                if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
+                rowHeights.AddRange(supplied);
+            }
+            else
+            {
+                for (int rowIndex = 1; rowIndex <= bodyRowCount; rowIndex++)
                 {
-                    // One absent row must not become one guessed height. The panel's row
-                    // positions are cumulative, so a single wrong height would displace
-                    // every row below it and the result would look plausible.
-                    return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
-                }
+                    if (GetBodyRowAt(body, rowIndex) is not { } row || ToPoints(row.RowHeight) is not { } height)
+                    {
+                        // One absent row must not become one guessed height. The panel's row
+                        // positions are cumulative, so a single wrong height would displace
+                        // every row below it and the result would look plausible.
+                        return PanelGridOutcome.Refused(PanelGridRefusalReason.InvalidMeasurement);
+                    }
 
-                // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
-                // HIDDEN row's height as zero, and a collapsed outline group hides its
-                // child rows, so zero is a real measurement of the displayed sheet rather
-                // than a missing one. Core accepts it and the rows below share its top;
-                // a negative height is still refused there.
-                rowHeights.Add(height);
+                    // A ZERO height is passed through deliberately (ADR-0034): Excel reports a
+                    // HIDDEN row's height as zero, and a collapsed outline group hides its
+                    // child rows, so zero is a real measurement of the displayed sheet rather
+                    // than a missing one. Core accepts it and the rows below share its top;
+                    // a negative height is still refused there.
+                    rowHeights.Add(height);
+                }
             }
         }
 

@@ -52,9 +52,22 @@ public sealed class ExcelRowHeightNormaliserDepthTests
 
         public List<int> BodyWrites { get; } = [];
 
+        /// <summary>Each body-row height write, with the height that was written.</summary>
+        public List<(int Row, double Height)> BodyWriteHeights { get; } = [];
+
         public List<(int Row, bool Hidden)> HiddenWrites { get; } = [];
 
         public List<int> LayoutWrites { get; } = [];
+
+        /// <summary>
+        /// How many <c>Type</c> cells the adapter read through <see cref="CellValueAt"/>.
+        /// </summary>
+        /// <remarks>
+        /// The only caller of <see cref="CellValueAt"/> is <c>ReadTypeCellText</c>, so this
+        /// count is exactly the per-body-row Type reads the caller's supplied texts are
+        /// meant to remove.
+        /// </remarks>
+        public int TypeCellReads { get; private set; }
 
         internal override Excel.Range? GetTableBody(Excel.ListObject table) => _body;
 
@@ -71,7 +84,11 @@ public sealed class ExcelRowHeightNormaliserDepthTests
             Mock<Excel.Range> mock = new();
             _ = mock.SetupGet(r => r.RowHeight).Returns(rowHeights[index - 1]!);
             _ = mock.SetupSet(r => r.RowHeight = It.IsAny<object>())
-                .Callback<object>(_ => BodyWrites.Add(row));
+                .Callback<object>(value =>
+                {
+                    BodyWrites.Add(row);
+                    BodyWriteHeights.Add((row, Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture)));
+                });
             _ = mock.SetupGet(r => r.Hidden).Returns(hiddenValues[index - 1]!);
             _ = mock.SetupSet(r => r.Hidden = It.IsAny<object>())
                 .Callback<object>(value => HiddenWrites.Add(
@@ -100,8 +117,11 @@ public sealed class ExcelRowHeightNormaliserDepthTests
         internal override Excel.ListColumn ColumnAt(Excel.ListColumns columns1, int index) =>
             columns[index - 1]!;
 
-        internal override object? CellValueAt(Excel.Range column, int index) =>
-            index >= 1 && index <= typeTexts.Count ? typeTexts[index - 1] : null;
+        internal override object? CellValueAt(Excel.Range column, int index)
+        {
+            TypeCellReads++;
+            return index >= 1 && index <= typeTexts.Count ? typeTexts[index - 1] : null;
+        }
     }
 
     private static Mock<IWorksheetProtectionGuard> ClearGuard()
@@ -195,7 +215,9 @@ public sealed class ExcelRowHeightNormaliserDepthTests
             columns ?? []);
     }
 
-    private static RowHeightNormalisationOutcome Normalise(DepthNormaliser normaliser) =>
+    private static RowHeightNormalisationOutcome Normalise(
+        DepthNormaliser normaliser,
+        IReadOnlyList<string?>? suppliedTypeTexts = null) =>
         normaliser.Normalise(
             ManagedPt,
             SplitterPt,
@@ -203,7 +225,8 @@ public sealed class ExcelRowHeightNormaliserDepthTests
             HeaderPt,
             ReservedRowPt,
             PaddingRowPt,
-            AnchorRowPt);
+            AnchorRowPt,
+            suppliedTypeTexts);
 
     [Fact]
     public void Normalise_refuses_table_missing_when_no_sheet_carries_the_gantt_table()
@@ -241,20 +264,32 @@ public sealed class ExcelRowHeightNormaliserDepthTests
         Assert.Empty(normaliser.BodyWrites);
     }
 
+    /// <summary>
+    /// A hidden row reported as a boxed boolean is skipped, with neither a height write
+    /// nor a hidden-state write.
+    /// </summary>
+    /// <remarks>
+    /// The boxed encodings still matter: reading <c>Hidden</c> is what decides the skip,
+    /// so each supported encoding has its own test. The write itself is deliberately
+    /// gone -- a hidden row measures 0pt, and writing the token into it un-hides and
+    /// re-hides the row, which moves every <c>xlMoveAndSize</c> chart shape over it
+    /// (measured 2026-11-03; the splitter band drifted a row taller each refresh).
+    /// </remarks>
     [Fact]
-    public void A_hidden_row_reported_as_a_boolean_is_restored_hidden_after_its_height_write()
+    public void A_hidden_row_reported_as_a_boolean_is_skipped_without_a_write()
     {
         DepthNormaliser normaliser = Normaliser([30d], hiddenValues: [true]);
 
         RowHeightNormalisationOutcome outcome = Normalise(normaliser);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
-        Assert.Equal([1], normaliser.BodyWrites);
-        Assert.Equal([(1, true)], normaliser.HiddenWrites);
+        Assert.Empty(normaliser.BodyWrites);
+        Assert.Empty(normaliser.HiddenWrites);
     }
 
+    /// <summary>A hidden row reported as the integer 1 is skipped too.</summary>
     [Fact]
-    public void A_hidden_row_reported_as_an_integer_is_restored_hidden()
+    public void A_hidden_row_reported_as_an_integer_is_skipped_without_a_write()
     {
         // Range.Hidden is Object on the PIA, so a host may report 1 rather than true.
         DepthNormaliser normaliser = Normaliser([30d], hiddenValues: [1]);
@@ -262,16 +297,19 @@ public sealed class ExcelRowHeightNormaliserDepthTests
         RowHeightNormalisationOutcome outcome = Normalise(normaliser);
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
-        Assert.Equal([(1, true)], normaliser.HiddenWrites);
+        Assert.Empty(normaliser.BodyWrites);
+        Assert.Empty(normaliser.HiddenWrites);
     }
 
+    /// <summary>A hidden row reported as the double 1.0 is skipped too.</summary>
     [Fact]
-    public void A_hidden_row_reported_as_a_double_is_restored_hidden()
+    public void A_hidden_row_reported_as_a_double_is_skipped_without_a_write()
     {
         DepthNormaliser normaliser = Normaliser([30d], hiddenValues: [1.0d]);
 
         Assert.True(Normalise(normaliser).Succeeded);
-        Assert.Equal([(1, true)], normaliser.HiddenWrites);
+        Assert.Empty(normaliser.BodyWrites);
+        Assert.Empty(normaliser.HiddenWrites);
     }
 
     [Fact]
@@ -342,6 +380,93 @@ public sealed class ExcelRowHeightNormaliserDepthTests
         DepthNormaliser normaliser = Normaliser([30d], typeTexts: [42d]);
 
         Assert.Null(normaliser.ReadTypeCellText(new Mock<Excel.Range>().Object, 1));
+    }
+
+    /// <summary>
+    /// A supplied Type text decides the row's height policy with no cell read at all.
+    /// </summary>
+    /// <remarks>
+    /// The host's own Type cell deliberately reports <see langword="null"/> while the
+    /// caller supplies <c>Splitter</c>. If the adapter ignored the supplied list the row
+    /// would take the managed token (18pt); it takes the splitter token (24pt) and reads
+    /// no cell, so the supplied text is both used and the only source that was read.
+    /// </remarks>
+    [Fact]
+    public void A_supplied_type_text_decides_the_height_without_reading_the_cell()
+    {
+        DepthNormaliser normaliser = Normaliser([30d], typeTexts: [null]);
+
+        RowHeightNormalisationOutcome outcome = Normalise(normaliser, ["Splitter"]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(0, normaliser.TypeCellReads);
+        Assert.Equal([(1, SplitterPt)], normaliser.BodyWriteHeights);
+    }
+
+    /// <summary>
+    /// A supplied list shorter than the body falls back to the column for the tail.
+    /// </summary>
+    /// <remarks>
+    /// A partial projection must not shift later rows onto earlier types: row 1 comes from
+    /// the supplied list and row 2 from the host's Type column, and each gets its own
+    /// token. Exactly one cell is read -- the one row the caller did not supply.
+    /// </remarks>
+    [Fact]
+    public void A_supplied_list_shorter_than_the_body_reads_the_remaining_rows()
+    {
+        Excel.ListColumn typeColumn = Column("Type", new Mock<Excel.Range>().Object);
+        DepthNormaliser normaliser = Normaliser(
+            [30d, 30d],
+            typeTexts: [null, "Splitter"],
+            columns: [typeColumn]);
+
+        RowHeightNormalisationOutcome outcome = Normalise(normaliser, ["Spacer"]);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(1, normaliser.TypeCellReads);
+        Assert.Equal([(1, SpacerPt), (2, SplitterPt)], normaliser.BodyWriteHeights);
+    }
+
+    /// <summary>
+    /// A pass that writes no body row returns the heights it measured, so the panel
+    /// measurement can reuse them instead of reading every row again.
+    /// </summary>
+    /// <remarks>
+    /// The rows are already at the managed token, so the plan writes nothing -- the warm
+    /// case, which is the common refresh. The figures are the sheet's state precisely
+    /// because nothing in this pass changed it.
+    /// </remarks>
+    [Fact]
+    public void A_pass_that_writes_no_body_row_returns_the_heights_it_measured()
+    {
+        DepthNormaliser normaliser = Normaliser([ManagedPt]);
+
+        RowHeightNormalisationOutcome outcome = Normalise(normaliser);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Empty(normaliser.BodyWrites);
+        Assert.Equal([ManagedPt], outcome.BodyHeightsPt);
+    }
+
+    /// <summary>
+    /// A pass that writes a body row returns no heights: the sheet has changed, and the
+    /// measurement is no longer of the sheet as it now is.
+    /// </summary>
+    /// <remarks>
+    /// Returning the pre-write measurement here would make the measurement reuse data
+    /// this refresh has just replaced, so the panel would lay out the old heights while
+    /// the sheet displays the new ones. The empty list forces the measurement to read.
+    /// </remarks>
+    [Fact]
+    public void A_pass_that_writes_a_body_row_returns_no_heights()
+    {
+        DepthNormaliser normaliser = Normaliser([30d]);
+
+        RowHeightNormalisationOutcome outcome = Normalise(normaliser);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal([1], normaliser.BodyWrites);
+        Assert.Empty(outcome.BodyHeightsPt);
     }
 
     [Fact]

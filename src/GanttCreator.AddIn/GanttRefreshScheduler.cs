@@ -41,7 +41,27 @@ namespace GanttCreator.AddIn;
 /// </remarks>
 internal sealed class GanttRefreshScheduler : IDisposable
 {
-    private const int _debounceMilliseconds = 300;
+    /// <summary>The coalescing window for worksheet cell edits.</summary>
+    /// <remarks>
+    /// A user typing, pasting, or dragging a fill can raise many events in a burst, so
+    /// the window is long enough to collapse them into one render.
+    /// </remarks>
+    private const int _cellDebounceMilliseconds = 300;
+
+    /// <summary>The coalescing window for a successful command.</summary>
+    /// <remarks>
+    /// A command has already finished its own writes before it schedules, so the only
+    /// events left to absorb are the ones its write emitted — not a user burst. Waiting
+    /// the full cell window added 300ms of dead time between a button click and the
+    /// plot, which is exactly the latency the owner reported.
+    /// </remarks>
+    private const int _commandDebounceMilliseconds = 50;
+
+    /// <summary>The cell-edit coalescing window, exposed for the policy pin.</summary>
+    internal static readonly TimeSpan CellDebounce = TimeSpan.FromMilliseconds(_cellDebounceMilliseconds);
+
+    /// <summary>The post-command coalescing window, exposed for the policy pin.</summary>
+    internal static readonly TimeSpan CommandDebounce = TimeSpan.FromMilliseconds(_commandDebounceMilliseconds);
 
     private readonly IExcelApplicationAdapter _adapter;
     private readonly ISheetChangeAnalyzer _analyzer;
@@ -51,6 +71,13 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private int _timerGeneration;
     private IDisposable? _sheetChangeSubscription;
     private bool _disposed;
+
+    /// <summary>
+    /// Whether a successful command has a refresh queued, so the cell events that
+    /// command's own writes emit are folded into it instead of restarting the longer
+    /// cell window.
+    /// </summary>
+    private volatile bool _commandRefreshPending;
 
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
         : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel)
@@ -101,17 +128,26 @@ internal sealed class GanttRefreshScheduler : IDisposable
         _sheetChangeSubscription = null;
     }
 
-    internal void ScheduleRefresh()
+    internal void ScheduleCommandRefresh()
     {
-        if (!_disposed)
+        if (_disposed)
         {
-            ResetTimer();
+            return;
         }
+
+        // The command's own cell writes raise SheetChange synchronously; without this
+        // flag they would reset the timer to the longer cell window and delay (or
+        // duplicate) the pass the command just asked for. Cleared when the queued macro
+        // runs, so a genuine edit made while the refresh is in flight still schedules the
+        // follow-up pass.
+        _commandRefreshPending = true;
+        ResetTimer(_commandDebounceMilliseconds);
     }
 
     internal void CancelPendingRefresh()
     {
         _ = Interlocked.Increment(ref _timerGeneration);
+        _commandRefreshPending = false;
         DisposeTimer();
     }
 
@@ -122,12 +158,18 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// <param name="changedAddress">The Excel-style address of the changed range.</param>
     private void OnSheetChanged(string? changedAddress)
     {
+        if (_commandRefreshPending)
+        {
+            // This is the command's own write, already covered by its pending refresh.
+            return;
+        }
+
         if (!_analyzer.ShouldAutoRefresh(changedAddress))
         {
             return;
         }
 
-        ResetTimer();
+        ResetTimer(_cellDebounceMilliseconds);
     }
 
     /// <summary>
@@ -136,14 +178,14 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// The generation counter is incremented so stale timer callbacks from
     /// superseded timers can be detected and discarded.
     /// </summary>
-    private void ResetTimer()
+    private void ResetTimer(int debounceMilliseconds)
     {
         DisposeTimer();
         int generation = Interlocked.Increment(ref _timerGeneration);
         _timer = new System.Threading.Timer(
             _ => OnTimerElapsed(generation),
             null,
-            _debounceMilliseconds,
+            debounceMilliseconds,
             Timeout.Infinite);
     }
 
@@ -167,6 +209,9 @@ internal sealed class GanttRefreshScheduler : IDisposable
         {
             if (!_disposed && generation == Volatile.Read(ref _timerGeneration))
             {
+                // Clear before the refresh so an edit made during it still schedules the
+                // next pass rather than being swallowed as the command's own write.
+                _commandRefreshPending = false;
                 _refresh();
             }
         });

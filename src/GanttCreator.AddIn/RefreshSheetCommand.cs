@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using GanttCreator.Core.Scene;
 using GanttCreator.Office;
 
@@ -34,6 +36,7 @@ internal static class RefreshSheetCommand
         GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
             ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: false);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
+        long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service so the warnings
@@ -49,6 +52,8 @@ internal static class RefreshSheetCommand
         {
             Present(CommandErrorDialog.Show, outcome.Message ?? "The chart could not be refreshed.");
         }
+
+        TracePostPass(refreshCompleted);
     }
 
     /// <summary>
@@ -69,6 +74,7 @@ internal static class RefreshSheetCommand
         GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
             ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: true);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
+        long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
 
         // Store scene warnings in the Ribbon state service — same as RunForExcel.
@@ -90,10 +96,12 @@ internal static class RefreshSheetCommand
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.AddChild);
+            TracePostPass(refreshCompleted);
             return;
         }
 
         Present(RibbonStatusBar.Warn, outcome.Message ?? "The chart could not be refreshed.");
+        TracePostPass(refreshCompleted);
     }
 
     /// <summary>Runs an injected refresh, for tests and for the R4.9 wiring.</summary>
@@ -115,6 +123,23 @@ internal static class RefreshSheetCommand
 
         Present(presenter, outcome.Message ?? "The chart could not be refreshed.");
     }
+
+    /// <summary>
+    /// Records how long the work AFTER the refresh pipeline took, in milliseconds.
+    /// </summary>
+    /// <param name="since">The <see cref="Stopwatch"/> timestamp taken when the pipeline returned.</param>
+    /// <remarks>
+    /// The click-to-plot time the user feels also includes the ribbon invalidation, the
+    /// warning and status presentation, and the state restore that follow the pipeline.
+    /// Those sit outside the pipeline's own <c>gantt.refresh result</c> line, so without
+    /// this figure they are invisible and every later optimisation is attributed to the
+    /// pipeline whether or not it belongs there. The sink degrades internally and never
+    /// throws, so this cannot abort a refresh that has already succeeded.
+    /// </remarks>
+    private static void TracePostPass(long since) =>
+        CommandBoundary.Instance.WriteTechnicalRecord(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh post ms={Stopwatch.GetElapsedTime(since).TotalMilliseconds:0.#}"));
 
     /// <summary>
     /// Shows the message, degrading to no dialog if the host refuses one.
@@ -146,15 +171,21 @@ internal static class RefreshSheetCommand
 #pragma warning disable CA2000
     /// <param name="application">The Excel application object.</param>
     /// <param name="useDeltaCache">Whether this scheduled refresh may skip unchanged payload writes.</param>
-    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, bool useDeltaCache) =>
-        new(
+    private static GanttRefreshOrchestrator CreateLiveOrchestrator(object? application, bool useDeltaCache)
+    {
+        // One sink for the refresh's delta/geometry decisions and the row-structure
+        // writes in the same run. It goes to the rolling log, which degrades internally
+        // and never throws, so a logging failure cannot abort a refresh.
+        Action<string> trace = CommandBoundary.Instance.WriteTechnicalRecord;
+
+        return new GanttRefreshOrchestrator(
             new ExcelGanttTableReader(application),
             new ExcelConfigCatalogueReader(application),
             new ExcelWorksheetProtectionGuard(application),
             new ExcelPanelGridMeasurement(application),
             new ExcelDurationWriter(application),
-            new ExcelRowHeightNormaliser(application),
-            new ExcelOutlineGroupWriter(application),
+            new ExcelRowHeightNormaliser(application, trace: trace),
+            new ExcelOutlineGroupWriter(application, trace: trace),
 
             // The text-metrics seam is a real host dependency: Core never measures,
             // so something must. This is now the FONT-BACKED implementation:
@@ -168,7 +199,7 @@ internal static class RefreshSheetCommand
             // font binaries by scripts/gen-font-advances.py and committed as data,
             // so the measurement stays deterministic and Office-free.
             new ExcelSceneBuildRequestFactory(new AptosTextMetrics()),
-            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
+            new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application), trace),
 
             // R4.8A D2's two remaining preflight steps, supplied here so the
             // orchestrator runs them. Both are optional in the constructor, which is
@@ -202,6 +233,8 @@ internal static class RefreshSheetCommand
             // rejects. Runs after identity repair and before validation.
             new ExcelTypeChangeNormaliser(application),
             shapeDeltaCache: _shapeDeltaCache,
-            useDeltaCache: useDeltaCache);
+            useDeltaCache: useDeltaCache,
+            trace: trace);
+    }
 #pragma warning restore CA2000
 }

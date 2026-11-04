@@ -178,6 +178,38 @@ public sealed class ExcelSheetChangeAnalyzerDecisionTests
         Assert.False(graph.Analyzer.ShouldAutoRefresh("'Book.xlsx|Gantt'!A6"));
     }
 
+    /// <summary>
+    /// The column map is built from ONE bulk header read, not one read per column.
+    /// </summary>
+    /// <remarks>
+    /// The per-column indexer is made to throw, so a decision made at all proves the
+    /// header payload was the source. This runs on every worksheet change, which is why
+    /// the per-column reads were worth removing: a paste raises many change events.
+    /// </remarks>
+    [Fact]
+    public void The_column_map_is_built_from_one_bulk_header_read()
+    {
+        AnalyzerGraph graph = Graph(headerRowReadable: true, columnIndexerThrows: true);
+
+        Assert.True(graph.Analyzer.ShouldAutoRefresh("'Book.xlsx|Gantt'!A6"));
+    }
+
+    /// <summary>
+    /// A header the bulk read cannot express as text falls back to the column names.
+    /// </summary>
+    /// <remarks>
+    /// A numeric header cell is the case where Excel's table column name and the cell
+    /// value can differ. The fallback keeps the map exactly as it was built before, so
+    /// the decision does not depend on which path read the names.
+    /// </remarks>
+    [Fact]
+    public void A_header_the_bulk_read_cannot_express_as_text_falls_back_to_the_column_names()
+    {
+        AnalyzerGraph graph = Graph(headerRowReadable: true, headerCellIsText: false);
+
+        Assert.True(graph.Analyzer.ShouldAutoRefresh("'Book.xlsx|Gantt'!A6"));
+    }
+
     [Fact]
     public void A_chart_sheet_before_the_gantt_sheet_is_skipped()
     {
@@ -206,7 +238,10 @@ public sealed class ExcelSheetChangeAnalyzerDecisionTests
         bool completeColumns = true,
         bool bodyPresent = true,
         bool sheetEnumerationFails = false,
-        bool chartSheetFirst = false)
+        bool chartSheetFirst = false,
+        bool headerRowReadable = false,
+        bool headerCellIsText = true,
+        bool columnIndexerThrows = false)
     {
         const string WorkbookName = "Book.xlsx";
         const string SheetName = "Gantt";
@@ -250,9 +285,37 @@ public sealed class ExcelSheetChangeAnalyzerDecisionTests
         _ = table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
         _ = table.SetupGet(t => t.ListColumns).Returns(listColumns.Object);
         _ = listColumns.SetupGet(c => c.Count).Returns(columnCount);
+        if (headerRowReadable)
+        {
+            // One bulk payload, exactly the shape a single-row header range reports: a
+            // two-dimensional SAFEARRAY with ONE-based bounds, which is what COM hands
+            // back and what the adapter's reader normalises.
+            Mock<Excel.Range> header = new();
+            Array payload = Array.CreateInstance(typeof(object), [1, columnCount], [1, 1]);
+            for (int index = 0; index < columnCount; index++)
+            {
+                payload.SetValue(
+                    headerCellIsText ? GanttTableSchema.Default.Columns[index].Name : 42d,
+                    1,
+                    index + 1);
+            }
+
+            _ = header.SetupGet(r => r.Value2).Returns(payload);
+            _ = table.SetupGet(t => t.HeaderRowRange).Returns(header.Object);
+        }
+
         _ = listColumns
             .Setup(c => c[It.IsAny<int>()])
             .Returns<int>(index => columns[index - 1].Object);
+
+        if (columnIndexerThrows)
+        {
+            // Placed after the returning setup, so it wins: reading any column name would
+            // now throw out of the analyzer, which is what proves the bulk path ran.
+            _ = listColumns
+                .Setup(c => c[It.IsAny<int>()])
+                .Throws(new InvalidOperationException("The column names must not be read one by one."));
+        }
         _ = table.SetupGet(t => t.DataBodyRange).Returns(bodyPresent ? body.Object : (Excel.Range)null!);
         _ = body.SetupGet(b => b.Row).Returns(5);
         _ = body.SetupGet(b => b.Column).Returns(1);

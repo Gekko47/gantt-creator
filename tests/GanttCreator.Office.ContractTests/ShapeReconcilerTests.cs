@@ -45,6 +45,37 @@ public class ShapeReconcilerTests
         Assert.True(outcome.Succeeded, $"Refusal={outcome.Refusal}; failure={outcome.Failure}; calls={string.Join(',', port.Calls)}");
         Assert.Empty(port.ShapeCalls);
         Assert.Empty(port.ZOrderLists);
+
+        // Both candidates were verified against the host, not merely trusted from the
+        // cache. Without these checks a shape the host moved on its own stays stale.
+        Assert.Equal(2, port.GeometryMatchChecks);
+    }
+
+    /// <summary>
+    /// A cached payload match whose LIVE geometry has drifted is still rewritten.
+    /// </summary>
+    /// <remarks>
+    /// This is the positive test for verified skip: the signature is identical, so the
+    /// cache alone would skip the shape, and the reconciler must consult the host and
+    /// update it. The drift is the model of a row insert, a hidden row or a user drag,
+    /// none of which changes the scene.
+    /// </remarks>
+    [Fact]
+    public void A_cached_match_whose_live_geometry_drifted_is_still_updated()
+    {
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(desired);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+        _ = port.DriftedGeometry.Add("row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
+        Assert.Equal(2, port.GeometryMatchChecks);
     }
 
     [Fact]
@@ -81,6 +112,62 @@ public class ShapeReconcilerTests
         Assert.True(outcome.Succeeded);
         Assert.Equal(["Create:row-3:bar", "Delete:row-2:bar"], port.ShapeCalls);
         Assert.Single(port.ZOrderLists);
+    }
+
+    /// <summary>
+    /// A delete-only reconcile whose survivors are already in order skips the z-order
+    /// pass: removing a shape never moves the others, and the pass costs one lookup and
+    /// one host command per shape.
+    /// </summary>
+    [Fact]
+    public void A_delete_only_reconcile_skips_the_z_order_pass()
+    {
+        OfficeShapeRequest[] previous =
+        [
+            Request("row-1:bar"),
+            Request("row-2:bar", 40d),
+            Request("row-3:bar", 80d),
+        ];
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-3:bar", 80d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar", "row-3:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Delete:row-2:bar"], port.ShapeCalls);
+        Assert.Empty(port.ZOrderLists);
+        Assert.False(outcome.ZOrderApplied);
+    }
+
+    /// <summary>
+    /// A CREATE still takes the z-order pass, because a new shape is added in front of
+    /// the existing ones and has to be placed behind the shapes the scene puts behind it.
+    /// </summary>
+    [Fact]
+    public void A_reconcile_with_a_create_still_applies_z_order()
+    {
+        OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        OfficeShapeRequest[] desired =
+        [
+            Request("row-1:bar"),
+            Request("row-2:bar", 40d),
+            Request("row-3:bar", 80d),
+        ];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Single(port.ZOrderLists);
+        Assert.True(outcome.ZOrderApplied);
     }
 
     /// <summary>

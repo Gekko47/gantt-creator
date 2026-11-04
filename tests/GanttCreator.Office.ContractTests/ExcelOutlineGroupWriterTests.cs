@@ -23,8 +23,9 @@ public sealed class ExcelOutlineGroupWriterTests
         IWorksheetProtectionGuard guard,
         Excel.Worksheet worksheet,
         Excel.ListObject table,
-        List<(int First, int Last, int Level)> writes)
-        : ExcelOutlineGroupWriter(application, guard)
+        List<(int First, int Last, int Level)> writes,
+        Action<string>? trace = null)
+        : ExcelOutlineGroupWriter(application, guard, trace)
     {
         internal override bool TryFindTable(
             Excel.Sheets sheets,
@@ -246,6 +247,76 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// An applied group is traced with its body-row span, so a live log can name the
+    /// outline write that may have re-evaluated (and un-hidden) a collapsed span.
+    /// </summary>
+    [Fact]
+    public void An_applied_group_is_traced_with_its_span()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        List<string> trace = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes,
+            trace.Add);
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.outline group body-rows=2-3", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A span whose rows are ALREADY grouped is not rewritten, so a no-op Refresh does
+    /// not re-evaluate the group and disturb its collapsed rows.
+    /// </summary>
+    /// <remarks>
+    /// Writing the child level again is the same re-evaluation the reset pass avoids on
+    /// top-level rows: the host may treat it as a grouping change, and the grouped rows
+    /// are the ones a collapsed group hides. The measured consequence was a splitter
+    /// band moved by a no-op refresh that the delta cache then skipped. A span that is
+    /// new, resized, or moved still writes, because at least one of its rows is not at
+    /// the child level yet.
+    /// </remarks>
+    [Fact]
+    public void An_already_grouped_span_is_not_rewritten()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            InitialLevels = new Dictionary<int, object?>
+            {
+                [2] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+                [3] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+            },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(0, outcome.GroupsApplied);
+        Assert.Equal(0, outcome.RowsUngrouped);
+        Assert.Empty(writes);
+    }
+
+    /// <summary>
     /// A flat table writes nothing at all: the common case must not add outline
     /// controls or dirty the workbook.
     /// </summary>
@@ -383,12 +454,18 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
-    /// A group survives the reset pass: the rows the plan DOES group must not be
-    /// reset, or the reset would erase the grouping the next phase is about to apply.
-    /// Body row 1 is the parent and rows 2-3 are its children, so only row 1 resets.
+    /// A span the plan groups is neither reset nor re-grouped when the sheet already
+    /// carries it, so an unchanged outline costs the host no write at all.
     /// </summary>
+    /// <remarks>
+    /// The reset pass is the dangerous one -- writing level 1 to a grouped row
+    /// re-evaluates the outline and can re-expand the group -- but re-writing level 2 to
+    /// an already-grouped row is the same re-evaluation from the other side, and the
+    /// live log showed it happening on every refresh while the delta cache skipped a
+    /// splitter band in the same run. Both passes therefore leave this span alone.
+    /// </remarks>
     [Fact]
-    public void A_grouped_child_is_not_reset_by_the_pass_that_clears_stale_levels()
+    public void A_grouped_child_is_neither_reset_nor_regrouped()
     {
         var (application, worksheet, table) = Graph();
         List<(int First, int Last, int Level)> writes = [];
@@ -413,13 +490,9 @@ public sealed class ExcelOutlineGroupWriterTests
             [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)]);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(1, outcome.GroupsApplied);
-
-        // The parent is already top-level and the children are planned at level 2,
-        // so the reset pass clears nothing. Only the grouping write lands.
-        var grouped = Assert.Single(writes, w => w.Level == ExcelOutlineGroupWriter.ChildOutlineLevel);
-        Assert.Equal(3, grouped.First);
-        Assert.Equal(4, grouped.Last);
+        Assert.Equal(0, outcome.GroupsApplied);
+        Assert.Equal(0, outcome.RowsUngrouped);
+        Assert.Empty(writes);
     }
 
     /// <summary>

@@ -79,9 +79,25 @@ public interface IPanelGridMeasurementPort
     /// panel must use. Order is significant — the emitted cell bounds depend on
     /// it — so it is preserved rather than sorted.
     /// </param>
+    /// <param name="bodyRowHeightsPt">
+    /// The body rows' heights in points, in body order, when the caller has just
+    /// measured them itself; or <see langword="null"/> to have the adapter read every body
+    /// row.
+    /// </param>
     /// <returns>
     /// The measured grid, or the refusal reason. On a refusal nothing was
     /// mutated.
     /// </returns>
-    PanelGridOutcome Measure(IReadOnlyList<string> includedColumns);
+    /// <remarks>
+    /// <b>Why the heights can be supplied.</b> The row-height normalisation that runs
+    /// immediately before this measurement has already read every body row's height to
+    /// decide what to write. When that pass wrote nothing, its figures are still the
+    /// sheet's heights, and reading them again would be one COM read per body row for a
+    /// value the caller already holds. A caller that supplied heights the adapter cannot
+    /// use — a list whose length does not match the live body, which a concurrent
+    /// structural edit would produce — gets a normal read rather than a presumption.
+    /// </remarks>
+    PanelGridOutcome Measure(
+        IReadOnlyList<string> includedColumns,
+        IReadOnlyList<double>? bodyRowHeightsPt = null);
 }

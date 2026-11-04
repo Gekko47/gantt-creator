@@ -67,6 +67,8 @@ public sealed class ExcelRowHeightNormaliserTests
     /// One Type display name per body row. When absent, no Type column resolves and
     /// every row is treated as managed -- which is what the pre-existing tests rely on.
     /// </param>
+    /// <param name="layoutHeights">The seeded heights of the reserved layout rows.</param>
+    /// <param name="trace">The diagnostic sink, or null for no trace.</param>
     private sealed class TestableNormaliser(
         object? application,
         IWorksheetProtectionGuard guard,
@@ -75,8 +77,9 @@ public sealed class ExcelRowHeightNormaliserTests
         IReadOnlyList<double> heights,
         List<int> written,
         IReadOnlyList<string>? types = null,
-        Dictionary<int, double>? layoutHeights = null)
-        : ExcelRowHeightNormaliser(application, guard)
+        Dictionary<int, double>? layoutHeights = null,
+        Action<string>? trace = null)
+        : ExcelRowHeightNormaliser(application, guard, trace)
     {
         internal override bool TryFindTable(
             Excel.Sheets sheets,
@@ -731,37 +734,87 @@ public sealed class ExcelRowHeightNormaliserTests
     }
 
     /// <summary>
-    /// A collapsed (hidden) row off its token is restored to the token
-    /// AND put back to hidden. A live host un-hides a row when its
-    /// <c>RowHeight</c> is written, and this pass runs after the outline
-    /// pass on every Refresh, so an unrestored write re-expands every
-    /// collapsed group whose rows are off-token -- the reported defect.
-    /// The third row is visible and off-token: it must receive the height
-    /// write and NO hidden-state write, which pins that the restore is
-    /// driven by the row's own state rather than applied everywhere.
+    /// A collapsed (hidden) row is NOT rewritten, so the host never un-hides and
+    /// re-hides it, and no chart shape is moved by the round trip.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The measured defect this replaces the previous behaviour for.</b> A hidden row
+    /// reports <c>0pt</c>, which never equals the token, so the plan wanted to write the
+    /// token into it on EVERY Refresh. A <c>RowHeight</c> write un-hides the row and the
+    /// restore re-hides it, but every <c>xlMoveAndSize</c> chart shape over the row is
+    /// moved and resized by the host in between, and the round trip is not perfectly
+    /// reversible. The live log on 2026-11-03 showed a collapsed two-row group writing
+    /// both rows on every refresh while the delta cache skipped the splitter band in the
+    /// same run, and the band grew a row taller each time until a manual Refresh
+    /// rewrote it.
+    /// </para>
+    /// <para>
+    /// The third row is visible and off-token: it must still receive the height write,
+    /// which is what proves the skip is driven by the row's own hidden state rather than
+    /// applied to the whole body.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void A_collapsed_child_row_is_restored_and_stays_hidden()
+    public void A_collapsed_row_is_not_rewritten_so_the_host_is_not_disturbed()
     {
         var (application, worksheet, table) = Graph();
         List<int> written = [];
+        List<string> trace = [];
         var normaliser = new TestableNormaliser(
             application.Object,
             Guard(ProtectionGuardOutcome.NotProtected),
             worksheet.Object,
             table.Object,
             [45, ManagedPt, 30],
-            written);
+            written,
+            trace: trace.Add);
         normaliser.HiddenRows.Add(1);
 
         RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
 
         Assert.True(outcome.Succeeded);
-        Assert.Equal(2, outcome.RowsWritten);
-        Assert.Equal([1, 3], written);
-        var (hiddenRow, hidden) = Assert.Single(normaliser.HiddenWrites);
-        Assert.Equal(1, hiddenRow);
-        Assert.True(hidden);
+        Assert.Equal(1, outcome.RowsWritten);
+        Assert.Equal([3], written);
+        Assert.Empty(normaliser.HiddenWrites);
+        Assert.Contains(
+            trace,
+            line => line.Contains("body-row=1", StringComparison.Ordinal)
+                && line.Contains("skipped=hidden", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Each body-row height write is traced with its row and target, so a live log can
+    /// tie a chart shape Excel moved to the exact write that disturbed it.
+    /// </summary>
+    /// <remarks>
+    /// A visible off-token row is the writing case; a hidden row's skip has its own
+    /// assertion in <c>A_collapsed_row_is_not_rewritten_so_the_host_is_not_disturbed</c>.
+    /// The line names the row, whether it was structural, and the target height — the
+    /// facts a diagnosis needs and the refresh summary alone cannot provide.
+    /// </remarks>
+    [Fact]
+    public void A_visible_row_height_write_is_traced_with_its_target()
+    {
+        var (application, worksheet, table) = Graph();
+        List<int> written = [];
+        List<string> trace = [];
+        var normaliser = new TestableNormaliser(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            [45],
+            written,
+            trace: trace.Add);
+
+        RowHeightNormalisationOutcome outcome = normaliser.Normalise(ManagedPt, SplitterPt, SpacerPt, HeaderPt, ReservedRowPt, PaddingRowPt, AnchorRowPt);
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.rowheight body-row=1", StringComparison.Ordinal)
+                && line.Contains("hidden=False", StringComparison.Ordinal));
     }
 
     /// <summary>

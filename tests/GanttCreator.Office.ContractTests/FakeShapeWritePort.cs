@@ -201,6 +201,7 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         // sheet forever, indistinguishable from a user's own.
         _shapes[request.PrimitiveId] = FakeShape.ForPrimitive(request.PrimitiveId);
         _owned.Add(request.PrimitiveId);
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
         Requests[request.PrimitiveId] = request;
 
         return ShapeWriteOutcome.Ok();
@@ -224,6 +225,9 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
         }
 
+        // A write converges the shape, so a modelled drift is cleared — the next
+        // verification must find it matching, exactly as the live host would.
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
         Requests[request.PrimitiveId] = request;
         return ShapeWriteOutcome.Ok();
     }
@@ -270,6 +274,29 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         ListOwnedCallCount++;
         Calls.Add("ListOwned");
         return [.. _owned];
+    }
+
+    /// <summary>
+    /// Identifiers whose live geometry has drifted from the last write — the model of a
+    /// host that moved or resized a shape on its own (a row insert, a hidden row, a user
+    /// drag).
+    /// </summary>
+    /// <remarks>
+    /// Empty by default, so an unchanged fake host verifies as matching and the
+    /// existing "scheduled refresh skips unchanged shapes" pins keep their meaning. A
+    /// test seeds an identifier here to prove the reconciler rewrites it despite an
+    /// identical payload signature.
+    /// </remarks>
+    public HashSet<string> DriftedGeometry { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>How many times the reconciler asked the host to verify a shape.</summary>
+    public int GeometryMatchChecks { get; private set; }
+
+    public bool GeometryMatches(OfficeShapeRequest request)
+    {
+        GeometryMatchChecks++;
+        return _owned.Contains(request.PrimitiveId)
+            && !DriftedGeometry.Contains(request.PrimitiveId);
     }
 
     public ShapeWriteOutcome ApplyZOrder(IReadOnlyList<string> backToFront)

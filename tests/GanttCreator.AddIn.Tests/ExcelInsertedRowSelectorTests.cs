@@ -23,10 +23,38 @@ public class ExcelInsertedRowSelectorTests
         object? application,
         Excel.Worksheet worksheet,
         Excel.ListObject table,
-        Func<int, Excel.ListRow> rowAt)
+        Func<int, Excel.ListRow> rowAt,
+        IReadOnlyDictionary<Excel.Range, int> rangeRows)
         : ExcelInsertedRowSelector(application)
     {
         public List<int> RequestedBodyIndexes { get; } = [];
+
+        /// <summary>
+        /// The cells the column-aware path selected, as (worksheet row, worksheet column).
+        /// </summary>
+        /// <remarks>
+        /// A cell select is a different call from a row select, and the whole point of
+        /// <c>SelectBodyCell</c> is that the row's full width is NOT selected. Recording
+        /// the address is what proves the column came from the active cell.
+        /// </remarks>
+        public List<(int Row, int Column)> SelectedCells { get; } = [];
+
+        /// <summary>The column the host reports for the active cell, or null for none.</summary>
+        public int? ActiveColumn { get; set; }
+
+        internal override int? ReadActiveColumn() => ActiveColumn;
+
+        internal override int GetRangeRow(Excel.Range range) =>
+            rangeRows.TryGetValue(range, out int row) ? row : 0;
+
+        internal override Excel.Range GetCell(Excel.Worksheet source, int worksheetRow, int worksheetColumn)
+        {
+            Assert.Same(worksheet, source);
+            SelectedCells.Add((worksheetRow, worksheetColumn));
+            Mock<Excel.Range> cell = new();
+            _ = cell.Setup(r => r.Select());
+            return cell.Object;
+        }
 
         /// <summary>
         /// Whether the list-row lookup seam surfaces the host failure, simulating a
@@ -87,6 +115,15 @@ public class ExcelInsertedRowSelectorTests
 
         public Mock<Excel.Range>[] RowRanges { get; } = [new(), new(), new(), new()];
 
+        /// <summary>
+        /// The worksheet row each body row's range reports, so the cell address the
+        /// selector builds can be asserted against the real layout rather than a constant.
+        /// </summary>
+        public Dictionary<Excel.Range, int> RangeRows { get; } = [];
+
+        /// <summary>The worksheet row of the table's first body row.</summary>
+        private const int _firstBodyRow = 4;
+
         public int Activations { get; private set; }
 
         /// <summary>
@@ -119,6 +156,7 @@ public class ExcelInsertedRowSelectorTests
             for (var index = 0; index < Rows.Length; index++)
             {
                 _ = Rows[index].SetupGet(r => r.Range).Returns(RowRanges[index].Object);
+                RangeRows[RowRanges[index].Object] = _firstBodyRow + index;
                 var bodyIndex = index + 1;
                 _ = RowRanges[index]
                     .Setup(r => r.Select())
@@ -131,7 +169,54 @@ public class ExcelInsertedRowSelectorTests
                 Application.Object,
                 Worksheet.Object,
                 Table.Object,
-                bodyIndex => Rows[bodyIndex - 1].Object);
+                bodyIndex => Rows[bodyIndex - 1].Object,
+                RangeRows);
+    }
+
+    /// <summary>
+    /// A cell selection keeps the user's column and moves only the row.
+    /// </summary>
+    /// <remarks>
+    /// This is the relocation contract: promote, demote, move up and move down all rotate
+    /// or re-home content, so the address the user was on holds a different activity
+    /// afterwards. Selecting the row's full width would keep the row but throw the column
+    /// away; the cell address is what the user expects to still be on.
+    /// </remarks>
+    [Fact]
+    public void SelectBodyCell_selects_the_active_column_of_the_requested_row()
+    {
+        var graph = new Graph();
+        TestableSelector selector = graph.Build();
+        selector.ActiveColumn = 3;
+
+        selector.SelectBodyCell(2);
+
+        Assert.Equal(1, graph.Activations);
+        Assert.Equal([(5, 3)], selector.SelectedCells);
+        foreach (Mock<Excel.Range> rowRange in graph.RowRanges)
+        {
+            rowRange.Verify(r => r.Select(), Times.Never);
+        }
+    }
+
+    /// <summary>
+    /// A host that reports no active cell falls back to selecting the whole row.
+    /// </summary>
+    /// <remarks>
+    /// The fallback is the behaviour this port had before cell selection existed, so a
+    /// host error degrades to a row selection rather than to no selection at all.
+    /// </remarks>
+    [Fact]
+    public void SelectBodyCell_without_an_active_cell_selects_the_whole_row()
+    {
+        var graph = new Graph();
+        TestableSelector selector = graph.Build();
+        selector.ActiveColumn = null;
+
+        selector.SelectBodyCell(2);
+
+        Assert.Empty(selector.SelectedCells);
+        graph.RowRanges[1].Verify(r => r.Select(), Times.Once);
     }
 
     [Fact]

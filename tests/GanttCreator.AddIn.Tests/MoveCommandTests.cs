@@ -81,6 +81,7 @@ public class MoveCommandTests
         mutator.Verify(m => m.MoveUp(), Times.Once);
         mutator.Verify(m => m.MoveDown(), Times.Never);
         // A boundary no-op moved nothing: the selection stays put.
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
         selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 
@@ -96,16 +97,15 @@ public class MoveCommandTests
 
         Assert.Empty(messages);
         mutator.Verify(m => m.MoveDown(), Times.Once);
-        mutator.Verify(m => m.MoveUp(), Times.Never);
-        selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
-    public void MoveUp_success_moves_the_selection_onto_the_moved_row()
+    public void MoveUp_success_moves_the_selection_onto_the_moved_rows_cell()
     {
         // R5.4 D9: the outcome names the row's new one-based body
         // index and the command puts the selection on it, so the
-        // next move repeats on the same row.
+        // next move repeats on the same row. The CELL is selected,
+        // so the column the user was working in survives the move.
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(6, 4, 2));
@@ -114,11 +114,12 @@ public class MoveCommandTests
         MoveUpCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Empty(messages);
-        selector.Verify(s => s.SelectBodyRow(2), Times.Once);
+        selector.Verify(s => s.SelectBodyCell(2), Times.Once);
+        selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
-    public void MoveDown_success_moves_the_selection_onto_the_moved_row()
+    public void MoveDown_success_moves_the_selection_onto_the_moved_rows_cell()
     {
         var messages = new List<string>();
         Mock<IParentChildMutator> mutator = MutatorReturning(
@@ -128,7 +129,8 @@ public class MoveCommandTests
         MoveDownCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Empty(messages);
-        selector.Verify(s => s.SelectBodyRow(5), Times.Once);
+        selector.Verify(s => s.SelectBodyCell(5), Times.Once);
+        selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -141,7 +143,7 @@ public class MoveCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(6, 4, 2));
         Mock<IInsertedRowSelector> selector = Selector();
-        selector.Setup(s => s.SelectBodyRow(It.IsAny<int>()))
+        selector.Setup(s => s.SelectBodyCell(It.IsAny<int>()))
             .Throws(new InvalidOperationException("host busy"));
 
         Exception? exception = Record.Exception(() =>
@@ -158,7 +160,7 @@ public class MoveCommandTests
         Mock<IParentChildMutator> mutator = MutatorReturning(
             ParentChildMutationOutcome.Ok(3, 4, 5));
         Mock<IInsertedRowSelector> selector = Selector();
-        selector.Setup(s => s.SelectBodyRow(It.IsAny<int>()))
+        selector.Setup(s => s.SelectBodyCell(It.IsAny<int>()))
             .Throws(new InvalidOperationException("host busy"));
 
         Exception? exception = Record.Exception(() =>
@@ -179,6 +181,7 @@ public class MoveCommandTests
         MoveUpCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Single(messages);
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
         selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 
@@ -193,6 +196,7 @@ public class MoveCommandTests
         MoveDownCommand.Run(mutator.Object, selector.Object, messages.Add);
 
         Assert.Single(messages);
+        selector.Verify(s => s.SelectBodyCell(It.IsAny<int>()), Times.Never);
         selector.Verify(s => s.SelectBodyRow(It.IsAny<int>()), Times.Never);
     }
 

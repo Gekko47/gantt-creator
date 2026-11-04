@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace GanttCreator.Office;
 
 /// <summary>
@@ -229,6 +231,35 @@ public static partial class ShapeReconciler
                     _ = unchangedIds.Add(item.PrimitiveId);
                 }
             }
+
+            // Verify the candidate skips against the LIVE host before trusting them.
+            //
+            // The signature proves the scene's payload is unchanged, not that the shape on
+            // the sheet still matches it: shapes are host objects, and Excel moves and
+            // resizes xlMoveAndSize shapes whenever rows are inserted, hidden, shown, or
+            // re-heighted - none of which changes the scene. A skipped shape whose live
+            // geometry has drifted is a chart that no Refresh repairs, and it is the class
+            // of defect the last two live sessions produced. Geometry is verifiable where
+            // text and style are not (R4.7 D5 rejected a full property diff because a null
+            // colour means "leave the host alone"; four absolute numbers carry no such
+            // ambiguity), so the check is sound and costs a handful of property reads per
+            // unchanged shape instead of a rewrite.
+            if (unchangedIds.Count > 0)
+            {
+                List<string> drifted = [];
+                foreach (OfficeShapeRequest item in request.Desired)
+                {
+                    if (unchangedIds.Contains(item.PrimitiveId) && !writer.GeometryMatches(item))
+                    {
+                        drifted.Add(item.PrimitiveId);
+                    }
+                }
+
+                foreach (string identifier in drifted)
+                {
+                    _ = unchangedIds.Remove(identifier);
+                }
+            }
         }
 
         ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds);
@@ -264,14 +295,64 @@ public static partial class ShapeReconciler
         // The z-order pass runs only once every shape write has succeeded, so a
         // half-applied plan is never stacked as though it were complete.
         bool orderUnchanged = cacheMatchesOwned && previous is not null
-            && previous.BackToFront.SequenceEqual(plan.BackToFront, StringComparer.Ordinal);
-        ShapeWriteOutcome zOrder = orderUnchanged
-            ? ShapeWriteOutcome.Ok()
-            : writer.ApplyZOrder(plan.BackToFront);
+            && SurvivorOrderUnchanged(previous.BackToFront, plan);
+        ShapeWriteOutcome zOrder = ShapeWriteOutcome.Ok();
+        if (!orderUnchanged)
+        {
+            long zOrderStarted = Stopwatch.GetTimestamp();
+            zOrder = writer.ApplyZOrder(plan.BackToFront);
+            double zOrderMilliseconds = Stopwatch.GetElapsedTime(zOrderStarted).TotalMilliseconds;
+            return zOrder.Succeeded
+                ? new ShapeReconcileOutcome(null, plan, null, completed)
+                {
+                    ZOrderApplied = true,
+                    ZOrderMilliseconds = zOrderMilliseconds,
+                }
+                : new ShapeReconcileOutcome(ShapeReconcileRefusal.ZOrderRefused, plan, null, completed)
+                {
+                    ZOrderApplied = true,
+                    ZOrderMilliseconds = zOrderMilliseconds,
+                };
+        }
 
-        return zOrder.Succeeded
-            ? new ShapeReconcileOutcome(null, plan, null, completed)
-            : new ShapeReconcileOutcome(ShapeReconcileRefusal.ZOrderRefused, plan, null, completed);
+        return new ShapeReconcileOutcome(null, plan, null, completed);
+    }
+
+    /// <summary>
+    /// Whether the surviving owned shapes are already in the desired relative order.
+    /// </summary>
+    /// <param name="previous">The back-to-front order last applied.</param>
+    /// <param name="plan">The plan just executed.</param>
+    /// <returns><see langword="true"/> when the pass can be skipped.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Deletes do not reorder the survivors.</b> Removing a shape leaves every other
+    /// shape's relative position untouched, so a delete-only reconcile whose survivors
+    /// match the last applied order needs no z-order pass — the pass costs one lookup and
+    /// one host command per shape and was running on every such refresh.
+    /// </para>
+    /// <para>
+    /// <b>A CREATE is different and must never take this path.</b> A new shape is added
+    /// in front of the existing ones, so a create needs the pass to place it behind the
+    /// shapes the scene puts behind it. The caller therefore also requires that the plan
+    /// contains no create; this method only answers the relative-order question.
+    /// </para>
+    /// </remarks>
+    private static bool SurvivorOrderUnchanged(
+        IReadOnlyList<string> previous,
+        ShapeReconcilePlan plan)
+    {
+        if (plan.Of(ShapeReconcileAction.Create).Count > 0)
+        {
+            return false;
+        }
+
+        // Compare the previous order with the deleted shapes removed against the desired
+        // order: removing a shape does not move the survivors, so their relative order is
+        // what the pass would have to reproduce.
+        HashSet<string> planned = new(plan.BackToFront, StringComparer.Ordinal);
+        List<string> previousSurvivors = [.. previous.Where(planned.Contains)];
+        return previousSurvivors.SequenceEqual(plan.BackToFront, StringComparer.Ordinal);
     }
 
     /// <summary>

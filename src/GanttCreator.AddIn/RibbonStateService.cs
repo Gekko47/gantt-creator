@@ -321,7 +321,12 @@ internal class RibbonStateService
     internal IExcelApplicationAdapter? GetApplicationAdapter() => _applicationAdapter;
 
     /// <summary>Coalesces a successful command/configuration write into the automatic refresh queue.</summary>
-    internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleRefresh();
+    /// <remarks>
+    /// Uses the command window rather than the cell-edit window: the command's writes are
+    /// already committed, so there is no user burst left to absorb and the full cell
+    /// window was 300ms of dead time between the click and the plot.
+    /// </remarks>
+    internal void ScheduleAutomaticRefresh() => _refreshScheduler?.ScheduleCommandRefresh();
 
     /// <summary>
     /// Injects the log-availability source that supplies the second state fact.

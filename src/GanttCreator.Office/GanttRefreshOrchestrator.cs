@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 
@@ -59,7 +61,8 @@ public sealed class GanttRefreshOrchestrator(
     ITypeChangeNormaliser? typeChangeNormaliser = null,
     ChangeTracker? changeTracker = null,
     ShapeDeltaCache? shapeDeltaCache = null,
-    bool useDeltaCache = true)
+    bool useDeltaCache = true,
+    Action<string>? trace = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -95,6 +98,25 @@ public sealed class GanttRefreshOrchestrator(
     private readonly ChangeTracker? _changeTracker = changeTracker;
     private readonly ShapeDeltaCache? _shapeDeltaCache = shapeDeltaCache;
     private readonly bool _useDeltaCache = useDeltaCache;
+
+    /// <summary>
+    /// Optional diagnostic sink for one refresh's delta and geometry decisions, or
+    /// <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why a trace and not a behaviour change.</b> The scheduled refresh skips any
+    /// shape whose payload signature is unchanged, and the manual Refresh bypasses the
+    /// snapshot. A stale shape therefore has two possible causes — a scene that really
+    /// changed, or a live shape Excel moved or resized on its own — and no code path
+    /// currently says which. This sink names the decision per splitter band and the
+    /// structural writes in the same run, so the live host can be diagnosed instead of
+    /// guessed at. The production sink is the rolling log; it degrades internally and
+    /// must not throw, exactly like the application-state scope's sink.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
+
+    /// <summary>The scene role suffix that identifies a splitter band primitive.</summary>
+    private const string _splitterBandRoleSuffix = ":splitter-band";
 
     /// <remarks>
     /// <para>
@@ -182,6 +204,8 @@ public sealed class GanttRefreshOrchestrator(
     /// <returns>The typed outcome.</returns>
     private GanttRefreshOutcome RunRefresh()
     {
+        long refreshStarted = Stopwatch.GetTimestamp();
+
         // Step 1-2. Read the complete user's table and configuration. Automatic
         // refresh may use its payload-signature snapshot to skip unchanged host
         // writes, but it never validates only changed rows: identifiers,
@@ -253,22 +277,29 @@ public sealed class GanttRefreshOrchestrator(
                     "The row identifiers could not be repaired.");
             }
 
-            // The step-1 snapshot is now STALE: repair writes new Id values into the
-            // worksheet, and those writes are the whole point of the step. Validating
-            // the pre-repair rows would report the blank or malformed Ids that repair
-            // just fixed — so a workbook needing only an ID refresh refused with
-            // BlockingValidationErrors, which is both wrong and unfixable by the
-            // user. Re-read through the same port, and take the same refusal path a
-            // failed first read takes, because from here on it is indistinguishable
-            // from one.
-            rows = _tableReader.Read();
-            if (!rows.Succeeded)
+            // The step-1 snapshot is STALE only when repair actually wrote. Repairing
+            // nothing is the normal case, and re-reading the whole table for it is a
+            // second full COM read on every Refresh for no new information — the id
+            // repairer reports its own write count precisely so this can be skipped.
+            if (repaired.RepairedCount > 0)
             {
-                GanttTableReadRefusalReason rereadRefusal =
-                    rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
-                return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
-                    ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
-                    : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+                // Repair writes new Id values into the worksheet, and those writes are
+                // the whole point of the step. Validating the pre-repair rows would
+                // report the blank or malformed Ids that repair just fixed — so a
+                // workbook needing only an ID refresh refused with
+                // BlockingValidationErrors, which is both wrong and unfixable by the
+                // user. Re-read through the same port, and take the same refusal path a
+                // failed first read takes, because from here on it is indistinguishable
+                // from one.
+                rows = _tableReader.Read();
+                if (!rows.Succeeded)
+                {
+                    GanttTableReadRefusalReason rereadRefusal =
+                        rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+                    return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                        ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
+                        : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+                }
             }
         }
 
@@ -279,17 +310,26 @@ public sealed class GanttRefreshOrchestrator(
         if (_typeChangeNormaliser is { } normaliser)
         {
             GanttTypeChangeNormaliseOutcome normalised = normaliser.Normalise();
-            // Re-read so validation sees the corrected engine-hidden cells.
-            rows = _tableReader.Read();
-            if (!rows.Succeeded)
+
+            // Same rule as identity repair: re-read only when cells were written. The
+            // normaliser walks every row to decide, so a no-op is the common case and
+            // its count is the evidence that the snapshot is still current.
+            if (normalised.CellsWritten > 0)
             {
-                GanttTableReadRefusalReason rereadRefusal =
-                    rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
-                return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
-                    ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
-                    : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+                // Re-read so validation sees the corrected engine-hidden cells.
+                rows = _tableReader.Read();
+                if (!rows.Succeeded)
+                {
+                    GanttTableReadRefusalReason rereadRefusal =
+                        rows.Refusal ?? GanttTableReadRefusalReason.TableMissing;
+                    return rereadRefusal == GanttTableReadRefusalReason.NoActiveWorkbook
+                        ? Refuse(GanttRefreshRefusal.NoActiveWorkbook, Describe(rereadRefusal))
+                        : Refuse(GanttRefreshRefusal.TableMissing, Describe(rereadRefusal));
+                }
             }
         }
+
+        long readCompleted = Stopwatch.GetTimestamp();
 
         // Step 6. Validate every row before derived worksheet writes or shape
         // mutation. This is required on both explicit and automatic refreshes.
@@ -300,6 +340,7 @@ public sealed class GanttRefreshOrchestrator(
         // comes from the same read at step 2, so no second sheet read is
         // introduced.
         GanttValidationOutcome validation = GanttRowValidator.Validate(rows.Rows, config.Styles);
+        long validationCompleted = Stopwatch.GetTimestamp();
 
         // Step 6b. Bring the cell notes into line with what was just found, BEFORE
         // deciding whether to render.
@@ -398,7 +439,15 @@ public sealed class GanttRefreshOrchestrator(
             styleCellsWritten = style.CellsWritten;
         }
 
+        long worksheetWritesCompleted = Stopwatch.GetTimestamp();
+
         // Step 8. Normalize row heights before measuring and building the scene.
+        int rowHeightsWritten;
+
+        // The heights the normaliser measured, when it measured without writing any of
+        // them. Step 9 needs exactly these figures, so a pass that changed none hands
+        // them over rather than making the measurement read every body row again.
+        IReadOnlyList<double> measuredBodyHeights;
         {
             RowHeightNormalisationOutcome heights = _rowHeightNormaliser.Normalise(
                 ThemedMetric(config.Metrics, "GanttRowHeightPt"),
@@ -426,7 +475,13 @@ public sealed class GanttRefreshOrchestrator(
                 // anchor below the insert point. A THIRD reserved-row token, not the
                 // padding height: this row is the sub-row anchor, and a margin-height row
                 // here would be a visible strip of sheet rather than an anchor.
-                ThemedMetric(config.Metrics, "ChartAnchorRowHeightPt"));
+                ThemedMetric(config.Metrics, "ChartAnchorRowHeightPt"),
+
+                // The Type column was read in step 1's single bulk Value2 call, so the
+                // normaliser is handed that column rather than reading one cell per body
+                // row through COM to decide the same heights. Same data, same refresh,
+                // same decision.
+                ProjectTypeTexts(rows.Rows));
             if (!heights.Succeeded)
             {
                 // The Duration column has already been written at this point, so the
@@ -437,12 +492,23 @@ public sealed class GanttRefreshOrchestrator(
                     validation.Issues,
                     duration.CellsWritten);
             }
+
+            rowHeightsWritten = heights.RowsWritten;
+            measuredBodyHeights = heights.BodyHeightsPt;
         }
 
         // Step 9-10. Measure the live panel, then resolve the scene
         // inputs. The measurement is a read; the factory performs no host call
         // of its own.
-        PanelGridOutcome grid = _panelMeasurement.Measure(ExcelSceneBuildRequestFactory.MeasuredColumns);
+        //
+        // The body heights are passed through only when the normalisation above wrote
+        // none of them: then they are still the sheet's state, and re-reading them is one
+        // COM call per row for a value this refresh already holds. A pass that wrote a
+        // height returns an empty list, so the measurement reads the host -- the sheet has
+        // changed, and this is not a cache that may outlive the change.
+        PanelGridOutcome grid = _panelMeasurement.Measure(
+            ExcelSceneBuildRequestFactory.MeasuredColumns,
+            measuredBodyHeights);
         if (!grid.Succeeded)
         {
             return RefuseAfterWrites(
@@ -451,6 +517,8 @@ public sealed class GanttRefreshOrchestrator(
                 validation.Issues,
                 duration.CellsWritten);
         }
+
+        long measurementCompleted = Stopwatch.GetTimestamp();
 
         // The style registry comes from the configuration read, not from
         // GanttCatalogues. The config sheet is the single source of the effective
@@ -493,6 +561,8 @@ public sealed class GanttRefreshOrchestrator(
                 validation.Issues,
                 duration.CellsWritten);
         }
+
+        long buildCompleted = Stopwatch.GetTimestamp();
 
         // ADR-0043 D1: the live title is an owned textbox in the reserved row.
         // Read the title settings, compute the reserved-row bounds, and add the
@@ -553,6 +623,20 @@ public sealed class GanttRefreshOrchestrator(
         // validation, measurement, and scene construction above has completed; from
         // here the reconciliation stops at the first refusal (D3).
         ShapeDeltaSnapshot? previousSnapshot = _useDeltaCache ? _shapeDeltaCache?.Snapshot : null;
+
+        // The snapshot is a cheap first filter, not a verdict: the reconciler verifies
+        // every candidate skip against the live shape's geometry and placement before
+        // honouring it (see ShapeReconciler). That verification is what makes a
+        // scheduled refresh converge to the manual-refresh state even after the host
+        // moved or resized a shape, without forcing a full rewrite on every structural
+        // change.
+        TraceRefreshSummary(
+            desired,
+            previousSnapshot,
+            outline,
+            rowHeightsWritten,
+            grid.Grid!.RowHeightsPt.Count);
+
         // Host writes are not transactional. Invalidate before entering the
         // mutation boundary so an unexpected exception cannot leave a cache
         // describing a partially changed shape collection.
@@ -563,6 +647,18 @@ public sealed class GanttRefreshOrchestrator(
             {
                 PreviousSnapshot = previousSnapshot,
             });
+
+        TraceReconcileResult(
+            reconcile,
+            desired.Count,
+            new RefreshTimings(
+                refreshStarted,
+                readCompleted,
+                validationCompleted,
+                worksheetWritesCompleted,
+                measurementCompleted,
+                buildCompleted,
+                Stopwatch.GetTimestamp()));
 
         if (reconcile.Succeeded)
         {
@@ -623,6 +719,135 @@ public sealed class GanttRefreshOrchestrator(
         metrics.TryGetValue(tokenName, out double value) ? value : GanttCatalogues.MetricDefault(tokenName);
 
     /// <summary>
+    /// Writes one diagnostic line summarising the delta decision this run will take,
+    /// plus one line per splitter band with its desired rectangle and whether its
+    /// payload matches the cached signature.
+    /// </summary>
+    /// <param name="desired">The complete desired shape set, translated from the scene.</param>
+    /// <param name="previousSnapshot">The committed signature snapshot, or null when bypassed.</param>
+    /// <param name="outline">The outline result of this run.</param>
+    /// <param name="rowHeightsWritten">How many row heights this run wrote.</param>
+    /// <param name="gridRowCount">How many body rows the measurement returned.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>What this distinguishes.</b> A splitter band whose scene rectangle is
+    /// unchanged after a move or collapse produces a byte-identical payload, so the
+    /// delta cache skips its update. That is correct only while the live shape still
+    /// matches. Excel shapes are created with <c>Placement = xlMoveAndSize</c>, so the
+    /// host itself moves and resizes them when rows are inserted, hidden, un-hidden,
+    /// or re-heighted — and nothing invalidates the snapshot for that. The band line
+    /// separates "the scene moved the band" (<c>sig=rewrite</c>) from "the scene left
+    /// it exactly where it was" (<c>sig=match</c>), and the structural counters in the
+    /// summary line say whether this run wrote row structure at all.
+    /// </para>
+    /// <para>
+    /// Invariant culture and fixed order, so two runs are comparable in a log.
+    /// </para>
+    /// </remarks>
+    private void TraceRefreshSummary(
+        List<OfficeShapeRequest> desired,
+        ShapeDeltaSnapshot? previousSnapshot,
+        OutlineGroupOutcome outline,
+        int rowHeightsWritten,
+        int gridRowCount)
+    {
+        if (_trace is null)
+        {
+            return;
+        }
+
+        int bands = 0;
+        int skippedBands = 0;
+        foreach (OfficeShapeRequest request in desired)
+        {
+            if (!request.PrimitiveId.EndsWith(_splitterBandRoleSuffix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            bands++;
+            bool skipped = previousSnapshot is not null
+                && previousSnapshot.Signatures.TryGetValue(request.PrimitiveId, out string? signature)
+                && string.Equals(signature, ShapeDeltaCache.Signature(request), StringComparison.Ordinal);
+            if (skipped)
+            {
+                skippedBands++;
+            }
+
+            RectD? bounds = request.Geometry.Bounds;
+            string rect = bounds is { } value
+                ? string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"x={value.X:0.###} y={value.Y:0.###} w={value.Width:0.###} h={value.Height:0.###}")
+                : "bounds=none";
+            TraceRefresh(string.Create(
+                CultureInfo.InvariantCulture,
+                $"gantt.refresh band delta={_useDeltaCache} id={request.PrimitiveId} {rect} sig={(skipped ? "match" : "rewrite")}"));
+        }
+
+        TraceRefresh(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh delta={_useDeltaCache} snapshot={previousSnapshot?.Signatures.Count ?? 0} desired={desired.Count} bands={bands} bands-skipped={skippedBands} outline-groups={outline.GroupsApplied} outline-ungrouped={outline.RowsUngrouped} heights-written={rowHeightsWritten} grid-rows={gridRowCount}"));
+    }
+
+    /// <summary>Timestamp boundaries of one refresh, for the diagnostic timing line.</summary>
+    /// <param name="Started">When the pipeline started.</param>
+    /// <param name="Read">After the table/configuration reads.</param>
+    /// <param name="Validated">After row validation.</param>
+    /// <param name="WorksheetWrites">After the outline, duration, StyleKey and row-height writes.</param>
+    /// <param name="Measured">After the panel measurement.</param>
+    /// <param name="Built">After the scene was built and translated.</param>
+    /// <param name="Written">After the reconciliation completed.</param>
+    private readonly record struct RefreshTimings(
+        long Started,
+        long Read,
+        long Validated,
+        long WorksheetWrites,
+        long Measured,
+        long Built,
+        long Written);
+
+    /// <summary>
+    /// Writes one diagnostic line naming what the reconciliation actually planned and
+    /// completed, plus the phase timings of the pass.
+    /// </summary>
+    /// <param name="reconcile">The reconciliation result.</param>
+    /// <param name="desiredCount">How many shapes the scene declared.</param>
+    /// <param name="timings">The phase boundaries of this pass.</param>
+    /// <remarks>
+    /// The timings are what separate "the refresh is slow because the pipeline is
+    /// expensive" from "the refresh is slow because the host writes are expensive" — the
+    /// distinction the last optimisation decision turned on. Each figure is the elapsed
+    /// milliseconds for one phase, in pipeline order.
+    /// </remarks>
+    private void TraceReconcileResult(
+        ShapeReconcileOutcome reconcile,
+        int desiredCount,
+        RefreshTimings timings)
+    {
+        if (_trace is null)
+        {
+            return;
+        }
+
+        ShapeReconcilePlan plan = reconcile.Plan;
+        TraceRefresh(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh result ok={reconcile.Succeeded} desired={desiredCount} updated={plan.Of(ShapeReconcileAction.Update).Count} created={plan.Of(ShapeReconcileAction.Create).Count} deleted={plan.Of(ShapeReconcileAction.Delete).Count} written={reconcile.CompletedCount} zorder={reconcile.ZOrderApplied} zorderms={reconcile.ZOrderMilliseconds:0.#} refusal={reconcile.Refusal?.ToString() ?? "none"}"));
+        TraceRefresh(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.refresh timings ms read={ElapsedMs(timings.Started, timings.Read):0.#} validate={ElapsedMs(timings.Read, timings.Validated):0.#} sheet={ElapsedMs(timings.Validated, timings.WorksheetWrites):0.#} measure={ElapsedMs(timings.WorksheetWrites, timings.Measured):0.#} build={ElapsedMs(timings.Measured, timings.Built):0.#} write={ElapsedMs(timings.Built, timings.Written):0.#} total={ElapsedMs(timings.Started, timings.Written):0.#}"));
+    }
+
+    /// <summary>Elapsed milliseconds between two <see cref="Stopwatch"/> timestamps.</summary>
+    private static double ElapsedMs(long from, long to) =>
+        Stopwatch.GetElapsedTime(from, to).TotalMilliseconds;
+
+    /// <summary>Writes one trace line, or does nothing when no sink is wired.</summary>
+    /// <param name="message">The line to write.</param>
+    private void TraceRefresh(string message) => _trace?.Invoke(message);
+
+    /// <summary>
     /// Mirrors the written <c>StyleKey</c> cells into the validated events so the
     /// outline, duration, and scene steps render from the corrected keys rather than
     /// the stale keys read from the worksheet at step 1. Without this a type change
@@ -670,6 +895,55 @@ public sealed class GanttRefreshOrchestrator(
     /// Reads the <c>Duration</c> text each row currently shows, so the planner can
     /// exclude unchanged rows instead of rewriting the whole column.
     /// </summary>
+    /// <summary>
+    /// Projects the already-read <c>Type</c> texts into a body-index-ordered list so the
+    /// row-height normaliser does not re-read each body row's Type cell through COM.
+    /// </summary>
+    /// <param name="rows">The rows just read, in body order.</param>
+    /// <returns>
+    /// One entry per body index, <see langword="null"/> where a row is missing or its
+    /// Type cell is blank or unreadable; the normaliser reads those from the column.
+    /// </returns>
+    /// <remarks>
+    /// The table reader has already read the whole body -- <c>Type</c> included -- in a
+    /// single bulk <c>Value2</c> call. Passing that column to the normaliser keeps the
+    /// height decision identical while removing one parameterised COM read per body row
+    /// from every refresh. A blank entry becomes <see langword="null"/>, which both this
+    /// projection and the normaliser's own read treat as "managed row": the two paths
+    /// reach the same decision from the same data.
+    /// </remarks>
+    private static string?[] ProjectTypeTexts(IReadOnlyList<GanttRowDto> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        // Body numbers are one-based and normally contiguous, but the array is sized
+        // from the highest number actually read: a gap then stays null rather than
+        // shifting every later row's type onto the wrong index.
+        int highestRowNumber = 0;
+        foreach (GanttRowDto row in rows)
+        {
+            if (row.RowNumber > highestRowNumber)
+            {
+                highestRowNumber = row.RowNumber;
+            }
+        }
+
+        string?[] texts = new string?[highestRowNumber];
+        foreach (GanttRowDto row in rows)
+        {
+            int index = row.RowNumber - 1;
+            if (index >= 0 && index < texts.Length)
+            {
+                texts[index] = row.TypeCell.HasValue ? row.TypeCell.Value : null;
+            }
+        }
+
+        return texts;
+    }
+
     private static Dictionary<int, string?> ReadCurrentDurations(IReadOnlyList<GanttRowDto> rows)
     {
         Dictionary<int, string?> current = [];

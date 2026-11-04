@@ -42,7 +42,11 @@ public class GanttRefreshOrchestratorTests
         // fill. The refresh succeeds; the issues are carried on the outcome for the
         // caller to surface (warnings panel, status bar).
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.Equal(2, fakes.TableReadCount);
+
+        // One full read. The pending batch does NOT cause a second read — identity
+        // repair and the type-change normaliser report zero writes here, and re-reading
+        // the whole table for a no-op was a redundant slot on every refresh.
+        Assert.Equal(1, fakes.TableReadCount);
         Assert.Equal(0, fakes.TargetedTableReadCount);
         Assert.NotEmpty(fakes.Shapes.Calls);
         Assert.Contains(outcome.ValidationIssues, issue => issue.RowNumber == 2);
@@ -240,6 +244,60 @@ public class GanttRefreshOrchestratorTests
         return (fakes, fakes.BuildOrchestrator());
     }
 
+    /// <summary>
+    /// The row-height normaliser is handed the <c>Type</c> column the refresh already
+    /// read, so it does not read one cell per body row through COM after the fact.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The assertion is on the ARGUMENT, not on a call count. The normaliser still walks
+    /// every body row for its height; the saving is the per-row Type read it no longer
+    /// issues, and the only way to prove that from outside is to see the column arrive.
+    /// </para>
+    /// <para>
+    /// The fixture is one row because this fake's style registry holds one style and its
+    /// lane anchors need the single-lane layout the other tests use; the body-index
+    /// mapping of the projection, and the type-to-token decision it feeds, are pinned by
+    /// the height-normaliser depth tests, where the host and the caller can be made to
+    /// disagree on purpose.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_row_height_normaliser_is_handed_the_bulk_read_type_texts()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal(["As-Planned Activity"], fakes.LastTypeTexts);
+    }
+
+    /// <summary>
+    /// The heights the normalisation measured reach the panel measurement, so the panel
+    /// does not read every body row again for figures this refresh already holds.
+    /// </summary>
+    /// <remarks>
+    /// The chain matters more than either port on its own: the normaliser returns its
+    /// measurement, and the orchestrator has to pass it on. A normaliser that returned the
+    /// figures to a caller that dropped them would look identical from either port's own
+    /// test, and the second read would survive unnoticed.
+    /// </remarks>
+    [Fact]
+    public void The_panel_measurement_is_handed_the_heights_the_normalisation_measured()
+    {
+        RefreshFakes fakes = new()
+        {
+            Rows = ValidRows(),
+            RowHeightBodyHeights = [18d],
+        };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
+        Assert.Equal([18d], fakes.LastMeasuredBodyHeightsPt);
+    }
+
     [Fact]
     public void Scheduled_refresh_skips_unchanged_shape_writes_and_explicit_refresh_forces_full_updates()
     {
@@ -264,6 +322,112 @@ public class GanttRefreshOrchestratorTests
         Assert.True(fakes.Shapes.ShapeCalls.Count > shapeWritesAfterFirst);
         Assert.Equal(zOrderCallsAfterFirst + 1, fakes.Shapes.ZOrderLists.Count);
         Assert.NotNull(cache.Snapshot);
+    }
+
+    /// <summary>
+    /// A refresh traces its delta decision, the structural writes of the run, and the
+    /// reconciliation result — the evidence a skipped shape needs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this test exists.</b> The reported defect is a splitter band left
+    /// stretched after a collapsed group moved past it: the scheduled refresh said
+    /// nothing, and the manual Refresh fixed it. The two paths differ only in the
+    /// delta snapshot, so the log has to name (a) whether this run used the snapshot,
+    /// (b) what structural writes it made, and (c) how many shape writes it actually
+    /// issued. Without those three facts the cause can only be guessed.
+    /// </para>
+    /// <para>
+    /// The second scheduled run is the load-bearing half: every payload is unchanged,
+    /// so the result line must report <c>written=0</c> while still naming the desired
+    /// count. That is exactly the state in which a live shape Excel moved on its own
+    /// would stay stale, and it is now visible in the log rather than inferred.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_scheduled_refresh_traces_its_delta_decision_and_reconcile_result()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+        List<string> trace = [];
+
+        GanttRefreshOutcome first = fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh();
+        Assert.True(first.Succeeded, "first refresh refused: " + first.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh delta=True", StringComparison.Ordinal));
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal));
+
+        trace.Clear();
+        GanttRefreshOutcome scheduled = fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh();
+        Assert.True(scheduled.Succeeded, "scheduled refresh refused: " + scheduled.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal)
+                && line.Contains("written=0", StringComparison.Ordinal));
+
+        trace.Clear();
+        GanttRefreshOutcome explicitRefresh = fakes
+            .BuildOrchestratorWithDeltaCache(cache, useDeltaCache: false, trace: trace.Add)
+            .Refresh();
+        Assert.True(explicitRefresh.Succeeded, "explicit refresh refused: " + explicitRefresh.Refusal);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh delta=False", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A scheduled refresh does not blindly rewrite every shape just because it wrote
+    /// row structure: it verifies the live shapes and writes only the drifted ones.
+    /// </summary>
+    /// <remarks>
+    /// The earlier interim rule forced a full reconcile on any structural write, which
+    /// made the cache stop paying exactly on the refreshes the user performs most.
+    /// Verified skip replaces it: the same certainty, at a few property reads per
+    /// unchanged shape.
+    /// </remarks>
+    [Fact]
+    public void A_structural_write_does_not_bypass_verified_skips()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache).Refresh().Succeeded);
+        int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+
+        fakes.RowHeightsWritten = 2;
+        fakes.OutlineGroupsApplied = 1;
+        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
+        Assert.Equal(writesAfterFirst, fakes.Shapes.ShapeCalls.Count);
+        Assert.True(fakes.Shapes.GeometryMatchChecks > 0, "the candidates must be verified against the host");
+    }
+
+    /// <summary>
+    /// A scheduled refresh rewrites a shape the host moved on its own, even though the
+    /// scene payload is byte-identical — the case that left the splitter band stale.
+    /// </summary>
+    [Fact]
+    public void A_refresh_rewrites_a_shape_whose_live_geometry_drifted()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+        ShapeDeltaCache cache = new();
+
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache).Refresh().Succeeded);
+        int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
+        string drifted = fakes.Shapes.Requests.Keys.First();
+        _ = fakes.Shapes.DriftedGeometry.Add(drifted);
+
+        GanttRefreshOutcome second = fakes.BuildOrchestratorWithDeltaCache(cache).Refresh();
+
+        Assert.True(second.Succeeded, "refused: " + second.Refusal + " " + second.Message);
+        Assert.Contains(
+            fakes.Shapes.ShapeCalls,
+            call => string.Equals(call, "Update:" + drifted, StringComparison.Ordinal));
+        Assert.True(fakes.Shapes.ShapeCalls.Count > writesAfterFirst);
     }
 
     [Fact]
@@ -651,6 +815,10 @@ public class GanttRefreshOrchestratorTests
     {
         (RefreshFakes fakes, GanttRefreshOrchestrator orchestrator) = Ready();
 
+        // Make identity repair report a write, so the conditional re-read is in the
+        // sequence this test pins; the no-op case has its own test.
+        fakes.IdentityRepairedCount = 1;
+
         GanttRefreshOutcome outcome = orchestrator.Refresh();
 
         Assert.True(outcome.Succeeded, "SCAFFOLD refusal=" + outcome.Refusal + " msg=" + outcome.Message);
@@ -995,7 +1163,7 @@ public class GanttRefreshOrchestratorTests
     {
         // The FIRST read returns a row with no usable Id: the blocking error that
         // makes identity repair necessary in the first place.
-        RefreshFakes fakes = new() { Rows = [RowWithoutId()] };
+        RefreshFakes fakes = new() { Rows = [RowWithoutId()], IdentityRepairedCount = 1 };
 
         // After repair the same row carries a well-formed Id, which is what the
         // repairer writes to the worksheet.
@@ -1034,6 +1202,7 @@ public class GanttRefreshOrchestratorTests
         RefreshFakes fakes = new()
         {
             Rows = [RowWithoutId()],
+            IdentityRepairedCount = 1,
             TableReadRefusedAfterRepair = true,
         };
 
@@ -1110,7 +1279,7 @@ public class GanttRefreshOrchestratorTests
     [Fact]
     public void A_type_change_normaliser_is_followed_by_a_reread_before_validation()
     {
-        RefreshFakes fakes = new() { Rows = ValidRows() };
+        RefreshFakes fakes = new() { Rows = ValidRows(), TypeCellsWritten = 1 };
 
         GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
 
@@ -1143,6 +1312,7 @@ public class GanttRefreshOrchestratorTests
         RefreshFakes fakes = new()
         {
             Rows = ValidRows(),
+            TypeCellsWritten = 1,
             TableReadRefusedAfterRepair = true,
             RereadRefusalReason = GanttTableReadRefusalReason.NoActiveWorkbook,
         };
@@ -1167,6 +1337,7 @@ public class GanttRefreshOrchestratorTests
         RefreshFakes fakes = new()
         {
             Rows = ValidRows(),
+            TypeCellsWritten = 1,
             TableReadRefusedAfterRepair = true,
             RereadRefusalReason = GanttTableReadRefusalReason.TableMissing,
         };
@@ -1176,6 +1347,41 @@ public class GanttRefreshOrchestratorTests
         Assert.Equal(1, fakes.NormaliseCount);
         Assert.Equal(GanttRefreshRefusal.TableMissing, outcome.Refusal);
         Assert.Empty(fakes.Shapes.Calls);
+    }
+
+    /// <summary>
+    /// A no-op identity repair does not trigger a second full-table read.
+    /// </summary>
+    /// <remarks>
+    /// The re-read exists only because repair may have WRITTEN Ids. Reporting zero means
+    /// the step-1 snapshot is still the sheet's content, so re-reading it was a redundant
+    /// slot on every refresh — the kind of cost this optimisation row removes without
+    /// changing what validation sees.
+    /// </remarks>
+    [Fact]
+    public void A_no_op_identity_repair_does_not_trigger_a_second_read()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows() };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestrator().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(1, fakes.TableReadCount);
+    }
+
+    /// <summary>
+    /// A no-op type-change pass does not trigger a second full-table read, and a written
+    /// cell still does.
+    /// </summary>
+    [Fact]
+    public void A_write_from_the_type_change_normaliser_still_triggers_the_reread()
+    {
+        RefreshFakes fakes = new() { Rows = ValidRows(), TypeCellsWritten = 1 };
+
+        GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithTypeChangeNormaliser().Refresh();
+
+        Assert.True(outcome.Succeeded, "refused: " + outcome.Refusal + " " + outcome.Message);
+        Assert.Equal(2, fakes.TableReadCount);
     }
 
     /// <summary>

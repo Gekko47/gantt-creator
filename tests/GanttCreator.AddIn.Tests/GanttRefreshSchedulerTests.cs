@@ -54,8 +54,8 @@ public sealed class GanttRefreshSchedulerTests
         };
 
         using GanttRefreshScheduler scheduler = CreateScheduler(queue, () => Interlocked.Increment(ref refreshCount));
-        scheduler.ScheduleRefresh();
-        scheduler.ScheduleRefresh();
+        scheduler.ScheduleCommandRefresh();
+        scheduler.ScheduleCommandRefresh();
 
         Assert.True(queuedSignal.Wait(TimeSpan.FromSeconds(5)), "The debounced macro was not queued before the deadline.");
         Assert.True(macros.TryDequeue(out ExcelAction? macro));
@@ -81,7 +81,7 @@ public sealed class GanttRefreshSchedulerTests
         };
 
         using GanttRefreshScheduler scheduler = CreateScheduler(queue, () => Interlocked.Increment(ref refreshCount));
-        scheduler.ScheduleRefresh();
+        scheduler.ScheduleCommandRefresh();
 
         Assert.True(queuedSignal.Wait(TimeSpan.FromSeconds(5)), "The debounced macro was not queued before the deadline.");
         scheduler.CancelPendingRefresh();
@@ -89,6 +89,82 @@ public sealed class GanttRefreshSchedulerTests
         queuedMacro!();
 
         Assert.Equal(0, Volatile.Read(ref refreshCount));
+    }
+
+    /// <summary>
+    /// The post-command window is shorter than the cell-edit window.
+    /// </summary>
+    /// <remarks>
+    /// A command has already committed its writes, so the only events left to absorb are
+    /// its own; waiting the full cell window was 300ms of dead time between the click and
+    /// the plot. The relationship is pinned rather than the absolute figure, so tuning
+    /// either window stays deliberate.
+    /// </remarks>
+    [Fact]
+    public void The_command_window_is_shorter_than_the_cell_window()
+    {
+        Assert.True(GanttRefreshScheduler.CommandDebounce > TimeSpan.Zero);
+        Assert.True(GanttRefreshScheduler.CommandDebounce < GanttRefreshScheduler.CellDebounce);
+    }
+
+    /// <summary>
+    /// A command's own cell writes do not restart the longer window, so one click
+    /// produces exactly one refresh.
+    /// </summary>
+    [Fact]
+    public void A_command_schedule_absorbs_the_cells_its_own_write_emitted()
+    {
+        using ManualResetEventSlim queuedSignal = new(false);
+        using ManualResetEventSlim secondQueueSignal = new(false);
+        ConcurrentQueue<ExcelAction> macros = new();
+        Action<string?>? onChanged = null;
+        int queuedCount = 0;
+        int refreshCount = 0;
+
+        var adapter = new Mock<IExcelApplicationAdapter>();
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        var analyzer = new Mock<ISheetChangeAnalyzer>();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            macro =>
+            {
+                macros.Enqueue(macro);
+                if (Interlocked.Increment(ref queuedCount) == 1)
+                {
+                    queuedSignal.Set();
+                }
+                else
+                {
+                    secondQueueSignal.Set();
+                }
+            },
+            () => Interlocked.Increment(ref refreshCount));
+        scheduler.Activate();
+
+        scheduler.ScheduleCommandRefresh();
+        Assert.NotNull(onChanged);
+        onChanged!("\"book|Sheet\"!D5");
+
+        Assert.True(queuedSignal.Wait(TimeSpan.FromSeconds(5)), "The command refresh was not queued before the deadline.");
+        Assert.True(macros.TryDequeue(out ExcelAction? macro));
+        macro!();
+
+        Assert.Equal(1, Volatile.Read(ref refreshCount));
+        Assert.Equal(1, Volatile.Read(ref queuedCount));
+
+        // The flag is cleared for the next genuine edit: a cell event after the pass
+        // schedules a new refresh rather than being swallowed. Observed through the
+        // second signal, because the first signal is already set and would make the wait
+        // above pass vacuously.
+        onChanged!("\"book|Sheet\"!D5");
+        Assert.True(secondQueueSignal.Wait(TimeSpan.FromSeconds(5)), "A later edit did not schedule a refresh.");
+        Assert.Equal(2, Volatile.Read(ref queuedCount));
     }
 
     private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>
