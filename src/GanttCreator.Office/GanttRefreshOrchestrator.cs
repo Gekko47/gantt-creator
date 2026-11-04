@@ -831,9 +831,15 @@ public sealed class GanttRefreshOrchestrator(
         }
 
         ShapeReconcilePlan plan = reconcile.Plan;
+
+        // geom= is the count of move-only updates (ADR-0053). It is the figure that says how
+        // much of a pass was a relocation rather than a re-apply, and it is the only way to see
+        // from the log that a promote moved 40 primitives instead of restyling them.
+        int geometryOnly = plan.Operations.Count(operation =>
+            operation.Action == ShapeReconcileAction.Update && operation.Scope == ShapeUpdateScope.Geometry);
         TraceRefresh(string.Create(
             CultureInfo.InvariantCulture,
-            $"gantt.refresh result ok={reconcile.Succeeded} desired={desiredCount} updated={plan.Of(ShapeReconcileAction.Update).Count} created={plan.Of(ShapeReconcileAction.Create).Count} deleted={plan.Of(ShapeReconcileAction.Delete).Count} written={reconcile.CompletedCount} zorder={reconcile.ZOrderApplied} zorderms={reconcile.ZOrderMilliseconds:0.#} refusal={reconcile.Refusal?.ToString() ?? "none"}"));
+            $"gantt.refresh result ok={reconcile.Succeeded} desired={desiredCount} updated={plan.Of(ShapeReconcileAction.Update).Count} geom={geometryOnly} created={plan.Of(ShapeReconcileAction.Create).Count} deleted={plan.Of(ShapeReconcileAction.Delete).Count} written={reconcile.CompletedCount} zorder={reconcile.ZOrderApplied} zorderms={reconcile.ZOrderMilliseconds:0.#} refusal={reconcile.Refusal?.ToString() ?? "none"}"));
         TraceRefresh(string.Create(
             CultureInfo.InvariantCulture,
             $"gantt.refresh timings ms read={ElapsedMs(timings.Started, timings.Read):0.#} validate={ElapsedMs(timings.Read, timings.Validated):0.#} sheet={ElapsedMs(timings.Validated, timings.WorksheetWrites):0.#} measure={ElapsedMs(timings.WorksheetWrites, timings.Measured):0.#} build={ElapsedMs(timings.Measured, timings.Built):0.#} write={ElapsedMs(timings.Built, timings.Written):0.#} total={ElapsedMs(timings.Started, timings.Written):0.#}"));

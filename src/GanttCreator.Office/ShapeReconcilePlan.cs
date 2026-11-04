@@ -41,6 +41,31 @@ public enum ShapeReconcileAction
     Delete = 2,
 }
 
+/// <summary>How much of an updated shape's request has to be re-applied.</summary>
+/// <remarks>
+/// <para>
+/// An update that re-applies geometry, text and style costs ~15–18 ms on the live host; a
+/// geometry-only move is a handful of property writes at ~0.5 ms. The reconciliation knows
+/// which parts changed (the payload cache stores a hash per part), so a shape that only moved
+/// is moved rather than re-styled and re-lettered.
+/// </para>
+/// <para>
+/// <b>What this does not promise.</b> A geometry-only update does not repair a fill or font a
+/// user changed by hand. That is the deliberate trade ADR-0053 records: an automatic refresh
+/// keeps the user's own formatting for a shape it merely moved, and the explicit Refresh
+/// (which carries no previous snapshot, so every shape is
+/// <see cref="All"/>) restores the scene's formatting.
+/// </para>
+/// </remarks>
+public enum ShapeUpdateScope
+{
+    /// <summary>Re-apply geometry, placement, content, and style — the full update.</summary>
+    All = 0,
+
+    /// <summary>Re-apply geometry and placement only, because nothing else changed.</summary>
+    Geometry = 1,
+}
+
 /// <summary>One planned reconciliation operation.</summary>
 /// <param name="Action">What to do with the shape.</param>
 /// <param name="PrimitiveId">
@@ -53,7 +78,12 @@ public enum ShapeReconcileAction
 /// The shape request, or <see langword="null"/> for a
 /// <see cref="ShapeReconcileAction.Delete"/>.
 /// </param>
-public sealed record ShapeReconcileOperation(ShapeReconcileAction Action, string PrimitiveId, OfficeShapeRequest? Request);
+public sealed record ShapeReconcileOperation(ShapeReconcileAction Action, string PrimitiveId, OfficeShapeRequest? Request)
+{
+    /// <summary>How much of the request an update re-applies; always
+    /// <see cref="ShapeUpdateScope.All"/> for a create or a delete.</summary>
+    public ShapeUpdateScope Scope { get; init; } = ShapeUpdateScope.All;
+}
 
 /// <summary>The complete set of operations one reconciliation decided on.</summary>
 /// <param name="Operations">

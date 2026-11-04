@@ -180,7 +180,23 @@ public class ExcelShapeWriter(
     }
 
     /// <inheritdoc />
-    public ShapeWriteOutcome Update(OfficeShapeRequest request)
+    public ShapeWriteOutcome Update(OfficeShapeRequest request) => UpdateCore(request, applyAppearance: true);
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request) => UpdateCore(request, applyAppearance: false);
+
+    /// <summary>
+    /// The shared update path: authorise, move, and — for a full update — re-apply the
+    /// content and the style.
+    /// </summary>
+    /// <param name="request">The scene's desired shape.</param>
+    /// <param name="applyAppearance">
+    /// Whether to re-apply content and style as well as geometry. <see langword="false"/>
+    /// is the move-only path, used when the payload cache proves nothing but the box
+    /// changed (ADR-0053).
+    /// </param>
+    /// <returns>The typed result.</returns>
+    private ShapeWriteOutcome UpdateCore(OfficeShapeRequest request, bool applyAppearance)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -237,7 +253,17 @@ public class ExcelShapeWriter(
         // change. This runs on every update, so an existing workbook converts itself
         // on the next Refresh without a rebuild of its shapes.
         ApplyPlacement(existing);
-        TraceBandShape("update", existing, request.PrimitiveId, bandBefore);
+        TraceBandShape(applyAppearance ? "update" : "move", existing, request.PrimitiveId, bandBefore);
+
+        // The move-only path stops here. Everything below writes generated appearance
+        // (text, fill, stroke, hatch, typography) which the caller has already proven
+        // unchanged; re-applying it would cost the ~15–18 ms a full update costs for a
+        // shape that only changed where it sits. A hand-edited fill is deliberately NOT
+        // repaired here — the explicit Refresh does that (ADR-0053).
+        if (!applyAppearance)
+        {
+            return ShapeWriteOutcome.Ok();
+        }
 
         // R4.4: a text box's CONTENT is owned generated data, exactly as its
         // geometry is, so an update re-applies it. Without this, a refresh that

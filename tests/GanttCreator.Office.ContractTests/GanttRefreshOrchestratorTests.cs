@@ -356,9 +356,6 @@ public class GanttRefreshOrchestratorTests
         Assert.Contains(
             trace,
             line => line.Contains("gantt.refresh delta=True", StringComparison.Ordinal));
-        Assert.Contains(
-            trace,
-            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal));
 
         trace.Clear();
         GanttRefreshOutcome scheduled = fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh();
@@ -394,7 +391,15 @@ public class GanttRefreshOrchestratorTests
         RefreshFakes fakes = new() { Rows = ValidRows() };
         ShapeDeltaCache cache = new();
 
-        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache).Refresh().Succeeded);
+        // The result line reports the move-only count (ADR-0053). A pass with no
+        // geometry-only updates says geom=0 rather than omitting the field, so a reader of
+        // the log never has to guess which build produced the line.
+        List<string> trace = [];
+        Assert.True(fakes.BuildOrchestratorWithDeltaCache(cache, trace: trace.Add).Refresh().Succeeded);
+        Assert.Contains(
+            trace,
+            line => line.Contains("gantt.refresh result ok=True", StringComparison.Ordinal)
+                && line.Contains("geom=", StringComparison.Ordinal));
         int writesAfterFirst = fakes.Shapes.ShapeCalls.Count;
 
         fakes.RowHeightsWritten = 2;

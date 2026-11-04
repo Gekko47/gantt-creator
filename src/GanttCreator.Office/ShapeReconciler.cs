@@ -63,6 +63,11 @@ public static partial class ShapeReconciler
     /// <see cref="IShapeWritePort.ListOwned"/>.
     /// </param>
     /// <param name="unchangedIds">Cached IDs whose desired payload is unchanged.</param>
+    /// <param name="scopes">
+    /// How much of each changed shape has to be re-applied, or <see langword="null"/> to
+    /// re-apply everything. A shape absent from the map gets the full update, so a caller
+    /// that cannot classify a change never gets a partial write.
+    /// </param>
     /// <returns>The planned operations and the back-to-front z-order list.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="desired"/> or <paramref name="owned"/> is
@@ -92,7 +97,8 @@ public static partial class ShapeReconciler
     public static ShapeReconcilePlan Plan(
         IReadOnlyList<OfficeShapeRequest> desired,
         IReadOnlyList<string> owned,
-        IReadOnlySet<string>? unchangedIds = null)
+        IReadOnlySet<string>? unchangedIds = null,
+        IReadOnlyDictionary<string, ShapeUpdateScope>? scopes = null)
     {
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(owned);
@@ -133,7 +139,12 @@ public static partial class ShapeReconciler
         List<ShapeReconcileOperation> operations = new(updates.Count + creates.Count + owned.Count);
         foreach (OfficeShapeRequest request in updates)
         {
-            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Update, request.PrimitiveId, request));
+            operations.Add(new ShapeReconcileOperation(ShapeReconcileAction.Update, request.PrimitiveId, request)
+            {
+                Scope = scopes is not null && scopes.TryGetValue(request.PrimitiveId, out ShapeUpdateScope scope)
+                    ? scope
+                    : ShapeUpdateScope.All,
+            });
         }
 
         foreach (OfficeShapeRequest request in creates)
@@ -262,13 +273,68 @@ public static partial class ShapeReconciler
             }
         }
 
-        ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds);
+        // Classify what changed, so a shape that only MOVED is moved rather than
+        // re-styled and re-lettered (ADR-0053). The part hashes come from the same cache
+        // entries that decided "unchanged", and the classification is a pure in-memory
+        // comparison: no extra host call decides it.
+        //
+        // Only geometry-only is scoped. A shape whose appearance changed (a style-key change,
+        // a type change, a label change) or whose parts BOTH changed is re-applied in full:
+        // writing the style is the honest repair, and a full update is what the verified
+        // skip's counterpart has always done.
+        Dictionary<string, ShapeUpdateScope>? scopes = null;
+        if (unchangedIds is not null && previous is not null && previous.Parts.Count > 0)
+        {
+            foreach (OfficeShapeRequest item in request.Desired)
+            {
+                if (unchangedIds.Contains(item.PrimitiveId)
+                    || !previous.Parts.TryGetValue(item.PrimitiveId, out ShapePartSignatures? parts))
+                {
+                    continue;
+                }
+
+                bool geometrySame = string.Equals(
+                    parts.Geometry,
+                    ShapeDeltaCache.GeometrySignature(item),
+                    StringComparison.Ordinal);
+                bool appearanceSame = string.Equals(
+                    parts.Appearance,
+                    ShapeDeltaCache.AppearanceSignature(item),
+                    StringComparison.Ordinal);
+
+                // A kind change is never a move: the host builds a different shape for a
+                // diamond than for a bar, and ApplyGeometry on the wrong kind is not a
+                // repair. Re-applying everything is the honest answer.
+                bool kindSame = string.Equals(parts.Kind, item.Kind.ToString(), StringComparison.Ordinal);
+                if (!kindSame || geometrySame || !appearanceSame)
+                {
+                    continue;
+                }
+
+                // The shape moved — or the host moved it for us. An inserted or deleted
+                // worksheet row moves every xlMove shape with its cells, so the live box can
+                // already BE the scene's box. Verifying that costs a handful of property
+                // reads and removes the write entirely, which is what makes an insert cheap.
+                if (writer.GeometryMatches(item))
+                {
+                    _ = unchangedIds.Add(item.PrimitiveId);
+                    continue;
+                }
+
+                scopes ??= new Dictionary<string, ShapeUpdateScope>(StringComparer.Ordinal);
+                scopes[item.PrimitiveId] = ShapeUpdateScope.Geometry;
+            }
+        }
+
+        ShapeReconcilePlan plan = Plan(request.Desired, owned, unchangedIds, scopes);
 
         int completed = 0;
         foreach (ShapeReconcileOperation operation in plan.Operations)
         {
             ShapeWriteOutcome outcome = operation.Action switch
             {
+                ShapeReconcileAction.Update when operation.Scope == ShapeUpdateScope.Geometry =>
+                    writer.UpdateGeometry(operation.Request!),
                 ShapeReconcileAction.Update => writer.Update(operation.Request!),
                 ShapeReconcileAction.Create => writer.Create(operation.Request!),
                 ShapeReconcileAction.Delete => writer.Delete(operation.PrimitiveId),

@@ -232,6 +232,33 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         return ShapeWriteOutcome.Ok();
     }
 
+    /// <summary>
+    /// The move-only update (ADR-0053). Recorded under its own call name so a test can
+    /// prove a shape that only moved was moved rather than re-styled, which is the whole
+    /// point of the scope.
+    /// </summary>
+    /// <param name="request">The scene's desired shape.</param>
+    /// <returns>The typed result.</returns>
+    public ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        Calls.Add("UpdateGeometry:" + request.PrimitiveId);
+        if (RefusalFor("UpdateGeometry", request.PrimitiveId) is { } refusal)
+        {
+            return ShapeWriteOutcome.Refused(refusal);
+        }
+
+        if (!CarriesOwnTag(request.PrimitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        _ = DriftedGeometry.Remove(request.PrimitiveId);
+        Requests[request.PrimitiveId] = request;
+        return ShapeWriteOutcome.Ok();
+    }
+
     public ShapeWriteOutcome Delete(string primitiveId)
     {
         Calls.Add("Delete:" + primitiveId);

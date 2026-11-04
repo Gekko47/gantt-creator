@@ -175,6 +175,34 @@ public interface IShapeWritePort
     ShapeWriteOutcome Update(OfficeShapeRequest request);
 
     /// <summary>
+    /// Moves or resizes one existing owned shape to the request's geometry, WITHOUT
+    /// re-applying its content, style or typography.
+    /// </summary>
+    /// <param name="request">The scene's desired shape; only its kind and box are applied.</param>
+    /// <returns>The same typed result <see cref="Update"/> returns.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>When this is correct.</b> When the shape's content and appearance are provably
+    /// unchanged — the reconciliation knows this from the payload cache's per-part hashes,
+    /// and a kind change is never routed here — so the only thing that can differ is where
+    /// the shape sits. A row relocation, a row-height change, or a date edit that keeps the
+    /// plot scale are exactly that case, and they are the common ones: a full update costs
+    /// ~15–18 ms per primitive on the live host, while the four geometry writes cost ~0.5 ms.
+    /// </para>
+    /// <para>
+    /// <b>What it deliberately does not do.</b> It does not repair a fill, stroke, font or
+    /// text a user changed by hand. The explicit Refresh re-applies everything, so a
+    /// hand-edited shape converges there; an automatic refresh converges the geometry and
+    /// leaves the user's own formatting alone (ADR-0053).
+    /// </para>
+    /// <para>
+    /// The authorisation rule is unchanged: the ownership tag, not the name, authorises the
+    /// write, and an absent or unowned shape is <see cref="ShapeWriteRefusal.NotFound"/>.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome UpdateGeometry(OfficeShapeRequest request);
+
+    /// <summary>
     /// Reports whether the live shape already matches the request's GEOMETRY and
     /// PLACEMENT, so a payload-equality skip can be verified against the host instead of
     /// trusted.

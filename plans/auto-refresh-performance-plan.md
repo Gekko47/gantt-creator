@@ -122,13 +122,21 @@ Ordered by measured value; each phase lists its acceptance criteria.
 
 ### P1 — Write scope (largest single win)
 
-- Part hashes (geometry / style / text) per primitive in `ShapeDeltaCache`,
-  compared against our own last successful write; the reconciler passes the
-  diff as an update scope; `ExcelShapeWriter.Update` applies only that scope.
-- *Acceptance*: a date-only edit writes geometry only (the fake records the
-  requested parts); a style-only edit writes no geometry; per-shape time
-  ≤ 12 ms; golden scene unchanged; a refused update invalidates the snapshot
-  (already the rule).
+> **Shipped 2026-11-04 as P1′ — command-scoped geometry (ADR-0053).** The request
+> payload is hashed in two parts, geometry and appearance, per primitive in
+> `ShapeDeltaCache`. A shape whose BOX changed and whose appearance did not is
+> moved with `IShapeWritePort.UpdateGeometry` instead of being re-applied in full,
+> and a box the host already holds (the row-insert case) is not written at all.
+> Appearance changes, kind changes and every shape on the explicit Refresh keep
+> the full update, which is what makes the manual path the repair pass.
+> *Acceptance met*: `A_geometry_only_change_moves_only_that_shape`,
+> `A_geometry_only_change_the_host_already_made_is_skipped` (zero writes, two
+> verifications), `An_appearance_only_change_re_applies_the_whole_shape`,
+> `A_kind_change_re_applies_the_whole_shape`,
+> `Without_a_snapshot_a_moved_shape_is_re_applied_in_full`, and
+> `UpdateGeometry_moves_the_shape_without_re_applying_text_or_style` (style and
+> content recordings both empty, box and placement written). The unshipped
+> remainder is appearance-level skipping, rejected below.
 
 ### P2 — Minimal z-order moves
 
@@ -158,14 +166,19 @@ Ordered by measured value; each phase lists its acceptance criteria.
 
 ## Expected cumulative effect (warm command)
 
+Measured baseline (owner's session, 2026-11-04, 46 automatic passes, 86–87
+shapes): **191.6 ms average**, of which the reconcile is 169.5 ms and the
+pipeline ~30 ms; 8 passes wrote nothing and cost 31–67 ms; the ordering pass ran
+on 12 passes at 49–111 ms; a manual Refresh is 859–1 129 ms.
+
 | After | Total (ms) | Composition |
 |---|---|---|
-| today | ≈236 | pipeline ≈40 + writes ≈120–240 + z-order 0/≈85 |
-| P0 | ≈215 | row passes halved |
-| P1 | ≈140 | writes ≈60–120 |
-| P2 | ≈85 | z-order 0–15 |
-| P3 | ≈70 | read ≤10 |
-| P4/P5 | measured | — |
+| measured baseline | ≈192 | pipeline ≈30 + writes ≈140 + z-order 0/≈60 |
+| P0a/P0b/P0c/P4 | shipped | row passes and per-event column reads removed; `post` measured at 0.3–1.4 ms |
+| P1′ (geometry scope) | ≈40–100 | a move is ~0.5 ms/primitive, so a relocation pass drops from 257–335 ms to ~40–70 ms and a date edit to the ~40 ms floor |
+| P2 | ≈35–70 | z-order is now the largest remaining term (49–111 ms on reordering passes) |
+| P3 | ≈30–60 | read ≤10 |
+| P5 | measured | first-pass create cost |
 
 Click-to-plot adds the 50 ms command window to each figure.
 
@@ -177,27 +190,23 @@ Click-to-plot adds the 50 ms command window to each figure.
 | P0a — one row pass shared with the measurement | shipped | `RowHeightNormalisationOutcome.BodyHeightsPt` is returned only when the pass wrote no body row; `IPanelGridMeasurementPort.Measure(columns, bodyRowHeightsPt)` uses it only when its length matches the live body |
 | P0c — column map without per-column reads | shipped | `ExcelSheetChangeAnalyzer` reads the header row in ONE bulk `Value2` call, falling back to `ListColumn.Name` for headers that are not non-empty text |
 | P4 — post-pass measurement | shipped | `gantt.refresh post ms=...` after the pipeline on both command paths |
-| P1 — write scope | not implemented | see below |
-| P2 — minimal z-order moves | not implemented | see below |
+| P1′ — command-scoped geometry | shipped | `ShapeDeltaCache` stores kind, geometry and appearance hashes; `ShapeReconciler` plans `ShapeUpdateScope.Geometry` for a box-only change, verifies the live box first, and `ExcelShapeWriter.UpdateGeometry` applies placement and the box only (ADR-0053) |
+| P1 (appearance scope) | not implemented | see below |
+| P2 — minimal z-order moves | not implemented | see below, and now the largest remaining term |
 | P3 — configuration cache | not implemented | see below |
-| P5 — cold start | not re-measured | depends on P1 |
+| P5 — cold start | not re-measured | depends on P1′ |
 
-### Why P1 (write scope) is not implemented
+### Why appearance-level skipping (the rest of P1) is not implemented
 
-Part-level skipping cannot be verified at a price lower than writing. A shape
-whose style is not re-applied must be known to still carry the style last
-written, and the only way to know that is to read the shape back -- fill, line,
-font, text, alignment -- which is one read per property, i.e. the same COM
-round-trip count as the write it replaces. Without that read, a shape the user
-recoloured by hand and then moved (so its geometry changed) would keep the hand
-colour until a manual Refresh, because the automatic pass would apply geometry
-only.
-
-The whole-shape skip that already ships (ADR-0052) is sound precisely because
-geometry is verifiable in a handful of reads (`Left`, `Top`, `Width`, `Height`,
-`Placement`), so a skipped shape is proven rather than assumed. Nothing
-comparable exists for style, so P1 is deferred until a cheaper verification
-exists.
+The GEOMETRY scope ships because geometry can be verified: four absolute numbers
+plus `Placement` (ADR-0052), with no `null`-means-leave-alone member. Appearance
+cannot. `TextColour`, `FontFamily`, `FillColour` and friends use `null` to mean
+"leave the host alone" (R4.7 D5), so after a write the intent is unobservable and
+an un-applied part cannot be proven still correct. Reading it back is one read per
+property — the same round-trip count as the write it would replace — so a
+"skip the style" scope would either cost what it saves or silently accept a stale
+style. Writing the style when the style changed is therefore both the cheapest
+verified option and the repair.
 
 ### Why P2 (minimal z-order moves) is not implemented
 

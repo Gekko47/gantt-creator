@@ -337,6 +337,45 @@ public class ExcelShapeWriterTests
         Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
     }
 
+    /// <summary>
+    /// The move-only update writes the box and placement and touches NEITHER text nor style.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the cost that matters (ADR-0053): a relocation writes geometry for every
+    /// primitive in the moved window, and a full update would re-apply fill, stroke, hatch,
+    /// font, text, alignment and colour to each — measured ~15–18 ms per primitive against
+    /// ~0.5 ms for a move.
+    /// </para>
+    /// <para>
+    /// The assertion is on the two recordings a full update populates: <c>Requests</c> (the
+    /// content write) and <c>StyledRequests</c> (the style write). The first call below is a
+    /// full update, so the fixtures are proven non-vacuous before the move is measured.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void UpdateGeometry_moves_the_shape_without_re_applying_text_or_style()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome full = writer.Update(RectangleRequest());
+        Assert.True(full.Succeeded, full.Refusal?.ToString());
+        Assert.NotEmpty(writer.StyledRequests);
+
+        writer.StyledRequests.Clear();
+        writer.Requests.Clear();
+
+        ShapeWriteOutcome moved = writer.UpdateGeometry(RectangleRequest(x: 55, y: 66));
+
+        Assert.True(moved.Succeeded, moved.Refusal?.ToString());
+        Assert.Empty(writer.StyledRequests);
+        Assert.Empty(writer.Requests);
+        Assert.Equal(55f, existing.Left);
+        Assert.Equal(66f, existing.Top);
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+    }
+
     [Fact]
     public void Create_writes_the_primitive_id_as_the_shape_name_and_the_tag_as_the_alternative_text()
     {

@@ -23,12 +23,17 @@ namespace GanttCreator.Office.ContractTests;
 /// </remarks>
 public class ShapeReconcilerTests
 {
-    private static OfficeShapeRequest Request(string id, double left = 10d) =>
+    private static OfficeShapeRequest Request(
+        string id,
+        double left = 10d,
+        string? fill = null,
+        OfficeShapeKind kind = OfficeShapeKind.Rectangle) =>
         new(
             id,
-            OfficeShapeKind.Rectangle,
+            kind,
             new OfficeShapeGeometry(Bounds: new RectD(left, 0, 100, 20)),
-            ZLayer.ActivityBody);
+            ZLayer.ActivityBody,
+            FillColour: fill is null ? null : ColourHex.Parse(fill));
 
     [Fact]
     public void Matching_cached_payloads_skip_shape_writes_and_unchanged_z_order()
@@ -78,8 +83,45 @@ public class ShapeReconcilerTests
         Assert.Equal(2, port.GeometryMatchChecks);
     }
 
+    /// <summary>
+    /// A payload that changed only in its BOX is a move, not a re-apply (ADR-0053).
+    /// </summary>
+    /// <remarks>
+    /// The drift models a host still holding the old box, which is what a relocation
+    /// produces: the scene moved the shape, the sheet has not. A full update here would
+    /// re-apply fill, stroke, font and text for a shape whose only difference is where it
+    /// sits, at ~15–18 ms instead of ~0.5 ms.
+    /// </remarks>
     [Fact]
-    public void Changed_cached_payload_updates_only_that_shape()
+    public void A_geometry_only_change_moves_only_that_shape()
+    {
+        OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
+        OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 45d)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-1:bar", "row-2:bar");
+        _ = port.DriftedGeometry.Add("row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["UpdateGeometry:row-2:bar"], port.ShapeCalls);
+        Assert.Empty(port.ZOrderLists);
+    }
+
+    /// <summary>
+    /// A box the HOST already holds is not written at all — the row-insert case.
+    /// </summary>
+    /// <remarks>
+    /// Inserting a worksheet row moves every <c>xlMove</c> shape with its cells, so the
+    /// live box is already the scene's. The verification read costs a handful of property
+    /// reads and removes the write entirely, which is why adding a row is cheap for the
+    /// shapes that were already on the sheet.
+    /// </remarks>
+    [Fact]
+    public void A_geometry_only_change_the_host_already_made_is_skipped()
     {
         OfficeShapeRequest[] previous = [Request("row-1:bar"), Request("row-2:bar", 40d)];
         OfficeShapeRequest[] desired = [Request("row-1:bar"), Request("row-2:bar", 45d)];
@@ -92,8 +134,78 @@ public class ShapeReconcilerTests
             new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
 
         Assert.True(outcome.Succeeded);
+        Assert.Empty(port.ShapeCalls);
+
+        // Both the unchanged shape and the moved one were verified against the host.
+        Assert.Equal(2, port.GeometryMatchChecks);
+    }
+
+    /// <summary>
+    /// A payload that changed only in its appearance re-applies the whole shape.
+    /// </summary>
+    /// <remarks>
+    /// Writing the style IS the repair when the style is what changed, so this path must not
+    /// be narrowed by the move-only scope.
+    /// </remarks>
+    [Fact]
+    public void An_appearance_only_change_re_applies_the_whole_shape()
+    {
+        OfficeShapeRequest[] previous = [Request("row-2:bar", fill: "#3366CC")];
+        OfficeShapeRequest[] desired = [Request("row-2:bar", fill: "#FF0000")];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
         Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
-        Assert.Empty(port.ZOrderLists);
+    }
+
+    /// <summary>
+    /// A KIND change is never routed through the move-only path.
+    /// </summary>
+    /// <remarks>
+    /// The host builds a different shape for a diamond than for a bar, so applying the new
+    /// box to the old kind is not a repair. The full update is the honest answer even though
+    /// the box is identical.
+    /// </remarks>
+    [Fact]
+    public void A_kind_change_re_applies_the_whole_shape()
+    {
+        OfficeShapeRequest[] previous = [Request("row-2:bar")];
+        OfficeShapeRequest[] desired = [Request("row-2:bar", kind: OfficeShapeKind.Diamond)];
+        ShapeDeltaCache cache = new();
+        cache.Commit(previous);
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired) { PreviousSnapshot = cache.Snapshot });
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
+    }
+
+    /// <summary>
+    /// Without a previous snapshot every changed shape gets the full update — the
+    /// explicit-Refresh path, which is the repair pass.
+    /// </summary>
+    [Fact]
+    public void Without_a_snapshot_a_moved_shape_is_re_applied_in_full()
+    {
+        OfficeShapeRequest[] desired = [Request("row-2:bar", 45d)];
+        FakeShapeWritePort port = new FakeShapeWritePort().Owned("row-2:bar");
+
+        ShapeReconcileOutcome outcome = ShapeReconciler.Reconcile(
+            port,
+            new ShapeReconcileRequest(desired));
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(["Update:row-2:bar"], port.ShapeCalls);
+        Assert.Equal(0, port.GeometryMatchChecks);
     }
 
     [Fact]
