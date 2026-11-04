@@ -1307,10 +1307,33 @@ public class ExcelShapeWriterTests
         private readonly List<Mock<Excel.Shape>> _ordered = [];
         private readonly Mock<Excel.Shapes> _collection = new();
 
+        /// <summary>
+        /// The modelled live z-order, back to front — index 0 is the shape at the BACK,
+        /// which is what <c>Shape.ZOrderPosition</c> of 1 means (Microsoft: Shapes(1) is
+        /// the shape at the back of the z-order).
+        /// </summary>
+        /// <remarks>
+        /// The first version of this double handed each shape a fixed position, so a test
+        /// could only assert which <c>ZOrder</c> calls the adapter made. That is precisely
+        /// how a wrong pass survived: the calls looked plausible while the resulting stack
+        /// was inverted. Modelling the collection and applying <c>msoSendToBack</c> for real
+        /// lets a test assert the ORDER the user sees.
+        /// </remarks>
+        private readonly List<string> _zOrder = [];
+
         public BatchWriter()
             : base(ActiveApplication().Object, ClearGuard().Object)
         {
         }
+
+        /// <summary>
+        /// Whether the host reports a usable position. When false, every shape reports 0,
+        /// which models a double or a host that will not describe its z-order.
+        /// </summary>
+        public bool ReportsPositions { get; set; } = true;
+
+        /// <summary>Gets the live z-order after the pass, back to front.</summary>
+        public IReadOnlyList<string> LiveOrder => _zOrder;
 
         /// <summary>How many times the worksheet had to be resolved.</summary>
         public int WorksheetResolutions { get; private set; }
@@ -1327,17 +1350,20 @@ public class ExcelShapeWriterTests
         /// <summary>The shape name behind each z-order command, in call order.</summary>
         public List<string> ZOrderCalls { get; } = [];
 
-        /// <summary>Adds a shape the host already holds.</summary>
+        /// <summary>Adds a shape the host already holds, at the front of the z-order.</summary>
         /// <param name="name">The shape's name.</param>
         /// <param name="alternativeText">Its alternative text, or null for none.</param>
         /// <param name="placement">Its placement.</param>
-        /// <param name="zOrderPosition">Its one-based z-order position, 1 being the front.</param>
         /// <returns>This writer, for chaining.</returns>
+        /// <remarks>
+        /// Adds in call order, each one in front of the last, which is what the host does.
+        /// A test that wants a starting order that is NOT the desired order seeds the shapes
+        /// it wants at the back first and then calls <see cref="SendToBack"/>.
+        /// </remarks>
         public BatchWriter Add(
             string name,
             string? alternativeText,
-            Excel.XlPlacement placement = Excel.XlPlacement.xlMove,
-            int zOrderPosition = 1)
+            Excel.XlPlacement placement = Excel.XlPlacement.xlMove)
         {
             Excel.XlPlacement currentPlacement = placement;
             var shape = new Mock<Excel.Shape>();
@@ -1354,13 +1380,49 @@ public class ExcelShapeWriterTests
                     currentPlacement = value;
                     PlacementWrites++;
                 });
-            _ = shape.SetupGet(s => s.ZOrderPosition).Returns(zOrderPosition);
+            _ = shape.SetupGet(s => s.ZOrderPosition)
+                .Returns(() => ReportsPositions
+                    ? _zOrder.FindIndex(candidate => string.Equals(candidate, name, StringComparison.Ordinal)) + 1
+                    : 0);
             _ = shape.Setup(s => s.ZOrder(It.IsAny<MsoZOrderCmd>()))
-                .Callback<MsoZOrderCmd>(_ => ZOrderCalls.Add(name));
+                .Callback<MsoZOrderCmd>(command => ApplyZOrderCommand(name, command));
 
             _byName[name] = shape;
             _ordered.Add(shape);
+            _zOrder.Add(name);
             return this;
+        }
+
+        /// <summary>Moves a shape to the back, as a test seeding a starting order would.</summary>
+        /// <param name="name">The shape to move.</param>
+        /// <returns>This writer, for chaining.</returns>
+        public BatchWriter SendToBack(string name)
+        {
+            ApplyZOrderCommand(name, MsoZOrderCmd.msoSendToBack);
+            return this;
+        }
+
+        /// <summary>States the starting z-order directly, back to front, recording nothing.</summary>
+        /// <param name="backToFront">Every modelled shape name, backmost first.</param>
+        /// <returns>This writer, for chaining.</returns>
+        public BatchWriter SeedOrder(params string[] backToFront)
+        {
+            ArgumentNullException.ThrowIfNull(backToFront);
+            _zOrder.Clear();
+            _zOrder.AddRange(backToFront);
+            return this;
+        }
+
+        private void ApplyZOrderCommand(string name, MsoZOrderCmd command)
+        {
+            ZOrderCalls.Add(name);
+
+            // Only msoSendToBack is modelled because it is the only command the adapter
+            // issues; msoBringToFront would be a different absolute move and its absence is
+            // itself part of the contract (R4.5 D2).
+            Assert.Equal(MsoZOrderCmd.msoSendToBack, command);
+            _ = _zOrder.Remove(name);
+            _zOrder.Insert(0, name);
         }
 
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets)
@@ -1445,8 +1507,9 @@ public class ExcelShapeWriterTests
     public void A_batch_reuses_the_shape_proxy_for_the_z_order_pass()
     {
         var writer = new BatchWriter()
-            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"), zOrderPosition: 1)
-            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"), zOrderPosition: 2);
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .SendToBack("row-1:a");
 
         using (writer.BeginBatch())
         {
@@ -1458,7 +1521,7 @@ public class ExcelShapeWriterTests
         // Two lookups for the updates and none for the preflight: both names are cached.
         // Without the memo this would be four.
         Assert.Equal(2, writer.IndexedNameLookups);
-        Assert.Equal(["row-1:b"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a"], writer.ZOrderCalls);
     }
 
     /// <summary>
@@ -1498,61 +1561,69 @@ public class ExcelShapeWriterTests
     /// O5: a stack that is already in the desired order issues no z-order command.
     /// </summary>
     /// <remarks>
-    /// Position 1 is the front-most shape, so a correct back-to-front list has strictly
-    /// DECREASING positions. Reading that direction the wrong way would call this stack
-    /// ordered when it is not, which is why the next test pins the opposite case.
+    /// <c>Shapes(1)</c> is the shape at the BACK of the z-order, so a correct back-to-front
+    /// list has strictly increasing positions. Calling this stack ordered in the wrong
+    /// direction is what shipped once: the pass then skipped the very shapes it had to move.
     /// </remarks>
     [Fact]
     public void An_already_correct_stack_issues_no_z_order_command()
     {
         var writer = new BatchWriter()
-            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"), zOrderPosition: 3)
-            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"), zOrderPosition: 2)
-            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"), zOrderPosition: 1);
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"));
 
         Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
 
         Assert.Empty(writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
     }
 
     /// <summary>
-    /// O5: only the shapes after the first inversion are moved, and they are moved from the
-    /// front of the list towards the back.
-    /// </summary>
-    [Fact]
-    public void A_z_order_pass_moves_only_the_shapes_after_the_first_inversion()
-    {
-        var writer = new BatchWriter()
-            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"), zOrderPosition: 1)
-            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"), zOrderPosition: 3)
-            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"), zOrderPosition: 2);
-
-        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
-
-        // 'a' is accepted as the correct back-most prefix; c and b are sent to the back in
-        // front-to-back order, which lands them as b, c behind a.
-        Assert.Equal(["row-1:c", "row-1:b"], writer.ZOrderCalls);
-    }
-
-    /// <summary>
-    /// O5's regression pin: a front-anchored stack is NOT a correct one.
+    /// O5: the correct FRONT run is left alone and only the shapes behind it are moved.
     /// </summary>
     /// <remarks>
-    /// Ascending positions describe a chart whose back-most desired shape is at the front —
-    /// the state a create leaves behind. Treating an increasing run as already ordered would
-    /// skip exactly the correction the pass exists to make, so this asserts a write happens.
+    /// <c>msoSendToBack</c> is absolute, so untouched shapes always end in front of every
+    /// moved shape; only a front run may be skipped. Skipping a back run would push the
+    /// touched shapes behind it and invert exactly what was skipped.
     /// </remarks>
     [Fact]
-    public void A_front_anchored_stack_is_not_mistaken_for_a_correct_one()
+    public void A_z_order_pass_moves_only_the_shapes_behind_an_already_correct_front_run()
     {
+        // Live back-to-front: b, a, c. Desired: a, b, c. Only 'a' is out of place.
         var writer = new BatchWriter()
-            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"), zOrderPosition: 1)
-            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"), zOrderPosition: 2)
-            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"), zOrderPosition: 3);
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .SeedOrder("row-1:b", "row-1:a", "row-1:c");
 
         Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
 
-        Assert.Equal(["row-1:c", "row-1:b"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5's regression pin: a reversed stack must be repaired in full, not read as ordered.
+    /// </summary>
+    /// <remarks>
+    /// Descending positions describe a chart stacked exactly upside down. Both the inverted
+    /// direction and a skip-the-back-prefix rule accept this as correct, which is how the
+    /// chart came out mis-stacked on a full refresh, so the resulting ORDER is asserted and
+    /// not just the call count.
+    /// </remarks>
+    [Fact]
+    public void A_reversed_stack_is_reordered_rather_than_read_as_correct()
+    {
+        var writer = new BatchWriter()
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .SeedOrder("row-1:c", "row-1:b", "row-1:a");
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
     }
 
     /// <summary>
@@ -1561,14 +1632,55 @@ public class ExcelShapeWriterTests
     [Fact]
     public void A_host_that_reports_no_position_falls_back_to_the_full_pass()
     {
-        var writer = new BatchWriter()
-            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"), zOrderPosition: 0)
-            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"), zOrderPosition: 0)
-            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"), zOrderPosition: 0);
+        var writer = new BatchWriter
+        {
+            ReportsPositions = false,
+        }
+            .Add("row-1:c", ShapeOwnershipTag.ForPrimitiveId("row-1:c"))
+            .Add("row-1:b", ShapeOwnershipTag.ForPrimitiveId("row-1:b"))
+            .Add("row-1:a", ShapeOwnershipTag.ForPrimitiveId("row-1:a"));
 
         Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
 
         Assert.Equal(["row-1:c", "row-1:b", "row-1:a"], writer.ZOrderCalls);
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+    }
+
+    /// <summary>
+    /// O5 convergence: every starting permutation ends in the desired order, and no
+    /// permutation ever issues more commands than the full pass would.
+    /// </summary>
+    /// <param name="start">The live order, back to front, before the pass.</param>
+    [Theory]
+    [InlineData("a,b,c")]
+    [InlineData("a,c,b")]
+    [InlineData("b,a,c")]
+    [InlineData("b,c,a")]
+    [InlineData("c,a,b")]
+    [InlineData("c,b,a")]
+    public void Every_starting_permutation_ends_in_the_desired_order(string start)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(start);
+        string[] live = [.. start.Split(',').Select(part => "row-1:" + part)];
+        var writer = new BatchWriter();
+
+        foreach (string name in live)
+        {
+            _ = writer.Add(name, ShapeOwnershipTag.ForPrimitiveId(name));
+        }
+
+        // The starting stack, stated exactly rather than reached by commands: this test is
+        // about the pass's arithmetic, not about how a shape got to its position.
+        _ = writer.SeedOrder(live);
+        Assert.Equal(live, writer.LiveOrder);
+        writer.ZOrderCalls.Clear();
+
+        Assert.True(writer.ApplyZOrder(["row-1:a", "row-1:b", "row-1:c"]).Succeeded);
+
+        Assert.Equal(["row-1:a", "row-1:b", "row-1:c"], writer.LiveOrder);
+        Assert.True(
+            writer.ZOrderCalls.Count <= 3,
+            $"The pass issued {writer.ZOrderCalls.Count} commands for a 3-shape order.");
     }
 
     /// <summary>

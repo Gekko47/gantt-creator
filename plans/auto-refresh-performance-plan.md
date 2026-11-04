@@ -335,15 +335,22 @@ available during the change. The sketches below are kept as the design record.
 - The original P2 rejection assumed reads and writes cost the same. The zero-write passes
   disprove that: 87 shapes verify in ~20 ms, so a read is ~0.03–0.1 ms while a `ZOrder`
   command is a write at ~0.6–2.7 ms. Reading position to avoid writes is now **worth it**.
-- **Sketch:** `ListOwned` already walks `Shapes[i].Name` front-to-back — that walk IS the
-  live z-order. Compare it with the desired order, find the longest already-correct
-  suffix/prefix, and issue `ZOrder` only for the shapes outside it; a create still forces
-  the full pass (existing rule).
+- **Sketch:** read `ZOrderPosition` for the desired back-to-front list, find the longest
+  already-correct **front run**, and issue `ZOrder` only for the shapes behind it; a create
+  still forces the full pass (existing rule).
 - **Expected saving:** a pass where 2–4 primitives moved: **50–90 ms → 10–15 ms**. A full
   reorder (manual refresh) is unchanged.
-- **Fidelity risk:** medium — the minimal-move algorithm must provably converge; the plan's
-  original acceptance (fake's recorded call list plus an order simulation) is the gate.
-- **Validation:** `zorderms` on small-reorder passes; the order-simulation test.
+- **Fidelity risk:** medium, and it materialised. Two independent facts decide which end may
+  be skipped: `ZOrderPosition` 1 is the shape at the **back** (Microsoft's remarks), so a
+  correct run has *increasing* positions; and `msoSendToBack` is **absolute**, so untouched
+  shapes always end in front of every moved shape and only a front run can be left alone.
+  The first implementation inverted the comparison *and* skipped the back end, which
+  mis-stacked the chart on both the automatic and the full refresh while every test passed —
+  the double gave shapes fixed positions, so a test could only see the call list. Fixed in the
+  commit that follows `c55dda0`; the double now models the collection and applies
+  `msoSendToBack`, so the tests assert the resulting order.
+- **Validation:** `zorderms` on small-reorder passes; the permutation test (all six 3-shape
+  starting orders must end at the desired order) is the gate.
 
 ### Not proposed (checked and rejected)
 

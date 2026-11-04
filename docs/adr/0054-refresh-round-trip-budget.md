@@ -60,10 +60,26 @@ Five changes, all within the existing ports and all covered by contract tests.
    `ExcelShapeWriter.ChartTitlePrimitiveId`, consumed by the orchestrator.
 
 5. **Minimal z-order moves.** `ApplyZOrder` reads `ZOrderPosition` for the desired
-   back-to-front list, accepts the longest prefix whose live positions already decrease (1 is
-   the front-most shape), and sends only the remainder to the back, front-to-back as before. An
-   already-correct stack issues no command. A host that reports no usable position (`<= 0`)
-   falls back to the full absolute pass, so the pass still converges.
+   back-to-front list, accepts the longest already-correct **front** run, and sends only the
+   shapes behind it to the back, front-to-back, which is the original absolute pass applied to
+   a prefix. An already-correct stack issues no command. A host that reports no usable position
+   (`<= 0`) falls back to the full pass, so the pass still converges.
+
+   Two facts decide that shape, and the first implementation of this ADR got both wrong:
+
+   - **`Shape.ZOrderPosition` 1 is the shape at the BACK** of the z-order (Microsoft's
+     `Shape.ZOrderPosition` remarks: `Shapes(1)` is the back, `Shapes(n)` the front), so a
+     correct back-to-front run has strictly *increasing* positions.
+   - **`msoSendToBack` is absolute**, so every shape the loop touches finishes behind every
+     shape it does not. Only a **front** run can therefore be left alone; skipping a back run
+     sends the moved shapes behind it and inverts exactly what was skipped.
+
+   The defect this replaces shipped in `c55dda0` and mis-stacked the chart on both the
+   automatic and the full refresh: it skipped a back-most prefix on a decreasing-position test.
+   It was invisible to the original tests because the double handed each shape a *fixed*
+   position, so the assertions could only check which `ZOrder` calls were made — never the
+   order the user sees. The double now models the collection and applies `msoSendToBack` for
+   real, and a permutation test asserts the resulting stack for all six 3-shape orders.
 
 The guard consultation stays visible in each entry point (`Create`, `Update`, `Delete`,
 `ApplyZOrder`) as ADR-0008 D4's first statement and is short-circuited only **inside** a
@@ -93,8 +109,10 @@ guard moved into a helper once became unreachable.
   outer pass's resolution.
 - A new named identifier outside the two enumerated forms now fails loudly at `Create` instead
   of producing an un-updatable shape. That is the intended failure direction.
-- Tests pin the direction of the z-order prefix logic in both directions, because reading
-  `ZOrderPosition` backwards would leave a mis-stacked chart while looking like a saving.
+- Z-order tests assert the **resulting stack**, not the call list: a call list cannot tell a
+  correct pass from an inverted one, which is exactly how the first version of O5 survived its
+  own tests. Every 3-shape starting permutation is pinned, plus the reversed and
+  unusable-position cases.
 
 ## Validation
 

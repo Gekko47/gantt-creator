@@ -661,22 +661,32 @@ public class ExcelShapeWriter(
         // the single deterministic pass R4.5 D2 requires: no BringToFront, and no
         // per-shape call outside this method.
         //
-        // O5 (ADR-0054): only the shapes that are actually out of order are moved. The
-        // BACK-TO-FRONT prefix of the desired order whose live positions already decrease
-        // is already correct and stays put; the remainder is pushed to the back in
-        // front-to-back order, which lands it in exactly the desired order behind the
-        // prefix. A read costs ~0.03-0.1 ms and a ZOrder command is a write at 0.6-2.7 ms,
-        // so reading N positions to skip most of the writes is a large win, and a pass
-        // whose order is already correct now issues no writes at all.
+        // O5 (ADR-0054): only the shapes that are actually out of order are moved. A read
+        // costs ~0.03-0.1 ms and a ZOrder command is a write at 0.6-2.7 ms, so reading N
+        // positions to skip most of the writes is a large win, and a pass whose order is
+        // already correct issues no writes at all.
         //
-        // "Position" is one-based with 1 as the FRONT-most shape, so a correct
-        // back-to-front ordering has strictly DECREASING positions as the index advances.
-        // Reading that direction wrong is not a performance bug: it would accept a
-        // front-anchored run as ordered and leave the chart mis-stacked, which is why the
-        // comparison is pinned by tests in both directions.
-        int bound = 0;
-        int previousPosition = 0;
-        for (int index = 0; index < resolved.Count; index++)
+        // Two facts fix which end can be skipped, and getting either wrong silently leaves
+        // the chart mis-stacked rather than merely slower.
+        //
+        // ONE: `Shape.ZOrderPosition` is the shape's index in the Shapes collection and
+        // Shapes(1) is the shape at the BACK of the z-order (Microsoft, Shape.ZOrderPosition
+        // remarks). So a correct back-to-front run has strictly INCREASING positions as the
+        // index advances.
+        //
+        // TWO: msoSendToBack is absolute, so every shape this loop touches ends up behind
+        // every shape it does not. The untouched shapes therefore always finish in FRONT of
+        // the moved ones, which means only the FRONT-most run of the desired order may be
+        // left alone: it keeps its relative order and stays above the pass. Skipping a
+        // back-most run would push the touched shapes behind it, inverting exactly what was
+        // skipped — the defect this comment replaces.
+        //
+        // So: find the longest front run already in correct relative order, and push
+        // everything before it to the back, front-to-back, which is the original full pass
+        // applied to a prefix.
+        int moveCount = resolved.Count;
+        int previousPosition = int.MaxValue;
+        for (int index = resolved.Count - 1; index >= 0; index--)
         {
             int position = GetZOrderPosition(resolved[index]);
             if (position <= 0)
@@ -684,21 +694,20 @@ public class ExcelShapeWriter(
                 // The host did not report a usable position (a test double, or a shape the
                 // host will not describe). Fall back to the full pass rather than trust a
                 // partial order: the pass is absolute and always converges.
-                bound = 0;
+                moveCount = resolved.Count;
                 break;
             }
 
-            if (index > 0 && position >= previousPosition)
+            if (position >= previousPosition)
             {
-                bound = index;
                 break;
             }
 
             previousPosition = position;
-            bound = index + 1;
+            moveCount = index;
         }
 
-        for (int index = resolved.Count - 1; index >= bound; index--)
+        for (int index = moveCount - 1; index >= 0; index--)
         {
             resolved[index].ZOrder(MsoZOrderCmd.msoSendToBack);
         }
