@@ -322,12 +322,86 @@ public class WorksheetProtectionGuardTests
     }
 
     /// <summary>
+    /// ADR-0055: a protected sheet the add-in owns is authorised, so the add-in can refresh the
+    /// very worksheet it protected in order to lock the chart shapes.
+    /// </summary>
+    [Fact]
+    public void A_protected_sheet_the_add_in_owns_is_authorised()
+    {
+        var ownership = new ProtectionOwnershipSource();
+        ownership.Set(true);
+        TestableGuard guard = OwnedGuard(ownership);
+
+        Assert.Equal(ProtectionGuardOutcome.NotProtected, guard.Query());
+        Assert.Equal(
+            ProtectionGuardOutcome.NotProtected,
+            guard.QueryTarget(new Mock<Excel._Worksheet>().Object));
+    }
+
+    /// <summary>
+    /// The counterpart guard: protection the add-in does not recognise still refuses, which is
+    /// every workbook until the setting says the add-in owns it.
+    /// </summary>
+    [Fact]
+    public void A_protected_sheet_the_add_in_does_not_own_still_refuses()
+    {
+        // Ownership is never set, which is the default state of a fresh source.
+        TestableGuard guard = OwnedGuard(new ProtectionOwnershipSource());
+
+        Assert.Equal(ProtectionGuardOutcome.SheetProtected, guard.Query());
+        Assert.Equal(
+            ProtectionGuardOutcome.SheetProtected,
+            guard.QueryTarget(new Mock<Excel._Worksheet>().Object));
+    }
+
+    /// <summary>
+    /// Structural protection is never authorised by ownership: it blocks workbook-level changes
+    /// the add-in does not own, so it keeps refusing even when content protection is ours.
+    /// </summary>
+    [Fact]
+    public void Workbook_structure_protection_refuses_even_when_the_add_in_owns_sheet_protection()
+    {
+        var ownership = new ProtectionOwnershipSource();
+        ownership.Set(true);
+        TestableGuard guard = OwnedGuard(ownership, structureProtected: true);
+
+        Assert.Equal(ProtectionGuardOutcome.WorkbookStructureProtected, guard.Query());
+    }
+
+    /// <summary>
+    /// Builds a guard whose host reports a protected active sheet, with the ownership fact the
+    /// refresh would have handed it.
+    /// </summary>
+    /// <param name="ownership">The ownership source under test.</param>
+    /// <param name="structureProtected">Whether the workbook's structure is protected too.</param>
+    /// <returns>The guard.</returns>
+    private static TestableGuard OwnedGuard(
+        IProtectionOwnershipSource ownership,
+        bool structureProtected = false)
+    {
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        var sheet = new Mock<Excel._Worksheet>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.ActiveSheet).Returns(sheet.Object);
+        _ = workbook.SetupGet(w => w.ProtectStructure).Returns(structureProtected);
+        _ = sheet.SetupGet(s => s.ProtectContents).Returns(true);
+
+        return new TestableGuard(application.Object, ownership)
+        {
+            StructureProtectedReturnValue = structureProtected,
+            SheetProtectedReturnValue = true,
+        };
+    }
+
+    /// <summary>
     /// A guard whose protection-probe seams are injectable, so the contract test
     /// can prove the PIA properties are wired rather than hardcoded.
     /// </summary>
     private sealed class TestableGuard : ExcelWorksheetProtectionGuard
     {
-        public TestableGuard(object? application) : base(application)
+        public TestableGuard(object? application, IProtectionOwnershipSource? ownership = null)
+            : base(application, ownership)
         {
             StructureProtectedReturnValue = true;
             SheetProtectedReturnValue = true;

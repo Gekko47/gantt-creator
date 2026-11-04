@@ -33,11 +33,18 @@ reference establishes four facts that the design has to obey:
    **22**). The key is both the ownership record and the user's switch: `FALSE` means the add-in
    neither protects nor re-protects, and the sheet behaves exactly as it did before.
 3. **The guard authorises our own protection.** `ExcelWorksheetProtectionGuard` returns
-   `NotProtected` when the sheet is protected **and** the workbook records that we own it **and**
-   `ProtectDrawingObjects` is true; every other protected state keeps returning `SheetProtected`.
-   The existing enum member is reused deliberately: `NotProtected` is what all 24 call sites
-   actually rely on ("writes are authorised"), and adding a member would demand an audit of every
-   one of them for no behavioural difference. The enum's documentation states the widened meaning.
+   `NotProtected` when the sheet is protected **and** the workbook records that we own it; every
+   other protected state keeps returning `SheetProtected`. The existing enum member is reused
+   deliberately: `NotProtected` is what all 24 call sites actually rely on ("writes are
+   authorised"), and adding a member would demand an audit of every one of them for no behavioural
+   difference. The enum's documentation states the widened meaning.
+
+   `ProtectDrawingObjects` is deliberately **not** part of the authorisation test. It describes the
+   lock's behaviour, not whose protection this is, and requiring it would refuse writes to a sheet
+   we own whose shape flag had been lost — exactly the state a refresh must repair. The ownership
+   fact reaches the guard through `IProtectionOwnershipSource`, set from the configuration the
+   refresh has already read, so the decision costs **no host call**; a guard that read the
+   configuration itself would add a second config read to every command and every refresh.
 4. **Owned shapes are locked.** `Locked = msoTrue` joins the ADR-0019 ownership stamp on create,
    and the existing `ListOwned` walk back-fills it once on shapes created before this change.
 5. **Refresh re-arms protection before it writes.** Because `UserInterfaceOnly` does not survive a

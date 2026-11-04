@@ -62,7 +62,8 @@ public sealed class GanttRefreshOrchestrator(
     ChangeTracker? changeTracker = null,
     ShapeDeltaCache? shapeDeltaCache = null,
     bool useDeltaCache = true,
-    Action<string>? trace = null)
+    Action<string>? trace = null,
+    ProtectionOwnershipSource? protectionOwnership = null)
     : IGanttRefreshOrchestrator
 {
     private readonly IGanttTableReader _tableReader = tableReader ?? throw new ArgumentNullException(nameof(tableReader));
@@ -93,6 +94,24 @@ public sealed class GanttRefreshOrchestrator(
     /// scan is needed to clear stale reports.
     /// </summary>
     private readonly IRowWarningHighlighter? _rowWarningHighlighter = rowWarningHighlighter;
+
+    /// <summary>
+    /// Records whether this refresh's workbook lets the add-in own the Gantt worksheet's
+    /// protection, or <see langword="null"/> when nothing consumes the fact (ADR-0055).
+    /// </summary>
+    /// <remarks>
+    /// Set from the configuration step 2 has already read, so the guard's ownership decision adds
+    /// no host call to the pass. Without a source the guard refuses every protected sheet exactly
+    /// as it always has.
+    /// </remarks>
+    private readonly ProtectionOwnershipSource? _protectionOwnership = protectionOwnership;
+
+    /// <summary>
+    /// The setting key that records whether the add-in owns the Gantt worksheet's protection
+    /// (ADR-0055). Part of the workbook schema, so it is named here rather than restated at the
+    /// read site.
+    /// </summary>
+    private const string _protectGanttSheetSettingKey = "ProtectGanttSheet";
 
     /// <summary>Tracks pending automatic changes until a complete render succeeds.</summary>
     private readonly ChangeTracker? _changeTracker = changeTracker;
@@ -231,6 +250,15 @@ public sealed class GanttRefreshOrchestrator(
             return Refuse(
                 GanttRefreshRefusal.ConfigurationUnreadable,
                 "The Gantt Creator configuration could not be read from the hidden configuration sheet.");
+        }
+
+        // Step 2b. Record protection ownership from the configuration just read (ADR-0055), so the
+        // guard below can authorise the add-in's own protection instead of refusing the worksheet
+        // it protected in order to lock the chart shapes. This is a field assignment, not a host
+        // call: the setting travelled with the read at step 2.
+        if (_protectionOwnership is { } ownership)
+        {
+            ownership.Set(ProtectsGanttSheet(config));
         }
 
         // Step 3. The mutation boundary, consulted before any write. A protected
@@ -720,6 +748,20 @@ public sealed class GanttRefreshOrchestrator(
     /// </remarks>
     private static double ThemedMetric(IReadOnlyDictionary<string, double> metrics, string tokenName) =>
         metrics.TryGetValue(tokenName, out double value) ? value : GanttCatalogues.MetricDefault(tokenName);
+
+    /// <summary>
+    /// Reads whether the workbook records that the add-in owns the Gantt worksheet's protection.
+    /// </summary>
+    /// <param name="config">The configuration this refresh already read.</param>
+    /// <returns><see langword="true"/> unless the setting is explicitly <c>FALSE</c>.</returns>
+    /// <remarks>
+    /// Absent means "on", which is the key's catalogue default: a workbook written before schema 22
+    /// reports a schema mismatch and is repaired by Initialise, so the fallback only matters while
+    /// a configuration is being built.
+    /// </remarks>
+    private static bool ProtectsGanttSheet(ConfigReadOutcome config) =>
+        !config.Settings.TryGetValue(_protectGanttSheetSettingKey, out string? value)
+        || !string.Equals(value, "FALSE", StringComparison.Ordinal);
 
     /// <summary>
     /// Writes one diagnostic line summarising the delta decision this run will take,

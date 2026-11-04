@@ -17,6 +17,11 @@ namespace GanttCreator.Office;
 /// supplied none. A foreign object fails the interface cast and degrades to the
 /// <c>NoActiveWorkbook</c> outcome.
 /// </param>
+/// <param name="ownershipSource">
+/// Supplies whether the protection on the Gantt worksheet is the add-in's own (ADR-0055), or
+/// <see langword="null"/> when no ownership is configured — in which case a protected sheet
+/// refuses exactly as it always has.
+/// </param>
 /// <remarks>
 /// <para>
 /// COM ownership: the <c>Application</c>, <c>Workbook</c>, and
@@ -44,9 +49,21 @@ namespace GanttCreator.Office;
 /// exercised by the tagged live-Office integration test.
 /// </para>
 /// </remarks>
-public class ExcelWorksheetProtectionGuard(object? application) : IWorksheetProtectionGuard
+public class ExcelWorksheetProtectionGuard(
+    object? application,
+    IProtectionOwnershipSource? ownershipSource = null) : IWorksheetProtectionGuard
 {
     private readonly Excel.Application? _application = application as Excel.Application;
+
+    /// <summary>
+    /// The ownership fact, or <see langword="null"/> when none is configured.
+    /// </summary>
+    /// <remarks>
+    /// Read as a field, never fetched: ADR-0055 requires the ownership decision to add no host
+    /// call to the refresh, so the answer is handed in once and read here as many times as the
+    /// guard is asked.
+    /// </remarks>
+    private readonly IProtectionOwnershipSource? _ownershipSource = ownershipSource;
 
     /// <inheritdoc />
     public ProtectionGuardOutcome Query()
@@ -71,9 +88,7 @@ public class ExcelWorksheetProtectionGuard(object? application) : IWorksheetProt
         Excel._Worksheet? sheet = GetActiveSheet(workbook);
         return sheet is null
             ? ProtectionGuardOutcome.NoActiveWorkbook
-            : IsWorksheetProtected(sheet)
-                ? ProtectionGuardOutcome.SheetProtected
-                : ProtectionGuardOutcome.NotProtected;
+            : ProtectedOutcome(sheet);
     }
 
     /// <inheritdoc />
@@ -91,11 +106,38 @@ public class ExcelWorksheetProtectionGuard(object? application) : IWorksheetProt
             : IsWorkbookStructureProtected(workbook)
                 ? ProtectionGuardOutcome.WorkbookStructureProtected
                 : target is Excel._Worksheet sheet
-                    ? IsWorksheetProtected(sheet)
-                        ? ProtectionGuardOutcome.SheetProtected
-                        : ProtectionGuardOutcome.NotProtected
+                    ? ProtectedOutcome(sheet)
                     : ProtectionGuardOutcome.NoActiveWorkbook;
     }
+
+    /// <summary>
+    /// Maps a worksheet's protection state to the guard's answer, honouring add-in ownership.
+    /// </summary>
+    /// <param name="worksheet">The worksheet the caller intends to write.</param>
+    /// <returns>
+    /// <see cref="ProtectionGuardOutcome.NotProtected"/> when the sheet is open or the add-in owns
+    /// the protection, otherwise <see cref="ProtectionGuardOutcome.SheetProtected"/>.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Ownership (ADR-0055).</b> The add-in protects the visible Gantt worksheet so its shapes
+    /// can be locked, which would otherwise make the sheet unwritable to the very code that
+    /// protects it. When ownership is recorded, a protected sheet is authorised; when it is not,
+    /// every protected sheet refuses exactly as before.
+    /// </para>
+    /// <para>
+    /// <b>Why the flag names no worksheet.</b> It cannot: COM proxies for the same sheet are not
+    /// reliably reference-equal, and asking "is this the sheet we protected" would cost a table
+    /// walk on every call — the extra step ADR-0055 forbids. The invariant that makes the flag
+    /// sufficient is that the add-in protects exactly one worksheet, the visible Gantt sheet, and
+    /// every guard call site acts on that sheet or on the VeryHidden configuration sheet, which
+    /// the add-in never protects.
+    /// </para>
+    /// </remarks>
+    private ProtectionGuardOutcome ProtectedOutcome(Excel._Worksheet worksheet) =>
+        !IsWorksheetProtected(worksheet) || _ownershipSource?.AddInOwnsProtection == true
+            ? ProtectionGuardOutcome.NotProtected
+            : ProtectionGuardOutcome.SheetProtected;
 
     /// <summary>
     /// Returns the active sheet of the workbook. Test seam over the COM

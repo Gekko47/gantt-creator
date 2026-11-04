@@ -335,6 +335,11 @@ public sealed class ProtectionGuardFirstTests
         // implementation is the one declared protection-control adapter, which cannot
         // consult the guard for the reason recorded on ProtectionControlAdapters.
         "src/GanttCreator.Office/IWorksheetProtectionPort.cs",
+        // ADR-0055: the protection-ownership fact the guard reads. An interface plus a
+        // single volatile boolean - no interop proxy, no host call, and nothing to
+        // guard. It exists precisely so the ownership decision costs the refresh no
+        // round trip, which is why it must stay a plain in-memory flag.
+        "src/GanttCreator.Office/ProtectionOwnershipSource.cs",
     ];
 
     /// <summary>
