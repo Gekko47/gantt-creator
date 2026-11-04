@@ -179,6 +179,11 @@ public sealed class ProtectionGuardFirstTests
         // recovery unreachable. It touches COM only through IWorksheetProtectionPort and
         // IShapeWritePort, so the policy itself is contract-tested without a host.
         "src/GanttCreator.Office/WorksheetProtectionArming.cs",
+        // ADR-0055: the release window. The same exception again, and unavoidably so: it releases
+        // the sheet precisely because the sheet is protected, then re-applies protection afterwards.
+        // Its whole job is the state the guard refuses, and it holds no COM of its own - it talks to
+        // IWorksheetProtectionPort only.
+        "src/GanttCreator.Office/WorksheetProtectionWindow.cs",
     ];
 
     /// <summary>

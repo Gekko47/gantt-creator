@@ -1556,28 +1556,26 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// The arming step locks the owned shapes BEFORE it protects the sheet, and protects it once.
+    /// The arming step locks the owned shapes and leaves the sheet RELEASED for the write phase.
     /// </summary>
     /// <remarks>
-    /// The order is the assertion, not the call count: a shape created before ADR-0055 is still
-    /// unlocked, and once the sheet is protected the back-fill cannot write it back, so a
-    /// protect-then-lock sequence would leave exactly the shapes this feature exists for still
-    /// draggable. The port's own callback observes what had already run at the moment of
-    /// <c>Protect</c>, because two fakes' call lists cannot be compared for relative order.
+    /// Not protecting here is the correction the live measurement forced: a protected sheet refuses
+    /// shape creation, so arming must end with the sheet open and <see cref="WorksheetProtectionWindow"/>
+    /// re-applies the protection when the writes finish. A lock-then-protect sequence inside this step
+    /// would make the very first refresh fail at its first shape write.
     /// </remarks>
     [Fact]
-    public void A_refresh_locks_the_owned_shapes_before_it_protects_the_sheet()
+    public void A_refresh_locks_the_owned_shapes_and_leaves_the_sheet_released()
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
-        bool lockedBeforeProtect = false;
-        fakes.SheetProtection.OnProtect = () => lockedBeforeProtect = fakes.Shapes.LockOwnedShapesCallCount == 1;
 
         GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.True(lockedBeforeProtect, "the sweep had not run when Protect was called");
-        Assert.Equal(["Read", "Protect"], fakes.SheetProtection.Calls);
+        Assert.Equal(1, fakes.Shapes.LockOwnedShapesCallCount);
+        Assert.Equal(["Read"], fakes.SheetProtection.Calls);
         Assert.True(fakes.SheetProtectionArming.IsArmed);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
     }
 
     /// <summary>
@@ -1596,16 +1594,17 @@ public class GanttRefreshOrchestratorTests
         Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
         Assert.True(fakes.BuildOrchestratorWithProtection().Refresh().Succeeded);
 
-        Assert.Equal(1, fakes.SheetProtection.ProtectCount);
+        Assert.Equal(0, fakes.SheetProtection.ProtectCount);
+        Assert.Equal(["Read"], fakes.SheetProtection.Calls);
         Assert.Equal(1, fakes.Shapes.LockOwnedShapesCallCount);
     }
 
     /// <summary>
-    /// A sheet that was already protected is released before it is protected again, because
-    /// <c>UserInterfaceOnly</c> does not survive a reopen.
+    /// A sheet that was already protected is released, because <c>UserInterfaceOnly</c> does not
+    /// survive a reopen and the write phase needs an open sheet.
     /// </summary>
     [Fact]
-    public void An_already_protected_sheet_is_unprotected_before_it_is_reprotected()
+    public void An_already_protected_sheet_is_released_before_the_writes()
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
         fakes.SheetProtection.State = new WorksheetProtectionState(ContentsProtected: true, ShapesProtected: true);
@@ -1613,7 +1612,8 @@ public class GanttRefreshOrchestratorTests
         GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection().Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.Equal(["Read", "Unprotect", "Protect"], fakes.SheetProtection.Calls);
+        Assert.Equal(["Read", "Unprotect"], fakes.SheetProtection.Calls);
+        Assert.False(fakes.SheetProtection.State!.ContentsProtected);
     }
 
     /// <summary>
@@ -1641,28 +1641,26 @@ public class GanttRefreshOrchestratorTests
     }
 
     /// <summary>
-    /// A refused protection write loses the lock, not the chart, and leaves the arming unmarked.
+    /// A refused lock sweep loses the lock, not the chart, and is recorded.
     /// </summary>
     /// <remarks>
-    /// Two separate claims. The refresh still rendering is the product decision — no chart at all is
-    /// worse than a correct chart the user can drag. Staying unarmed is what makes the next pass
-    /// retry instead of assuming a lock that was never applied, and the trace is the only evidence
-    /// the user can act on, so it is asserted rather than assumed.
+    /// The refresh still rendering is the product decision — no chart at all is worse than a correct
+    /// chart the user can drag — and the trace is the only evidence a user can act on, so it is
+    /// asserted rather than assumed.
     /// </remarks>
     [Fact]
-    public void A_refused_protection_write_keeps_the_chart_and_leaves_the_arming_unmarked()
+    public void A_refused_lock_sweep_keeps_the_chart_and_is_recorded()
     {
         RefreshFakes fakes = new() { Rows = ValidRows() };
-        fakes.SheetProtection.ProtectRefusal = ProtectionWriteRefusal.HostRejected;
+        fakes.Shapes.Refusals["LockOwnedShapes"] = ShapeWriteRefusal.TargetProtected;
         List<string> traces = [];
 
         GanttRefreshOutcome outcome = fakes.BuildOrchestratorWithProtection(traces.Add).Refresh();
 
         Assert.True(outcome.Succeeded, "refusal=" + outcome.Refusal + " msg=" + outcome.Message);
-        Assert.False(fakes.SheetProtectionArming.IsArmed);
         Assert.Contains(
             traces,
-            line => line.Contains("protect refused=HostRejected", StringComparison.Ordinal));
+            line => line.Contains("lock refused=TargetProtected", StringComparison.Ordinal));
     }
 
     /// <summary>

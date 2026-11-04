@@ -4,7 +4,7 @@ namespace GanttCreator.AddIn;
 
 /// <summary>
 /// Moves the row under the active cell down one position (R5.4 D5): the
-/// mirror of <see cref="MoveUpCommand"/> — a top-level row swaps its window
+/// mirror of <see cref="MoveUpCommand"/> ÔÇö a top-level row swaps its window
 /// with the group below it, a child swaps with its next sibling, and the
 /// bottom of the set is a silent success with zero cells written (R5.4 D4).
 /// The command owns outcome-to-message translation; the selection
@@ -13,7 +13,13 @@ namespace GanttCreator.AddIn;
 internal static class MoveDownCommand
 {
     /// <summary>Runs the production move-down command in the current Excel session.</summary>
-    internal static void RunForExcel() =>
+    internal static void RunForExcel()
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelParentChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
@@ -21,6 +27,7 @@ internal static class MoveDownCommand
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
             RibbonStateService.Instance.ScheduleAutomaticRefresh);
+    }
 
     /// <summary>Runs an injected move-down command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>
@@ -44,7 +51,7 @@ internal static class MoveDownCommand
 
         ParentChildMutationOutcome outcome = mutator.MoveDown();
 
-        // R2.2/R2.6 and R5.4 D4: success is silent — including the boundary
+        // R2.2/R2.6 and R5.4 D4: success is silent ÔÇö including the boundary
         // no-op, which writes zero cells and reports nothing because the
         // user asked for a move that cannot happen.
         if (outcome.Succeeded)

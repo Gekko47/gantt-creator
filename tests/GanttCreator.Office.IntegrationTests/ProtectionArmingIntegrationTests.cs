@@ -68,49 +68,59 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             sheet.Shapes.Item("probe:control").Left = 250f;
             _output.WriteLine("controls: create, insert and move all succeed unprotected");
 
+            // Arming ends with the sheet RELEASED: a protected sheet refuses shape creation (measured
+            // below), so protecting during arming would break the write it exists to enable. The
+            // window re-applies it when the write phase ends.
             protection.Arm(protects: true);
             ownership.Set(arming.IsArmed);
+            Assert.True(arming.IsArmed);
+            Assert.False(sheet.ProtectContents);
+            _output.WriteLine("armed: sheet released for the write phase, arming recorded");
+
+            Excel.Range probeCell = (Excel.Range)scope.Track(sheet.Cells[4, 2]);
+
+            // The refresh's write phase, inside the window.
+            var window = new WorksheetProtectionWindow(port, arming, _output.WriteLine);
+            using (window.Open())
+            {
+                Assert.True(writer.Create(BarRequest("probe:live")).Succeeded);
+                sheet.Shapes.Item("probe:control").Left = 300f;
+                Assert.True(Insert(inserter, '2').Succeeded);
+                Assert.True(writer.LockOwnedShapes().Succeeded);
+                _output.WriteLine("create, move, insert and lock all succeed inside the window");
+            }
+
+            // Closing the window restores the user-facing lock.
             Assert.True(sheet.ProtectContents);
             Assert.True(sheet.ProtectDrawingObjects);
-            _output.WriteLine("armed: contents=True drawings=True");
+            _output.WriteLine("window closed: contents=True drawings=True");
 
-            // 1. A cell write is exempt, which is what lets a command repair Duration or StyleKey.
-            Excel.Range probeCell = (Excel.Range)scope.Track(sheet.Cells[4, 2]);
-            probeCell.Value2 = "probe";
-            Assert.Equal("probe", probeCell.Value2);
-            _output.WriteLine("cell write on the protected sheet: ok");
-
-            // 2. Creating a shape is NOT exempt, and the host's message names no cause.
+            // What the lock actually does, and the one write it still allows.
             COMException createRefusal = Assert.Throws<COMException>(
                 () => writer.Create(BarRequest("probe:protected")));
             _output.WriteLine("shape create on the protected sheet: " + createRefusal.Message);
 
-            // 3. Moving a shape is NOT exempt either.
             ArgumentException moveRefusal = Assert.Throws<ArgumentException>(
-                () => sheet.Shapes.Item("probe:control").Left = 300f);
+                () => sheet.Shapes.Item("probe:control").Left = 320f);
             _output.WriteLine("shape move on the protected sheet: " + moveRefusal.Message);
 
-            // 4. Inserting a table row is refused by the add-in's own write path.
-            GanttRowInsertOutcome insert = Insert(inserter, '2');
+            GanttRowInsertOutcome insert = Insert(inserter, '3');
             Assert.False(insert.Succeeded);
             Assert.Equal(GanttRowInsertRefusalReason.RowWriteRefused, insert.Refusal);
             _output.WriteLine("row insert on the protected sheet: refused " + insert.Refusal);
 
-            // 5. Stamping Locked is exempt, which is why the arming sweeps before it protects.
-            Assert.True(writer.LockOwnedShapes().Succeeded);
-            _output.WriteLine("lock sweep on the protected sheet: ok");
-
-            // 6. The release window: everything the refresh does works again.
-            Assert.True(port.Unprotect().Succeeded);
-            Assert.True(writer.Create(BarRequest("probe:released")).Succeeded);
-            Assert.True(Insert(inserter, '3').Succeeded);
-            _output.WriteLine("create and insert after the release: ok");
-
-            // 7. Re-protecting restores the user-facing lock without blocking cell writes.
-            Assert.True(port.Protect().Succeeded);
             probeCell.Value2 = "probe2";
             Assert.Equal("probe2", probeCell.Value2);
-            _output.WriteLine("cell write after re-protecting: ok");
+            _output.WriteLine("cell write on the protected sheet: ok");
+
+            // A second window round-trips again, which is what every refresh relies on.
+            using (window.Open())
+            {
+                Assert.True(writer.Create(BarRequest("probe:live2")).Succeeded);
+            }
+
+            Assert.True(sheet.ProtectContents);
+            _output.WriteLine("second window: wrote and re-protected");
 
             _ = port.Unprotect();
         }

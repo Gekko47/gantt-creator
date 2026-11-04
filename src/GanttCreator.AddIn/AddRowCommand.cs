@@ -12,7 +12,12 @@ internal static class AddRowCommand
 {
     /// <summary>Runs the production add-row command in the current Excel session.</summary>
     /// <param name="type">The canonical catalogue type to insert.</param>
-    internal static void RunForExcel(GanttEntityType type) =>
+    internal static void RunForExcel(GanttEntityType type)
+    {
+        // ADR-0055: inserting a table row is refused on a protected sheet (measured), so the command
+        // runs inside the release window. The render this triggers opens the same window and nests.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelGanttRowInserter(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
@@ -21,6 +26,7 @@ internal static class AddRowCommand
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
             type);
+    }
 
     /// <summary>Runs an injected add-row command.</summary>
     /// <param name="inserter">The row insertion port.</param>

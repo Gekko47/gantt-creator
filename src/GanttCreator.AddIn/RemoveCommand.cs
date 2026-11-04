@@ -26,7 +26,13 @@ internal static class RemoveCommand
     private static readonly ConfirmationSession _session = new();
 
     /// <summary>Runs the production remove command in the current Excel session.</summary>
-    internal static void RunForExcel() =>
+    internal static void RunForExcel()
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelParentChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
@@ -34,6 +40,7 @@ internal static class RemoveCommand
             CommandErrorDialog.Confirm,
             CommandErrorDialog.Show,
             RibbonStateService.Instance.ScheduleAutomaticRefresh);
+    }
 
     /// <summary>Runs an injected remove command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>
@@ -123,7 +130,7 @@ internal static class RemoveCommand
         {
             // R5.4 D11-amended: the delete removed a worksheet
             // row and its anchored shapes, so the chart is
-            // rebuilt now — even when the rehomed-children
+            // rebuilt now ÔÇö even when the rehomed-children
             // resequence wrote zero cells (a lone row delete
             // still changed the sheet).
             onMutated?.Invoke();

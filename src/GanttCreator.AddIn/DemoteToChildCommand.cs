@@ -15,13 +15,20 @@ namespace GanttCreator.AddIn;
 internal static class DemoteToChildCommand
 {
     /// <summary>Runs the production demote command in the current Excel session.</summary>
-    internal static void RunForExcel() =>
+    internal static void RunForExcel()
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelParentChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
                 outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show);
+    }
 
     /// <summary>Runs an injected demote command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>

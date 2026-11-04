@@ -52,16 +52,23 @@ public sealed class WorksheetProtectionArming(
     /// <param name="protects">Whether the configuration the refresh already read asks for it.</param>
     /// <remarks>
     /// <para>
-    /// The order is <b>read → release (if protected) → lock the shapes → protect</b>. The release is
-    /// required because <c>UserInterfaceOnly</c> is not persisted, so a sheet protected in an earlier
-    /// session still refuses this add-in's writes. The lock runs between the release and the protect
-    /// because the shape writer's own guard refuses a protected sheet — this is the only window in
-    /// which shapes created before ADR-0055 can be reached.
+    /// The order is <b>read → release (if protected) → lock the shapes → record armed</b>. The release
+    /// is required because <c>UserInterfaceOnly</c> is not persisted, so a sheet protected in an
+    /// earlier session still refuses this add-in's writes; the lock runs after it because the shape
+    /// writer's own guard refuses a protected sheet, and this is the only moment shapes created
+    /// before ADR-0055 can be reached.
+    /// </para>
+    /// <para>
+    /// <b>Arming deliberately ends with the sheet RELEASED.</b> Measured live: a protected sheet
+    /// refuses shape creation, shape movement and row insertion, so protecting here would stop the
+    /// very write the arming exists to enable. <see cref="WorksheetProtectionWindow"/> re-applies the
+    /// protection when the write phase ends, which is also what makes the sheet locked again between
+    /// refreshes.
     /// </para>
     /// <para>
     /// Nothing here refuses the refresh: a protection write the host rejects loses the lock, not the
-    /// chart, and the state stays unarmed so the next pass tries again. An opt-out after the sheet
-    /// was armed releases it, because the sheet is then the user's to manage.
+    /// chart. An opt-out after the sheet was armed releases it and clears the state, because the
+    /// sheet is then the user's to manage.
     /// </para>
     /// </remarks>
     public void Arm(bool protects)
@@ -90,12 +97,9 @@ public sealed class WorksheetProtectionArming(
 
         Record(_shapeWriter.LockOwnedShapes(), "lock");
 
-        ProtectionWriteOutcome applied = _port.Protect();
-        Record(applied, "protect");
-        if (applied.Succeeded)
-        {
-            _state.MarkArmed();
-        }
+        // No Protect here, on purpose: the window that wraps the write phase re-applies it. See the
+        // remarks above and the measured table in ADR-0055.
+        _state.MarkArmed();
     }
 
     /// <summary>Records a protection write that did not succeed, or nothing when it did.</summary>

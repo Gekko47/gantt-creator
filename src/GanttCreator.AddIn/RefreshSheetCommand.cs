@@ -32,13 +32,47 @@ internal static class RefreshSheetCommand
     /// The session's arming memory (ADR-0055). It must outlive one orchestrator, because the live
     /// composition builds a new one for every refresh.
     /// </summary>
-    /// <remarks>
-    /// Kept even though the live composition does not arm yet: the measured host behaviour
-    /// (see <c>ProtectionArmingIntegrationTests</c>) shows that a protected sheet refuses shape
-    /// creation, shape movement and table-row insertion, so arming cannot be switched back on until
-    /// the refresh and every structural command open a release window around their writes.
-    /// </remarks>
     private static readonly ProtectionArmingState _protectionArming = ProtectionArmingState.Shared;
+
+    /// <summary>
+    /// The session's protection-ownership flag, shared with every adapter's guard so the add-in's
+    /// own protection does not block its own writes.
+    /// </summary>
+    private static readonly ProtectionOwnershipSource _protectionOwnership = ProtectionOwnershipSource.Shared;
+
+    /// <summary>
+    /// The process's one release window, so nesting is by depth across commands: Add activity opens
+    /// it, the refresh it triggers opens it again, and only the outermost scope re-protects.
+    /// </summary>
+    private static WorksheetProtectionWindow? _protectionWindow;
+
+    /// <summary>Resolves the release window for this Excel session (ADR-0055).</summary>
+    /// <param name="application">The Excel application object.</param>
+    /// <returns>The shared window.</returns>
+    /// <remarks>
+    /// One instance per process because the depth is the mechanism: a per-call window would let the
+    /// refresh re-protect the sheet while the command that triggered it still has to write. The
+    /// application object is a stable Excel-owned root for the session, so the port built from the
+    /// first one stays valid.
+    /// </remarks>
+    private static WorksheetProtectionWindow ProtectionWindowFor(object? application) =>
+        _protectionWindow ??= new WorksheetProtectionWindow(
+            new ExcelWorksheetProtectionPort(application),
+            _protectionArming,
+            CommandBoundary.Instance.WriteTechnicalRecord);
+
+    /// <summary>
+    /// Opens the ADR-0055 release window for a command that changes the sheet's structure or shapes.
+    /// </summary>
+    /// <returns>The scope that re-applies protection when the command finishes.</returns>
+    /// <remarks>
+    /// The row commands share the refresh's window instance, so a command that inserts a row and then
+    /// triggers a render releases once and protects once, at the outermost boundary. Cell-only
+    /// commands do not need this: the live measurement shows a protected sheet still accepts cell
+    /// writes.
+    /// </remarks>
+    internal static IDisposable OpenProtectionWindow() =>
+        ProtectionWindowFor(ExcelDna.Integration.ExcelDnaUtil.Application).Open();
 
     internal static void ResetDeltaCache() => _shapeDeltaCache.Invalidate();
 
@@ -56,8 +90,13 @@ internal static class RefreshSheetCommand
     /// <summary>Runs the production refresh in the current Excel session.</summary>
     internal static void RunForExcel()
     {
-        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
-            ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: false);
+        object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+
+        // ADR-0055: the write phase runs with the add-in's protection released, because a protected
+        // sheet refuses shape creation and movement (measured; see ProtectionArmingIntegrationTests).
+        using IDisposable window = ProtectionWindowFor(application).Open();
+
+        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: false);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
         long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
@@ -94,8 +133,13 @@ internal static class RefreshSheetCommand
     /// </summary>
     internal static void RunSilentForExcel()
     {
-        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(
-            ExcelDna.Integration.ExcelDnaUtil.Application, useDeltaCache: true);
+        object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+
+        // ADR-0055: same window as the manual path, so a scheduled refresh can create and move shapes
+        // on a sheet the add-in owns.
+        using IDisposable window = ProtectionWindowFor(application).Open();
+
+        GanttRefreshOrchestrator orchestrator = CreateLiveOrchestrator(application, useDeltaCache: true);
         GanttRefreshOutcome outcome = orchestrator.Refresh();
         long refreshCompleted = Stopwatch.GetTimestamp();
         RibbonStateService.Instance.UpdateCurrentValidationIssues(outcome.ValidationIssues);
@@ -263,16 +307,18 @@ internal static class RefreshSheetCommand
             new ExcelTypeChangeNormaliser(application),
             shapeDeltaCache: _shapeDeltaCache,
             useDeltaCache: useDeltaCache,
-            trace: trace);
+            trace: trace,
 
-        // ADR-0055 is NOT armed here, deliberately. Measured live on 2026-11-04: with the sheet
-        // protected for the interface only, a cell write lands but Shapes.AddShape and Shape.Left
-        // raise "The specified value is out of range" and a table-row insert is refused -- so
-        // arming protection at this point breaks every refresh and every row command. The policy,
-        // the port, the ownership flag and the arming memory are all in place and contract-tested;
-        // what is missing is the release window around the writes, which needs the owner's ruling
-        // because it costs two host calls per refresh (ADR-0055's "no extra step" rule).
-        // ProtectionArmingIntegrationTests records the measurement.
+            // ADR-0055: the refresh arms the add-in's own protection (release -> lock -> record) and
+            // claims ownership only of protection this session applied. Both the ownership flag and
+            // the arming memory are session state, because a new orchestrator is built for every
+            // pass; the caller's release window re-applies the protection when the writes finish.
+            protectionOwnership: _protectionOwnership,
+            protectionArming: new WorksheetProtectionArming(
+                new ExcelWorksheetProtectionPort(application),
+                shapeWriter,
+                _protectionArming,
+                trace));
     }
 #pragma warning restore CA2000
 }

@@ -35,11 +35,17 @@ internal static class CollapseGroupsCommand
 {
     /// <summary>Runs the production collapse-all command in the current Excel session.</summary>
     internal static void RunForExcel(OutlineCollapseDirection direction)
-        => Run(
+    {
+        // ADR-0055: outline levels are a structural write, refused on a protected sheet, so the
+        // command runs inside the release window; the refresh it schedules opens its own.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
+        Run(
             new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application),
             direction,
             CommandErrorDialog.Show,
             RibbonStateService.Instance.ScheduleAutomaticRefresh);
+    }
 
     /// <summary>Runs an injected collapse-all command.</summary>
     /// <param name="outline">The outline port that performs the writes.</param>

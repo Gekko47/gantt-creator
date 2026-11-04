@@ -13,7 +13,13 @@ internal static class AddChildCommand
 {
     /// <summary>Runs the production add-child command in the current Excel session.</summary>
     /// <param name="childType">The catalogue type the new child will have.</param>
-    internal static void RunForExcel(GanttEntityType childType) =>
+    internal static void RunForExcel(GanttEntityType childType)
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelAddChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
@@ -24,6 +30,7 @@ internal static class AddChildCommand
             GanttRowId.New,
             CommandErrorDialog.Show,
             childType);
+    }
 
     /// <summary>Runs an injected add-child command.</summary>
     /// <param name="mutator">The add-child mutation port.</param>

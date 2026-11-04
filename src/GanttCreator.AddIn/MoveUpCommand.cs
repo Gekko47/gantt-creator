@@ -14,7 +14,13 @@ namespace GanttCreator.AddIn;
 internal static class MoveUpCommand
 {
     /// <summary>Runs the production move-up command in the current Excel session.</summary>
-    internal static void RunForExcel() =>
+    internal static void RunForExcel()
+    {
+        // ADR-0055: this command changes row structure or shapes, which a protected sheet
+        // refuses (measured), so it runs inside the release window. A render it triggers nests
+        // inside the same window and only the outermost scope re-protects.
+        using IDisposable window = RefreshSheetCommand.OpenProtectionWindow();
+
         Run(
             new ExcelParentChildMutator(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
@@ -22,6 +28,7 @@ internal static class MoveUpCommand
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,
             RibbonStateService.Instance.ScheduleAutomaticRefresh);
+    }
 
     /// <summary>Runs an injected move-up command.</summary>
     /// <param name="mutator">The parent/child mutation port.</param>
@@ -45,7 +52,7 @@ internal static class MoveUpCommand
 
         ParentChildMutationOutcome outcome = mutator.MoveUp();
 
-        // R2.2/R2.6 and R5.4 D4: success is silent — including the boundary
+        // R2.2/R2.6 and R5.4 D4: success is silent ÔÇö including the boundary
         // no-op, which writes zero cells and reports nothing because the
         // user asked for a move that cannot happen.
         if (outcome.Succeeded)

@@ -57,17 +57,25 @@ reference establishes four facts that the design has to obey:
    change. It is a separate operation rather than something `ListOwned` does, because `ListOwned`
    runs on every refresh and reading `Locked` once per shape per pass would cost more than the write
    it avoids. `Shape.Locked` is a `Boolean` on this PIA, not an `MsoTriState`.
-5. **Refresh arms protection before it writes, once per session.** The order is
-   **read → release (if protected) → lock the shapes → protect**, because `UserInterfaceOnly` does not
-   survive a reopen (so a sheet protected in an earlier session still refuses our writes) and because
-   the shape writer's own guard refuses a protected sheet (so the back-fill can only run while the
-   sheet is released). `ProtectionArmingState` records that the arming is in force, so a refresh that
-   follows one reads a bool instead of re-arming; the add-in invalidates it when the active workbook
-   changes, which is the one event that can make it wrong.
+5. **Every write phase runs inside a release window (owner ruling, 2026-11-04).** The live measurement
+   below shows a protected sheet refuses shape creation, shape movement and table-row insertion, so
+   the feature cannot simply "protect and let code through". The shape is:
 
-   **REVISED 2026-11-04 after the live measurement below: arming is currently NOT wired into the live
-   refresh.** The once-per-session assumption this clause was built on is false, so re-enabling it
-   needs a decision this ADR cannot make on its own (see "Measured host behaviour").
+   - **Arm once per session** (`WorksheetProtectionArming`): read the state → release if protected →
+     lock the owned shapes → record the arming. It ends with the sheet **released**, because
+     protecting here would stop the first write the arming exists to enable.
+   - **Write inside the window** (`WorksheetProtectionWindow`): `Open()` releases once, the outermost
+     scope's `Dispose()` re-applies `Protect(DrawingObjects, Contents, UserInterfaceOnly)` once, and
+     nesting is by depth so a command that triggers a render still releases exactly once. The scope is
+     returned even when nothing is armed, because arming can happen inside it; when nothing is armed
+     at either end the cost is a bool read and no host call.
+   - **Every refresh and every structural command opens one.** Refresh (manual and scheduled), Add
+     activity, Add child, Promote, Demote, Move up, Move down, Remove, and outline collapse. Cell-only
+     commands do not need it: cells are the one write the lock still allows.
+
+   The window costs **two host calls per write phase**, which the owner accepted in place of the
+   original "no extra step" wording. The sheet is unlocked for the few hundred milliseconds a refresh
+   takes and locked the rest of the time, which is the state the ruling asked for.
 6. **Unlock is transient at the reconciler and suspended at the scheduler.** "Unlock shape" acts
    only on a selected, provably-owned shape: it unprotects the sheet and clears that shape's
    `Locked`. Automatic refresh is **suspended** for as long as anything is unlocked, so a manual
@@ -92,13 +100,10 @@ inferred:
 | `Protect()` again, then write a cell | — | **ok** |
 
 So `UserInterfaceOnly` exempts **cells only** in this host: the drawing-object lock blocks every
-shape write and the contents lock blocks the row insert. The consequence is that a refresh cannot
-run with the sheet protected, and neither can Add activity, Add child, Promote, Demote, Move or
-Delete. The design that can work is a **release window**: unprotect immediately before the write
-phase, re-protect immediately after, on every path — which costs two host calls per pass and is
-therefore the owner's call, because clause D1's brief said the feature must not add a step to the
-automatic refresh. Until that ruling, `RefreshSheetCommand` deliberately does not construct the
-arming, so the feature is dormant in the product while every part of it stays contract-tested.
+shape write and the contents lock blocks the row insert. The consequence is that a refresh cannot run
+with the sheet protected, and neither can Add activity, Add child, Promote, Demote, Move or Delete —
+which is why clause 5 makes every one of those run inside the release window, and why the window was
+accepted despite costing two host calls.
 
 Two further facts from the same run: a workbook protected by an earlier session refuses a command
 that runs before the first refresh (`TargetProtected`), because ownership is only established by a
