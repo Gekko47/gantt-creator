@@ -235,9 +235,26 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
     /// Moq expression.
     /// </summary>
     /// <param name="sheet">The worksheet to protect.</param>
+    /// <remarks>
+    /// <b>Outlining is enabled first, on purpose.</b> Microsoft documents
+    /// <c>Worksheet.EnableOutlining</c> as "True if outlining symbols are enabled when
+    /// user-interface-only protection is turned on", and states that it "is not saved with the
+    /// worksheet or session". Without it a protected sheet greys out the native +/- group buttons,
+    /// which is exactly the outline the add-in spends a refresh building (ADR-0026 D5) and what the
+    /// user reaches for to fold a section away. It is set before <c>Protect</c> because the host
+    /// refuses the property once the sheet is protected, and it is set on every protect for the same
+    /// "not saved" reason — the window's close is the only protect the product performs.
+    /// </remarks>
     internal virtual void ProtectWorksheet(Excel._Worksheet sheet)
     {
         ArgumentNullException.ThrowIfNull(sheet);
+
+        // The property is refused on an already-protected sheet, and a second Lock shapes click
+        // would otherwise turn a harmless no-op into a HostRejected refusal.
+        if (!sheet.ProtectContents)
+        {
+            SetOutlineSymbolsEnabled(sheet);
+        }
 
         sheet.Protect(
             Type.Missing,   // Password: none, deliberately (ADR-0055).
@@ -256,6 +273,18 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
             Type.Missing,   // AllowSorting
             Type.Missing,   // AllowFiltering
             Type.Missing);  // AllowUsingPivotTables
+    }
+
+    /// <summary>
+    /// Leaves the native outline symbols usable while the sheet is protected. Test seam over
+    /// <c>Worksheet.EnableOutlining</c>.
+    /// </summary>
+    /// <param name="sheet">The worksheet about to be protected.</param>
+    internal virtual void SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
+    {
+        ArgumentNullException.ThrowIfNull(sheet);
+
+        sheet.EnableOutlining = true;
     }
 
     /// <summary>Removes protection. Test seam over <c>Worksheet.Unprotect</c>.</summary>

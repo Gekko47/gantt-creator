@@ -29,6 +29,15 @@ reference establishes four facts that the design has to obey:
    feature prevents accidental edits; it is not a security control, and a password we do not store
    could never be re-entered. A user who unprotects by hand is not fought with: the next refresh
    re-protects.
+
+   **The native outline symbols stay usable.** `Protect` greys out the +/- group buttons on a
+   protected sheet unless `Worksheet.EnableOutlining` is `true` — Microsoft documents it as "True if
+   outlining symbols are enabled when user-interface-only protection is turned on" — and it "is not
+   saved with the worksheet or session". The port therefore sets it immediately before every
+   `Protect`, skipping the set when the sheet is already protected (the host refuses the property
+   there, and a second Lock shapes click must stay a no-op). Without this the lock removed the
+   collapse/expand control that the outline pass exists to build (ADR-0026 D5), which is a
+   user-facing regression rather than a lock.
 2. **Ownership is recorded in the workbook** as the `ProtectGanttSheet` setting (schema version
    **22**). The key is both the ownership record and the user's switch: `FALSE` means the add-in
    neither protects nor re-protects, and the sheet behaves exactly as it did before.
@@ -146,7 +155,8 @@ already-protected sheet is released before it is protected again; a refused prot
 the chart and leaves the arming unmarked; an opt-out workbook is never protected and an opt-out after
 arming releases it; `Locked` is set on create; the back-fill touches only tagged shapes; unlock
 refuses a user shape and clears only the selected owned one; the scheduler does not schedule while
-unlocked.
+unlocked. Live: a protect leaves `EnableOutlining` true (and it is false before the add-in sets
+it), so the +/- group buttons survive the lock.
 
 Live gate (required — the feature is almost entirely host behaviour): shapes cannot be selected,
 dragged or deleted while protected; the add-in can still create, move, resize, delete, z-order and

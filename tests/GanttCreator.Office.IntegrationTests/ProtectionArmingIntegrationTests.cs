@@ -75,6 +75,10 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             // created rather than on a name looked up again in a shared host.
             Excel.Shape control = (Excel.Shape)scope.Track(sheet.Shapes.Item("probe:control"));
             control.Left = 250f;
+
+            // Positive control for the outlining assertion below: the host does not report the
+            // property as set until this add-in sets it.
+            Assert.False(sheet.EnableOutlining);
             _output.WriteLine("controls: create, insert and move succeed unprotected");
 
             // Arming ends with the sheet RELEASED: a protected sheet refuses shape creation (measured
@@ -102,7 +106,13 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             // Closing the window restores the user-facing lock.
             Assert.True(sheet.ProtectContents);
             Assert.True(sheet.ProtectDrawingObjects);
-            _output.WriteLine("window closed: contents=True drawings=True");
+
+            // The native +/- group buttons stay usable, which is the whole point of the outline the
+            // refresh builds. Without EnableOutlining the host greys them out on a protected sheet,
+            // and the property is "not saved with the worksheet or session", so every protect has to
+            // re-apply it. Pinned here because the contract tests substitute ProtectWorksheet.
+            Assert.True(sheet.EnableOutlining);
+            _output.WriteLine("window closed: contents=True drawings=True outlining=True");
 
             // What the lock actually does, and the one write it still allows.
             COMException createRefusal = Assert.Throws<COMException>(
