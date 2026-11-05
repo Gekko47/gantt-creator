@@ -92,6 +92,11 @@ internal static class RefreshSheetCommand
     {
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
+        // ADR-0055 clause 6: an explicit Refresh is the user asking for the chart to be rebuilt from
+        // the scene, so it ends any manual-edit window — the unlocks are forgotten and the arming step
+        // re-locks every shape before this pass writes.
+        _ = ShapeUnlockState.Shared.Clear();
+
         // ADR-0055: the write phase runs with the add-in's protection released, because a protected
         // sheet refuses shape creation and movement (measured; see ProtectionArmingIntegrationTests).
         using IDisposable window = ProtectionWindowFor(application).Open();

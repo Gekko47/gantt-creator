@@ -1777,4 +1777,46 @@ public class ExcelShapeWriterTests
         Assert.True(alreadyLocked.Locked);
         Assert.False(userShape.Locked);
     }
+
+    /// <summary>
+    /// ADR-0055 clause 6: unlocking clears the lock on the selected owned shape so the user can drag
+    /// it deliberately. The sheet must also be released for the drag to be possible, which is the
+    /// command's job, not this one.
+    /// </summary>
+    [Fact]
+    public void UnlockShape_clears_the_lock_on_an_owned_shape()
+    {
+        Excel.Shape owned = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        owned.Locked = true;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, owned);
+
+        Assert.True(writer.UnlockShape("row-1:bar").Succeeded);
+
+        Assert.False(owned.Locked);
+    }
+
+    /// <summary>
+    /// The tag authorises the unlock, so a user's shape that shares a name is neither unlocked nor
+    /// touched — the whole point of the ownership check.
+    /// </summary>
+    [Fact]
+    public void UnlockShape_refuses_a_shape_the_add_in_does_not_own()
+    {
+        Excel.Shape userShape = NewShape("row-1:bar", "a note the user typed");
+        userShape.Locked = true;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, userShape);
+
+        ShapeWriteOutcome outcome = writer.UnlockShape("row-1:bar");
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, outcome.Refusal);
+        Assert.True(userShape.Locked);
+    }
+
+    [Fact]
+    public void UnlockShape_refuses_an_absent_shape()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        Assert.Equal(ShapeWriteRefusal.NotFound, writer.UnlockShape("row-9:bar").Refusal);
+    }
 }

@@ -276,6 +276,27 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
 
+    /// <summary>
+    /// The Unlock shape command: releases the chart's protection and clears one owned shape's lock
+    /// (ADR-0055 clause 6).
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnUnlockShapeClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnUnlockShapeClick)),
+            UnlockShapeCommand.RunForExcel,
+            nameof(OnUnlockShapeClick));
+
+    /// <summary>
+    /// The Lock shapes command: re-locks every owned shape and restores the chart's protection.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnLockShapesClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnLockShapesClick)),
+            LockShapesCommand.RunForExcel,
+            nameof(OnLockShapesClick));
+
     /// <summary>Opens the read-only warnings list for the last successful render.</summary>
     public void OnWarningsClick(IRibbonControl control) =>
         CommandBoundary.Instance.Run(

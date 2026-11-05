@@ -150,6 +150,11 @@
         <group id="grpPlaceholder" label="Gantt Creator">
           <button id="btnRefreshSheet" label="Refresh chart" imageMso="Refresh" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
           <button id="btnWarnings" label="Warnings..." keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
+          <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on
+               ONE selected shape the add-in drew, releases the protection so it can be dragged, and
+               suspends the automatic refresh until Lock shapes or an explicit Refresh puts it back. -->
+          <button id="btnUnlockShape" label="Unlock shape" keytip="UL" screentip="Unlock the selected shape" supertip="Lets you drag the selected chart shape. Automatic refresh pauses until you lock the shapes again or refresh the chart." getEnabled="GetEnabled" onAction="OnUnlockShapeClick"/>
+          <button id="btnLockShapes" label="Lock shapes" keytip="LK" screentip="Lock every chart shape" supertip="Re-locks every chart shape and restores the chart's protection. A manual edit is reverted by the next refresh." getEnabled="GetEnabled" onAction="OnLockShapesClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics">
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

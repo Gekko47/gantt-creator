@@ -80,7 +80,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private volatile bool _commandRefreshPending;
 
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
-        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel)
+        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel, ShapeUnlockState.Shared)
     {
     }
 
@@ -88,13 +88,29 @@ internal sealed class GanttRefreshScheduler : IDisposable
         IExcelApplicationAdapter adapter,
         ISheetChangeAnalyzer analyzer,
         Action<ExcelDna.Integration.ExcelAction> queueAsMacro,
-        Action refresh)
+        Action refresh,
+        ShapeUnlockState? unlockState = null)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
         _queueAsMacro = queueAsMacro ?? throw new ArgumentNullException(nameof(queueAsMacro));
         _refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
+        _unlockState = unlockState;
     }
+
+    /// <summary>
+    /// The shapes the user has deliberately unlocked, or <see langword="null"/> when nothing tracks
+    /// them (ADR-0055 clause 6).
+    /// </summary>
+    /// <remarks>
+    /// While anything is unlocked an automatic refresh would rebuild the chart underneath a manual
+    /// edit, so both the cell-change path and the command path stay quiet. An explicit Refresh and the
+    /// Lock shapes command are unaffected: they are the user asking for the rebuild.
+    /// </remarks>
+    private readonly ShapeUnlockState? _unlockState;
+
+    /// <summary>Gets whether automatic refresh is suspended by an unlocked shape.</summary>
+    private bool IsSuspendedByUnlock => _unlockState?.IsAnyUnlocked == true;
 
     private static void QueueMacro(ExcelDna.Integration.ExcelAction macro) =>
         ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(macro);
@@ -130,7 +146,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
 
     internal void ScheduleCommandRefresh()
     {
-        if (_disposed)
+        if (_disposed || IsSuspendedByUnlock)
         {
             return;
         }
@@ -158,6 +174,12 @@ internal sealed class GanttRefreshScheduler : IDisposable
     /// <param name="changedAddress">The Excel-style address of the changed range.</param>
     private void OnSheetChanged(string? changedAddress)
     {
+        if (IsSuspendedByUnlock)
+        {
+            // A shape is unlocked for manual editing; any rebuild now would undo the edit.
+            return;
+        }
+
         if (_commandRefreshPending)
         {
             // This is the command's own write, already covered by its pending refresh.
@@ -200,6 +222,12 @@ internal sealed class GanttRefreshScheduler : IDisposable
     {
         // Discard stale callbacks from superseded timer generations.
         if (generation != _timerGeneration)
+        {
+            return;
+        }
+
+        // Re-check at the last moment: an unlock can happen between the debounce and this callback.
+        if (IsSuspendedByUnlock)
         {
             return;
         }

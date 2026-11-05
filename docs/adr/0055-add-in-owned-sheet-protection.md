@@ -76,12 +76,13 @@ reference establishes four facts that the design has to obey:
    The window costs **two host calls per write phase**, which the owner accepted in place of the
    original "no extra step" wording. The sheet is unlocked for the few hundred milliseconds a refresh
    takes and locked the rest of the time, which is the state the ruling asked for.
-6. **Unlock is transient at the reconciler and suspended at the scheduler.** "Unlock shape" acts
+6. **Unlock is transient and suspends the scheduler, never the reconciler.** "Unlock shape" acts
    only on a selected, provably-owned shape: it unprotects the sheet and clears that shape's
    `Locked`. Automatic refresh is **suspended** for as long as anything is unlocked, so a manual
    edit is not lost to an unrelated cell edit; an explicit Refresh, or a "Lock shapes" command,
    re-protects, re-locks and re-asserts the shape's geometry — reverting the manual edit, exactly
-   as ruled.
+   as ruled. The two controls are answered from the unlock set and from one `Selection` read rather
+   than from the ribbon snapshot, so enabling the button costs no host call during a refresh.
 
 ## Measured host behaviour (2026-11-04, live Excel 16.0.20527.20112 x64)
 

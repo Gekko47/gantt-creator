@@ -218,6 +218,14 @@ public sealed class ProtectionGuardFirstTests
         // consume; it writes nothing and touches no COM object, so it is
         // read-only and consults no guard.
         "src/GanttCreator.Office/ExcelGanttRowProjection.cs",
+        // ADR-0055 clause 6: the unlock selector reads the current Selection and the
+        // selected shape's name tag; it mutates nothing, so the write it enables is the
+        // registered ExcelShapeWriter's, not this reader's.
+        "src/GanttCreator.Office/ExcelSelectedShapeReader.cs",
+        "src/GanttCreator.Office/ISelectedShapePort.cs",
+        // The in-memory set of primitive ids the user has unlocked. It carries no COM
+        // object and no workbook state; it exists so the scheduler can suspend.
+        "src/GanttCreator.Office/ShapeUnlockState.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",

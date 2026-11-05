@@ -521,6 +521,41 @@ public class ExcelShapeWriter(
     }
 
     /// <inheritdoc />
+    public ShapeWriteOutcome UnlockShape(string primitiveId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
+
+        // Same guard-first rule as every other entry point, and it is load-bearing here too: an
+        // unlock clears `Locked`, which the host refuses on a sheet the add-in does not own.
+        if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
+        {
+            return guardRefusal;
+        }
+
+        Excel.Shapes? shapes = ResolveShapes(out ShapeWriteOutcome? refusal);
+        if (shapes is null)
+        {
+            return refusal!;
+        }
+
+        Excel.Shape? existing = FindShapeByName(shapes, primitiveId);
+
+        // The tag authorises the unlock, not the name: handing the user a writable shape the add-in
+        // does not own would turn "unlock" into a way to edit anything on the sheet (ADR-0055 D6).
+        if (existing is null || !CarriesOwnershipTagFor(existing, primitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        if (ReadLocked(existing))
+        {
+            ApplyUnlock(existing);
+        }
+
+        return ShapeWriteOutcome.Ok();
+    }
+
+    /// <inheritdoc />
     public ShapeWriteOutcome LockOwnedShapes()
     {
         if (!_batchActive && RefusalFor(_protectionGuard.Query()) is { } guardRefusal)
@@ -573,6 +608,11 @@ public class ExcelShapeWriter(
     /// <summary>Locks a shape. Test seam over the COM property.</summary>
     /// <param name="shape">The live shape.</param>
     internal virtual void ApplyLock(Excel.Shape shape) => shape.Locked = true;
+
+    /// <summary>Clears a shape's lock. Test seam over the COM property.</summary>
+    /// <param name="shape">The live shape.</param>
+    /// <remarks>The PIA types this property as <c>Boolean</c>, not <c>MsoTriState</c>.</remarks>
+    internal virtual void ApplyUnlock(Excel.Shape shape) => shape.Locked = false;
 
     /// <inheritdoc />
     public bool GeometryMatches(OfficeShapeRequest request)

@@ -408,6 +408,11 @@ public class GanttRibbonTests
                 RibbonControlIds.PresetPresentation4x3,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Warnings,
+                // ADR-0055 clause 6: the two shape-lock buttons sit beside Refresh in the Gantt
+                // Creator group. Unlock is gated on a single selected owned shape; Lock is gated on
+                // at least one unlock being in effect.
+                RibbonControlIds.UnlockShape,
+                RibbonControlIds.LockShapes,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
                 // R5.5: the description-label dropdown is the first

@@ -1878,13 +1878,48 @@ internal class RibbonStateService
     }
 
     /// <summary>
-    /// Gets whether the control with <paramref name="controlId"/> is enabled.
-    /// A pure read of the cached snapshot: no Excel probe, no ribbon call, no
-    /// log write, and no exception for any input. Never throws.
+    /// The unlock set the Lock shapes button reads (ADR-0055), overridable so a test does not have to
+    /// mutate the session singleton.
+    /// </summary>
+    internal ShapeUnlockState UnlockState { get; set; } = ShapeUnlockState.Shared;
+
+    /// <summary>
+    /// The port that answers "is one owned shape selected?" for the Unlock button, overridable for
+    /// tests.
+    /// </summary>
+    /// <remarks>
+    /// Created on first use rather than at construction: the service is built during <c>AutoOpen</c>,
+    /// and <c>ExcelDnaUtil.Application</c> is only reliably available by the time a getter runs.
+    /// </remarks>
+    internal ISelectedShapePort? SelectedShapePort { get; set; }
+
+    /// <summary>Resolves the selection port, creating the live one on first use.</summary>
+    /// <returns>The port.</returns>
+    private ISelectedShapePort ResolveSelectedShapePort() =>
+        SelectedShapePort ??= new ExcelSelectedShapeReader(ExcelDna.Integration.ExcelDnaUtil.Application);
+
+    /// <summary>
+    /// Gets whether the control with <paramref name="controlId"/> is enabled. Every control but the
+    /// two ADR-0055 shape ones is a pure read of the cached snapshot: no Excel probe, no ribbon call,
+    /// no log write, and no exception for any input. Never throws.
     /// </summary>
     /// <param name="controlId">The Ribbon control ID, or null when unprobeable.</param>
     /// <returns>The control's enabled state (fail-open for unknown IDs).</returns>
-    internal virtual bool GetEnabled(string? controlId) => _state.IsEnabled(controlId);
+    /// <remarks>
+    /// The two ADR-0055 shape controls are answered here rather than from <see cref="RibbonState"/>'s
+    /// snapshot table, because both depend on facts that are not in it: whether the add-in currently
+    /// holds an unlock, and whether the selection is one shape this add-in drew. The second costs one
+    /// <c>Selection</c> read, and Excel asks for it when the selection changes or the control is
+    /// invalidated — never during a refresh. The read is a typed refusal on every failure, so it
+    /// cannot throw here.
+    /// </remarks>
+    internal virtual bool GetEnabled(string? controlId) => controlId switch
+    {
+        RibbonControlIds.LockShapes => UnlockState.IsAnyUnlocked,
+        RibbonControlIds.UnlockShape =>
+            _state.HasActiveWorkbook && _state.SheetInitialised && ResolveSelectedShapePort().Read().Succeeded,
+        _ => _state.IsEnabled(controlId),
+    };
 
     /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's

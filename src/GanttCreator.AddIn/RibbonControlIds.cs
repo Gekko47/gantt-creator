@@ -54,6 +54,16 @@ internal static class RibbonControlIds
     internal const string AddDelineator = "btnAddDelineator";
 
     /// <summary>
+    /// The Unlock shape button (ADR-0055): enabled only when exactly one owned shape is selected.
+    /// </summary>
+    internal const string UnlockShape = "btnUnlockShape";
+
+    /// <summary>
+    /// The Lock shapes button (ADR-0055): enabled when at least one owned shape is unlocked.
+    /// </summary>
+    internal const string LockShapes = "btnLockShapes";
+
+    /// <summary>
     /// The Add child dropdown (R5.3 WI-E). It offers the child types the
     /// selected parent may take, projected from the hierarchy catalogue.
     /// </summary>

@@ -371,6 +371,28 @@ internal sealed class FakeShapeWritePort : IShapeWritePort
         return ShapeWriteOutcome.Ok();
     }
 
+    /// <summary>The identifiers this fake was asked to unlock, in order.</summary>
+    public List<string> Unlocked { get; } = [];
+
+    /// <inheritdoc />
+    public ShapeWriteOutcome UnlockShape(string primitiveId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(primitiveId);
+        Calls.Add("UnlockShape:" + primitiveId);
+        if (Refusals.TryGetValue("UnlockShape", out ShapeWriteRefusal? refusal) && refusal is { } reason)
+        {
+            return ShapeWriteOutcome.Refused(reason);
+        }
+
+        if (!_shapes.ContainsKey(primitiveId) || !_owned.Contains(primitiveId))
+        {
+            return ShapeWriteOutcome.Refused(ShapeWriteRefusal.NotFound);
+        }
+
+        Unlocked.Add(primitiveId);
+        return ShapeWriteOutcome.Ok();
+    }
+
     /// <summary>
     /// Identifiers whose live geometry has drifted from the last write — the model of a
     /// host that moved or resized a shape on its own (a row insert, a hidden row, a user

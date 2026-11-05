@@ -167,6 +167,59 @@ public sealed class GanttRefreshSchedulerTests
         Assert.Equal(2, Volatile.Read(ref queuedCount));
     }
 
+    /// <summary>
+    /// ADR-0055 clause 6: while a shape is unlocked for manual editing, neither a cell edit nor a
+    /// command may schedule a refresh, because either would rebuild the chart over the edit. Locking
+    /// the shapes again re-enables both.
+    /// </summary>
+    [Fact]
+    public void An_unlocked_shape_suspends_both_scheduling_paths()
+    {
+        var unlockState = new ShapeUnlockState();
+        int queued = 0;
+        Mock<IExcelApplicationAdapter> adapter = new();
+        Action<string?>? onChanged = null;
+        _ = adapter
+            .Setup(a => a.SubscribeSheetChanged(It.IsAny<Action<string?>>()))
+            .Callback<Action<string?>>(handler => onChanged = handler)
+            .Returns(Mock.Of<IDisposable>());
+        Mock<ISheetChangeAnalyzer> analyzer = new();
+        _ = analyzer.Setup(a => a.ShouldAutoRefresh(It.IsAny<string?>())).Returns(true);
+        using GanttRefreshScheduler scheduler = new(
+            adapter.Object,
+            analyzer.Object,
+            _ => Interlocked.Increment(ref queued),
+            () => { },
+            unlockState);
+        scheduler.Activate();
+
+        // Positive control first: with nothing unlocked both paths queue, so the negative assertion
+        // below cannot pass on a harness that simply never queues anything.
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) == 1, TimeSpan.FromSeconds(5)),
+            "With nothing unlocked, a command did not schedule a refresh.");
+
+        _ = unlockState.Add("G-0123456789abcdef0123456789abcdef:bar");
+        int before = Volatile.Read(ref queued);
+        scheduler.ScheduleCommandRefresh();
+        onChanged!("\"book|Sheet\"!D5");
+
+        // A negative assertion needs a bound. The command window is 50 ms, so spinning for 400 ms is
+        // longer than any timer could hide behind, and SpinUntil does not sleep the thread.
+        Assert.False(
+            SpinWait.SpinUntil(
+                () => Volatile.Read(ref queued) > before,
+                TimeSpan.FromMilliseconds(400)),
+            "A suspended scheduler queued a refresh while a shape was unlocked.");
+
+        _ = unlockState.Clear();
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > before, TimeSpan.FromSeconds(5)),
+            "Locking the shapes again did not re-enable scheduling.");
+    }
+
     private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>
         new(
             Mock.Of<IExcelApplicationAdapter>(),

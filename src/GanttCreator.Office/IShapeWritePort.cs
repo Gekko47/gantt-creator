@@ -224,6 +224,26 @@ public interface IShapeWritePort
     ShapeWriteOutcome LockOwnedShapes();
 
     /// <summary>
+    /// Clears <c>Locked</c> on ONE owned shape, so the user can drag it deliberately (ADR-0055).
+    /// </summary>
+    /// <param name="primitiveId">The scene primitive id, which is also the shape's name.</param>
+    /// <returns>The typed result; <see cref="ShapeWriteRefusal.NotFound"/> for an absent or unowned shape.</returns>
+    /// <remarks>
+    /// <para>
+    /// Ownership is proved by the tag, exactly as every other operation proves it, so a user's shape
+    /// that shares a name is refused rather than unlocked — the command must not hand the user a
+    /// writable chart element the add-in does not own.
+    /// </para>
+    /// <para>
+    /// Clearing <c>Locked</c> is inert while the sheet is protected, so the caller must release the
+    /// protection as well; the two together are what makes a shape draggable. The unlock is recorded in
+    /// <see cref="ShapeUnlockState"/> by the caller, which is what suspends the automatic refresh until
+    /// a Lock or an explicit Refresh re-arms everything.
+    /// </para>
+    /// </remarks>
+    ShapeWriteOutcome UnlockShape(string primitiveId);
+
+    /// <summary>
     /// Begins a reconciliation batch, in which the target worksheet and the protection
     /// guard are resolved ONCE for every operation until the returned scope is disposed.
     /// </summary>
