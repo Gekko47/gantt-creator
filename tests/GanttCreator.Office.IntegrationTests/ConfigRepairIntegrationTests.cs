@@ -32,6 +32,10 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome initialised = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
+            // ADR-0055: the loaded pack's background refresh would protect the sheet and write
+            // over the repair this test asserts.
+            OfficeFixture.DisableChartProtection(workbook);
+
             Excel.Worksheet gantt = FindSheet(workbook, GanttWorkbookContract.GanttSheetLabel);
             Excel.Worksheet config = FindSheet(workbook, GanttWorkbookContract.ConfigSheetName);
             Excel.ListObject ganttTable = gantt.ListObjects[GanttTableSchema.TableName];
@@ -95,6 +99,7 @@ public class ConfigRepairIntegrationTests(ITestOutputHelper output)
             Excel.Workbook workbook = fixture.CreateWorkbook();
             WorkbookInitialiseOutcome initialised = new ExcelWorkbookInitialiser(fixture.Excel).Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+            OfficeFixture.DisableChartProtection(workbook);
 
             Excel.Worksheet gantt = FindSheet(workbook, GanttWorkbookContract.GanttSheetLabel);
             Excel.ListObject table = gantt.ListObjects[GanttTableSchema.TableName];

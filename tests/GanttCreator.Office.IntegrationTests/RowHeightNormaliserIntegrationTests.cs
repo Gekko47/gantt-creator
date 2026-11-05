@@ -90,8 +90,9 @@ public class RowHeightNormaliserIntegrationTests(ITestOutputHelper output)
     /// the height pass of the same Refresh then runs against the
     /// collapsed children. Their rows are off the height token
     /// (the host default, not <c>GanttRowHeightPt</c>), so the
-    /// normaliser has a real write to make; the children must end
-    /// the pass both restored to the token and still hidden.
+    /// pass has a decision to make; the children must end the pass
+    /// still hidden and untouched, and the first pass after the
+    /// expand is what normalises them.
     /// </summary>
     [Trait("Category", "OfficeIntegration")]
     [Fact]
@@ -113,6 +114,7 @@ public class RowHeightNormaliserIntegrationTests(ITestOutputHelper output)
 
             int firstBodyRow = scope.Track(table.DataBodyRange!).Row;
             double token = GanttCatalogues.MetricDefault("GanttRowHeightPt");
+            var normaliser = new ExcelRowHeightNormaliser(fixture.Excel);
 
             // The added rows sit at the host default, not the token,
             // so the height pass has a write to make -- the
@@ -129,19 +131,12 @@ public class RowHeightNormaliserIntegrationTests(ITestOutputHelper output)
 
                 // The height pass of the same Refresh, run while the
                 // group is collapsed.
-                var normaliser = new ExcelRowHeightNormaliser(fixture.Excel);
-                RowHeightNormalisationOutcome heights = normaliser.Normalise(
-                    GanttCatalogues.MetricDefault("GanttRowHeightPt"),
-                    GanttCatalogues.MetricDefault("SplitterHeightPt"),
-                    GanttCatalogues.MetricDefault("SpacerHeightPt"),
-                    GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
-                    GanttCatalogues.MetricDefault("YearBandHeightPt"),
-                    GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
-                    GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
+                RowHeightNormalisationOutcome heights = NormaliseWithCatalogueTokens(normaliser);
                 Assert.True(heights.Succeeded, $"Height normalisation refused: {heights.Refusal}");
 
-                // Every body row sits at the host default, so all four
-                // were in the write set.
+                // The structural rows still sit at the host default, so the
+                // pass had real writes to make; the hidden children it left
+                // alone (below).
                 Assert.True(heights.RowsWritten >= 4, $"Only {heights.RowsWritten} rows written.");
 
                 // The defect: the height write must not un-hide the
@@ -162,10 +157,19 @@ public class RowHeightNormaliserIntegrationTests(ITestOutputHelper output)
                 excelOutline.ShowLevels(2, 2);
             }
 
-            // The height write landed: expanded, the children sit at
-            // the token again.
+            // The rule the 2026-11-04 pass introduced: a hidden row is NOT written at all,
+            // because a hidden row reports 0pt and writing the token into it re-groups the
+            // outline and moves every xlMoveAndSize shape over the span. The consequence is
+            // that the child returns from the collapse still at the host default, and the
+            // FIRST pass after the expand is what normalises it.
             Excel.Range expandedChild = scope.Track(sheet.Rows[firstBodyRow + 1]);
-            Assert.Equal(token, Convert.ToDouble(expandedChild.RowHeight, CultureInfo.InvariantCulture));
+            Assert.NotEqual(token, Convert.ToDouble(expandedChild.RowHeight, CultureInfo.InvariantCulture));
+
+            RowHeightNormalisationOutcome afterExpand = NormaliseWithCatalogueTokens(normaliser);
+            Assert.True(afterExpand.Succeeded, $"Post-expand normalisation refused: {afterExpand.Refusal}");
+
+            Excel.Range normalisedChild = scope.Track(sheet.Rows[firstBodyRow + 1]);
+            Assert.Equal(token, Convert.ToDouble(normalisedChild.RowHeight, CultureInfo.InvariantCulture));
         }
         finally
         {
@@ -173,4 +177,20 @@ public class RowHeightNormaliserIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    /// <summary>
+    /// Runs the height pass with the catalogue's own tokens, the way the refresh does.
+    /// </summary>
+    /// <param name="normaliser">The pass under test.</param>
+    /// <returns>The pass's outcome.</returns>
+    private static RowHeightNormalisationOutcome NormaliseWithCatalogueTokens(
+        ExcelRowHeightNormaliser normaliser) =>
+        normaliser.Normalise(
+            GanttCatalogues.MetricDefault("GanttRowHeightPt"),
+            GanttCatalogues.MetricDefault("SplitterHeightPt"),
+            GanttCatalogues.MetricDefault("SpacerHeightPt"),
+            GanttCatalogues.MetricDefault("PeriodBandHeightPt"),
+            GanttCatalogues.MetricDefault("YearBandHeightPt"),
+            GanttCatalogues.MetricDefault("ChartPaddingRowHeightPt"),
+            GanttCatalogues.MetricDefault("ChartAnchorRowHeightPt"));
 }

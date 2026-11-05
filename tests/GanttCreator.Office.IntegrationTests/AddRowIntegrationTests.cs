@@ -30,6 +30,11 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
 
+            // ADR-0055: the pack this test loads would otherwise protect the sheet on its own
+            // background refresh and refuse this test's next insert with TargetProtected. This test
+            // is about the inserter, so it turns the chart lock off through the user switch.
+            OfficeFixture.DisableChartProtection(workbook);
+
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
             var shapesBefore = sheet.Shapes.Count;
@@ -103,6 +108,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
             var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
             Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
 
@@ -164,6 +170,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
 
             // The workbook is NOT tracked: CreateWorkbook hands that proxy to the
             // fixture, which closes and releases it during teardown, and tracking it
@@ -324,6 +331,7 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(workbook);
 
             using var scope = new OfficeFixture.ComScope();
             var sheet = (Excel.Worksheet)scope.Track(workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);

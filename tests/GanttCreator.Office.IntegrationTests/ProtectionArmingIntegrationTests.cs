@@ -31,8 +31,11 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;
 
-    private static string XllPath => OfficeFixtureTests.ResolvePackedXllPath();
-
+    // Deliberately no RegisterXll in this class: loading the packed add-in starts a live
+    // scheduler in the same Excel instance, whose automatic refresh now ends by PROTECTING the
+    // sheet (ADR-0055). That raced these two tests -- one run failed at Assert.False after
+    // arming because the add-in had protected the sheet between the call and the assertion.
+    // These tests drive the ports directly, so the add-in adds nothing but a competitor.
     [Trait("Category", "OfficeIntegration")]
     [Fact]
     public async Task Protection_exempts_cell_writes_but_not_shapes_or_row_inserts()
@@ -42,8 +45,6 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             using var scope = new OfficeFixture.ComScope();
             Excel.Workbook workbook = scope.Track(fixture.CreateWorkbook());
@@ -156,8 +157,6 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
         try
         {
             await fixture.InitializeAsync().ConfigureAwait(true);
-            Assert.True(fixture.RegisterXll(XllPath),
-                $"Application.RegisterXLL returned false for '{XllPath}'.");
 
             using var scope = new OfficeFixture.ComScope();
             Excel.Workbook workbook = scope.Track(fixture.CreateWorkbook());

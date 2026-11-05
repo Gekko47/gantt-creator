@@ -5,7 +5,11 @@ using System.Threading;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using GanttCreator.Core;
 using Microsoft.Office.Interop.Excel;
+
+// Ambiguous with System.Range, which the implicit usings bring in.
+using ExcelRange = Microsoft.Office.Interop.Excel.Range;
 
 namespace GanttCreator.Office.IntegrationTests;
 
@@ -378,6 +382,115 @@ internal class OfficeFixture : IAsyncLifetime
         {
             Marshal.ReleaseComObject(workbooks);
         }
+    }
+
+    /// <summary>
+    /// Switches the ADR-0055 chart protection OFF for <paramref name="workbook"/>, so a live test
+    /// that drives the adapters directly is not raced by the add-in it has loaded.
+    /// </summary>
+    /// <param name="workbook">The initialised workbook the test is about to drive.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists.</b> Every live test that calls <see cref="RegisterXll"/> loads the real
+    /// add-in into the same Excel instance, and the add-in's scheduler coalesces an automatic
+    /// refresh on the test's own cell writes. Since ADR-0055 that refresh arms and PROTECTS the
+    /// sheet, so the test's next direct-adapter write is refused <c>TargetProtected</c> — measured:
+    /// <c>AddRowIntegrationTests</c> loses its second insert to exactly that, and the failure set
+    /// moved between three consecutive gate runs. The product is behaving; the test is racing it.
+    /// </para>
+    /// <para>
+    /// This uses the switch that already exists for the purpose (<c>ProtectGanttSheet</c>, schema
+    /// 22) rather than a test-only hook in the add-in: with it FALSE,
+    /// <see cref="GanttCreator.Office.WorksheetProtectionArming.Arm"/> releases anything it armed
+    /// and returns, so the add-in neither locks nor protects. Tests that are ABOUT protection must
+    /// not call this — <c>ProtectionArmingIntegrationTests</c> drives the ports without loading the
+    /// pack, and the refusal tests protect their sheet themselves.
+    /// </para>
+    /// <para>
+    /// The row and the value column are resolved through the schema's own header names, never by a
+    /// fixed offset, so drift in the VeryHidden sheet's layout fails here instead of silently
+    /// writing a neighbouring setting.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The workbook has no configuration sheet, the settings table no longer matches the schema's
+    /// header row, or the setting has no row.
+    /// </exception>
+    public static void DisableChartProtection(Workbook workbook)
+    {
+        ArgumentNullException.ThrowIfNull(workbook);
+
+        const string SettingKey = "ProtectGanttSheet";
+
+        // Positive control on the key: a catalogue rename must fail here rather than write a value
+        // nothing reads.
+        if (GanttCatalogues.SettingDefault(SettingKey) is null)
+        {
+            throw new InvalidOperationException(
+                $"'{SettingKey}' is not a catalogue setting any more; update this fixture.");
+        }
+
+        using ComScope scope = new ComScope();
+
+        Sheets sheets = scope.Track(workbook.Sheets);
+        if (sheets[GanttWorkbookContract.ConfigSheetName] is not Worksheet config)
+        {
+            throw new InvalidOperationException(
+                $"The workbook has no '{GanttWorkbookContract.ConfigSheetName}' worksheet; run Initialise first.");
+        }
+
+        _ = scope.Track(config);
+        ListObjects tables = scope.Track(config.ListObjects);
+        ListObject settings = scope.Track(tables[GanttCatalogues.SettingsTableName]);
+        ListColumns columns = scope.Track(settings.ListColumns);
+
+        // By header name, never by offset: the VeryHidden sheet's layout is schema, so a drifted
+        // column must fail loudly instead of writing a neighbouring setting.
+        if (columns.Count != GanttCatalogues.SettingsHeaders.Length)
+        {
+            throw new InvalidOperationException(
+                $"'{GanttCatalogues.SettingsTableName}' has {columns.Count} columns; the schema declares "
+                    + $"{GanttCatalogues.SettingsHeaders.Length}.");
+        }
+
+        for (int index = 1; index <= columns.Count; index++)
+        {
+            ListColumn column = scope.Track(columns[index]);
+            string header = Convert.ToString(column.Name, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (!string.Equals(header, GanttCatalogues.SettingsHeaders[index - 1], StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"'{GanttCatalogues.SettingsTableName}' column {index} is '{header}'; the schema declares "
+                        + $"'{GanttCatalogues.SettingsHeaders[index - 1]}'.");
+            }
+        }
+
+        ExcelRange body = scope.Track(settings.DataBodyRange);
+        if (body.Value2 is not object[,] cells)
+        {
+            throw new InvalidOperationException(
+                $"'{GanttCatalogues.SettingsTableName}' has no readable body.");
+        }
+
+        int firstRow = cells.GetLowerBound(0);
+        int firstColumn = cells.GetLowerBound(1);
+        for (int row = firstRow; row <= cells.GetUpperBound(0); row++)
+        {
+            string key = Convert.ToString(cells[row, firstColumn], CultureInfo.InvariantCulture) ?? string.Empty;
+            if (!string.Equals(key, SettingKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // The value column is the schema's second header, verified above, so this is an
+            // anchored offset rather than a guess.
+            ExcelRange valueCell = scope.Track(body.Cells[row - firstRow + 1, firstColumn + 1]);
+            valueCell.Value2 = "FALSE";
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"'{GanttCatalogues.SettingsTableName}' has no '{SettingKey}' row.");
     }
 
     /// <summary>

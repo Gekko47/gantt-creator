@@ -59,6 +59,7 @@ public class ValidationReporterIntegrationTests(ITestOutputHelper output)
             var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
             WorkbookInitialiseOutcome initialised = initialiser.Initialise();
             Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+            OfficeFixture.DisableChartProtection(workbook);
 
             Excel.Worksheet sheet =
                 (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
@@ -180,6 +181,10 @@ public class ValidationReporterIntegrationTests(ITestOutputHelper output)
 
             Excel.Workbook workbook = fixture.CreateWorkbook();
             Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+
+            // ADR-0055: the loaded pack's background refresh would protect the sheet and rewrite
+            // this test's notes out from under it.
+            OfficeFixture.DisableChartProtection(workbook);
 
             Excel.Worksheet sheet =
                 (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
