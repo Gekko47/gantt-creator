@@ -1135,8 +1135,15 @@ public sealed class GanttRefreshOrchestrator(
         return -1;
     }
 
-    private static GanttRefreshOutcome Refuse(GanttRefreshRefusal refusal, string message) =>
-        GanttRefreshOutcome.Refused(refusal, message);
+    private GanttRefreshOutcome Refuse(GanttRefreshRefusal refusal, string message)
+    {
+        // Every refusal travels through here, and until now none of them left a record: a refresh
+        // that refused at step 1 and one that refused at step 3 were indistinguishable in the log,
+        // while only the exception path wrote a CommandError. The reason is the one fact a live
+        // diagnosis needs, so it is recorded once, here.
+        _trace?.Invoke("gantt.refresh refusal=" + refusal);
+        return GanttRefreshOutcome.Refused(refusal, message);
+    }
 
     /// <summary>
     /// Refuses with the worksheet writes that already landed before this point.

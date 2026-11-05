@@ -59,7 +59,9 @@ public sealed class WorksheetProtectionWindow(
     {
         if (_depth == 0 && _state.IsArmed)
         {
-            Record(_port.Unprotect(), "window release");
+            ProtectionWriteOutcome released = _port.Unprotect();
+            Record(released, "window release");
+            _trace?.Invoke("gantt.protection window open released=" + released.Succeeded);
         }
 
         _depth++;
@@ -76,7 +78,9 @@ public sealed class WorksheetProtectionWindow(
         _depth--;
         if (_depth == 0 && _state.IsArmed)
         {
-            Record(_port.Protect(), "window protect");
+            ProtectionWriteOutcome protectedOutcome = _port.Protect();
+            Record(protectedOutcome, "window protect");
+            _trace?.Invoke("gantt.protection window close protected=" + protectedOutcome.Succeeded);
         }
     }
 

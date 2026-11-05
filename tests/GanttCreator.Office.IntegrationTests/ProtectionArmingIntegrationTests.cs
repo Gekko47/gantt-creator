@@ -63,10 +63,18 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
                 new ExcelWorksheetProtectionGuard(fixture.Excel, ownership));
 
             // Positive controls on the UNPROTECTED sheet, so a refusal below cannot be the probe.
+            // Deliberately no name-based shape move here: the host is shared between tests, and a
+            // lookup by name that lands on the wrong sheet reports the protection message, which
+            // would read as a protection finding. The window section below moves a shape by the
+            // proxy it created, which is unambiguous.
             Assert.True(writer.Create(BarRequest("probe:control")).Succeeded);
             Assert.True(Insert(inserter, '1').Succeeded);
-            sheet.Shapes.Item("probe:control").Left = 250f;
-            _output.WriteLine("controls: create, insert and move all succeed unprotected");
+
+            // One proxy, resolved once and reused, so every move below is on the shape this test
+            // created rather than on a name looked up again in a shared host.
+            Excel.Shape control = (Excel.Shape)scope.Track(sheet.Shapes.Item("probe:control"));
+            control.Left = 250f;
+            _output.WriteLine("controls: create, insert and move succeed unprotected");
 
             // Arming ends with the sheet RELEASED: a protected sheet refuses shape creation (measured
             // below), so protecting during arming would break the write it exists to enable. The
@@ -84,7 +92,7 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             using (window.Open())
             {
                 Assert.True(writer.Create(BarRequest("probe:live")).Succeeded);
-                sheet.Shapes.Item("probe:control").Left = 300f;
+                control.Left = 300f;
                 Assert.True(Insert(inserter, '2').Succeeded);
                 Assert.True(writer.LockOwnedShapes().Succeeded);
                 _output.WriteLine("create, move, insert and lock all succeed inside the window");
@@ -101,7 +109,7 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             _output.WriteLine("shape create on the protected sheet: " + createRefusal.Message);
 
             ArgumentException moveRefusal = Assert.Throws<ArgumentException>(
-                () => sheet.Shapes.Item("probe:control").Left = 320f);
+                () => control.Left = 320f);
             _output.WriteLine("shape move on the protected sheet: " + moveRefusal.Message);
 
             GanttRowInsertOutcome insert = Insert(inserter, '3');
@@ -121,6 +129,83 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
 
             Assert.True(sheet.ProtectContents);
             _output.WriteLine("second window: wrote and re-protected");
+
+            _ = port.Unprotect();
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// The state a reopen leaves behind — a sheet protected by an earlier session, with no
+    /// <c>UserInterfaceOnly</c> in force — must be released by arming and re-locked by the window,
+    /// twice over, because that is the state every existing customer workbook is in.
+    /// </summary>
+    /// <remarks>
+    /// This is the scenario a refresh and every row command face on the first click after a reopen,
+    /// so it is worth its own live test rather than being folded into the fresh-workbook one.
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_sheet_protected_by_an_earlier_session_is_released_by_arming_and_re_locked_by_the_window()
+    {
+        var fixture = new OfficeFixture();
+        fixture.SuppressLeakSignal = true;
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            using var scope = new OfficeFixture.ComScope();
+            Excel.Workbook workbook = scope.Track(fixture.CreateWorkbook());
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            Excel.Worksheet sheet = (Excel.Worksheet)scope.Track(
+                workbook.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+
+            // Exactly what a reopen leaves: protected, three flags as an earlier session applied them,
+            // and no UserInterfaceOnly because Excel does not persist it.
+            sheet.Protect(Type.Missing, true, true, Type.Missing, false);
+            Assert.True(sheet.ProtectContents);
+
+            ProtectionOwnershipSource ownership = new();
+            ProtectionArmingState arming = new();
+            var writer = new ExcelShapeWriter(
+                fixture.Excel,
+                new ExcelWorksheetProtectionGuard(fixture.Excel, ownership));
+            var port = new ExcelWorksheetProtectionPort(fixture.Excel);
+            var protection = new WorksheetProtectionArming(port, writer, arming, _output.WriteLine);
+            var window = new WorksheetProtectionWindow(port, arming, _output.WriteLine);
+            var inserter = new ExcelGanttRowInserter(
+                fixture.Excel,
+                new ExcelWorksheetProtectionGuard(fixture.Excel, ownership));
+
+            protection.Arm(protects: true);
+            ownership.Set(arming.IsArmed);
+            Assert.True(arming.IsArmed);
+            Assert.False(sheet.ProtectContents);
+            _output.WriteLine("arming released a sheet protected by an earlier session");
+
+            using (window.Open())
+            {
+                Assert.True(writer.Create(BarRequest("probe:reopened")).Succeeded);
+                Assert.True(Insert(inserter, '4').Succeeded);
+            }
+
+            Assert.True(sheet.ProtectContents);
+            Assert.True(sheet.ProtectDrawingObjects);
+            _output.WriteLine("the window wrote and re-locked");
+
+            // The second write phase, which is every refresh after the first.
+            using (window.Open())
+            {
+                Assert.True(writer.Create(BarRequest("probe:reopened2")).Succeeded);
+            }
+
+            Assert.True(sheet.ProtectContents);
+            _output.WriteLine("the second window released and re-locked");
 
             _ = port.Unprotect();
         }

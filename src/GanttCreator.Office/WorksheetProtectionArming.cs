@@ -90,6 +90,14 @@ public sealed class WorksheetProtectionArming(
         }
 
         WorksheetProtectionState? live = _port.Read();
+
+        // Recorded because a live failure is otherwise indistinguishable from "the feature is off":
+        // these are the facts that decide whether the write phase can proceed, and none of them was
+        // visible in the log before.
+        _trace?.Invoke(
+            "gantt.protection arm contents=" + (live?.ContentsProtected.ToString() ?? "unknown") +
+            " shapes=" + (live?.ShapesProtected.ToString() ?? "unknown"));
+
         if (live is { } current && (current.ContentsProtected || current.ShapesProtected))
         {
             Record(_port.Unprotect(), "reprotect");
@@ -100,6 +108,7 @@ public sealed class WorksheetProtectionArming(
         // No Protect here, on purpose: the window that wraps the write phase re-applies it. See the
         // remarks above and the measured table in ADR-0055.
         _state.MarkArmed();
+        _trace?.Invoke("gantt.protection armed");
     }
 
     /// <summary>Records a protection write that did not succeed, or nothing when it did.</summary>
