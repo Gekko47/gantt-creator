@@ -1120,6 +1120,29 @@ public sealed class GanttRefreshOrchestrator(
             }
         }
 
+        // Recorded because a coloured cell says "something is wrong" and never why: this turn's
+        // report was "the bottom row got error highlighting" with no way to read the finding out of
+        // the workbook. One line names every finding, its row and its severity, so the next report
+        // names its own cause. Bounded, because a badly damaged table can produce a finding per cell.
+        const int MaxLoggedIssues = 12;
+        string summary = string.Join(
+            ", ",
+            issues
+                .Take(MaxLoggedIssues)
+                .Select(i => string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"row={i.RowNumber} code={i.Code} sev={i.Severity} field={i.Field}")));
+        if (issues.Count > MaxLoggedIssues)
+        {
+            summary += string.Create(
+                CultureInfo.InvariantCulture,
+                $", +{issues.Count - MaxLoggedIssues} more");
+        }
+
+        TraceRefresh(string.Create(
+            CultureInfo.InvariantCulture,
+            $"gantt.validation issues={issues.Count} targets={targets.Count} [{summary}]"));
+
         // Single differential reconciliation: clear stale fills, write new fills,
         // skip unchanged addresses. No full-table clear-then-rewrite.
         return _rowWarningHighlighter.ReconcileHighlights(targets);
