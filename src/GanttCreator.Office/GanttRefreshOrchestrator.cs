@@ -261,9 +261,16 @@ public sealed class GanttRefreshOrchestrator(
         ConfigReadOutcome config = _configReader.Read();
         if (!config.Succeeded)
         {
-            return Refuse(
-                GanttRefreshRefusal.ConfigurationUnreadable,
-                "The Gantt Creator configuration could not be read from the hidden configuration sheet.");
+            ConfigReadRefusalReason configRefusal =
+                config.Refusal ?? ConfigReadRefusalReason.CatalogueMismatch;
+
+            // The reason decides the remedy, and until now all of them produced one generic message
+            // that named no action. The commonest is a workbook written by an earlier schema: the
+            // catalogue hash moved, the read refuses, and the only way forward is Initialise
+            // (ADR-0029 D6: no migration). Telling the user that is the difference between a dead
+            // add-in and one click.
+            _trace?.Invoke("gantt.refresh config refused=" + configRefusal);
+            return Refuse(GanttRefreshRefusal.ConfigurationUnreadable, Describe(configRefusal));
         }
 
         // Step 2b. Arm the add-in's own protection, BEFORE the guard below, because arming is what
@@ -1175,6 +1182,43 @@ public sealed class GanttRefreshOrchestrator(
         int shapesWritten = 0,
         int styleKeyCellsWritten = 0) =>
         GanttRefreshOutcome.Refused(refusal, message, issues, durationCellsWritten, shapesWritten, styleKeyCellsWritten);
+
+    /// <summary>Turns a configuration read refusal into a message that names the remedy.</summary>
+    /// <param name="refusal">The reason the catalogue reader refused.</param>
+    /// <returns>A user-facing sentence with the action to take.</returns>
+    /// <remarks>
+    /// The commonest refusal is a workbook written by an earlier schema: the catalogue hash moved,
+    /// the read refuses, and the only way forward is Initialise (ADR-0029 D6 — no migration). The
+    /// generic "could not be read" message named no action, which is how a schema bump presented as a
+    /// completely dead add-in.
+    /// </remarks>
+    private static string Describe(ConfigReadRefusalReason refusal) => refusal switch
+    {
+        ConfigReadRefusalReason.NoActiveWorkbook =>
+            "There is no active workbook to refresh.",
+        ConfigReadRefusalReason.ConfigSheetMissing =>
+            "This workbook has no Gantt Creator configuration sheet. Run Initialize sheet first.",
+        ConfigReadRefusalReason.TableMissing =>
+            "The configuration sheet is missing a catalogue table. Run Initialize sheet to restore it.",
+        ConfigReadRefusalReason.HeaderMismatch =>
+            "The configuration sheet's tables have been edited. " +
+            "Run Initialize sheet to restore them, then refresh again.",
+        ConfigReadRefusalReason.RowCountMismatch =>
+            "This workbook's Gantt Creator configuration has the wrong number of catalogue rows. " +
+            "Run Initialize sheet to update it, then refresh again.",
+        ConfigReadRefusalReason.CatalogueMismatch =>
+            "This workbook's Gantt Creator configuration does not match this version. " +
+            "Run Initialize sheet to update it, then refresh again.",
+        ConfigReadRefusalReason.CatalogueHashMismatch =>
+            "This workbook's Gantt Creator configuration was written by an earlier version. " +
+            "Run Initialize sheet to update it, then refresh again.",
+        ConfigReadRefusalReason.ValueOutOfRange =>
+            "A value in the configuration sheet is not valid. Run Initialize sheet to restore it.",
+        ConfigReadRefusalReason.BadColourFormat =>
+            "A colour in the configuration sheet is not in the required format. " +
+            "Run Initialize sheet to restore it.",
+        _ => "The Gantt Creator configuration could not be read from the hidden configuration sheet.",
+    };
 
     private static string Describe(GanttTableReadRefusalReason refusal) =>
         refusal switch
