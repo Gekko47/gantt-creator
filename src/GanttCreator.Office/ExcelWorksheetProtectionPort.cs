@@ -249,12 +249,13 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
-        // The property is refused on an already-protected sheet, and a second Lock shapes click
-        // would otherwise turn a harmless no-op into a HostRejected refusal.
-        if (!sheet.ProtectContents)
-        {
-            SetOutlineSymbolsEnabled(sheet);
-        }
+        // Before AND after, because the two live reports disagree about which one the host needs:
+        // a full refresh kept the symbols while an automatic pass greyed them out, and the only
+        // difference between those paths is whether a protect is re-applied to an already-protected
+        // sheet. The property is refused while protected, so the attempt is best-effort; the
+        // unprotected attempt before Protect is the one that matters on a fresh cycle, and the one
+        // after covers a host that resets the option when protection is re-applied.
+        _ = TrySetOutlineSymbolsEnabled(sheet);
 
         sheet.Protect(
             Type.Missing,   // Password: none, deliberately (ADR-0055).
@@ -273,6 +274,32 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
             Type.Missing,   // AllowSorting
             Type.Missing,   // AllowFiltering
             Type.Missing);  // AllowUsingPivotTables
+
+        _ = TrySetOutlineSymbolsEnabled(sheet);
+    }
+
+    /// <summary>
+    /// Sets <c>EnableOutlining</c> if the host allows it in the sheet's current protection state.
+    /// </summary>
+    /// <param name="sheet">The worksheet being protected.</param>
+    /// <returns><see langword="true"/> when the host accepted the value.</returns>
+    /// <remarks>
+    /// A refusal is expected rather than exceptional: Excel refuses the property on a protected
+    /// sheet, and every window close after the first protects an unprotected sheet anyway, so the
+    /// next cycle re-applies it. Swallowing the refusal keeps a harmless no-op (a second Lock shapes
+    /// click) from becoming a <c>HostRejected</c> refusal that would leave the chart unlocked.
+    /// </remarks>
+    private bool TrySetOutlineSymbolsEnabled(Excel._Worksheet sheet)
+    {
+        try
+        {
+            SetOutlineSymbolsEnabled(sheet);
+            return true;
+        }
+        catch (COMException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

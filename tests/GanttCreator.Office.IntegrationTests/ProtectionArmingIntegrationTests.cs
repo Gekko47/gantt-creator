@@ -114,6 +114,15 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             Assert.True(sheet.EnableOutlining);
             _output.WriteLine("window closed: contents=True drawings=True outlining=True");
 
+            // The live report that fixed this turn: a full refresh kept the symbols while an
+            // automatic pass greyed them out, and the only difference between the two paths is a
+            // protect re-applied to an ALREADY-protected sheet. Re-protect here and pin that the
+            // symbols survive it, which is what the second set inside ProtectWorksheet exists for.
+            Assert.True(port.Protect().Succeeded);
+            Assert.True(sheet.ProtectContents);
+            Assert.True(sheet.EnableOutlining);
+            _output.WriteLine("re-protect on a protected sheet: outlining still true");
+
             // What the lock actually does, and the one write it still allows.
             COMException createRefusal = Assert.Throws<COMException>(
                 () => writer.Create(BarRequest("probe:protected")));
