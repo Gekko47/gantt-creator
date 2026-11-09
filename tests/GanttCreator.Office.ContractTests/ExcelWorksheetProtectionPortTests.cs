@@ -193,12 +193,29 @@ public class ExcelWorksheetProtectionPortTests
         /// <summary>Gets how many times the host refused the option.</summary>
         public int RefusedSets { get; private set; }
 
+        /// <summary>Gets the seam calls in the order the protect path made them.</summary>
+        public List<string> Calls { get; } = [];
+
+        /// <summary>Gets or sets whether the host refuses the cell-unlock format write.</summary>
+        public bool RefuseUnlockCells { get; set; }
+
+        /// <summary>Records the ruling-required unlock and reports whether it landed.</summary>
+        internal override bool UnlockTableCells(Excel._Worksheet sheet)
+        {
+            Calls.Add("unlock-cells");
+            return !RefuseUnlockCells;
+        }
+
         internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
             new Mock<Excel._Worksheet>().Object;
 
         internal override bool ReadContentsProtected(Excel._Worksheet sheet) => Protected;
 
-        internal override void ApplyProtect(Excel._Worksheet sheet) => Protected = true;
+        internal override void ApplyProtect(Excel._Worksheet sheet)
+        {
+            Calls.Add("protect");
+            Protected = true;
+        }
 
         /// <summary>Gets or sets whether the host refuses to release the protection (a password).</summary>
         public bool RefuseUnprotect { get; set; }
@@ -304,5 +321,55 @@ public class ExcelWorksheetProtectionPortTests
         Assert.Contains("cycled=refused", line, StringComparison.Ordinal);
         Assert.Contains("setBefore=refused", line, StringComparison.Ordinal);
         Assert.Contains("enabledAfter=false", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The visible table's cells are unlocked BEFORE the protect, so the user can copy, paste and
+    /// format schedule data while the chart is locked.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-09: "the visible table area should be fully unlocked at all times for the
+    /// user to copy paste change formatting etc". Excel locks every cell by default, so
+    /// <c>Protect(Contents:=true)</c> made the table read-only. The order is the assertion: a
+    /// <c>Locked</c> write is refused on a protected sheet, so an unlock after the protect could not
+    /// land.
+    /// </remarks>
+    [Fact]
+    public void Protect_unlocks_the_table_cells_before_it_protects()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: false, trace);
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(["unlock-cells", "protect"], port.Calls);
+        Assert.Contains("cellsUnlocked=ok", Assert.Single(trace), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A refused cell unlock is reported and does not abandon the protect.
+    /// </summary>
+    /// <remarks>
+    /// The state that produces it is a sheet protected with a password this add-in does not have:
+    /// the cycle cannot release it, so the format write is refused. Protecting anyway is still the
+    /// behaviour the user relies on — the chart stays locked — and the log line says the table did
+    /// not get unlocked, so the state is not silently half-applied.
+    /// </remarks>
+    [Fact]
+    public void A_refused_cell_unlock_still_protects_and_records_the_refusal()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace)
+        {
+            RefuseUnprotect = true,
+            RefuseUnlockCells = true,
+        };
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Contains("protect", port.Calls);
+        Assert.Contains("cellsUnlocked=refused", Assert.Single(trace), StringComparison.Ordinal);
     }
 }

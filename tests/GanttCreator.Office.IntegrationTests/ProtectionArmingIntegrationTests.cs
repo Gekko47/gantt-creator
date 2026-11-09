@@ -107,6 +107,18 @@ public class ProtectionArmingIntegrationTests(ITestOutputHelper output)
             Assert.True(sheet.ProtectContents);
             Assert.True(sheet.ProtectDrawingObjects);
 
+            // Owner ruling 2026-11-09: the visible table's cells stay UNLOCKED, so the user can copy,
+            // paste and format schedule data while the chart is locked. Excel defaults every cell to
+            // Locked=true, so this is the assertion that the protect path clears it; without the
+            // unlock the table is read-only the moment the window closes.
+            Excel.ListObject table = (Excel.ListObject)scope.Track(
+                sheet.ListObjects[GanttTableSchema.TableName]);
+            Excel.Range body = (Excel.Range)scope.Track(table.DataBodyRange);
+            Assert.NotNull(body);
+            Excel.Range firstBodyCell = (Excel.Range)scope.Track(body.Cells[1, 1]);
+            Assert.False(Convert.ToBoolean(firstBodyCell.Locked));
+            _output.WriteLine("protected sheet: the table body cells are unlocked, the shapes are not");
+
             // The native +/- group buttons stay usable, which is the whole point of the outline the
             // refresh builds. Without EnableOutlining the host greys them out on a protected sheet,
             // and the property is "not saved with the worksheet or session", so every protect has to

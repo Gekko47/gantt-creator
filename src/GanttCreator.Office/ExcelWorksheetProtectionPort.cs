@@ -225,6 +225,84 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
     internal virtual Excel.ListObject? GetListObjectAt(Excel.ListObjects objects, int index) =>
         objects[index];
 
+    /// <summary>
+    /// Unlocks the visible table's data cells, so the user can copy, paste and format them while the
+    /// chart stays locked. Test seam over <c>Range.Locked</c>.
+    /// </summary>
+    /// <param name="sheet">The worksheet carrying the table.</param>
+    /// <returns><see langword="true"/> when the cells were unlocked.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Owner ruling 2026-11-09:</b> "the visible table area should be fully unlocked at all times
+    /// for the user to copy paste change formatting etc". Excel's default is `Locked = true` on every
+    /// cell, so `Protect(Contents:=true)` made the whole table read-only and blocked every one of
+    /// those operations. The protection's remaining job is the CHART: `DrawingObjects` plus the
+    /// `Shape.Locked` stamp is what stops an accidental shape drag, and that is unaffected by this.
+    /// </para>
+    /// <para>
+    /// <b>Data body, not the whole range.</b> Unlocking the header would let a user rename a schema
+    /// column, which silently breaks the name-keyed column map every adapter builds. The schedule
+    /// data is the area the ruling is about. An empty table falls back to its whole range so the
+    /// first row the user types is editable.
+    /// </para>
+    /// <para>
+    /// <b>Must run while the sheet is released.</b> <c>Locked</c> is a format write and the host
+    /// refuses it on a protected sheet, which is one more reason the protect path cycles protection
+    /// first. A refusal here is reported and does not abandon the protect: a sheet protected with a
+    /// password we do not have is still worth protecting.
+    /// </para>
+    /// </remarks>
+    internal virtual bool UnlockTableCells(Excel._Worksheet sheet)
+    {
+        ArgumentNullException.ThrowIfNull(sheet);
+
+#pragma warning disable CA1031
+        try
+        {
+            Excel.Range? range = FindGanttTableRange(sheet);
+            if (range is null)
+            {
+                return false;
+            }
+
+            range.Locked = false;
+            return true;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            _ = exception;
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>Resolves the Gantt table's data range, or its whole range when the body is empty.</summary>
+    /// <param name="sheet">The worksheet carrying the table.</param>
+    /// <returns>The range to unlock, or <see langword="null"/> when the table is absent.</returns>
+    private Excel.Range? FindGanttTableRange(Excel._Worksheet sheet)
+    {
+        Excel.ListObjects? objects = sheet.ListObjects;
+        if (objects is null)
+        {
+            return null;
+        }
+
+        int count = GetListObjectCount(objects);
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.ListObject? table = GetListObjectAt(objects, index);
+            if (table is null
+                || !string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return table.DataBodyRange ?? table.Range;
+        }
+
+        return null;
+    }
+
     /// <summary>Reads <c>ProtectContents</c>. Test seam over the COM property.</summary>
     /// <param name="sheet">The worksheet.</param>
     /// <returns><see langword="true"/> when locked cells are read-only.</returns>
@@ -289,6 +367,12 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
             }
         }
 
+        // Owner ruling 2026-11-09: the visible table stays editable (copy/paste/format) while the
+        // chart is locked. This must precede Protect — Locked is a format write the host refuses on
+        // a protected sheet — and it is deliberately not fatal: a sheet we cannot release simply
+        // stays as locked as it was.
+        bool cellsUnlocked = UnlockTableCells(sheet);
+
         bool setBefore = SetOutlineSymbolsEnabled(sheet);
 
         ApplyProtect(sheet);
@@ -302,6 +386,8 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
         _trace?.Invoke(
             "gantt.protection protect outlining protectedBefore="
             + protectedBefore
+            + " cellsUnlocked="
+            + DescribeAttempt(cellsUnlocked)
             + " setBefore="
             + DescribeAttempt(setBefore)
             + " setAfter="
@@ -343,12 +429,16 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
         sheet.Protect(
             Type.Missing,   // Password: none, deliberately (ADR-0055).
             true,           // DrawingObjects: REQUIRED. Defaults to False, which leaves Shape.Locked inert.
-            true,           // Contents: locked cells become read-only, per the schema's IsLocked columns.
+            true,           // Contents: locked cells become read-only; the TABLE's cells are unlocked first.
             Type.Missing,   // Scenarios: host default.
             true,           // UserInterfaceOnly: the add-in may still write after protecting.
-            Type.Missing,   // AllowFormattingCells
-            Type.Missing,   // AllowFormattingColumns
-            Type.Missing,   // AllowFormattingRows
+
+            // Owner ruling 2026-11-09: formatting is a SHEET permission, not a per-cell one, so
+            // unlocking the table's cells alone would still leave Paste Special / Format Cells
+            // refused. These three are what "change formatting" actually needs.
+            true,           // AllowFormattingCells
+            true,           // AllowFormattingColumns
+            true,           // AllowFormattingRows
             Type.Missing,   // AllowInsertingColumns
             Type.Missing,   // AllowInsertingRows
             Type.Missing,   // AllowInsertingHyperlinks
