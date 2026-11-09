@@ -451,9 +451,17 @@ public sealed class GanttRefreshOrchestrator(
         // Refreshes to show the right style.
         IReadOnlyList<GanttEvent> events = validation.Events;
 
-        // Step 6. Worksheet presentation. The outline is rebuilt from the validated
-        // hierarchy, never read back, so collapsing a group stays presentation.
-        OutlineGroupOutcome outline = _outlineWriter.Apply(events);
+        // Step 6. Worksheet presentation. The outline is rebuilt from the hierarchy as READ,
+        // never read back, so collapsing a group stays presentation.
+        //
+        // <b>The rows as read, not the validated events.</b> Measured live 2026-11-09: the Add
+        // activity command groups the new row correctly from the rows it wrote, and this refresh
+        // then ungrouped it 313 ms later. The cause was two planners and two datasets — a freshly
+        // inserted activity has no dates, so it is not a "usable event" and was absent from
+        // `validation.Events`, which made the plan legitimately contain no group for it and the
+        // reset pass clear the rows the insert had just grouped. Validation decides what may be
+        // RENDERED; the outline is presentation of the `ParentId` column and follows the column.
+        OutlineGroupOutcome outline = _outlineWriter.Apply(HierarchyProjection.FromRows(rows.Rows));
         if (!outline.Succeeded)
         {
             return Refuse(GanttRefreshRefusal.OutlineRefused, "The row outline groups could not be updated.");

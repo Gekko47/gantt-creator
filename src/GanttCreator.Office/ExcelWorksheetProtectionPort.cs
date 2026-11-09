@@ -15,6 +15,10 @@ namespace GanttCreator.Office;
 /// The Excel application object (for example <c>ExcelDnaUtil.Application</c>), or
 /// <see langword="null"/> when the host supplied none.
 /// </param>
+/// <param name="trace">
+/// Optional diagnostic sink for the outline-symbol state a protect finds and leaves, or
+/// <see langword="null"/> for no trace. The production sink must not throw.
+/// </param>
 /// <remarks>
 /// <para>
 /// <b>COM ownership.</b> Every proxy reached here is an Excel-owned shared root: it is held in a
@@ -37,9 +41,11 @@ namespace GanttCreator.Office;
 /// permanently unprotectable by the user. Both directions pass <see cref="Type.Missing"/>.
 /// </para>
 /// </remarks>
-public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProtectionPort
+public class ExcelWorksheetProtectionPort(object? application, Action<string>? trace = null)
+    : IWorksheetProtectionPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
+    private readonly Action<string>? _trace = trace;
 
     /// <inheritdoc />
     public WorksheetProtectionState? Read()
@@ -249,13 +255,62 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
-        // Before AND after, because the two live reports disagree about which one the host needs:
-        // a full refresh kept the symbols while an automatic pass greyed them out, and the only
-        // difference between those paths is whether a protect is re-applied to an already-protected
-        // sheet. The property is refused while protected, so the attempt is best-effort; the
-        // unprotected attempt before Protect is the one that matters on a fresh cycle, and the one
-        // after covers a host that resets the option when protection is re-applied.
-        _ = TrySetOutlineSymbolsEnabled(sheet);
+        // The two live reports disagree about which side of Protect the host needs, and a third
+        // report says the automatic pass still greys the symbols out while a full refresh keeps
+        // them. Rather than guess a fourth ordering, the state is READ on both sides and recorded:
+        // the deciding fact is whether the sheet was already protected when this ran, because the
+        // host refuses EnableOutlining on a protected sheet and a refused attempt is a silent
+        // no-op that leaves the symbols exactly as Protect left them.
+        bool protectedBefore = ReadContentsProtected(sheet);
+        bool? enabledBefore = ReadOutlineSymbolsEnabled(sheet);
+        bool setBefore = SetOutlineSymbolsEnabled(sheet);
+
+        ApplyProtect(sheet);
+
+        bool setAfter = SetOutlineSymbolsEnabled(sheet);
+        bool? enabledAfter = ReadOutlineSymbolsEnabled(sheet);
+
+        // One line, emitted after the last read, so a live log answers the question the reports
+        // keep re-opening: was the sheet already protected (which is what makes a set a no-op),
+        // did each attempt land, and what does the host actually report afterwards.
+        _trace?.Invoke(
+            "gantt.protection protect outlining protectedBefore="
+            + protectedBefore
+            + " setBefore="
+            + DescribeAttempt(setBefore)
+            + " setAfter="
+            + DescribeAttempt(setAfter)
+            + " enabledBefore="
+            + Describe(enabledBefore)
+            + " enabledAfter="
+            + Describe(enabledAfter));
+
+        static string Describe(bool? value)
+        {
+            return value is { } flag ? (flag ? "true" : "false") : "unreadable";
+        }
+
+        static string DescribeAttempt(bool landed)
+        {
+            return landed ? "ok" : "refused";
+        }
+    }
+
+    /// <summary>
+    /// Applies the protection itself. Test seam over the sixteen-parameter
+    /// <c>Worksheet.Protect</c> call, which Moq cannot express.
+    /// </summary>
+    /// <param name="sheet">The worksheet to protect.</param>
+    /// <remarks>
+    /// The arguments this seam is given are the whole ADR-0055 contract and cannot be asserted in a
+    /// contract test — <c>DrawingObjects</c>, <c>Contents</c>, <c>UserInterfaceOnly</c>, no password —
+    /// so they are proved by the live Office gate. Extracting the call is what lets the OUTLINING
+    /// diagnostic around it be tested, because a test that substitutes all of
+    /// <see cref="ProtectWorksheet"/> never reaches the reads.
+    /// </remarks>
+    internal virtual void ApplyProtect(Excel._Worksheet sheet)
+    {
+        ArgumentNullException.ThrowIfNull(sheet);
 
         sheet.Protect(
             Type.Missing,   // Password: none, deliberately (ADR-0055).
@@ -274,32 +329,6 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
             Type.Missing,   // AllowSorting
             Type.Missing,   // AllowFiltering
             Type.Missing);  // AllowUsingPivotTables
-
-        _ = TrySetOutlineSymbolsEnabled(sheet);
-    }
-
-    /// <summary>
-    /// Sets <c>EnableOutlining</c> if the host allows it in the sheet's current protection state.
-    /// </summary>
-    /// <param name="sheet">The worksheet being protected.</param>
-    /// <returns><see langword="true"/> when the host accepted the value.</returns>
-    /// <remarks>
-    /// A refusal is expected rather than exceptional: Excel refuses the property on a protected
-    /// sheet, and every window close after the first protects an unprotected sheet anyway, so the
-    /// next cycle re-applies it. Swallowing the refusal keeps a harmless no-op (a second Lock shapes
-    /// click) from becoming a <c>HostRejected</c> refusal that would leave the chart unlocked.
-    /// </remarks>
-    private bool TrySetOutlineSymbolsEnabled(Excel._Worksheet sheet)
-    {
-        try
-        {
-            SetOutlineSymbolsEnabled(sheet);
-            return true;
-        }
-        catch (COMException)
-        {
-            return false;
-        }
     }
 
     /// <summary>
@@ -307,11 +336,51 @@ public class ExcelWorksheetProtectionPort(object? application) : IWorksheetProte
     /// <c>Worksheet.EnableOutlining</c>.
     /// </summary>
     /// <param name="sheet">The worksheet about to be protected.</param>
-    internal virtual void SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
+    /// <returns><see langword="true"/> when the host accepted the value.</returns>
+    /// <remarks>
+    /// A refusal is expected rather than exceptional: Excel refuses the property on a protected
+    /// sheet, and a refused attempt is a silent no-op that leaves the option exactly as
+    /// <c>Protect</c> left it. Reporting the refusal as a bool rather than letting it escape keeps a
+    /// harmless no-op — a second Lock shapes click, or a re-protect of an already-protected sheet —
+    /// from becoming a <c>HostRejected</c> refusal that would leave the chart unlocked, and it lets
+    /// the caller record which of its two attempts actually landed.
+    /// </remarks>
+    internal virtual bool SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
-        sheet.EnableOutlining = true;
+        try
+        {
+            sheet.EnableOutlining = true;
+            return true;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the host's outline-symbol option so a protect can record what it found, rather than
+    /// only what it attempted. Test seam over <c>Worksheet.EnableOutlining</c>.
+    /// </summary>
+    /// <param name="sheet">The worksheet being protected.</param>
+    /// <returns>
+    /// The host's value, or <see langword="null"/> when the host will not report it in the sheet's
+    /// current protection state — which is itself the answer a diagnostic needs.
+    /// </returns>
+    internal virtual bool? ReadOutlineSymbolsEnabled(Excel._Worksheet sheet)
+    {
+        ArgumentNullException.ThrowIfNull(sheet);
+
+        try
+        {
+            return sheet.EnableOutlining;
+        }
+        catch (Exception exception) when (exception is COMException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Removes protection. Test seam over <c>Worksheet.Unprotect</c>.</summary>

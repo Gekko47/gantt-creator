@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using GanttCreator.Core;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -14,9 +15,23 @@ public class ExcelGanttRowInserter(
     IWorksheetProtectionGuard? protectionGuard = null,
     ITypeOptionsMaterialiser? typeOptionsMaterialiser = null,
     IRowHeightNormalisationPort? rowHeightNormaliser = null,
-    IOutlineGroupPort? outlineGroups = null) : IGanttRowInserter
+    IOutlineGroupPort? outlineGroups = null,
+    Action<string>? trace = null) : IGanttRowInserter
 {
     private readonly Excel.Application? _application = application as Excel.Application;
+
+    /// <summary>
+    /// Optional diagnostic sink for the group-aware parent decision and the regroup that follows
+    /// it, or <see langword="null"/> for no trace.
+    /// </summary>
+    /// <remarks>
+    /// Both lines exist because the decision and its consequence are one row apart in time but
+    /// several components apart in code: the inserter chooses a <c>ParentId</c>, writes it, then
+    /// the outline adapter rebuilds groups from a fresh read. A user report that "the new activity
+    /// is not in the group" cannot distinguish "the parent was never assigned" from "the parent was
+    /// assigned and the planner still dropped it", and the second is invisible in the sheet.
+    /// </remarks>
+    private readonly Action<string>? _trace = trace;
     private readonly IWorksheetProtectionGuard _protectionGuard =
         protectionGuard ?? new ExcelWorksheetProtectionGuard(application);
     private readonly ITypeOptionsMaterialiser _typeOptionsMaterialiser =
@@ -114,6 +129,11 @@ public class ExcelGanttRowInserter(
         Excel.ListRow? newRow = null;
         Excel.Range rowRange;
 
+        // Hoisted out of the insert block so the regroup can report WHICH body row it inserted:
+        // the plan's refusal list is a set of row numbers, and without this the log cannot say
+        // whether the new row was refused or some unrelated row was.
+        int? insertedBodyRow = null;
+
         // Only the APPEND branch can lose the padding row, because only it depends on
         // the insert below the table having succeeded. A positional insert shifts the
         // sheet by itself, so its padding row is displaced by definition.
@@ -129,6 +149,7 @@ public class ExcelGanttRowInserter(
         else
         {
             int? position = GetInsertionPosition(application!, table, rows);
+            insertedBodyRow = position;
 
             // BOTH branches insert a genuine WORKSHEET row, because
             // ListRows.Add(position) does NOT shift the sheet. Measured
@@ -247,7 +268,7 @@ public class ExcelGanttRowInserter(
         // parent/child mutator's Finish. A regroup refusal degrades to the
         // pre-D12 behaviour -- the insert stands and the next Refresh rebuilds
         // the outline -- rather than failing work that already landed.
-        RegroupOutline(table, columnMap);
+        RegroupOutline(table, columnMap, insertedBodyRow);
 
         TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
         if (!typeOptions.Succeeded)
@@ -604,6 +625,10 @@ public class ExcelGanttRowInserter(
         List<object?[]> body = ReadBody(table);
         if (position < 2 || position >= body.Count)
         {
+            _trace?.Invoke(
+                "gantt.rowinsert parent-decision position=" + position
+                + " rows=" + body.Count
+                + " decided=none (outside a group by position)");
             return values;
         }
 
@@ -614,26 +639,40 @@ public class ExcelGanttRowInserter(
         GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
         GanttRowId? belowParentId = TryParseParentId(belowRow, columnMap);
 
+        GanttRowId? decided = null;
+
         // The active cell is a child of P and the row below is also a
         // child of P: the new row lands inside P's contiguous child run,
         // so it joins that run.
         if (activeParentId is not null && belowParentId == activeParentId)
         {
-            return WithParentId(values, activeParentId);
+            decided = activeParentId;
         }
 
         // The active cell is a top-level parent and the row below is
         // its child: the new row lands between the parent and its first
         // child, so it becomes that parent's first child.
-        if (activeParentId is null && activeId is not null && belowParentId == activeId)
+        else if (activeParentId is null && activeId is not null && belowParentId == activeId)
         {
-            return WithParentId(values, activeId);
+            decided = activeId;
         }
 
         // Every other position -- below a top-level leaf, below a group's
         // last child, or between two different groups -- is top-level,
         // matching the host's own outline-insert behaviour.
-        return values;
+        _trace?.Invoke(
+            "gantt.rowinsert parent-decision position=" + position
+            + " active=" + Show(activeId)
+            + " activeparent=" + Show(activeParentId)
+            + " belowparent=" + Show(belowParentId)
+            + " decided=" + Show(decided));
+
+        return decided is null ? values : WithParentId(values, decided);
+
+        static string Show(GanttRowId? id)
+        {
+            return id?.Value ?? "none";
+        }
     }
 
     /// <summary>
@@ -708,7 +747,11 @@ public class ExcelGanttRowInserter(
     /// </summary>
     /// <param name="table">The Gantt data table, post-insert.</param>
     /// <param name="columnMap">The schema-column to table-column index map.</param>
-    private void RegroupOutline(Excel.ListObject table, int[] columnMap)
+    /// <param name="insertedBodyRow">
+    /// The one-based body row the new row occupies, or <see langword="null"/> when the insert
+    /// appended. Used only to report whether the new row is the one the plan refused.
+    /// </param>
+    private void RegroupOutline(Excel.ListObject table, int[] columnMap, int? insertedBodyRow)
     {
         if (_outlineGroups is null)
         {
@@ -723,10 +766,39 @@ public class ExcelGanttRowInserter(
             out int? _);
         if (events is null)
         {
+            _trace?.Invoke("gantt.rowinsert regroup rows=" + body.Count + " projected=false");
             return;
         }
 
-        _ = _outlineGroups.Apply(events);
+        // Forced: Excel copies the outline LEVEL of the row above into a row inserted inside a
+        // group, so the new row already reports the child level while sitting outside the group's
+        // span. The level-based skip would decline to group it and the row would be left ungrouped
+        // in the sheet with no error - measured live 2026-11-09 (groups=0 while the plan had 2 and
+        // the new row was inside one).
+        OutlineGroupOutcome outcome = _outlineGroups.Apply(events, forceRegroup: true);
+
+        // The plan is ALSO logged, because the writer's counts cannot distinguish the two ways a
+        // regroup does nothing: an empty plan (nothing was grouped) and a plan whose groups the
+        // writer judged already grouped (nothing was written). `RowsUngrouped` on the OUTCOME
+        // counts rows the writer reset, not rows the planner refused, so it reads zero in both.
+        OutlineGroupPlan plan = OutlineGroupPlanner.Plan(events);
+        bool insertedGrouped = insertedBodyRow is { } row
+            && plan.Groups.Any(group => group.ChildRowNumbers.Contains(row));
+        bool insertedRefused = insertedBodyRow is { } refused
+            && plan.RowsToUngroup.Contains(refused);
+
+        _trace?.Invoke(
+            "gantt.rowinsert regroup rows=" + body.Count
+            + " events=" + events.Count
+            + " groups=" + outcome.GroupsApplied
+            + " ungrouped=" + outcome.RowsUngrouped
+            + " refusal=" + (outcome.Refusal?.ToString() ?? "none")
+            + " parents=" + events.Count(static @event => @event.ParentId is not null)
+            + " plan-groups=" + plan.Groups.Count
+            + " plan-ungroup=" + plan.RowsToUngroup.Count
+            + " inserted=" + (insertedBodyRow?.ToString(CultureInfo.InvariantCulture) ?? "none")
+            + " inserted-grouped=" + insertedGrouped
+            + " inserted-refused=" + insertedRefused);
     }
 
     /// <summary>

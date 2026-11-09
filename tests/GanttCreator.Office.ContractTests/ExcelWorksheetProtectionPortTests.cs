@@ -172,4 +172,95 @@ public class ExcelWorksheetProtectionPortTests
         Assert.Equal(ProtectionWriteRefusal.HostRejected, outcome.Refusal);
         Assert.False(port.ProtectCalled);
     }
+
+    /// <summary>
+    /// A port whose Protect runs the REAL outline-symbol logic, with only the host calls beneath it
+    /// substituted, so the diagnostic line and the refusal behaviour around it are observable.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TestablePort"/> cannot prove any of this: it substitutes
+    /// <c>ProtectWorksheet</c>, which is exactly the method under test here.
+    /// </remarks>
+    private sealed class OutliningPort(object? application, bool contentsProtected, List<string> trace)
+        : ExcelWorksheetProtectionPort(application, trace.Add)
+    {
+        /// <summary>Gets or sets whether the sheet currently reports itself protected.</summary>
+        public bool Protected { get; set; } = contentsProtected;
+
+        /// <summary>Gets or sets the host's outline-symbol option.</summary>
+        public bool OutlineEnabled { get; set; }
+
+        /// <summary>Gets how many times the host refused the option.</summary>
+        public int RefusedSets { get; private set; }
+
+        internal override Excel._Worksheet? FindGanttWorksheet(Excel.Sheets sheets) =>
+            new Mock<Excel._Worksheet>().Object;
+
+        internal override bool ReadContentsProtected(Excel._Worksheet sheet) => Protected;
+
+        internal override void ApplyProtect(Excel._Worksheet sheet) => Protected = true;
+
+        internal override bool? ReadOutlineSymbolsEnabled(Excel._Worksheet sheet) => OutlineEnabled;
+
+        internal override bool SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
+        {
+            // The measured host behaviour: the property is refused while the sheet is protected,
+            // which is what turns a "set" into a silent no-op that leaves the option as Protect left it.
+            if (Protected)
+            {
+                RefusedSets++;
+                return false;
+            }
+
+            OutlineEnabled = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A protect on an unprotected sheet records what it found, what each attempt did, and what the
+    /// host then reports — the facts the two live reports are argued from.
+    /// </summary>
+    [Fact]
+    public void Protect_records_the_outline_symbol_state_it_found_and_left()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: false, trace);
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        string line = Assert.Single(trace);
+        Assert.Contains("gantt.protection protect outlining", line, StringComparison.Ordinal);
+        Assert.Contains("protectedBefore=False", line, StringComparison.Ordinal);
+        Assert.Contains("setBefore=ok", line, StringComparison.Ordinal);
+        Assert.Contains("setAfter=refused", line, StringComparison.Ordinal);
+        Assert.Contains("enabledAfter=true", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A protect re-applied to an ALREADY-protected sheet records both attempts as refused, because
+    /// that is the state in which the option cannot be repaired and the symbols stay greyed.
+    /// </summary>
+    /// <remarks>
+    /// This is the mechanism behind "full refresh keeps them unlocked but auto refresh locks them":
+    /// the path that reaches Protect while the sheet is still protected cannot set the option at all,
+    /// and until this line existed neither path said so.
+    /// </remarks>
+    [Fact]
+    public void A_protect_on_an_already_protected_sheet_records_both_attempts_as_refused()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace);
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        string line = Assert.Single(trace);
+        Assert.Contains("protectedBefore=True", line, StringComparison.Ordinal);
+        Assert.Contains("setBefore=refused", line, StringComparison.Ordinal);
+        Assert.Contains("setAfter=refused", line, StringComparison.Ordinal);
+        Assert.Contains("enabledAfter=false", line, StringComparison.Ordinal);
+        Assert.Equal(2, port.RefusedSets);
+    }
 }

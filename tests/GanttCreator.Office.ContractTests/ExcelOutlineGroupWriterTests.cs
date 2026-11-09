@@ -317,6 +317,52 @@ public sealed class ExcelOutlineGroupWriterTests
     }
 
     /// <summary>
+    /// A forced apply rewrites a span whose rows all report the child level, because the level is
+    /// not proof of membership: Excel copies the level of the row above into a row inserted inside
+    /// a grouped span, so a new child reads level 2 while sitting outside the group's bracket.
+    /// </summary>
+    /// <remarks>
+    /// Measured live 2026-11-09 on the Add activity path: the plan held two groups with the new row
+    /// inside one, every row already read level 2, and the unforced skip wrote nothing - the insert
+    /// was left ungrouped on screen with no refusal anywhere. The insert path therefore forces the
+    /// write; a Refresh keeps the skip that this test's sibling above pins.
+    /// </remarks>
+    [Fact]
+    public void A_forced_apply_regroups_a_span_that_already_reports_the_child_level()
+    {
+        var (application, worksheet, table) = Graph();
+        List<(int First, int Last, int Level)> writes = [];
+        GanttRowId parent = NewId();
+        var writer = new TestableWriter(
+            application.Object,
+            Guard(ProtectionGuardOutcome.NotProtected),
+            worksheet.Object,
+            table.Object,
+            writes)
+        {
+            BodyRowCount = 3,
+            InitialLevels = new Dictionary<int, object?>
+            {
+                [2] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+                [3] = ExcelOutlineGroupWriter.ChildOutlineLevel,
+            },
+        };
+
+        OutlineGroupOutcome outcome = writer.Apply(
+            [Event(1, parent), Event(2, NewId(), parent), Event(3, NewId(), parent)],
+            forceRegroup: true);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, outcome.GroupsApplied);
+        (int first, int last, int level) = Assert.Single(writes);
+
+        // The span, not its absolute address: the fixture maps body rows onto worksheet rows,
+        // so pinning the numbers here would test that mapping rather than the forced write.
+        Assert.Equal(2, (last - first) + 1);
+        Assert.Equal(ExcelOutlineGroupWriter.ChildOutlineLevel, level);
+    }
+
+    /// <summary>
     /// A flat table writes nothing at all: the common case must not add outline
     /// controls or dirty the workbook.
     /// </summary>

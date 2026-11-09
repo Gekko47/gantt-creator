@@ -222,8 +222,14 @@ public class ExcelShapeWriterTests
         double x = 10,
         double y = 20,
         double width = 100,
-        double height = 30) =>
-        new(id, OfficeShapeKind.Rectangle, new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)), ZLayer.ActivityBody);
+        double height = 30,
+        bool hostOwnsExtent = false) =>
+        new(
+            id,
+            OfficeShapeKind.Rectangle,
+            new OfficeShapeGeometry(Bounds: new RectD(x, y, width, height)),
+            ZLayer.ActivityBody,
+            HostOwnsExtent: hostOwnsExtent);
 
     /// <summary>
     /// A missing name resolves to <see langword="null"/>, not an escaping COM error.
@@ -339,6 +345,108 @@ public class ExcelShapeWriterTests
 
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+    }
+
+    /// <summary>
+    /// A host-owned shape — one that spans the plot's full height — is created with
+    /// <c>xlMoveAndSize</c>, so Excel stretches it live when a group collapses or
+    /// expands (ADR-0052 D6–D7).
+    /// </summary>
+    /// <remarks>
+    /// This is the opposite answer to the bar next door, and deliberately so. The scene's
+    /// height for this class is derived from the same measured rows the host ties the
+    /// shape to, so host resizing is the chart following its own rows rather than the
+    /// renderer losing control of its output.
+    /// </remarks>
+    [Fact]
+    public void Create_places_a_host_owned_shape_with_move_and_size()
+    {
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object);
+
+        ShapeWriteOutcome outcome = writer.Create(RectangleRequest(hostOwnsExtent: true));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Excel.Shape created = Assert.Single(writer.Created);
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, created.Placement);
+    }
+
+    /// <summary>
+    /// An update heals a host-owned shape that ADR-0052 had re-placed with <c>xlMove</c>
+    /// back to <c>xlMoveAndSize</c>, so an existing workbook regains the live stretch on
+    /// its next Refresh instead of needing its shapes rebuilt.
+    /// </summary>
+    [Fact]
+    public void An_update_heals_a_host_owned_shape_to_move_and_size()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        existing.Placement = Excel.XlPlacement.xlMove;
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+
+        ShapeWriteOutcome outcome = writer.Update(RectangleRequest(hostOwnsExtent: true));
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, existing.Placement);
+    }
+
+    /// <summary>
+    /// A host-owned shape matches within the stated host-resize tolerance and stops
+    /// matching just outside it, so a collapse/expand cycle does not force a rewrite
+    /// while a real geometry change still does (ADR-0052 D8).
+    /// </summary>
+    [Fact]
+    public void A_host_owned_shape_matches_within_the_host_resize_tolerance()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest(hostOwnsExtent: true);
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Equal(Excel.XlPlacement.xlMoveAndSize, existing.Placement);
+
+        // Excel resized the shape proportionally, as a collapse would: inside the
+        // tolerance is a match, because that drift is the host's own rounding.
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 0.8);
+        Assert.True(writer.GeometryMatches(request));
+
+        // Outside the tolerance is a real difference the scene must correct.
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 1.2);
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// The wider host-resize tolerance is scoped to the host-owned class and must not
+    /// leak to a scene-owned shape, whose height the scene still owns exactly.
+    /// </summary>
+    [Fact]
+    public void A_scene_owned_shape_is_not_rescued_by_the_host_resize_tolerance()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest();
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.Equal(Excel.XlPlacement.xlMove, existing.Placement);
+
+        existing.Height = 30f + (float)(HostOwnedGeometry.HostResizeTolerancePt * 0.8);
+        Assert.False(writer.GeometryMatches(request));
+    }
+
+    /// <summary>
+    /// A host-owned shape left on <c>xlMove</c> does not match, because the live stretch
+    /// this class exists to restore is absent and only a rewrite re-applies it.
+    /// </summary>
+    [Fact]
+    public void A_host_owned_shape_on_move_placement_does_not_match()
+    {
+        var existing = NewShape("row-1:bar", ShapeOwnershipTag.ForPrimitiveId("row-1:bar"));
+        var writer = new TestableWriter(ActiveApplication().Object, ClearGuard().Object, existing);
+        OfficeShapeRequest request = RectangleRequest(hostOwnsExtent: true);
+
+        Assert.True(writer.Update(request).Succeeded);
+        Assert.True(writer.GeometryMatches(request));
+
+        existing.Placement = Excel.XlPlacement.xlMove;
+        Assert.False(writer.GeometryMatches(request));
     }
 
     /// <summary>

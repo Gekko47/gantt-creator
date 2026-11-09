@@ -862,7 +862,7 @@ internal sealed class RefreshFakes
 
     private sealed class FakeOutlineWriter(RefreshFakes owner) : IOutlineGroupPort
     {
-        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
         {
             owner.Steps.Add("Outline");
             return owner.OutlineRefused

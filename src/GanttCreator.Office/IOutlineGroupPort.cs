@@ -73,8 +73,16 @@ public interface IOutlineGroupPort
 {
     /// <summary>Rebuilds the table's outline groups from a validated hierarchy.</summary>
     /// <param name="events">The validated events, from <c>GanttRowValidator</c>.</param>
+    /// <param name="forceRegroup">
+    /// <see langword="true"/> to write every planned span even when its rows already report the
+    /// child outline level. Required after a row insert: Excel copies the outline LEVEL of the row
+    /// above into an inserted row, so a new row inside a group already reads level 2 while sitting
+    /// outside the group's span, and the level-based skip then declines to group it. The Refresh
+    /// path leaves this <see langword="false"/>, which is what keeps a no-op Refresh from
+    /// re-evaluating (and re-expanding) a user's collapsed groups.
+    /// </param>
     /// <returns>How many groups were applied, or the refusal reason.</returns>
-    OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events);
+    OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false);
 
     /// <summary>
     /// Collapses or expands every group in the table, by hiding or showing the

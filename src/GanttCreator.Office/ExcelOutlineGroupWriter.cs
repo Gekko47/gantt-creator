@@ -207,7 +207,7 @@ public class ExcelOutlineGroupWriter(
     }
 
     /// <inheritdoc />
-    public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+    public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
     {
         ArgumentNullException.ThrowIfNull(events);
 
@@ -308,13 +308,26 @@ public class ExcelOutlineGroupWriter(
             // the delta cache cannot see. Rebuilding the hierarchy is still the rule --
             // a span that is new, resized, or moved is written because at least one of
             // its rows is not at the child level yet.
-            bool alreadyGrouped = true;
-            foreach (int childRowNumber in group.ChildRowNumbers)
+            //
+            // <b>`forceRegroup` exists because the level is not proof of membership.</b>
+            // Measured live 2026-11-09 through the Add activity path: Excel copies the
+            // outline LEVEL of the row above into a row inserted inside a grouped span, so
+            // the new child already reported level 2 while sitting outside the group's
+            // bracket. The plan was right (2 groups, the new row inside one) and this test
+            // skipped both writes, so the row was left ungrouped on screen with no error
+            // anywhere. The insert path therefore forces the write; a Refresh keeps the
+            // skip, which is what stops a no-op pass from re-expanding collapsed groups.
+            bool alreadyGrouped = !forceRegroup;
+            if (!forceRegroup)
             {
-                if (currentLevels.GetValueOrDefault(childRowNumber) != ChildOutlineLevel)
+                alreadyGrouped = true;
+                foreach (int childRowNumber in group.ChildRowNumbers)
                 {
-                    alreadyGrouped = false;
-                    break;
+                    if (currentLevels.GetValueOrDefault(childRowNumber) != ChildOutlineLevel)
+                    {
+                        alreadyGrouped = false;
+                        break;
+                    }
                 }
             }
 

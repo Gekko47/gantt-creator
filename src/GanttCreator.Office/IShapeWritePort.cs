@@ -43,6 +43,12 @@ namespace GanttCreator.Office;
 /// adapter decides, so a <see langword="null"/> means "leave the font colour
 /// alone" and is never substituted.
 /// </param>
+/// <param name="HostOwnsExtent">
+/// <see langword="true"/> when the host owns this shape's vertical extent
+/// (ADR-0052 D6): the shape spans the plot's full height and is placed with
+/// <c>xlMoveAndSize</c> so Excel resizes it live on collapse/expand. The
+/// default is <see langword="false"/> (scene-owned, <c>xlMove</c>).
+/// </param>
 /// <remarks>
 /// Every value is a primitive or a Core-owned type. No interop type crosses
 /// this request, so the AddIn compilation never names
@@ -63,7 +69,8 @@ public sealed record OfficeShapeRequest(
     string? Text = null,
     GanttTextAlignment? Alignment = null,
     ColourHex? TextColour = null,
-    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid);
+    GanttStrokeDash StrokeDash = GanttStrokeDash.Solid,
+    bool HostOwnsExtent = false);
 
 /// <summary>
 /// Narrow port over the live renderer's shape writes: create, update, and
@@ -279,8 +286,10 @@ public interface IShapeWritePort
     /// <param name="request">The scene's desired shape.</param>
     /// <returns>
     /// <see langword="true"/> when the owned shape for the identifier carries the
-    /// request's bounding box and is placed with <c>xlMove</c>; <see langword="false"/>
-    /// for an absent, unowned, moved, resized, or still <c>xlMoveAndSize</c> shape.
+    /// request's bounding box and the placement the request's class requires
+    /// (<c>xlMove</c> for a scene-owned shape, <c>xlMoveAndSize</c> for a host-owned
+    /// one, ADR-0052 D6–D8); <see langword="false"/> for an absent, unowned, moved,
+    /// resized, or wrongly-placed shape.
     /// </returns>
     /// <remarks>
     /// <para>
@@ -292,6 +301,13 @@ public interface IShapeWritePort
     /// payload signature proves what the SCENE wanted, not what the HOST holds — and the
     /// host moves and resizes <c>xlMoveAndSize</c> shapes whenever rows are inserted,
     /// hidden, shown, or re-heighted.
+    /// </para>
+    /// <para>
+    /// For a host-owned shape the height comparison uses
+    /// <see cref="HostOwnedGeometry.HostResizeTolerancePt"/>
+    /// rather than the strict geometry tolerance, because Excel resizes
+    /// <c>xlMoveAndSize</c> shapes proportionally and repeated collapse/expand cycles
+    /// can drift by a fraction of a point (ADR-0052 D8).
     /// </para>
     /// <para>
     /// Cheap by design: one indexed name lookup and five property reads per unchanged

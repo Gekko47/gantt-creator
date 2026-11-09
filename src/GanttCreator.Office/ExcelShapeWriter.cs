@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using GanttCreator.Core;
+using GanttCreator.Core.Scene;
 using Microsoft.Office.Core;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -226,16 +227,18 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.HostRejected);
         }
 
-        // The host must not own the shape's SIZE. Excel creates shapes with
+        // The host must not own the shape's SIZE -- except for the one class that
+        // spans the plot's full height, where the host owning it IS the wanted
+        // behaviour (ADR-0052 D6-D7). Excel creates shapes with
         // Placement = xlMoveAndSize, which ties the displayed height to the rows the
-        // shape spans: hiding, un-hiding or re-heighting one of those rows resizes the
-        // shape behind the renderer's back, and the scene's height never reaches the
-        // screen. Measured 2026-11-03: the scene declared the splitter band at 18pt on
-        // every refresh while the live band was four rows tall in one state and a line
-        // in another. xlMove keeps the one host behaviour the renderer depends on --
-        // an inserted worksheet row still moves the shape with its cell -- and removes
-        // the resizing.
-        ApplyPlacement(created);
+        // shape spans: for a bar or a label that resizes the shape behind the renderer's
+        // back, so xlMove is written. For a delineator or a plot-spanning band the
+        // scene's height is derived from those same rows, so the host resizing it is the
+        // chart following its own rows and is kept. Measured 2026-11-03: the scene
+        // declared the splitter band at 18pt on every refresh while the live band was
+        // four rows tall in one state and a line in another -- which is why the
+        // classification is a geometric one (full plot height) and not "all shapes".
+        ApplyPlacement(created, request.HostOwnsExtent);
 
         // R4.6. The style is written on the create path for the same reason the
         // text is: it is generated output the scene owns, and a shape created in
@@ -343,16 +346,18 @@ public class ExcelShapeWriter(
             return ShapeWriteOutcome.Refused(ShapeWriteRefusal.InvalidGeometry);
         }
 
-        // Heal a shape created before the placement rule changed (see Create), and
-        // keep the host from resizing this one on the next row visibility or height
-        // change. Every update used to write `Placement` unconditionally -- a host write
-        // per shape, most of them writing the value the shape already held. One cheap read
-        // now decides, so the write happens only on the first pass after the rule changed
+        // Heal a shape created before the placement rule changed (see Create), and keep
+        // the host's resize behaviour equal to what this shape's class requires. Every
+        // update used to write `Placement` unconditionally -- a host write per shape,
+        // most of them writing the value the shape already held. One cheap read now
+        // decides, so the write happens only on the first pass after the rule changed
         // (or for a shape a user re-anchored), and an existing workbook still heals itself
-        // without a rebuild of its shapes (ADR-0054).
-        if (ReadPlacement(existing) != Excel.XlPlacement.xlMove)
+        // without a rebuild of its shapes (ADR-0054). The rule is per class: a shape that
+        // ADR-0052 put on xlMove, and that the amendment now classifies as host-owned,
+        // heals to xlMoveAndSize on its next refresh and vice versa.
+        if (ReadPlacement(existing) != RequiredPlacement(request))
         {
-            ApplyPlacement(existing);
+            ApplyPlacement(existing, request.HostOwnsExtent);
         }
 
         TraceBandShape(applyAppearance ? "update" : "move", existing, request.PrimitiveId, bandBefore);
@@ -636,15 +641,30 @@ public class ExcelShapeWriter(
             return false;
         }
 
-        // Placement is part of the match. A shape still on the host's default
-        // xlMoveAndSize can be resized by a row-visibility change at any moment, so
-        // skipping it would preserve exactly the drift this verification exists to
-        // catch; the rewrite re-places it with xlMove.
-        return shape.Placement == Excel.XlPlacement.xlMove
-            && MatchesLive(shape.Left, desired.X)
+        // Placement is part of the match, and the required placement is the request's
+        // class. A scene-owned shape still on the host's default xlMoveAndSize can be
+        // resized by a row-visibility change at any moment, so skipping it would preserve
+        // exactly the drift this verification exists to catch; the rewrite re-places it
+        // with xlMove. The reverse holds for a host-owned shape: it must carry
+        // xlMoveAndSize, or the live stretch ADR-0052 D6 exists to restore is absent, and
+        // the rewrite re-places it (ADR-0052 D7).
+        if (shape.Placement != RequiredPlacement(request))
+        {
+            return false;
+        }
+
+        // Height is the one member the host is allowed to have moved for a host-owned
+        // shape: Excel resizes an xlMoveAndSize shape proportionally, so a
+        // collapse/expand cycle can leave a fraction of a point of drift that is not a
+        // scene change and must not be rewritten on every pass. The wider tolerance is
+        // stated (D8), not tuned; left, top and width keep the strict one because the
+        // host does not resize along those axes for this class.
+        return MatchesLive(shape.Left, desired.X)
             && MatchesLive(shape.Top, desired.Y)
             && MatchesLive(shape.Width, desired.Width)
-            && MatchesLive(shape.Height, desired.Height);
+            && (request.HostOwnsExtent
+                ? MatchesLiveWithin(shape.Height, desired.Height, HostOwnedGeometry.HostResizeTolerancePt)
+                : MatchesLive(shape.Height, desired.Height));
     }
 
     /// <summary>The tolerance for a live-versus-scene geometry comparison, in points.</summary>
@@ -658,7 +678,18 @@ public class ExcelShapeWriter(
 
     /// <summary>Compares one live host value to the scene's expected point value.</summary>
     private static bool MatchesLive(float actual, double expected) =>
-        Math.Abs(actual - GeometryMath.SnapToDisplayPrecision(expected)) <= GeometryMatchTolerancePt;
+        MatchesLiveWithin(actual, expected, GeometryMatchTolerancePt);
+
+    /// <summary>
+    /// Compares one live host value to the scene's expected point value within an
+    /// explicit tolerance.
+    /// </summary>
+    /// <param name="actual">The host's value.</param>
+    /// <param name="expected">The scene's value.</param>
+    /// <param name="tolerancePt">The tolerance, in points.</param>
+    /// <returns><see langword="true"/> when the values are within the tolerance.</returns>
+    private static bool MatchesLiveWithin(float actual, double expected, double tolerancePt) =>
+        Math.Abs(actual - GeometryMath.SnapToDisplayPrecision(expected)) <= tolerancePt;
 
     /// <summary>
     /// Derives the bounding box a shape of this kind occupies, exactly as
@@ -1263,20 +1294,25 @@ public class ExcelShapeWriter(
     }
 
     /// <summary>
-    /// Places the shape so the host keeps it attached to its cell but never resizes it
-    /// with the row.
+    /// Places the shape with the ownership the request's class requires: <c>xlMove</c>
+    /// for a scene-owned shape, <c>xlMoveAndSize</c> for a host-owned one.
     /// </summary>
     /// <param name="shape">The shape to place.</param>
+    /// <param name="hostOwnsExtent">
+    /// Whether the shape spans the plot's full vertical extent and the host therefore
+    /// owns its height (ADR-0052 D6).
+    /// </param>
     /// <remarks>
     /// <para>
-    /// <b>Why <c>xlMove</c> and not the host's default <c>xlMoveAndSize</c>.</b> The
-    /// scene owns the geometry, so the host resizing a shape is the renderer losing
-    /// control of its own output. Excel creates shapes with <c>xlMoveAndSize</c>, which
-    /// ties the displayed height to the rows the shape spans, so hiding, un-hiding or
-    /// re-heighting a row inside that span resizes the shape without any scene change.
-    /// Measured 2026-11-03: the scene declared the splitter band at 18pt on every
-    /// refresh while the live band was four rows tall in one state and a thin line in
-    /// another — a rewritten 18pt rect did not survive a row-visibility change.
+    /// <b>Why <c>xlMove</c> for a scene-owned shape and not the host's default
+    /// <c>xlMoveAndSize</c>.</b> The scene owns the geometry, so the host resizing a shape
+    /// is the renderer losing control of its own output. Excel creates shapes with
+    /// <c>xlMoveAndSize</c>, which ties the displayed height to the rows the shape spans,
+    /// so hiding, un-hiding or re-heighting a row inside that span resizes the shape
+    /// without any scene change. Measured 2026-11-03: the scene declared the splitter band
+    /// at 18pt on every refresh while the live band was four rows tall in one state and a
+    /// thin line in another — a rewritten 18pt rect did not survive a row-visibility
+    /// change.
     /// </para>
     /// <para>
     /// <c>xlMove</c> preserves the single host behaviour the row inserter depends on:
@@ -1285,9 +1321,24 @@ public class ExcelShapeWriter(
     /// sizing half is what this removes). Placement is re-applied on every update, so a
     /// workbook whose shapes were created under the old rule heals on its next Refresh.
     /// </para>
+    /// <para>
+    /// <b>Why the host-owned class gets the opposite answer (ADR-0052 D6–D7, amended
+    /// 2026-11-08).</b> A primitive that spans the plot's full vertical extent has a
+    /// height the scene derives from the same measured rows Excel uses, so host resizing
+    /// is not the renderer losing control — it is the chart following its own rows, which
+    /// is what makes a delineator or a band stretch live on collapse/expand before any
+    /// refresh runs. Verification accepts that geometry for this class only, with the
+    /// wider height tolerance D8 states.
+    /// </para>
     /// </remarks>
-    private static void ApplyPlacement(Excel.Shape shape) =>
-        shape.Placement = Excel.XlPlacement.xlMove;
+    private static void ApplyPlacement(Excel.Shape shape, bool hostOwnsExtent) =>
+        shape.Placement = hostOwnsExtent
+            ? Excel.XlPlacement.xlMoveAndSize
+            : Excel.XlPlacement.xlMove;
+
+    /// <summary>The placement a request's class requires in the host.</summary>
+    private static Excel.XlPlacement RequiredPlacement(OfficeShapeRequest request) =>
+        request.HostOwnsExtent ? Excel.XlPlacement.xlMoveAndSize : Excel.XlPlacement.xlMove;
 
     /// <summary>Whether the identifier names a splitter band primitive.</summary>
     /// <param name="primitiveId">The stable primitive identifier.</param>

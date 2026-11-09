@@ -21,7 +21,11 @@ internal static class AddRowCommand
         Run(
             new ExcelGanttRowInserter(
                 ExcelDna.Integration.ExcelDnaUtil.Application,
-                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application)),
+                outlineGroups: new ExcelOutlineGroupWriter(ExcelDna.Integration.ExcelDnaUtil.Application),
+                // The parent decision and the regroup that follows it are logged because a report
+                // that "the new activity is not in the group" cannot distinguish "no parent was
+                // assigned" from "a parent was assigned and the planner dropped the row".
+                trace: CommandBoundary.Instance.WriteTechnicalRecord),
             GanttRowId.New,
             new ExcelInsertedRowSelector(ExcelDna.Integration.ExcelDnaUtil.Application),
             CommandErrorDialog.Show,

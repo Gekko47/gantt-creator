@@ -130,7 +130,12 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
                     break;
 
                 default:
-                    OfficeShapeRequest? request = TranslatePrimitive(primitive);
+                    // The plot bounds are the scene's own, in the same coordinate space
+                    // as the primitive's bounds, so the host-owned classification is
+                    // taken BEFORE the origin delta is applied (ADR-0052 D6). Applying
+                    // the delta first and comparing against untranslated bounds would
+                    // classify every primitive as scene-owned, silently.
+                    OfficeShapeRequest? request = TranslatePrimitive(primitive, scene.PlotBounds);
                     if (request is not null)
                     {
                         requests.Add(request);
@@ -155,20 +160,29 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// or a family a later Phase-4 row owns returns <see langword="false"/>.
     /// </returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="primitive"/> is <see langword="null"/>.</exception>
-    public bool TryTranslate(ScenePrimitive primitive, out OfficeShapeRequest? request)
+    /// <param name="plotBounds">
+    /// The plot bounds the host-owned classification is measured against. Omit only
+    /// when the caller has no scene: every primitive is then classified as
+    /// scene-owned, which is the pre-ADR-0052-amendment placement and therefore never
+    /// misclassifies a shape into the host-owned class it cannot prove.
+    /// </param>
+    public bool TryTranslate(
+        ScenePrimitive primitive,
+        out OfficeShapeRequest? request,
+        RectD? plotBounds = null)
     {
-        request = TranslatePrimitive(primitive);
+        request = TranslatePrimitive(primitive, plotBounds);
         return request is not null;
     }
 
-    private OfficeShapeRequest? TranslatePrimitive(ScenePrimitive primitive)
+    private OfficeShapeRequest? TranslatePrimitive(ScenePrimitive primitive, RectD? plotBounds)
     {
         ArgumentNullException.ThrowIfNull(primitive);
 
         return primitive switch
         {
-            SceneRect rect => BuildRect(rect),
-            SceneLine line => BuildLine(line),
+            SceneRect rect => BuildRect(rect, plotBounds),
+            SceneLine line => BuildLine(line, plotBounds),
 
             // A polygon reaches here only when the caller's guard already
             // confirmed it is a diamond; the bounding box is recomputed rather
@@ -181,6 +195,20 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             _ => null,
         };
     }
+
+    /// <summary>
+    /// Determines whether a rectangular primitive's vertical extent is owned by the
+    /// host (ADR-0052 D6).
+    /// </summary>
+    private static bool HostOwns(SceneRect rect, RectD? plotBounds) =>
+        plotBounds is { } plot && HostOwnedGeometry.IsHostOwned(rect, plot);
+
+    /// <summary>
+    /// Determines whether a line primitive's vertical extent is owned by the host
+    /// (ADR-0052 D6).
+    /// </summary>
+    private static bool HostOwns(SceneLine line, RectD? plotBounds) =>
+        plotBounds is { } plot && HostOwnedGeometry.IsHostOwned(line, plot);
 
     /// <summary>Determines the family a primitive belongs to.</summary>
     /// <param name="primitive">The scene primitive.</param>
@@ -214,8 +242,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// renderer copies it and would be wrong to choose one.
     /// </remarks>
     /// <param name="rect">The scene rectangle.</param>
+    /// <param name="plotBounds">The plot bounds, or <see langword="null"/> when the caller has no scene.</param>
     /// <returns>The translated shape request.</returns>
-    private OfficeShapeRequest BuildRect(SceneRect rect) =>
+    private OfficeShapeRequest BuildRect(SceneRect rect, RectD? plotBounds) =>
         new(
             rect.PrimitiveId,
             OfficeShapeKind.Rectangle,
@@ -225,7 +254,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             StrokeColour: rect.Style.StrokeColour,
             LineWidthPt: rect.Style.OutlineWidthPt,
             HatchPattern: rect.Style.HatchPattern,
-            StrokeDash: rect.Style.StrokeDash);
+            StrokeDash: rect.Style.StrokeDash,
+            HostOwnsExtent: HostOwns(rect, plotBounds));
 
     /// <summary>
     /// Builds a plain-line request, preserving the scene's endpoint order and
@@ -250,8 +280,9 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
     /// </para>
     /// </remarks>
     /// <param name="line">The scene line.</param>
+    /// <param name="plotBounds">The plot bounds, or <see langword="null"/> when the caller has no scene.</param>
     /// <returns>The translated shape request.</returns>
-    private OfficeShapeRequest BuildLine(SceneLine line) =>
+    private OfficeShapeRequest BuildLine(SceneLine line, RectD? plotBounds) =>
         new(
             line.PrimitiveId,
             OfficeShapeKind.Line,
@@ -262,7 +293,8 @@ public sealed class SceneShapeRenderer(ChartOriginDelta originDelta)
             StrokeColour: line.Style.StrokeColour,
             LineWidthPt: line.Style.OutlineWidthPt,
             HatchPattern: line.Style.HatchPattern,
-            StrokeDash: line.Style.StrokeDash);
+            StrokeDash: line.Style.StrokeDash,
+            HostOwnsExtent: HostOwns(line, plotBounds));
 
     /// <summary>
     /// Determines whether four points form a symmetric axis-aligned diamond and,

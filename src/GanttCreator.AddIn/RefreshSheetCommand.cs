@@ -57,7 +57,10 @@ internal static class RefreshSheetCommand
     /// </remarks>
     private static WorksheetProtectionWindow ProtectionWindowFor(object? application) =>
         _protectionWindow ??= new WorksheetProtectionWindow(
-            new ExcelWorksheetProtectionPort(application),
+            // The same sink the window uses, so a live log carries the outline-symbol state a
+            // protect found and left next to the window's own open/close line. Both refresh paths
+            // share this one window, so the surrounding lines are what separate them.
+            new ExcelWorksheetProtectionPort(application, CommandBoundary.Instance.WriteTechnicalRecord),
             _protectionArming,
             CommandBoundary.Instance.WriteTechnicalRecord);
 
@@ -320,7 +323,9 @@ internal static class RefreshSheetCommand
             // pass; the caller's release window re-applies the protection when the writes finish.
             protectionOwnership: _protectionOwnership,
             protectionArming: new WorksheetProtectionArming(
-                new ExcelWorksheetProtectionPort(application),
+                // The arming path protects too, so it carries the same diagnostic sink: an arm
+                // that greys the symbols out must be visible in the log, not only a window close.
+                new ExcelWorksheetProtectionPort(application, trace),
                 shapeWriter,
                 _protectionArming,
                 trace));

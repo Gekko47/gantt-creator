@@ -115,9 +115,17 @@ public class GanttRowInserterTests
     {
         public List<IReadOnlyList<GanttEvent>> Applied { get; } = [];
 
-        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events)
+        /// <summary>
+        /// Whether each apply forced the write. The insert path must always force it: a row
+        /// inserted inside a group inherits the child outline LEVEL from the row above, which is
+        /// not proof it is inside the group's span (measured live 2026-11-09).
+        /// </summary>
+        public List<bool> Forced { get; } = [];
+
+        public OutlineGroupOutcome Apply(IReadOnlyList<GanttEvent> events, bool forceRegroup = false)
         {
             Applied.Add(events);
+            Forced.Add(forceRegroup);
             return OutlineGroupOutcome.Ok(events.Count, 0);
         }
 
