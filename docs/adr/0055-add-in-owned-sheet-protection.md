@@ -30,6 +30,12 @@ reference establishes four facts that the design has to obey:
    could never be re-entered. A user who unprotects by hand is not fought with: the next refresh
    re-protects.
 
+   **The visible table is exempt (owner ruling 2026-11-09, clause 7).** `Contents:=true` protects
+   cells whose `Locked` is `true`, and Excel's default is `true` on every cell — so the original
+   form of this clause made the whole schedule read-only and blocked copy, paste and formatting.
+   Every protect now unlocks the table's data cells first and grants the formatting permissions.
+   The protection's remaining job is the **chart**: `DrawingObjects` plus the `Shape.Locked` stamp.
+
    **The native outline symbols stay usable.** `Protect` greys out the +/- group buttons on a
    protected sheet unless `Worksheet.EnableOutlining` is `true` — Microsoft documents it as "True if
    outlining symbols are enabled when user-interface-only protection is turned on" — and it "is not
@@ -92,6 +98,26 @@ reference establishes four facts that the design has to obey:
    re-protects, re-locks and re-asserts the shape's geometry — reverting the manual edit, exactly
    as ruled. The two controls are answered from the unlock set and from one `Selection` read rather
    than from the ribbon snapshot, so enabling the button costs no host call during a refresh.
+7. **The visible table stays editable while the chart is locked (owner ruling, 2026-11-09).** The
+   requirement, in the owner's words: "the visible table area should be fully unlocked at all times
+   for the user to copy paste change formatting etc". Three facts make that two changes rather than
+   one. `Locked` is a **per-cell format** property and Excel defaults it to `true`, so `Contents`
+   protects every cell until it is cleared. **Formatting is a sheet permission, not a per-cell one**,
+   so unlocking the cells alone still leaves Format Cells and Paste Special refused. And `Locked`
+   cannot be written on a protected sheet, so the unlock has to happen inside the release the protect
+   path already performs.
+
+   The port therefore **unlocks the table's data cells and then grants `AllowFormattingCells`,
+   `AllowFormattingColumns` and `AllowFormattingRows`** on every protect. The data body is unlocked
+   rather than the whole table on purpose: unlocking the header would let a user rename a schema
+   column, which silently breaks the name-keyed column map every adapter builds. A refused unlock is
+   recorded (`cellsUnlocked=refused`) and does not abandon the protect — a sheet protected with a
+   password we do not have is still worth protecting.
+
+   **What still refuses, and why that is the point.** Shapes still cannot be created or moved on the
+   protected sheet (measured below), so the chart cannot be damaged by a stray drag; the table row
+   insert is still refused, which is why the structural commands keep their release window. What
+   changed is only who may edit the *data*: the user, freely, at any time.
 
 ## Measured host behaviour (2026-11-04, live Excel 16.0.20527.20112 x64)
 
