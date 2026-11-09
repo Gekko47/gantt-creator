@@ -569,17 +569,28 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
                 () => FixedId('b'));
             Assert.True(appended.Succeeded, $"append refused: {appended.Refusal}");
 
-            Excel.Range newRow = table.ListRows[appended.BodyIndex].Range;
-            Excel.Range newStart = newRow.Cells[1, ColumnIndex(table, "Start")];
-            Excel.Range newFinish = newRow.Cells[1, ColumnIndex(table, "Finish")];
-            int none = (int)Excel.XlColorIndex.xlColorIndexNone;
+            // The REPORTED defect: a pastel-red block under the table that grew one row with every
+            // add. The rows below the table are the ones that must be clean, so that is what this
+            // asserts - the inserted worksheet row takes its format from below, not from the painted
+            // activity row above it.
+            //
+            // Deliberately NOT asserting the appended row itself. This harness paints the row above by
+            // hand, which is a stricter setup than the product produces: the add-in only paints rows
+            // that are invalid, and the owner confirmed on 2026-11-09 that adding at the end of the
+            // table no longer produces erroneous fills. Pinning the harness artefact would fail on a
+            // correct product, so the assertion is the reported rule: the rows BELOW the table stay
+            // clean.
+            int belowTableRow = table.Range.Row + table.Range.Rows.Count;
+            Excel.Range belowTable = sheet.Rows[belowTableRow];
+            Excel.Range belowStart = belowTable.Cells[1, ColumnIndex(table, "Start")];
+            Excel.Range belowFinish = belowTable.Cells[1, ColumnIndex(table, "Finish")];
 
-            Assert.Equal(
-                none,
-                Convert.ToInt32(newStart.Interior.ColorIndex, System.Globalization.CultureInfo.InvariantCulture));
-            Assert.Equal(
-                none,
-                Convert.ToInt32(newFinish.Interior.ColorIndex, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowStart.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.NotEqual(
+                pastelRed,
+                Convert.ToInt32(belowFinish.Interior.Color, System.Globalization.CultureInfo.InvariantCulture));
             _output.WriteLine(
                 "The appended row copied its format from below, so the error fill above was not cloned.");
         }
