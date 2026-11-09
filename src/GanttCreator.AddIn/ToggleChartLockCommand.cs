@@ -29,7 +29,11 @@ namespace GanttCreator.AddIn;
 internal static class ToggleChartLockCommand
 {
     /// <summary>Runs the production toggle in the current Excel session.</summary>
-    internal static void RunForExcel()
+    /// <param name="locked">
+    /// The state the toggle has moved to: <see langword="true"/> to lock the chart. RibbonX passes this
+    /// to a <c>toggleButton</c>'s <c>onAction</c>, so the command never has to guess by flipping.
+    /// </param>
+    internal static void RunForExcel(bool locked)
     {
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
@@ -37,6 +41,7 @@ internal static class ToggleChartLockCommand
             new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
             new ExcelWorksheetProtectionPort(application),
             ProtectionPreferences.Shared,
+            locked,
             CommandErrorDialog.Show);
 
         RibbonStateService.Instance.InvalidateControl(RibbonControlIds.ToggleChartLock);
@@ -46,12 +51,14 @@ internal static class ToggleChartLockCommand
     /// <summary>Runs an injected toggle, for tests and for the R4.9 wiring.</summary>
     /// <param name="shapes">Applies or clears <c>Shape.Locked</c> on the owned shapes.</param>
     /// <param name="protection">Re-applies the sheet protection with the new flags.</param>
-    /// <param name="preferences">The session's toggles; the chart one is flipped.</param>
+    /// <param name="preferences">The session's toggles; the chart one is set to <paramref name="locked"/>.</param>
+    /// <param name="locked">The requested chart lock state.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     internal static void Run(
         IShapeWritePort shapes,
         IWorksheetProtectionPort protection,
         ProtectionPreferences preferences,
+        bool locked,
         Action<string> presenter)
     {
         ArgumentNullException.ThrowIfNull(shapes);
@@ -59,9 +66,10 @@ internal static class ToggleChartLockCommand
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(presenter);
 
-        // Flip first: the writes below must agree with the state the button is about to show, even if
-        // one of them is refused by the host.
-        bool lockNow = !preferences.ChartLocked;
+        // Set first: the writes below must agree with the state the button shows, even if one of them
+        // is refused by the host. Assigning the requested state (rather than flipping) makes the
+        // command idempotent, so a re-entrant or duplicate callback cannot invert the user's intent.
+        bool lockNow = locked;
         preferences.ChartLocked = lockNow;
 
         if (lockNow)

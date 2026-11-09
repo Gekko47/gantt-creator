@@ -174,6 +174,58 @@ public class GanttRibbonTests
         Assert.Contains("DoesNotExist", unresolved);
     }
 
+    /// <summary>
+    /// Every toggleButton onAction resolves to a method that declares the pressed argument.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Live Excel reported "Callback signature mismatch: OnToggleCellLockClick" the first time the
+    /// 2026-11-09 toggle buttons were pressed. RibbonX gives a <c>toggleButton</c> a different
+    /// <c>onAction</c> signature from a <c>button</c>: <c>void (IRibbonControl, bool isPressed)</c>
+    /// versus <c>void (IRibbonControl)</c>. <see cref="ValidateCallbacks"/> only resolves NAMES, so the
+    /// name-only contract above passed while every click failed.
+    /// </para>
+    /// <para>
+    /// This is the pin for that class of defect: the element type decides the arity, so the assertion
+    /// is made per element type rather than per callback name. The positive control below keeps the
+    /// loop from passing vacuously if the toggles are ever removed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Toggle_button_callbacks_declare_the_pressed_argument()
+    {
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        List<XElement> toggles = [.. doc.Descendants(ns + "toggleButton")];
+        Assert.NotEmpty(toggles);
+
+        List<string> mismatched = [];
+        foreach (XElement toggle in toggles)
+        {
+            string? callback = toggle.Attribute("onAction")?.Value;
+            if (string.IsNullOrEmpty(callback))
+            {
+                continue;
+            }
+
+            System.Reflection.MethodInfo? method = typeof(GanttRibbon).GetMethod(callback);
+            System.Reflection.ParameterInfo[] parameters =
+                method?.GetParameters() ?? [];
+
+            bool declaresPressed = parameters.Length == 2
+                && parameters[0].ParameterType == typeof(IRibbonControl)
+                && parameters[1].ParameterType == typeof(bool);
+            if (!declaresPressed)
+            {
+                mismatched.Add(callback);
+            }
+        }
+
+        Assert.Empty(mismatched);
+    }
+
     [Fact]
     public void OnDiagnosticsClick_routes_through_the_command_boundary()
     {

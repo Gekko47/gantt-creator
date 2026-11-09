@@ -23,13 +23,18 @@ namespace GanttCreator.AddIn;
 internal static class ToggleCellLockCommand
 {
     /// <summary>Runs the production toggle in the current Excel session.</summary>
-    internal static void RunForExcel()
+    /// <param name="locked">
+    /// The state the toggle has moved to: <see langword="true"/> to lock the cells outside the table.
+    /// RibbonX passes this to a <c>toggleButton</c>'s <c>onAction</c>.
+    /// </param>
+    internal static void RunForExcel(bool locked)
     {
         object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
 
         Run(
             new ExcelWorksheetProtectionPort(application),
             ProtectionPreferences.Shared,
+            locked,
             CommandErrorDialog.Show);
 
         RibbonStateService.Instance.InvalidateControl(RibbonControlIds.ToggleChartLock);
@@ -38,20 +43,22 @@ internal static class ToggleCellLockCommand
 
     /// <summary>Runs an injected toggle, for tests and for the R4.9 wiring.</summary>
     /// <param name="protection">Re-applies the sheet protection with the new flags.</param>
-    /// <param name="preferences">The session's toggles; the cell one is flipped.</param>
+    /// <param name="preferences">The session's toggles; the cell one is set from <paramref name="locked"/>.</param>
+    /// <param name="locked">The requested state of the cells outside the visible table.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     internal static void Run(
         IWorksheetProtectionPort protection,
         ProtectionPreferences preferences,
+        bool locked,
         Action<string> presenter)
     {
         ArgumentNullException.ThrowIfNull(protection);
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(presenter);
 
-        // Flip first, so the protection below is applied from the state the button is about to show
-        // even if the host refuses the write.
-        bool unlockNow = !preferences.CellsUnlocked;
+        // Set first, so the protection below is applied from the state the button shows even if the
+        // host refuses the write. Assigning the requested state keeps the command idempotent.
+        bool unlockNow = !locked;
         preferences.CellsUnlocked = unlockNow;
 
         ProtectionWriteOutcome outcome = protection.Protect();

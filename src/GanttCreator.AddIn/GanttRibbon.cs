@@ -282,10 +282,16 @@ public class GanttRibbon : ExcelRibbon
     /// state is the lock state, so it can always be found and always shows what is true.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnToggleChartLockClick(IRibbonControl control) =>
+    /// <param name="pressed">
+    /// The lock state the toggle has moved to. RibbonX supplies it for a <c>toggleButton</c>; the
+    /// handler must declare it or Excel reports "Callback signature mismatch" and refuses to run it.
+    /// </param>
+    public void OnToggleChartLockClick(IRibbonControl control, bool pressed) =>
         CommandBoundary.Instance.Run(
             () => ResolveCommandName(control, nameof(OnToggleChartLockClick)),
-            ToggleChartLockCommand.RunForExcel,
+            // A toggleButton's onAction receives the state the button has moved to, so the command is
+            // given the requested lock rather than flipping a flag Excel has already changed.
+            () => ToggleChartLockCommand.RunForExcel(pressed),
             nameof(OnToggleChartLockClick));
 
     /// <summary>
@@ -293,10 +299,11 @@ public class GanttRibbon : ExcelRibbon
     /// visible table are editable. The visible table itself is always editable.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnToggleCellLockClick(IRibbonControl control) =>
+    /// <param name="pressed">The lock state the toggle has moved to.</param>
+    public void OnToggleCellLockClick(IRibbonControl control, bool pressed) =>
         CommandBoundary.Instance.Run(
             () => ResolveCommandName(control, nameof(OnToggleCellLockClick)),
-            ToggleCellLockCommand.RunForExcel,
+            () => ToggleCellLockCommand.RunForExcel(pressed),
             nameof(OnToggleCellLockClick));
 
     /// <summary>
