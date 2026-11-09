@@ -383,12 +383,17 @@ public sealed class DateLabelRibbonTests : IDisposable
     }
 
     [Fact]
-    public void A_selection_change_invalidates_only_the_two_label_dropdowns()
+    public void A_selection_change_invalidates_only_the_controls_that_read_the_selection()
     {
         // Ruling 6: moving the selection must not re-query every getter on
-        // the ribbon, so the handler invalidates exactly the two label
-        // dropdowns that re-project from the newly selected row — not the
-        // whole ribbon, and not any other control.
+        // the ribbon, so the handler invalidates exactly the controls whose
+        // items or enablement are projected FROM the selection: the two label
+        // dropdowns, the custom-style dropdown, and the two shape-lock buttons.
+        //
+        // The shape pair was added 2026-11-09 because its getEnabled answer is not
+        // in the cached snapshot: without an invalidation on selection change the
+        // buttons keep the disabled state Excel computed at load, so a shape can
+        // never be unlocked. This test previously pinned the incomplete set.
         var ribbon = new Mock<IRibbonUI>();
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
@@ -407,7 +412,13 @@ public sealed class DateLabelRibbonTests : IDisposable
             .ToList();
 
         Assert.Equal(
-            [RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel, RibbonControlIds.CustomStyle],
+            [
+                RibbonControlIds.DescriptionLabel,
+                RibbonControlIds.DateLabel,
+                RibbonControlIds.CustomStyle,
+                RibbonControlIds.UnlockShape,
+                RibbonControlIds.LockShapes,
+            ],
             invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }

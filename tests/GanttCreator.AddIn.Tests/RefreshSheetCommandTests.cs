@@ -138,6 +138,56 @@ public class RefreshSheetCommandTests
         Assert.DoesNotContain("Interop.Excel", source, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The workbook-state path repairs the outline symbols before it refreshes, and it is the
+    /// ONLY path that does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EnableOutlining</c> is refused on a protected sheet and is not saved with the
+    /// worksheet, so a reopened workbook comes up protected with the <c>+</c>/<c>-</c>
+    /// symbols off, and only a protect run on an UNPROTECTED sheet restores them. The repair
+    /// must precede the refresh it guards: a refresh can refuse early (an unreadable
+    /// configuration, a blocked row) and would leave the user with greyed-out controls.
+    /// </para>
+    /// <para>
+    /// <b>Why exactly one call site.</b> An earlier revision also repaired from
+    /// <c>Activate</c>, to cover a workbook that was already open when the add-in attached.
+    /// That call ran in the AddIn test host too, where <c>ExcelDnaUtil.Application</c>
+    /// resolves the developer's live Excel, and the protect it performed polluted the
+    /// <c>AutoOpen</c> log fixtures — 9 red tests. The reopen case is covered by this path
+    /// plus the protect cycle a chart refresh performs; it must not come back.
+    /// </para>
+    /// <para>
+    /// <b>Why a source assertion.</b> The repair is a static command over the live COM
+    /// application, with no seam a unit test can substitute, so the wiring is asserted at
+    /// the call site — the same technique
+    /// <see cref="The_command_source_names_no_interop_type"/> already uses.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Only_the_workbook_state_path_repairs_the_outline_symbols()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src/GanttCreator.AddIn/RibbonStateService.cs");
+
+        string source = File.ReadAllText(path);
+        const string repair = "RefreshSheetCommand.RepairOutlineSymbols();";
+
+        int repairAt = source.IndexOf(repair, StringComparison.Ordinal);
+        Assert.True(repairAt >= 0, "The workbook-state path no longer repairs the outline symbols.");
+        int refreshAfter = source.IndexOf("Refresh();", repairAt, StringComparison.Ordinal);
+        Assert.True(
+            refreshAfter > repairAt,
+            "The repair must precede the refresh, or an early refusal leaves the symbols off.");
+
+        // Exactly one call site: a second one re-introduces the live-Excel write from Activate.
+        Assert.Equal(
+            -1,
+            source.IndexOf(repair, repairAt + repair.Length, StringComparison.Ordinal));
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -1800,6 +1800,14 @@ internal class RibbonStateService
         SubscribeToSheetChanges();
         SubscribeToSelectionChanges();
         LoadPlotSettingsFromWorkbook();
+
+        // Deliberately NO outline-symbol repair here. Activate runs on every add-in load,
+        // including in the AddIn test host, where ExcelDnaUtil.Application resolves the
+        // developer's LIVE Excel; a repair call from here reached that instance and wrote
+        // a `gantt.protection protect outlining` record into the AutoOpen fixtures,
+        // turning 9 AddInHostTests red. The reopen case is covered where it is safe: the
+        // workbook-state handler repairs before its refresh (3ef5507), and a chart refresh
+        // re-applies the option through the protect cycle (5a44c4d).
         Refresh();
     }
 
@@ -2888,10 +2896,22 @@ internal class RibbonStateService
 
     /// <summary>
     /// Handles one selection change: re-captures the snapshot and invalidates
-    /// the description-label, date-label, and custom-style dropdowns. Only
-    /// those three controls are invalidated, so moving the selection does not
-    /// re-query every getter on the ribbon. Never throws.
+    /// the description-label, date-label, and custom-style dropdowns and the two
+    /// shape-lock buttons. Only those five controls are invalidated, so moving
+    /// the selection does not re-query every getter on the ribbon. Never throws.
     /// </summary>
+    /// <remarks>
+    /// <b>The shape buttons are not optional here.</b> Their enablement is not in
+    /// <see cref="RibbonState"/>: "Unlock shape" asks whether the current selection is
+    /// one shape this add-in drew, and "Lock shapes" whether anything is unlocked. Excel
+    /// caches a button's <c>getEnabled</c> result from load or the last invalidation, so
+    /// without these two lines the pair keeps the state it had when the ribbon was
+    /// built — disabled, because nothing was selected then — no matter what the user
+    /// clicks afterwards. Reported live 2026-11-09: "ribbon buttons for lock and unlock
+    /// shapes are disabled yet everything is locked, why can i not unlock them". The
+    /// only other invalidation for them is inside the two commands, and neither can run
+    /// until the button is enabled, so the pair could never enable itself.
+    /// </remarks>
     private void OnSelectionChanged()
     {
         // CA1031: runs inside an Excel event dispatch; a failure must not
@@ -2903,6 +2923,11 @@ internal class RibbonStateService
             InvalidateControl(RibbonControlIds.DescriptionLabel);
             InvalidateControl(RibbonControlIds.DateLabel);
             InvalidateControl(RibbonControlIds.CustomStyle);
+
+            // The selection is the only thing that can turn "Unlock shape" on, and
+            // unlocking is the only thing that can turn "Lock shapes" on.
+            InvalidateControl(RibbonControlIds.UnlockShape);
+            InvalidateControl(RibbonControlIds.LockShapes);
         }
         catch
         {

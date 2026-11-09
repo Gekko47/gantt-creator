@@ -371,12 +371,18 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
     }
 
     [Fact]
-    public void A_selection_change_invalidates_only_the_two_label_dropdowns()
+    public void A_selection_change_invalidates_only_the_controls_that_read_the_selection()
     {
         // Ruling 6: moving the selection must not re-query every getter on
-        // the ribbon, so the handler invalidates exactly the two label
-        // dropdowns that re-project from the newly selected row — the
-        // description-label and date-label dropdowns — and no other control.
+        // the ribbon, so the handler invalidates exactly the controls whose
+        // enablement or items are projected FROM the selection: the two label
+        // dropdowns, the custom-style dropdown, and the two shape-lock buttons.
+        //
+        // The shape pair was missing until 2026-11-09 and that omission WAS the
+        // reported defect: their getEnabled answer is not in the cached snapshot,
+        // so without an invalidation on selection change Excel keeps the state it
+        // computed at load (disabled, nothing selected) and the user can never
+        // unlock a shape. This test previously pinned the incomplete set.
         var ribbon = new Mock<IRibbonUI>();
         var selection = new FakeSelectionIdentifier { Facts = SingleRow() };
         ArmWithRow(selection, Row("As-Built Activity", null), ribbon: ribbon.Object);
@@ -395,7 +401,13 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
             .ToList();
 
         Assert.Equal(
-            [RibbonControlIds.DescriptionLabel, RibbonControlIds.DateLabel, RibbonControlIds.CustomStyle],
+            [
+                RibbonControlIds.DescriptionLabel,
+                RibbonControlIds.DateLabel,
+                RibbonControlIds.CustomStyle,
+                RibbonControlIds.UnlockShape,
+                RibbonControlIds.LockShapes,
+            ],
             invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));
     }
