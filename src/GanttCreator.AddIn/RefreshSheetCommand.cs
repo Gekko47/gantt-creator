@@ -90,6 +90,59 @@ internal static class RefreshSheetCommand
     /// </remarks>
     internal static void ResetProtectionArming() => _protectionArming.Invalidate();
 
+    /// <summary>
+    /// Re-applies the outline-symbol option on a sheet that is already protected, so the native
+    /// <c>+</c>/<c>-</c> controls work as soon as a saved workbook is reopened.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>EnableOutlining</c> is refused while a sheet is protected and is not saved with the
+    /// worksheet, so a reopened workbook comes up protected with the symbols disabled, and no
+    /// protect the add-in performs could restore them until a protect happened to run on an
+    /// unprotected sheet. The protect path now cycles protection when the sheet is already
+    /// protected, and this is the call that triggers it at the one moment it matters: workbook
+    /// activate, before any refresh, because a refresh may refuse early and leave the user looking
+    /// at greyed-out buttons with no way to fold a section.
+    /// </para>
+    /// <para>
+    /// <b>It touches nothing when nothing needs repairing.</b> An unprotected sheet returns
+    /// immediately: there is no option to restore, and the next protect sets it. A sheet protected
+    /// with a password this add-in does not have is refused by the release inside the cycle, which
+    /// is caught there, so the sheet is left exactly as the user had it. Nothing here can throw.
+    /// </para>
+    /// </remarks>
+    internal static void RepairOutlineSymbols()
+    {
+        try
+        {
+            object? application = ExcelDna.Integration.ExcelDnaUtil.Application;
+            if (application is null)
+            {
+                return;
+            }
+
+            // The same sink the window uses, so a repair is visible in the log next to the
+            // protection lines it produces.
+            ExcelWorksheetProtectionPort port = new(application, CommandBoundary.Instance.WriteTechnicalRecord);
+            WorksheetProtectionState? state = port.Read();
+            if (state is null || !state.ContentsProtected)
+            {
+                return;
+            }
+
+            // Protect cycles the protection (release -> set the option -> re-protect), which is the
+            // only way to set a property the host refuses in the current state.
+            _ = port.Protect();
+        }
+#pragma warning disable CA1031
+        catch
+        {
+            // Workbook activate runs on the Excel UI thread and must never surface a failure;
+            // the log already carries whatever the port decided.
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>Runs the production refresh in the current Excel session.</summary>
     internal static void RunForExcel()
     {

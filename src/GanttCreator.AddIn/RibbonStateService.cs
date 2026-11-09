@@ -3024,6 +3024,14 @@ internal class RibbonStateService
         // whose UserInterfaceOnly did not survive the reopen. Forgetting the arming makes the next
         // refresh release and re-apply the protection on the sheet it actually has.
         RefreshSheetCommand.ResetProtectionArming();
+
+        // Reported 2026-11-09: "the first load from save the host +/- collapse expand buttons are
+        // locked". EnableOutlining is refused while protected and is not saved with the worksheet,
+        // so the reopened sheet has the symbols off and only a protect on an UNPROTECTED sheet can
+        // restore them. This runs BEFORE Refresh, because a refresh may refuse early (an unreadable
+        // configuration, a blocked row) and leave the user with greyed-out buttons and no way to
+        // fold a section. It is inert on an unprotected sheet.
+        RefreshSheetCommand.RepairOutlineSymbols();
         _lastSuccessfulSceneWarnings = [];
         _currentValidationIssues = [];
         _lastSuccessfulRenderAtUtc = null;
