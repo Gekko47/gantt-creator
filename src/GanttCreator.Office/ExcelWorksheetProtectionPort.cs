@@ -263,6 +263,32 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
         // no-op that leaves the symbols exactly as Protect left them.
         bool protectedBefore = ReadContentsProtected(sheet);
         bool? enabledBefore = ReadOutlineSymbolsEnabled(sheet);
+
+        // <b>A sheet protected by the PREVIOUS session has the option disabled and cannot have it
+        // set.</b> `EnableOutlining` is refused while protected and is not saved with the
+        // worksheet, so after a save and reopen the sheet is protected with the symbols off, and
+        // nothing in the add-in re-applied the option until a protect happened on an UNPROTECTED
+        // sheet. Reported 2026-11-09: "first load from save the host +/- collapse expand buttons are
+        // locked" until a refresh. Cycling the protection is the only way to set a property the
+        // host refuses in the current state: release, set, re-protect — with the same DrawingObjects
+        // and Contents arguments, so the protection the user had is the protection they get back.
+        bool cycled = false;
+        if (protectedBefore)
+        {
+            try
+            {
+                UnprotectWorksheet(sheet);
+                cycled = true;
+            }
+            catch (Exception exception) when (exception is COMException or InvalidOperationException)
+            {
+                // A password we do not have. The sheet stays as it was; protecting below is then a
+                // no-op and the caller's guard reports what it can prove, which is the existing
+                // behaviour rather than a new failure.
+                _ = exception;
+            }
+        }
+
         bool setBefore = SetOutlineSymbolsEnabled(sheet);
 
         ApplyProtect(sheet);
@@ -283,7 +309,9 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
             + " enabledBefore="
             + Describe(enabledBefore)
             + " enabledAfter="
-            + Describe(enabledAfter));
+            + Describe(enabledAfter)
+            + " cycled="
+            + DescribeAttempt(cycled));
 
         static string Describe(bool? value)
         {

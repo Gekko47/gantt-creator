@@ -200,6 +200,21 @@ public class ExcelWorksheetProtectionPortTests
 
         internal override void ApplyProtect(Excel._Worksheet sheet) => Protected = true;
 
+        /// <summary>Gets or sets whether the host refuses to release the protection (a password).</summary>
+        public bool RefuseUnprotect { get; set; }
+
+        internal override void UnprotectWorksheet(Excel._Worksheet sheet)
+        {
+            if (RefuseUnprotect)
+            {
+                // The same refusal shape the adapter already catches: a sheet protected with a
+                // password this add-in does not have.
+                throw new InvalidOperationException("The host refused to release the protection.");
+            }
+
+            Protected = false;
+        }
+
         internal override bool? ReadOutlineSymbolsEnabled(Excel._Worksheet sheet) => OutlineEnabled;
 
         internal override bool SetOutlineSymbolsEnabled(Excel._Worksheet sheet)
@@ -239,16 +254,17 @@ public class ExcelWorksheetProtectionPortTests
     }
 
     /// <summary>
-    /// A protect re-applied to an ALREADY-protected sheet records both attempts as refused, because
-    /// that is the state in which the option cannot be repaired and the symbols stay greyed.
+    /// A protect on a sheet already protected by the PREVIOUS session cycles the protection so the
+    /// outline option can be set, which is what the host +/- buttons need to be usable after a reopen.
     /// </summary>
     /// <remarks>
-    /// This is the mechanism behind "full refresh keeps them unlocked but auto refresh locks them":
-    /// the path that reaches Protect while the sheet is still protected cannot set the option at all,
-    /// and until this line existed neither path said so.
+    /// `EnableOutlining` is refused while protected and is not saved with the worksheet, so a
+    /// reopened workbook is protected with the symbols off and nothing in the add-in could repair it.
+    /// Reported 2026-11-09: "first load from save the host +/- collapse expand buttons are locked"
+    /// until a refresh ran.
     /// </remarks>
     [Fact]
-    public void A_protect_on_an_already_protected_sheet_records_both_attempts_as_refused()
+    public void A_protect_on_an_already_protected_sheet_cycles_so_the_option_lands()
     {
         List<string> trace = [];
         var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace);
@@ -258,9 +274,35 @@ public class ExcelWorksheetProtectionPortTests
         Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
         string line = Assert.Single(trace);
         Assert.Contains("protectedBefore=True", line, StringComparison.Ordinal);
+        Assert.Contains("cycled=ok", line, StringComparison.Ordinal);
+        Assert.Contains("setBefore=ok", line, StringComparison.Ordinal);
+        Assert.Contains("enabledAfter=true", line, StringComparison.Ordinal);
+
+        // Exactly one refusal: the after-set, because Protect has re-protected the sheet by then.
+        // That is the sibling test's pinned behaviour and is why the before-set is the one that
+        // has to land for the option to be repaired at all.
+        Assert.Equal(1, port.RefusedSets);
+    }
+
+    /// <summary>
+    /// When the sheet cannot be released — a password this add-in does not have — the protect still
+    /// succeeds, records the refusal, and leaves the option as the host had it.
+    /// </summary>
+    [Fact]
+    public void A_protect_that_cannot_release_the_sheet_records_the_refusal_and_still_protects()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(ActiveApplication().Object, contentsProtected: true, trace)
+        {
+            RefuseUnprotect = true,
+        };
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        string line = Assert.Single(trace);
+        Assert.Contains("cycled=refused", line, StringComparison.Ordinal);
         Assert.Contains("setBefore=refused", line, StringComparison.Ordinal);
-        Assert.Contains("setAfter=refused", line, StringComparison.Ordinal);
         Assert.Contains("enabledAfter=false", line, StringComparison.Ordinal);
-        Assert.Equal(2, port.RefusedSets);
     }
 }
