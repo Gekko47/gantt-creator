@@ -206,9 +206,10 @@ public class ExcelGanttRowInserter(
 
                 rowRange = GetRowRange(newRow);
 
-                // The height is already right by Excel's format inheritance, but that is a
-                // host behaviour rather than a stated invariant. Writing the token makes it
-                // this add-in's decision.
+                // The height is NOT right by Excel's format inheritance: the insert copies
+                // from the row BELOW (xlFormatFromRightOrBelow), so an appended row inherits
+                // the 6pt reserved row's height. Writing the token is therefore load-bearing
+                // here, not merely this add-in taking ownership of a host behaviour.
                 SetRowHeight(rowRange, GanttCatalogues.MetricDefault("GanttRowHeightPt"));
             }
             catch (System.Runtime.InteropServices.COMException ex)
@@ -383,10 +384,21 @@ public class ExcelGanttRowInserter(
 
     // Excel's own values, carried as named constants rather than PIA enums: the
     // interop assembly Office compiles against does not expose XlInsertionShift or
-    // XlFormatFrom, and these are the exact values a live probe drove Rows.Insert
-    // with successfully.
-    private const int _excelShiftDown = -4121;              // xlShiftDown
-    private const int _excelFormatFromLeftOrAbove = -4142; // xlFormatFromLeftOrAbove
+    // XlInsertFormatOrigin, and these are the exact values a live probe drove
+    // Rows.Insert with successfully.
+    private const int _excelShiftDown = -4121; // xlShiftDown
+
+    // 1 = XlInsertFormatOrigin.xlFormatFromRightOrBelow, NOT the default 0
+    // (xlFormatFromLeftOrAbove). The default copies the format of the row ABOVE into
+    // the inserted row, and the row above an appended activity is the last body row,
+    // which carries the pastel-red Start/Finish fills of the validation report. Excel
+    // copies cell interiors with the format, so every add cloned that pink into the
+    // row it created -- exactly one row lower than the previous clone, which is the
+    // reported "a warning fill appears one row below the entity, and the next add puts
+    // another one below that" trail. This constant previously read -4142, which is not
+    // a member of XlInsertFormatOrigin at all; Excel ignored it, fell back to the
+    // default, and cloned the fill. Measured 2026-11-09 against Excel 16.0.
+    private const int _excelFormatFromRightOrBelow = 1;
 
     /// <summary>
     /// Inserts one real worksheet row directly below the table, so the reserved
@@ -480,7 +492,7 @@ public class ExcelGanttRowInserter(
                 return false;
             }
 
-            rows[worksheetRow].Insert(_excelShiftDown, _excelFormatFromLeftOrAbove);
+            rows[worksheetRow].Insert(_excelShiftDown, _excelFormatFromRightOrBelow);
             return true;
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidCastException or ArgumentException)

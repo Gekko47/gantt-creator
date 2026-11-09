@@ -502,6 +502,110 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// An appended activity must not inherit the pastel-red error fill of the row above it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect.</b> Adding an activity at the bottom of the table painted
+    /// a red block on the blank rows below the last activity, and each further add put one
+    /// more red row below the previous one. Nothing in the add-in writes there: the
+    /// worksheet-row insert asked Excel to copy the format of the row above
+    /// (<c>xlFormatFromLeftOrAbove</c>), which is the last body row, and Excel copies the
+    /// cell interiors with the format. The pastel red on that row's <c>Start</c> and
+    /// <c>Finish</c> cells was therefore cloned into the new row — two columns wide,
+    /// exactly one row lower, and further down with every add.
+    /// </para>
+    /// <para>
+    /// <b>Why live.</b> The copy origin is an Excel decision made inside
+    /// <c>Rows[n].Insert</c>; no contract test can observe it, because the adapter's
+    /// insert seam is substituted in every behavioural test. This test paints the last
+    /// body row the way the validation report would, appends an activity, and asserts the
+    /// new row's two date cells carry no fill.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task An_appended_row_does_not_clone_the_error_fill_of_the_row_above()
+    {
+        const int pastelRed = 0x00C8C8FF;
+
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(
+                fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            ExcelWorkbookInitialiser initialiser = new(fixture.Excel);
+            WorkbookInitialiseOutcome initialised = initialiser.Initialise();
+            Assert.True(initialised.Succeeded, $"Initialise refused: {initialised.Refusal}");
+
+            // ADR-0055: the loaded pack protects the sheet on its own background refresh,
+            // which would refuse this test's insert with TargetProtected.
+            OfficeFixture.DisableChartProtection(workbook);
+
+            var sheet = (Excel.Worksheet)workbook.Sheets[GanttWorkbookContract.GanttSheetLabel];
+            Excel.ListObject table = sheet.ListObjects[GanttTableSchema.TableName];
+            var inserter = new ExcelGanttRowInserter(fixture.Excel);
+
+            GanttRowInsertOutcome first = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('a'));
+            Assert.True(first.Succeeded, $"first insert refused: {first.Refusal}");
+
+            // Paint the last body row exactly as the error report does, so the row above
+            // the next append carries a fill that must not be cloned.
+            Excel.Range lastRow = table.ListRows[table.ListRows.Count].Range;
+            Excel.Range lastStart = lastRow.Cells[1, ColumnIndex(table, "Start")];
+            Excel.Range lastFinish = lastRow.Cells[1, ColumnIndex(table, "Finish")];
+            lastStart.Interior.Color = pastelRed;
+            lastFinish.Interior.Color = pastelRed;
+
+            GanttRowInsertOutcome appended = inserter.Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('b'));
+            Assert.True(appended.Succeeded, $"append refused: {appended.Refusal}");
+
+            Excel.Range newRow = table.ListRows[appended.BodyIndex].Range;
+            Excel.Range newStart = newRow.Cells[1, ColumnIndex(table, "Start")];
+            Excel.Range newFinish = newRow.Cells[1, ColumnIndex(table, "Finish")];
+            int none = (int)Excel.XlColorIndex.xlColorIndexNone;
+
+            Assert.Equal(
+                none,
+                Convert.ToInt32(newStart.Interior.ColorIndex, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(
+                none,
+                Convert.ToInt32(newFinish.Interior.ColorIndex, System.Globalization.CultureInfo.InvariantCulture));
+            _output.WriteLine(
+                "The appended row copied its format from below, so the error fill above was not cloned.");
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>Resolves a table column's one-based index from its header name.</summary>
+    /// <param name="table">The Gantt table.</param>
+    /// <param name="headerName">The schema column name.</param>
+    /// <returns>The one-based index.</returns>
+    private static int ColumnIndex(Excel.ListObject table, string headerName)
+    {
+        for (int index = 1; index <= table.ListColumns.Count; index++)
+        {
+            if (string.Equals(table.ListColumns[index].Name, headerName, StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+
+        throw new InvalidOperationException($"'{headerName}' is not a column of '{table.Name}'.");
+    }
+
     private static int RequiredBodyIndex(GanttRowInsertOutcome outcome)
     {
         Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");

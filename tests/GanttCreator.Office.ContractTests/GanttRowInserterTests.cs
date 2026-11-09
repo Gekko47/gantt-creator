@@ -1284,6 +1284,53 @@ public class GanttRowInserterTests
         Assert.DoesNotContain("rows.Add(position)", source, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// An inserted row takes its format from BELOW, so it can never clone the error fill
+    /// of the row above it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reported defect.</b> Adding an activity at the bottom of the table painted
+    /// a pastel-red block on the blank rows below the last activity, and each further add
+    /// put one more red row below the previous one. No add-in code writes there: the
+    /// insert asked Excel to copy the format of the row above, which is the last body row,
+    /// and that row carries the pastel-red <c>Start</c>/<c>Finish</c> fills of the
+    /// validation report. Excel copies cell interiors with the format, so the clone is
+    /// exactly two columns wide and lands exactly one row lower each time.
+    /// </para>
+    /// <para>
+    /// <b>Why a source assertion.</b> <see cref="ExcelGanttRowInserter.InsertWorksheetRow"/>
+    /// is a substituted seam in every behavioural test in this file, because
+    /// <c>Worksheet.Rows[row]</c> is a parameterised COM property that Moq cannot set up.
+    /// The copy origin therefore cannot be observed through the seam, so the assertion is
+    /// made against the adapter's source — the same technique
+    /// <see cref="The_position_is_resolved_from_the_active_cell_rather_than_hard_coded"/>
+    /// already uses for the branch structure.
+    /// </para>
+    /// <para>
+    /// <b>Why the value matters.</b> <c>XlInsertFormatOrigin.xlFormatFromRightOrBelow</c>
+    /// is 1 and <c>xlFormatFromLeftOrAbove</c> is 0; the constant used to read -4142,
+    /// which is not a member of that enumeration, so Excel ignored it and fell back to
+    /// the default (from above). The live-Office assertion of the same behaviour is
+    /// <c>An_appended_row_does_not_clone_the_error_fill_of_the_row_above</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void An_inserted_row_takes_its_format_from_below_so_it_cannot_clone_the_highlight_above()
+    {
+        string source = File.ReadAllText(LocateInserterSource());
+
+        Assert.Contains("_excelFormatFromRightOrBelow = 1", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "Insert(_excelShiftDown, _excelFormatFromRightOrBelow)",
+            source,
+            StringComparison.Ordinal);
+
+        // The default origin is 0 (xlFormatFromLeftOrAbove) and is not requested.
+        Assert.DoesNotContain("_excelFormatFromLeftOrAbove", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Insert(_excelShiftDown, 0)", source, StringComparison.Ordinal);
+    }
+
     private static string LocateInserterSource()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
