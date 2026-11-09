@@ -181,8 +181,12 @@ public class ExcelWorksheetProtectionPortTests
     /// <see cref="TestablePort"/> cannot prove any of this: it substitutes
     /// <c>ProtectWorksheet</c>, which is exactly the method under test here.
     /// </remarks>
-    private sealed class OutliningPort(object? application, bool contentsProtected, List<string> trace)
-        : ExcelWorksheetProtectionPort(application, trace.Add)
+    private sealed class OutliningPort(
+        object? application,
+        bool contentsProtected,
+        List<string> trace,
+        IProtectionPreferenceSource? preferences = null)
+        : ExcelWorksheetProtectionPort(application, trace.Add, preferences)
     {
         /// <summary>Gets or sets whether the sheet currently reports itself protected.</summary>
         public bool Protected { get; set; } = contentsProtected;
@@ -211,9 +215,20 @@ public class ExcelWorksheetProtectionPortTests
 
         internal override bool ReadContentsProtected(Excel._Worksheet sheet) => Protected;
 
-        internal override void ApplyProtect(Excel._Worksheet sheet)
+        /// <summary>Gets the CHART toggle the protect was applied with.</summary>
+        public bool? AppliedDrawingObjects { get; private set; }
+
+        /// <summary>Gets the CELL toggle the protect was applied with.</summary>
+        public bool? AppliedContents { get; private set; }
+
+        internal override void ApplyProtect(
+            Excel._Worksheet sheet,
+            bool drawingObjectsProtected,
+            bool contentsProtected)
         {
             Calls.Add("protect");
+            AppliedDrawingObjects = drawingObjectsProtected;
+            AppliedContents = contentsProtected;
             Protected = true;
         }
 
@@ -356,6 +371,61 @@ public class ExcelWorksheetProtectionPortTests
     /// behaviour the user relies on — the chart stays locked — and the log line says the table did
     /// not get unlocked, so the state is not silently half-applied.
     /// </remarks>
+    /// <summary>
+    /// With both toggles in their default state, the protect protects the chart and the cell area.
+    /// </summary>
+    /// <remarks>
+    /// Owner ruling 2026-11-09: the ribbon carries one toggle for the chart and one for the sheet's
+    /// cells. The default is "both locked" — the chart cannot be dragged and the area outside the
+    /// visible table is read-only — which is the state a workbook should be left in.
+    /// </remarks>
+    [Fact]
+    public void Default_toggles_protect_the_chart_and_the_cells_outside_the_table()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(
+            ActiveApplication().Object,
+            contentsProtected: false,
+            trace,
+            new ProtectionPreferences());
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.True(port.AppliedDrawingObjects);
+        Assert.True(port.AppliedContents);
+        Assert.Contains("chartLocked=True", Assert.Single(trace), StringComparison.Ordinal);
+        Assert.Contains("sheetCellsLocked=True", trace[0], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Switching both toggles off reaches the host as a protect that locks neither.
+    /// </summary>
+    /// <remarks>
+    /// This is the assertion that the toggles are STATE the port reads rather than constants: before
+    /// the ruling the two flags were hard-coded <c>true</c>, so an unlocked chart or an editable sheet
+    /// was silently re-locked by the next protect — including the re-protect every release window
+    /// performs at the end of a refresh.
+    /// </remarks>
+    [Fact]
+    public void Neither_toggle_protects_neither_the_chart_nor_the_cells()
+    {
+        List<string> trace = [];
+        var port = new OutliningPort(
+            ActiveApplication().Object,
+            contentsProtected: false,
+            trace,
+            new ProtectionPreferences { ChartLocked = false, CellsUnlocked = true });
+
+        ProtectionWriteOutcome outcome = port.Protect();
+
+        Assert.True(outcome.Succeeded, outcome.Refusal?.ToString());
+        Assert.False(port.AppliedDrawingObjects);
+        Assert.False(port.AppliedContents);
+        Assert.Contains("chartLocked=False", Assert.Single(trace), StringComparison.Ordinal);
+        Assert.Contains("sheetCellsLocked=False", trace[0], StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_refused_cell_unlock_still_protects_and_records_the_refusal()
     {

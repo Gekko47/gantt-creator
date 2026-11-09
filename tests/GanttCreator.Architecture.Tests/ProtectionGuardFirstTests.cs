@@ -226,6 +226,10 @@ public sealed class ProtectionGuardFirstTests
         // The in-memory set of primitive ids the user has unlocked. It carries no COM
         // object and no workbook state; it exists so the scheduler can suspend.
         "src/GanttCreator.Office/ShapeUnlockState.cs",
+        // The session's two protection toggles (owner ruling 2026-11-09): two booleans the
+        // ribbon writes and ExcelWorksheetProtectionPort reads. No COM object, no workbook
+        // state, and no guard to consult — it changes nothing until a protect runs.
+        "src/GanttCreator.Office/ProtectionPreferences.cs",
         "src/GanttCreator.Office/ExcelWorksheetProtectionGuard.cs",
         "src/GanttCreator.Office/GanttRowInsertOutcome.cs",
         "src/GanttCreator.Office/IDurationWritePort.cs",

@@ -40,12 +40,32 @@ namespace GanttCreator.Office;
 /// password this add-in does not store could never be re-entered, so the workbook would be
 /// permanently unprotectable by the user. Both directions pass <see cref="Type.Missing"/>.
 /// </para>
+/// <param name="preferences">
+/// The user's two protection toggles, or <see langword="null"/> for
+/// <see cref="ProtectionPreferences.Shared"/>. Read-only here: the port applies whatever state the
+/// ribbon has set, so a refresh re-applies the user's choice instead of the default.
+/// </param>
 /// </remarks>
-public class ExcelWorksheetProtectionPort(object? application, Action<string>? trace = null)
+public class ExcelWorksheetProtectionPort(
+    object? application,
+    Action<string>? trace = null,
+    IProtectionPreferenceSource? preferences = null)
     : IWorksheetProtectionPort
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly Action<string>? _trace = trace;
+
+    /// <summary>
+    /// The user's two protection toggles (owner ruling 2026-11-09). Read, never written: the port
+    /// applies whatever the ribbon has set, so a refresh re-applies the user's choice instead of
+    /// overwriting it with the default.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see cref="ProtectionPreferences.Shared"/> for the same reason the guard defaults
+    /// its ownership source: every adapter in this assembly builds its own port, and the toggles are
+    /// a property of the session, not of the port.
+    /// </remarks>
+    private readonly IProtectionPreferenceSource _preferences = preferences ?? ProtectionPreferences.Shared;
 
     /// <inheritdoc />
     public WorksheetProtectionState? Read()
@@ -333,6 +353,12 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
+        // The two toggles, read once per protect so every flag below comes from one consistent view
+        // of the user's choice. Chart locked drives DrawingObjects; cells unlocked turns Contents
+        // protection off, which is what makes the area outside the visible table editable.
+        bool chartLocked = _preferences.ChartLocked;
+        bool sheetCellsLocked = !_preferences.CellsUnlocked;
+
         // The two live reports disagree about which side of Protect the host needs, and a third
         // report says the automatic pass still greys the symbols out while a full refresh keeps
         // them. Rather than guess a fourth ordering, the state is READ on both sides and recorded:
@@ -375,7 +401,7 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
 
         bool setBefore = SetOutlineSymbolsEnabled(sheet);
 
-        ApplyProtect(sheet);
+        ApplyProtect(sheet, chartLocked, sheetCellsLocked);
 
         bool setAfter = SetOutlineSymbolsEnabled(sheet);
         bool? enabledAfter = ReadOutlineSymbolsEnabled(sheet);
@@ -388,6 +414,10 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
             + protectedBefore
             + " cellsUnlocked="
             + DescribeAttempt(cellsUnlocked)
+            + " chartLocked="
+            + chartLocked
+            + " sheetCellsLocked="
+            + sheetCellsLocked
             + " setBefore="
             + DescribeAttempt(setBefore)
             + " setAfter="
@@ -415,21 +445,38 @@ public class ExcelWorksheetProtectionPort(object? application, Action<string>? t
     /// <c>Worksheet.Protect</c> call, which Moq cannot express.
     /// </summary>
     /// <param name="sheet">The worksheet to protect.</param>
+    /// <param name="drawingObjectsProtected">The CHART toggle: whether <c>Shape.Locked</c> is enforced.</param>
+    /// <param name="contentsProtected">The CELL toggle: whether cells outside the visible table are read-only.</param>
     /// <remarks>
-    /// The arguments this seam is given are the whole ADR-0055 contract and cannot be asserted in a
-    /// contract test — <c>DrawingObjects</c>, <c>Contents</c>, <c>UserInterfaceOnly</c>, no password —
-    /// so they are proved by the live Office gate. Extracting the call is what lets the OUTLINING
-    /// diagnostic around it be tested, because a test that substitutes all of
-    /// <see cref="ProtectWorksheet"/> never reaches the reads.
+    /// <para>
+    /// The <c>UserInterfaceOnly</c> and "no password" arguments are still proved only by the live
+    /// Office gate, because they are constants here. The two flags are not: they come from the user's
+    /// toggles, so the seam takes them as parameters and a contract test asserts the mapping from
+    /// toggle state to <c>Protect</c> arguments without a host.
+    /// </para>
+    /// <para>
+    /// Extracting the call is also what lets the OUTLINING diagnostic around it be tested, because a
+    /// test that substitutes all of <see cref="ProtectWorksheet"/> never reaches the reads.
+    /// </para>
     /// </remarks>
-    internal virtual void ApplyProtect(Excel._Worksheet sheet)
+    internal virtual void ApplyProtect(
+        Excel._Worksheet sheet,
+        bool drawingObjectsProtected,
+        bool contentsProtected)
     {
         ArgumentNullException.ThrowIfNull(sheet);
 
         sheet.Protect(
             Type.Missing,   // Password: none, deliberately (ADR-0055).
-            true,           // DrawingObjects: REQUIRED. Defaults to False, which leaves Shape.Locked inert.
-            true,           // Contents: locked cells become read-only; the TABLE's cells are unlocked first.
+
+            // Owner ruling 2026-11-09: the CHART toggle. True is what makes Shape.Locked meaningful
+            // and stops a stray drag; False is the user asking to move chart elements.
+            drawingObjectsProtected,
+
+            // The CELL toggle. True makes cells OUTSIDE the visible table read-only; the table's own
+            // cells are unlocked first, so they stay editable either way.
+            contentsProtected,
+
             Type.Missing,   // Scenarios: host default.
             true,           // UserInterfaceOnly: the add-in may still write after protecting.
 
