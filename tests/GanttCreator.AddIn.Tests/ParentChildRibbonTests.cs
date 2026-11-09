@@ -206,6 +206,30 @@ public class ParentChildRibbonTests
                 .Select(element => element.Attribute("id")?.Value));
     }
 
+    /// <summary>
+    /// The Outline group's Expand/Collapse pair stacks vertically, one icon-column wide.
+    /// </summary>
+    /// <remarks>
+    /// Owner direction (2026-11-09): the two buttons were laid out side by side in a
+    /// horizontal box, which cost two icon columns of ribbon width for a pair that is
+    /// only ever used together. A vertical box halves that width without removing either
+    /// control, so no callback, keytip or enablement changes.
+    /// </remarks>
+    [Fact]
+    public void Outline_group_buttons_stack_vertically_to_save_horizontal_space()
+    {
+        XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = CustomUiNamespace;
+
+        XElement box = Assert.Single(
+            doc.Descendants(ns + "box"),
+            b => b.Attribute("id")?.Value == "boxOutlineGroups");
+        Assert.Equal("vertical", box.Attribute("boxStyle")?.Value);
+        Assert.Equal(
+            [RibbonControlIds.ExpandAllGroups, RibbonControlIds.CollapseAllGroups],
+            box.Elements(ns + "button").Select(button => button.Attribute("id")?.Value));
+    }
+
     [Fact]
     public void Move_buttons_label_Up_and_Down_with_correct_actions()
     {

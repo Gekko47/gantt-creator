@@ -45,8 +45,11 @@
                which is the one thing Excel's per-group -/+ controls cannot do.
                They write the same state the native control writes (the child
                rows' hidden flag), so the result is indistinguishable from
-               pressing the native control on each group. -->
-          <box id="boxOutlineGroups" boxStyle="horizontal">
+               pressing the native control on each group.
+               Owner direction 2026-11-09: the pair is STACKED VERTICALLY, not
+               laid out side by side, so the group is one icon-column wide and
+               takes less of the ribbon. -->
+          <box id="boxOutlineGroups" boxStyle="vertical">
             <button id="btnExpandAllGroups" label="Expand all groups" imageMso="OutlineExpand" keytip="G" screentip="Expand every outline group" supertip="Shows every grouped child row. The chart is unchanged because hidden rows still keep their place." getEnabled="GetEnabled" onAction="OnExpandAllGroupsClick"/>
             <button id="btnCollapseAllGroups" label="Collapse all groups" imageMso="OutlineCollapse" keytip="C" screentip="Collapse every outline group" supertip="Hides every grouped child row using the same row state as Excel's own outline controls." getEnabled="GetEnabled" onAction="OnCollapseAllGroupsClick"/>
           </box>
