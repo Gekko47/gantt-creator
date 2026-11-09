@@ -416,8 +416,8 @@ public sealed class DateLabelRibbonTests : IDisposable
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,
-                RibbonControlIds.UnlockShape,
-                RibbonControlIds.LockShapes,
+                RibbonControlIds.ToggleChartLock,
+                RibbonControlIds.ToggleCellLock,
             ],
             invalidated);
         Assert.Equal(invalidationsBefore, CountInvalidations(ribbon));

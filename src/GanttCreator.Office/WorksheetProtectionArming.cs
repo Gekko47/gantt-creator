@@ -25,17 +25,31 @@ namespace GanttCreator.Office;
 /// release-on-opt-out, and the decision not to refuse the refresh — is contract-testable without a
 /// host.
 /// </para>
+/// <para>
+/// The optional <c>preferences</c> argument supplies the user's two protection toggles, defaulting to
+/// <see cref="ProtectionPreferences.Shared"/>. Arming reads only <c>ChartLocked</c>: it must not take
+/// back a chart the user has released.
+/// </para>
 /// </remarks>
 public sealed class WorksheetProtectionArming(
     IWorksheetProtectionPort port,
     IShapeWritePort shapeWriter,
     ProtectionArmingState state,
-    Action<string>? trace = null)
+    Action<string>? trace = null,
+    IProtectionPreferenceSource? preferences = null)
 {
     private readonly IWorksheetProtectionPort _port = port ?? throw new ArgumentNullException(nameof(port));
     private readonly IShapeWritePort _shapeWriter = shapeWriter ?? throw new ArgumentNullException(nameof(shapeWriter));
     private readonly ProtectionArmingState _state = state ?? throw new ArgumentNullException(nameof(state));
     private readonly Action<string>? _trace = trace;
+
+    /// <summary>
+    /// The user's toggles. Read here for one reason: arming used to lock every owned shape
+    /// unconditionally, which would undo a CHART unlock on the very next refresh. The chart toggle is
+    /// the user's decision and outlives a refresh; the cell toggle does not matter to arming, because
+    /// it changes only what <c>Protect</c> is called with, not what is written before it.
+    /// </summary>
+    private readonly IProtectionPreferenceSource _preferences = preferences ?? ProtectionPreferences.Shared;
 
     /// <summary>Gets whether the add-in's protection is already in force this session.</summary>
     /// <remarks>
@@ -103,7 +117,16 @@ public sealed class WorksheetProtectionArming(
             Record(_port.Unprotect(), "reprotect");
         }
 
-        Record(_shapeWriter.LockOwnedShapes(), "lock");
+        if (_preferences.ChartLocked)
+        {
+            Record(_shapeWriter.LockOwnedShapes(), "lock");
+        }
+        else
+        {
+            // The user has released the chart on purpose. Re-locking here would undo that on the next
+            // refresh, which is exactly the "it locks itself again" behaviour the toggle exists to end.
+            _trace?.Invoke("gantt.protection lock skipped chartLocked=False");
+        }
 
         // No Protect here, on purpose: the window that wraps the write phase re-applies it. See the
         // remarks above and the measured table in ADR-0055.

@@ -1923,11 +1923,45 @@ internal class RibbonStateService
     /// </remarks>
     internal virtual bool GetEnabled(string? controlId) => controlId switch
     {
+        // Owner ruling 2026-11-09: the two toggles replace the shape pair. A toggle is always
+        // available on an initialised sheet — asking it to be "enabled only when there is something
+        // to unlock" is what made the old pair unable to enable itself. What varies is the state it
+        // reports, not whether it can be pressed.
+        RibbonControlIds.ToggleChartLock or RibbonControlIds.ToggleCellLock =>
+            _state.HasActiveWorkbook && _state.SheetInitialised,
         RibbonControlIds.LockShapes => UnlockState.IsAnyUnlocked,
         RibbonControlIds.UnlockShape =>
             _state.HasActiveWorkbook && _state.SheetInitialised && ResolveSelectedShapePort().Read().Succeeded,
         _ => _state.IsEnabled(controlId),
     };
+
+    /// <summary>
+    /// Gets whether the CHART toggle is pressed, which is the state the button shows.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while the chart's shapes are locked.</returns>
+    /// <remarks>
+    /// Pressed means locked, which is the conventional reading of a toggle and needs no legend. The
+    /// value comes from <see cref="ProtectionPreferences"/>, the same object the protection port reads,
+    /// so the button cannot disagree with what the sheet actually enforces.
+    /// </remarks>
+    internal static bool GetToggleChartLockPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return ProtectionPreferences.Shared.ChartLocked;
+    }
+
+    /// <summary>
+    /// Gets whether the CELL toggle is pressed: <see langword="true"/> while the cells outside the
+    /// visible table are read-only.
+    /// </summary>
+    /// <param name="control">The Ribbon control, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> while those cells are locked, which is the default.</returns>
+    internal static bool GetToggleCellLockPressed(IRibbonControl? control)
+    {
+        _ = control;
+        return !ProtectionPreferences.Shared.CellsUnlocked;
+    }
 
     /// <summary>
     /// Returns how many items the description-label dropdown offers: the row's
@@ -2924,10 +2958,10 @@ internal class RibbonStateService
             InvalidateControl(RibbonControlIds.DateLabel);
             InvalidateControl(RibbonControlIds.CustomStyle);
 
-            // The selection is the only thing that can turn "Unlock shape" on, and
-            // unlocking is the only thing that can turn "Lock shapes" on.
-            InvalidateControl(RibbonControlIds.UnlockShape);
-            InvalidateControl(RibbonControlIds.LockShapes);
+            // The two toggles report state rather than selection, but a command can change
+            // either from anywhere, and Excel only re-asks getPressed on an invalidation.
+            InvalidateControl(RibbonControlIds.ToggleChartLock);
+            InvalidateControl(RibbonControlIds.ToggleCellLock);
         }
         catch
         {

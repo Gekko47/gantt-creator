@@ -61,7 +61,24 @@ internal static class RibbonControlIds
     /// <summary>
     /// The Lock shapes button (ADR-0055): enabled when at least one owned shape is unlocked.
     /// </summary>
+    /// <remarks>
+    /// Superseded by <see cref="ToggleChartLock"/> (owner ruling 2026-11-09): the ribbon no longer
+    /// shows two shape buttons. The constant and the command behind it remain for the transition so
+    /// their tested behaviour is not deleted in the same change that introduces a replacement.
+    /// </remarks>
     internal const string LockShapes = "btnLockShapes";
+
+    /// <summary>
+    /// The CHART lock toggle (owner ruling 2026-11-09): one control whose label and pressed state
+    /// reflect whether chart elements can be dragged, and whose action flips it.
+    /// </summary>
+    internal const string ToggleChartLock = "btnToggleChartLock";
+
+    /// <summary>
+    /// The CELL lock toggle (owner ruling 2026-11-09): one control for the sheet's cells OUTSIDE the
+    /// visible table. The table itself is always editable and is not affected.
+    /// </summary>
+    internal const string ToggleCellLock = "btnToggleCellLock";
 
     /// <summary>
     /// The Add child dropdown (R5.3 WI-E). It offers the child types the

@@ -156,8 +156,13 @@
           <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on
                ONE selected shape the add-in drew, releases the protection so it can be dragged, and
                suspends the automatic refresh until Lock shapes or an explicit Refresh puts it back. -->
-          <button id="btnUnlockShape" label="Unlock shape" keytip="UL" screentip="Unlock the selected shape" supertip="Lets you drag the selected chart shape. Automatic refresh pauses until you lock the shapes again or refresh the chart." getEnabled="GetEnabled" onAction="OnUnlockShapeClick"/>
-          <button id="btnLockShapes" label="Lock shapes" keytip="LK" screentip="Lock every chart shape" supertip="Re-locks every chart shape and restores the chart's protection. A manual edit is reverted by the next refresh." getEnabled="GetEnabled" onAction="OnLockShapesClick"/>
+          <!-- Owner ruling 2026-11-09: TWO toggles, not four buttons. Each is pressed
+               while its lock is engaged, so the state is visible without reading the
+               log or clicking to find out. The CHART toggle governs the shapes; the
+               CELL toggle governs the sheet's cells OUTSIDE the visible table, which
+               is always editable and has no toggle of its own. -->
+          <toggleButton id="btnToggleChartLock" label="Lock chart" keytip="LK" screentip="Lock or unlock the chart elements" supertip="Pressed means the chart's shapes are locked and cannot be dragged. Unpressed means you can move them; the automatic refresh pauses until you lock the chart again or refresh." imageMso="Lock" getEnabled="GetEnabled" getPressed="GetToggleChartLockPressed" onAction="OnToggleChartLockClick"/>
+          <toggleButton id="btnToggleCellLock" label="Lock cells" keytip="CL" screentip="Lock or unlock the cells outside the table" supertip="Pressed means the cells outside the visible table are read-only. Unpressed means the whole sheet is editable. The visible table is always editable either way, so copy, paste and formatting are never blocked there." imageMso="LockCell" getEnabled="GetEnabled" getPressed="GetToggleCellLockPressed" onAction="OnToggleCellLockClick"/>
         </group>
         <group id="grpDiagnostics" label="Diagnostics">
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>

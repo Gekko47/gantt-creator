@@ -373,7 +373,13 @@ public class GanttRibbonTests
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
+        // toggleButton is queried too: the 2026-11-09 CHART and CELL lock toggles are toggle buttons
+        // and declare getEnabled on the same workbook+initialised truth table. Leaving them out of the
+        // query would let a gated toggle be added or dropped without this pin noticing. They therefore
+        // appear in the pinned list after every <button>, which is why they are listed there rather
+        // than beside the buttons they sit next to in the XML.
         var gatedIds = doc.Descendants(ns + "button")
+            .Concat(doc.Descendants(ns + "toggleButton"))
             .Concat(doc.Descendants(ns + "dropDown"))
             .Concat(doc.Descendants(ns + "editBox"))
             .Where(button => button.Attribute("getEnabled") is not null
@@ -408,13 +414,13 @@ public class GanttRibbonTests
                 RibbonControlIds.PresetPresentation4x3,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Warnings,
-                // ADR-0055 clause 6: the two shape-lock buttons sit beside Refresh in the Gantt
-                // Creator group. Unlock is gated on a single selected owned shape; Lock is gated on
-                // at least one unlock being in effect.
-                RibbonControlIds.UnlockShape,
-                RibbonControlIds.LockShapes,
                 RibbonControlIds.Diagnostics,
                 RibbonControlIds.OpenLog,
+                // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.
+                // They are gated on workbook + initialised alone — a toggle must always be reachable,
+                // because its state is what the user came to change.
+                RibbonControlIds.ToggleChartLock,
+                RibbonControlIds.ToggleCellLock,
                 // R5.5: the description-label dropdown is the first
                 // selection-gated control — it shares the workbook+initialised
                 // part of the truth table and adds the single-row condition

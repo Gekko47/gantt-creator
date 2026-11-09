@@ -277,6 +277,29 @@ public class GanttRibbon : ExcelRibbon
     private static void RunRefreshSheet() => RefreshSheetCommand.RunForExcel();
 
     /// <summary>
+    /// The CHART lock toggle (owner ruling 2026-11-09): presses to flip whether the chart's elements
+    /// can be dragged. One control replaces the old Unlock shape / Lock shapes pair, and its pressed
+    /// state is the lock state, so it can always be found and always shows what is true.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnToggleChartLockClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleChartLockClick)),
+            ToggleChartLockCommand.RunForExcel,
+            nameof(OnToggleChartLockClick));
+
+    /// <summary>
+    /// The CELL lock toggle (owner ruling 2026-11-09): presses to flip whether the cells OUTSIDE the
+    /// visible table are editable. The visible table itself is always editable.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnToggleCellLockClick(IRibbonControl control) =>
+        CommandBoundary.Instance.Run(
+            () => ResolveCommandName(control, nameof(OnToggleCellLockClick)),
+            ToggleCellLockCommand.RunForExcel,
+            nameof(OnToggleCellLockClick));
+
+    /// <summary>
     /// The Unlock shape command: releases the chart's protection and clears one owned shape's lock
     /// (ADR-0055 clause 6).
     /// </summary>
@@ -724,6 +747,28 @@ public class GanttRibbon : ExcelRibbon
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
     public bool GetEnabled(IRibbonControl control) => GetEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Reports whether the CHART lock toggle is pressed, which is the chart's lock state.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while the chart's shapes are locked.</returns>
+    /// <remarks>
+    /// The answer comes from the same <c>ProtectionPreferences</c> the
+    /// protection port reads, so the button cannot disagree with what the sheet enforces. Exposed as a
+    /// public method here because RibbonX resolves <c>getPressed</c> to a public callback on this class.
+    /// </remarks>
+    public bool GetToggleChartLockPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleChartLockPressed(control);
+
+    /// <summary>
+    /// Reports whether the CELL lock toggle is pressed: <see langword="true"/> while the cells outside
+    /// the visible table are read-only.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><see langword="true"/> while those cells are locked.</returns>
+    public bool GetToggleCellLockPressed(IRibbonControl control) =>
+        RibbonStateService.GetToggleCellLockPressed(control);
 
     /// <summary>
     /// Runs <see cref="GetEnabled(IRibbonControl)"/> against an injected state
