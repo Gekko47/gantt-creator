@@ -23,7 +23,10 @@
 param(
     [string]$Solution = 'GanttCreator.slnx',
     [string]$Configuration = 'Release',
-    [int]$DeadlineSeconds = 600,
+    # 660 rather than 600: the suite completed in 9 m 59 s on 2026-11-09, i.e. one second
+    # inside the old default, so the gate was failing on its own deadline rather than on a
+    # defect. 660 keeps a real hang bounded and gives the suite room to finish.
+    [int]$DeadlineSeconds = 660,
     # Ratchet on the COM-proxy leak signal: the ceiling on forced kills the run
     # may contain before the gate fails. It is set to the measured baseline, so
     # the gate is green today and a regression past the ceiling is red. Each
@@ -154,7 +157,9 @@ function Log { param($s) Write-Host $s; Add-Content -LiteralPath $report -Value 
 function Save-Trx {
     $trxSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
     if (-not (Test-Path -LiteralPath $trxSource)) {
-        Log "WARN: trx not found at $trxSource; no per-run archive."
+        # Expected on a timeout: the killed run never flushed its results. Saying so is the
+        # point - the alternative was archiving whatever an earlier run had left behind.
+        Log "WARN: no trx was produced by this run ($trxSource); nothing archived."
         return
     }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmssfff'
@@ -430,6 +435,13 @@ dotnet build $Solution -c $Configuration --no-restore -warnaserror
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Log 'test OfficeIntegration (external watchdog deadline; blame collector omitted per L12)'
+
+# Remove any trx from a previous run BEFORE starting, so a take-over archive can never
+# present an old run's results as this run's. Measured 2026-11-09: a timed-out gate
+# archived a trx dated four days earlier, and reading it produced a false diagnosis.
+$staleTrx = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/GanttCreator.Office.IntegrationTests/TestResults/office.trx'
+if (Test-Path -LiteralPath $staleTrx) { Remove-Item -LiteralPath $staleTrx -Force -ErrorAction SilentlyContinue }
+
 $testArgs = @(
     'test', $Solution, '-c', $Configuration, '--no-build', '--no-restore',
     '--filter', 'Category=OfficeIntegration',
