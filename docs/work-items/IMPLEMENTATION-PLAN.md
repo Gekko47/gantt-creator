@@ -248,6 +248,7 @@ files only; the local audit verifies every file exists.
 | R5.13 | `R5.13-group-aware-row-insert.md` | Implemented; live group-aware insertion and outline review remains |
 | R5.14 | `R5.14-date-labels.md` | Implemented; live date-label selection and placement review remains |
 | R5.15 | `R5.15-managed-worksheet-protection.md` | Not implemented; proof-first live feasibility and ADR decision required before any protection adoption |
+| R5.16 | `R5.16-ribbon-first-run-and-data-group.md` | Governance recorded 2026-11-10 (ADR-0056); implementation and live ribbon review not started |
 
 **Phase 5 completion snapshot (2026-10-31):** R5.1–R5.14 feature code and
 automated coverage are present in the current source. Their required live

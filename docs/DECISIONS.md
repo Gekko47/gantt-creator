@@ -55,6 +55,14 @@
 | ADR-0049 | A delineator carries a user-authored named style whose width overrides the chart-wide metric | Accepted | 2026-10-28 | [`adr/0049-delineator-named-style.md`](adr/0049-delineator-named-style.md) |
 | ADR-0050 | Empty live chart and coalesced automatic refresh | Accepted | 2026-10-31 | [`adr/0050-empty-live-chart-and-coalesced-refresh.md`](adr/0050-empty-live-chart-and-coalesced-refresh.md) |
 | ADR-0051 | Retain the unprotected worksheet; add-in-owned protection is not adopted | Accepted | 2026-11-01 | [`adr/0051-retain-unprotected-worksheet.md`](adr/0051-retain-unprotected-worksheet.md) |
+| ADR-0056 | Ribbon first-run surface, Critical Interval attachment, and the append-to-end insert | Accepted | 2026-11-10 | [`adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md`](adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md) |
+
+**ADR-0052 through ADR-0055 have files but no index row.** They are implemented
+and cited by other records (verified shape skip, command-scoped shape updates,
+the refresh round-trip budget, and add-in-owned sheet protection). The gap is
+reported rather than filled in this change: adding four rows would mix an
+unrelated index repair into the R5.16 governance commit. The files remain
+readable at `docs/adr/0052-*.md` … `0055-*.md`.
 
 **ADR-0041 amends ADR-0040's D2 to make period-label visibility measured-fit.** ADR-0040 let the user choose `MM` or `MMM`, but both forms were gated by the same fixed `MinimumHeaderLabelWidthPt` floor, so `MM` showed on identical intervals to `MMM` — cosmetic, not functional. ADR-0041 replaces that floor **for the period band** with a measured-fit test (show iff the interval is at least as wide as the label measures), so `MM` — measuring shorter — survives on narrower intervals. The band stays uniform: the format is still one verbatim, user-chosen form, only the show/hide decision varies, and this is measured-fit, not ADR-0039's rejected per-interval ladder. The year band keeps the floor; measurement failure falls back to it.
 

@@ -237,6 +237,7 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 | R5.13 | Insert a row below a group child as a child of that group | Group-child join + regroup, top-level parent → first child, top-level leaf stays top-level, append stays top-level, and refused-positional-insert never reads/regroups tests | Required: insert below a group child, confirm the row joins the group and the native `-`/`+` controls reflect it without Refresh |
 | R5.14 | Add a per-row date-label selector (Auto/Start/Finish; the delineator's cell names a label corner instead — third owner ruling 2026-10-14) in the Labels group | Date-label capability-matrix, exact-enum, and type-capability validation tests; scene snapshots; successful commit refresh and cancel/no-refresh tests | Required: set Auto/Start/Finish on a span and confirm labels update after coalesced refresh; set a delineator corner and confirm its date label moves |
 | R5.15 | Prove feasibility of add-in-owned worksheet protection and record an ADR decision before any production adoption | Live Excel proof for editable/locked cells, table operations, add-in writes, reopen behavior, guard-first refusal, and preservation of user-owned protection | Required: prove supported operations and reopen behavior; retain current refusal policy unless proof and owner decision authorize an amendment; **decision recorded as ADR-0051 — retain the unprotected worksheet** |
+| R5.16 | Show only a large Initialise sheet on an unconfigured workbook, consolidate the Data group into four split buttons plus Remove, and make insertion selection and location aware | Ribbon XML/state contract tests for three-mode visibility, the catalogue-partitioned menus, the Critical Interval data gate, and the append-to-end escape; inserter contract tests for candidate validation, nearest-parent attachment, and the typed refusal; R5.13 tests extended | Required: blank workbook shows only Get started and Diagnostics; Initialise swaps the full ribbon without a restart; each split-button default and item adds the right Type; the Critical Interval item is greyed with no eligible parent and enabled once an activity exists; a spacer added inside a group lands at the end of the table; every new control renders a glyph |
 
 > **Phase 5 notes (revision 14):** revises R5.11 from manual-only refresh to
 > coalesced automatic refresh plus content-aware host-write deltas; adds
@@ -295,6 +296,14 @@ Goal: complete the main authoring workflow and the screenshot-equivalent Ribbon 
 >   **128** rows when it was written — so this figure is measured rather than
 >   inherited, and the discrepancy is recorded here rather than silently
 >   absorbed, exactly as revision 10 recorded revision 9's.
+
+> **Phase 5 notes (revision 12):** inserts one row, `R5.16`, for the
+> presentation and insertion contract recorded as ADR-0056. It changes no
+> schema: the ribbon gains a `Get started` group and three-group visibility,
+> the Data group becomes four large split buttons plus Remove, Add child is
+> removed in favour of Demote, and the insert gains candidate validation, a
+> nearest-parent rule for Critical Interval, and an append-to-end escape for
+> rows that cannot be children. R5.13's group-join decision is retained.
 
 > **Phase 5 notes (revision 11):** inserts one row, `R5.14`, which adds a
 > per-row **date-label selector** to the ribbon's **Labels** group (the group
