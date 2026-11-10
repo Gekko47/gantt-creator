@@ -65,12 +65,12 @@ public class ExcelGanttTableReader(
         Sheets sheets = workbook.Sheets;
         if (!TryFindTable(sheets, out ListObject? table) || table is null)
         {
-            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+            return RefuseTableMissing(sheets);
         }
 
         if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
-            return GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing);
+            return RefuseTableMissing(sheets);
         }
 
         Excel.Range? body = table.DataBodyRange;
@@ -170,6 +170,43 @@ public class ExcelGanttTableReader(
         }
 
         return GanttTableReadOutcome.Ok(rows);
+    }
+
+    /// <summary>
+    /// Builds the table-missing refusal, recording whether the workbook still
+    /// carries the configuration worksheet (R5.16, ADR-0056). The ribbon uses
+    /// that fact to choose <c>NeedsRepair</c> over a first run, so a workbook
+    /// that has lost its table but kept its configuration does not hide the
+    /// only command that can repair it.
+    /// </summary>
+    /// <param name="sheets">The active workbook's sheets.</param>
+    /// <returns>The typed refusal with the configuration fact.</returns>
+    private GanttTableReadOutcome RefuseTableMissing(Sheets sheets) =>
+        GanttTableReadOutcome.Refused(
+            GanttTableReadRefusalReason.TableMissing,
+            configurationPresent: HasConfigurationSheet(sheets));
+
+    /// <summary>
+    /// Whether a worksheet named <c>_GanttCreatorConfig</c> exists. Reads names
+    /// through the same <see cref="GetSheetAt"/> seam as the table search, so a
+    /// chart sheet cannot satisfy it and contract tests substitute it.
+    /// </summary>
+    /// <param name="sheets">The active workbook's sheets.</param>
+    /// <returns><see langword="true"/> when the configuration worksheet exists.</returns>
+    private bool HasConfigurationSheet(Sheets sheets)
+    {
+        int count = sheets.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            object sheet = GetSheetAt(sheets, index);
+            if (sheet is Worksheet worksheet
+                && string.Equals(worksheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

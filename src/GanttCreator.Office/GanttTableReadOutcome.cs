@@ -27,10 +27,17 @@ public enum GanttTableReadRefusalReason
 /// <param name="Succeeded">Whether rows were returned.</param>
 /// <param name="Rows">The rows in body order; empty on a refusal.</param>
 /// <param name="Refusal">The refusal reason when <paramref name="Succeeded"/> is <see langword="false"/>; otherwise <see langword="null"/>.</param>
+/// <param name="ConfigurationPresent">
+/// Whether the workbook carries a <c>_GanttCreatorConfig</c> worksheet. This is
+/// only meaningful on a <see cref="GanttTableReadRefusalReason.TableMissing"/>
+/// refusal, where it separates a first run (no configuration) from a damaged
+/// workbook that needs repair (R5.16, ADR-0056).
+/// </param>
 public sealed record GanttTableReadOutcome(
     bool Succeeded,
     IReadOnlyList<Core.GanttRowDto> Rows,
-    GanttTableReadRefusalReason? Refusal)
+    GanttTableReadRefusalReason? Refusal,
+    bool ConfigurationPresent = false)
 {
     /// <summary>
     /// Creates a success outcome.
@@ -43,7 +50,13 @@ public sealed record GanttTableReadOutcome(
     /// Creates a refusal outcome. Nothing was mutated.
     /// </summary>
     /// <param name="refusal">Why no rows were returned.</param>
+    /// <param name="configurationPresent">
+    /// Whether the workbook carries a <c>_GanttCreatorConfig</c> worksheet. Only
+    /// the table-missing path can know this; every other refusal leaves it false.
+    /// </param>
     /// <returns>The refusal outcome.</returns>
-    public static GanttTableReadOutcome Refused(GanttTableReadRefusalReason refusal) =>
-        new(false, [], refusal);
+    public static GanttTableReadOutcome Refused(
+        GanttTableReadRefusalReason refusal,
+        bool configurationPresent = false) =>
+        new(false, [], refusal, configurationPresent);
 }

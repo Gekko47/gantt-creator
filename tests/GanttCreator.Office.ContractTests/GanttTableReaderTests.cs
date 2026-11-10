@@ -297,6 +297,63 @@ public class GanttTableReaderTests
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
         Assert.Empty(outcome.Rows);
+        Assert.False(outcome.ConfigurationPresent);
+    }
+
+    [Fact]
+    public void A_missing_table_reports_the_configuration_sheet_when_it_exists()
+    {
+        // R5.16 / ADR-0056: this fact is what separates NeedsRepair from a
+        // first run, so the reader must report it on the refusal path.
+        var table = new TableGraph("SomeOtherTable", SchemaHeaders());
+        var ganttSheet = new SheetGraph(table);
+        var configSheet = new SheetGraph();
+        _ = configSheet.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.ConfigSheetName);
+
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        Mock<Excel.Sheets> sheetsMock = CreateSheetsMock([ganttSheet, configSheet]);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheetsMock.Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            sheetAt: (_, index) => index == 1 ? ganttSheet.Worksheet.Object : configSheet.Worksheet.Object,
+            tableAt: (_, _) => table.Table.Object,
+            columnAt: (columns, index) => table.ColumnAt(index),
+            date1904: _ => false,
+            bodyValues: _ => throw new InvalidOperationException("body must not be read"));
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.True(outcome.ConfigurationPresent);
+    }
+
+    [Fact]
+    public void A_missing_table_reports_no_configuration_sheet_when_it_is_absent()
+    {
+        var table = new TableGraph("SomeOtherTable", SchemaHeaders());
+        var ganttSheet = new SheetGraph(table);
+
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        Mock<Excel.Sheets> sheetsMock = CreateSheetsMock([ganttSheet]);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(sheetsMock.Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            sheetAt: (_, _) => ganttSheet.Worksheet.Object,
+            tableAt: (_, _) => table.Table.Object,
+            columnAt: (columns, index) => table.ColumnAt(index),
+            date1904: _ => false,
+            bodyValues: _ => throw new InvalidOperationException("body must not be read"));
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.False(outcome.ConfigurationPresent);
     }
 
     [Fact]

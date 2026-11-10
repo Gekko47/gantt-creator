@@ -213,4 +213,42 @@ internal static class RibbonControlIds
 
     /// <summary>The Chart title button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string ChartTitle = "btnChartTitle";
+
+    // R5.16 group ids. `getVisible` is declared on every group, so the
+    // visibility truth table needs a name for each one. An id that is absent
+    // from RibbonState.IsVisible is HIDDEN (fail-closed): showing an unintended
+    // group is the failure R5.16 removes.
+
+    /// <summary>The first-run group holding the large Initialise sheet button.</summary>
+    internal const string GetStartedGroup = "grpGetStarted";
+
+    /// <summary>The Data group: Fix, Add activity, Add milestone, Additional elements, Remove.</summary>
+    internal const string DataGroup = "grpData";
+
+    /// <summary>The Ordering group (promote, demote, move up/down).</summary>
+    internal const string OrderingGroup = "grpOrdering";
+
+    /// <summary>The Outline group (expand all, collapse all).</summary>
+    internal const string OutlineGroup = "grpOutline";
+
+    /// <summary>The Labels group (description, date, custom style).</summary>
+    internal const string LabelsGroup = "grpLabels";
+
+    /// <summary>The Style and Theme group.</summary>
+    internal const string StyleThemeGroup = "grpStyleTheme";
+
+    /// <summary>The Plot Area group.</summary>
+    internal const string PlotAreaGroup = "grpPlotArea";
+
+    /// <summary>The Plot Time Scale group.</summary>
+    internal const string PlotTimeScaleGroup = "grpPlotTimeScale";
+
+    /// <summary>The Plot Size group.</summary>
+    internal const string PlotSizeGroup = "grpPlotSize";
+
+    /// <summary>The refresh / warnings / lock group. The XML id is historical.</summary>
+    internal const string RefreshGroup = "grpPlaceholder";
+
+    /// <summary>The Diagnostics group, visible in every mode.</summary>
+    internal const string DiagnosticsGroup = "grpDiagnostics";
 }

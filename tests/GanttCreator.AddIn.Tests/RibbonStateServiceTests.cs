@@ -193,6 +193,73 @@ public sealed class RibbonStateServiceTests : IDisposable
     /// </summary>
     private static string NewRowId(char last = 'a') => "G-" + new string('0', 31) + last;
 
+    private static RibbonStateService ArmedWithTableRead(
+        FakeApplicationAdapter adapter,
+        GanttTableReadOutcome outcome)
+    {
+        var service = Arm(adapter);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read()).Returns(outcome);
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+        return service;
+    }
+
+    [Fact]
+    public void Refresh_reports_first_run_when_no_workbook_is_active()
+    {
+        // R5.16 positive control for the old `refusal != TableMissing` test:
+        // NoActiveWorkbook used to count as initialised, which would make this
+        // snapshot Ready and hide the only button a first-run user has.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = false },
+            GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook));
+
+        Assert.True(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DiagnosticsGroup));
+        Assert.False(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.False(service.GetVisible(RibbonControlIds.OrderingGroup));
+    }
+
+    [Fact]
+    public void Refresh_reports_needs_repair_when_configuration_exists_without_a_table()
+    {
+        // The recovery case: a workbook that carries _GanttCreatorConfig but has
+        // lost its table must not be treated as a first run, or Initialise's
+        // "use Repair configuration" refusal points at a hidden command.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Refused(
+                GanttTableReadRefusalReason.TableMissing,
+                configurationPresent: true));
+
+        Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.True(service.GetEnabled(RibbonControlIds.RepairConfig));
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+    }
+
+    [Fact]
+    public void Refresh_reports_ready_when_the_table_is_readable()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([]));
+
+        Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
+        Assert.True(service.GetVisible(RibbonControlIds.DataGroup));
+        Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));
+    }
+
+    [Fact]
+    public void GetVisible_hides_a_group_it_does_not_know()
+    {
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true });
+
+        Assert.False(service.GetVisible("grpUnknown"));
+        Assert.False(service.GetVisible(null));
+    }
+
     [Fact]
     public void GetEnabled_is_deterministic_and_never_probes_the_state_source()
     {

@@ -1832,34 +1832,32 @@ internal class RibbonStateService
     {
         LoadPlotSettingsFromWorkbook();
 
-        // Probe whether the active workbook has an initialised Gantt sheet.
-        // TableMissing means the sheet hasn't been initialised yet; other
-        // refusals mean it exists but is corrupted (still counts as initialised
-        // for gating purposes — the user can still repair). NoActiveWorkbook
-        // means no workbook at all.
-        // Start from the last known state so a transient probe failure
-        // cannot grey the Refresh gate: a fresh `false` would. The
-        // probe is guarded for the same reason as the source probes —
-        // this method never throws, and a COM failure here must not
-        // escape that contract.
-        bool sheetInitialised = _state.SheetInitialised;
+        // Probe the two workbook facts the mode needs (R5.16). Succeeded is the
+        // sheet-initialised fact: the previous `refusal != TableMissing` test
+        // counted a workbook-less host as initialised. ConfigurationPresent
+        // separates a first run from a damaged workbook that needs repair.
+        // Both stay nullable so a transient probe failure keeps the last known
+        // values instead of flipping the ribbon to FirstRun.
+        bool? sheetInitialised = null;
+        bool? configurationPresent = null;
         if (_tableReader is not null)
         {
 #pragma warning disable CA1031
             try
             {
                 GanttTableReadOutcome tableOutcome = _tableReader.Read();
-                sheetInitialised = tableOutcome.Refusal != GanttTableReadRefusalReason.TableMissing;
+                sheetInitialised = tableOutcome.Succeeded;
+                configurationPresent = tableOutcome.ConfigurationPresent;
             }
             catch
             {
-                // Keep the previous value: a transient COM failure must
+                // Keep the previous values: a transient COM failure must
                 // not grey the controls (same policy as the source probes).
             }
 #pragma warning restore CA1031
         }
 
-        _state = CaptureSnapshot(_state, sheetInitialised);
+        _state = CaptureSnapshot(_state, sheetInitialised, configurationPresent);
         Invalidate();
     }
 
@@ -1908,6 +1906,15 @@ internal class RibbonStateService
             _state.HasActiveWorkbook && _state.SheetInitialised,
         _ => _state.IsEnabled(controlId),
     };
+
+    /// <summary>
+    /// Gets whether the Ribbon group with <paramref name="groupId"/> is visible
+    /// (R5.16). A pure read of the cached snapshot: no Excel probe, no ribbon
+    /// call, and no exception for any input. Never throws.
+    /// </summary>
+    /// <param name="groupId">The Ribbon group ID, or null when unprobeable.</param>
+    /// <returns>The group's visibility (fail-closed: an unknown ID is hidden).</returns>
+    internal virtual bool GetVisible(string? groupId) => _state.IsVisible(groupId);
 
     /// <summary>
     /// Gets whether the CHART toggle is pressed, which is the state the button shows.
@@ -2363,9 +2370,19 @@ internal class RibbonStateService
     /// previous snapshot.
     /// </summary>
     /// <param name="previous">The snapshot currently published.</param>
-    /// <param name="sheetInitialised">Whether the active workbook has an initialised Gantt sheet.</param>
+    /// <param name="sheetInitialised">
+    /// Whether the active workbook has an initialised Gantt sheet, or null when
+    /// the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
+    /// <param name="configurationPresent">
+    /// Whether the workbook carries the configuration worksheet, or null when
+    /// the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
     /// <returns>The snapshot to publish.</returns>
-    private RibbonState CaptureSnapshot(RibbonState previous, bool sheetInitialised)
+    private RibbonState CaptureSnapshot(
+        RibbonState previous,
+        bool? sheetInitialised,
+        bool? configurationPresent = null)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
         // source failure keeps the last known snapshot instead of propagating
@@ -2375,6 +2392,14 @@ internal class RibbonStateService
         {
             bool? hasActiveWorkbook = _applicationAdapter?.HasActiveWorkbook() ?? null;
             bool? logAvailable = _logAvailabilitySource?.Invoke() ?? null;
+
+            // R5.16: resolve the mode from the three facts before the snapshot
+            // is built. Each fact falls back to the published value so a
+            // transient failure cannot flip the visible surface.
+            bool workbookPresent = hasActiveWorkbook ?? previous.HasActiveWorkbook;
+            bool initialised = sheetInitialised ?? previous.SheetInitialised;
+            bool configPresent = configurationPresent ?? previous.ConfigurationPresent;
+            RibbonMode mode = ResolveMode(workbookPresent, initialised, configPresent);
 
             // R5.5 ruling 6: the description-label dropdown is the first selection-gated
             // control, so its context is captured here rather than left at its
@@ -2388,9 +2413,9 @@ internal class RibbonStateService
             AddChildContext addChildContext = CaptureAddChildContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
-                hasActiveWorkbook ?? previous.HasActiveWorkbook,
+                workbookPresent,
                 logAvailable ?? previous.LogAvailable,
-                sheetInitialised,
+                initialised,
                 previous.PlotStartAuto,
                 previous.PlotFinishAuto,
                 previous.PlotStartDate,
@@ -2416,7 +2441,9 @@ internal class RibbonStateService
                 customStyleContext.Available,
                 customStyleContext.SelectedKey,
                 customStyleContext.Options,
-                addChildContext.Types));
+                addChildContext.Types,
+                ConfigurationPresent: configPresent,
+                Mode: mode));
         }
         catch
         {
@@ -2424,6 +2451,29 @@ internal class RibbonStateService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// Resolves the Ribbon mode from the three workbook facts (R5.16). A
+    /// workbook that carries configuration but has lost its table is
+    /// <see cref="RibbonMode.NeedsRepair"/>, not a first run: Initialise refuses
+    /// there and Fix is the only remedy, so treating it as a first run would
+    /// hide the command the refusal points at.
+    /// </summary>
+    /// <param name="hasActiveWorkbook">Whether Excel has an active workbook.</param>
+    /// <param name="sheetInitialised">Whether the Gantt table is readable.</param>
+    /// <param name="configurationPresent">Whether <c>_GanttCreatorConfig</c> exists.</param>
+    /// <returns>The resolved mode.</returns>
+    private static RibbonMode ResolveMode(
+        bool hasActiveWorkbook,
+        bool sheetInitialised,
+        bool configurationPresent) =>
+        !hasActiveWorkbook
+            ? RibbonMode.FirstRun
+            : sheetInitialised
+                ? RibbonMode.Ready
+                : configurationPresent
+                    ? RibbonMode.NeedsRepair
+                    : RibbonMode.FirstRun;
 
     /// <summary>
     /// Captures the description-label dropdown's context from the selection identifier, the

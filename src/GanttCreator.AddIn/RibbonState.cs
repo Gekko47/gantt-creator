@@ -3,6 +3,24 @@ using GanttCreator.Core;
 namespace GanttCreator.AddIn;
 
 /// <summary>
+/// Which face the Ribbon shows (R5.16, ADR-0056).
+/// </summary>
+internal enum RibbonMode
+{
+    /// <summary>No add-in configuration: only Initialise and Diagnostics are offered.</summary>
+    FirstRun = 0,
+
+    /// <summary>
+    /// Configuration exists but the table is missing or unreadable: the full
+    /// surface is shown, Initialise is hidden, and Fix is the enabled remedy.
+    /// </summary>
+    NeedsRepair = 1,
+
+    /// <summary>The table is readable: the full surface, with table-dependent controls enabled.</summary>
+    Ready = 2,
+}
+
+/// <summary>
 /// Immutable snapshot of the host facts the dynamic Ribbon getters read. The
 /// state service captures it only from an explicit refresh, so every getter is a
 /// pure read of one value — deterministic, side-effect-free, and never touching
@@ -109,6 +127,15 @@ namespace GanttCreator.AddIn;
 /// PROJECTED from the hierarchy catalogue, so the Add child dropdown and
 /// the Core planner's acceptance cannot disagree.
 /// </param>
+/// <param name="ConfigurationPresent">
+/// True when the active workbook carries a <c>_GanttCreatorConfig</c>
+/// worksheet. Only meaningful when the table is not initialised: it separates
+/// a first run from a damaged workbook that needs repair (R5.16).
+/// </param>
+/// <param name="Mode">
+/// The Ribbon mode derived from workbook presence, table readability, and
+/// configuration presence (R5.16). Drives group visibility only.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -138,7 +165,9 @@ internal sealed record RibbonState(
     bool CustomStyleSelectionAvailable = false,
     string? SelectedCustomStyleKey = null,
     IReadOnlyList<string>? CustomStyleOptions = null,
-    IReadOnlyList<GanttEntityType>? PermittedChildTypes = null)
+    IReadOnlyList<GanttEntityType>? PermittedChildTypes = null,
+    bool ConfigurationPresent = false,
+    RibbonMode Mode = RibbonMode.FirstRun)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -253,5 +282,33 @@ internal sealed record RibbonState(
         RibbonControlIds.ThemeSettings => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.ChartTitle => HasActiveWorkbook && SheetInitialised,
         _ => true,
+    };
+
+    /// <summary>
+    /// Gets whether the group with <paramref name="groupId"/> is visible under
+    /// this snapshot: the pure truth table behind the Ribbon's
+    /// <c>getVisible</c> callback (R5.16).
+    /// </summary>
+    /// <param name="groupId">The Ribbon group ID, or null when it could not be probed.</param>
+    /// <returns>
+    /// The group's visibility. Unlike <see cref="IsEnabled"/>, visibility is
+    /// FAIL-CLOSED: an unknown or null id is hidden, because showing an
+    /// unintended group is the failure R5.16 removes. Diagnostics is the one
+    /// group visible in every mode (owner ruling 2026-11-10).
+    /// </returns>
+    internal bool IsVisible(string? groupId) => groupId switch
+    {
+        RibbonControlIds.DiagnosticsGroup => true,
+        RibbonControlIds.GetStartedGroup => Mode == RibbonMode.FirstRun,
+        RibbonControlIds.DataGroup
+            or RibbonControlIds.OrderingGroup
+            or RibbonControlIds.OutlineGroup
+            or RibbonControlIds.LabelsGroup
+            or RibbonControlIds.StyleThemeGroup
+            or RibbonControlIds.PlotAreaGroup
+            or RibbonControlIds.PlotTimeScaleGroup
+            or RibbonControlIds.PlotSizeGroup
+            or RibbonControlIds.RefreshGroup => Mode != RibbonMode.FirstRun,
+        _ => false,
     };
 }
