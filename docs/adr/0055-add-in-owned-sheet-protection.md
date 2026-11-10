@@ -118,9 +118,11 @@ reference establishes four facts that the design has to obey:
    The port therefore **unlocks the table's data cells and then grants `AllowFormattingCells`,
    `AllowFormattingColumns` and `AllowFormattingRows`** on every protect. The data body is unlocked
    rather than the whole table on purpose: unlocking the header would let a user rename a schema
-   column, which silently breaks the name-keyed column map every adapter builds. A refused unlock is
-   recorded (`cellsUnlocked=refused`) and does not abandon the protect — a sheet protected with a
-   password we do not have is still worth protecting.
+   column, which silently breaks the name-keyed column map every adapter builds. A table with no
+   body rows yet falls back to the row immediately below the header — the blank entry row, which
+   Excel grows into the table — so a fresh workbook is editable without opening the header. A refused
+   unlock is recorded (`cellsUnlocked=refused`) and does not abandon the protect — a sheet protected
+   with a password we do not have is still worth protecting.
 
    **What still refuses, and why that is the point.** Shapes still cannot be created or moved on the
    protected sheet (measured below), so the chart cannot be damaged by a stray drag; the table row

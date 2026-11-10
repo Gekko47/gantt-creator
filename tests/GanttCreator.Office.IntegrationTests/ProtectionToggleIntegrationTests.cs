@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using GanttCreator.Core;
 using GanttCreator.Core.Scene;
 using Xunit.Abstractions;
@@ -71,12 +70,11 @@ public class ProtectionToggleIntegrationTests(ITestOutputHelper output)
             Excel.ListObject table = (Excel.ListObject)scope.Track(
                 sheet.ListObjects[GanttTableSchema.TableName]);
             Excel.Range tableRange = (Excel.Range)scope.Track(table.Range);
-            Excel.Range tableRows = (Excel.Range)scope.Track(tableRange.Rows);
-            Excel.Range body = (Excel.Range)scope.Track(table.DataBodyRange);
-            Excel.Range bodyCell = (Excel.Range)scope.Track(body.Cells[1, 1]);
+            Excel.Range headerRow = (Excel.Range)scope.Track(table.HeaderRowRange);
+            Excel.Range headerCell = (Excel.Range)scope.Track(headerRow.Cells[1, 1]);
 
             // A cell that is unambiguously OUTSIDE the table: two rows below it.
-            int outsideRow = tableRange.Row + tableRows.Count + 2;
+            int outsideRow = headerRow.Row + tableRange.Rows.Count + 2;
             Excel.Range outsideCell = (Excel.Range)scope.Track(sheet.Cells[outsideRow, 1]);
 
             // ---- CHART LOCKED (the default): the shape cannot be dragged. ----
@@ -88,6 +86,30 @@ public class ProtectionToggleIntegrationTests(ITestOutputHelper output)
             Assert.True(shape.Locked);
             _ = Assert.Throws<ArgumentException>(() => shape.Left = originalLeft + 20f);
             _output.WriteLine("chart locked: ProtectDrawingObjects=True, shape.Locked=True, drag refused");
+
+            // ---- The fresh table is editable, and the header is not. ----
+            // Initialise creates the table with a header and NO body rows, so DataBodyRange is null
+            // and the port falls back to the row immediately below the header. That is the blank
+            // entry row the user types the first activity into, and unlocking it is the ruling;
+            // unlocking the HEADER instead (the previous fallback) would let a user rename a schema
+            // column and break the name-keyed column map every adapter builds.
+            Assert.True(sheet.ProtectContents);
+            Assert.True(Convert.ToBoolean(headerCell.Locked));
+            Excel.Range blankEntryCell = (Excel.Range)scope.Track(
+                sheet.Cells[headerRow.Row + 1, tableRange.Column]);
+            Assert.False(Convert.ToBoolean(blankEntryCell.Locked));
+            _output.WriteLine("fresh table: header locked, the blank entry row is editable");
+
+            // Give the table a real body row for the "table stays editable" assertions below.
+            Assert.True(port.Unprotect().Succeeded);
+            var inserter = new ExcelGanttRowInserter(
+                fixture.Excel,
+                new ExcelWorksheetProtectionGuard(fixture.Excel, ownership));
+            Assert.True(inserter.Insert(GanttEntityType.AsPlannedActivity, () => FixedId()).Succeeded);
+            Excel.Range? dataBody = table.DataBodyRange;
+            Assert.NotNull(dataBody);
+            Excel.Range body = (Excel.Range)scope.Track(dataBody!);
+            Excel.Range bodyCell = (Excel.Range)scope.Track(body.Cells[1, 1]);
 
             // ---- CHART UNLOCKED: the same drag lands. ----
             preferences.ChartLocked = false;
@@ -104,9 +126,12 @@ public class ProtectionToggleIntegrationTests(ITestOutputHelper output)
             preferences.CellsUnlocked = false;
             Assert.True(port.Protect().Succeeded);
 
+            // A UI-only protect exempts the COM write path — ADR-0055's measured table records
+            // `Range.Value2` succeeding on a protected sheet — so an automated test cannot observe
+            // the refusal a user sees. What the user experiences is `ProtectContents` plus the
+            // cell's own `Locked` flag, and that is what these two assertions pin.
             Assert.True(sheet.ProtectContents);
             Assert.True(Convert.ToBoolean(outsideCell.Locked));
-            _ = Assert.Throws<COMException>(() => outsideCell.Value2 = "blocked");
 
             // The owner's permanent rule: the visible table is editable whatever the toggles say.
             Assert.False(Convert.ToBoolean(bodyCell.Locked));
@@ -140,6 +165,9 @@ public class ProtectionToggleIntegrationTests(ITestOutputHelper output)
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
     }
+
+    private static GanttRowId FixedId() =>
+        GanttRowId.Parse("G-0123456789abcdef0123456789abcdea");
 
     private static OfficeShapeRequest BarRequest(string primitiveId) => new(
         primitiveId,

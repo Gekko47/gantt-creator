@@ -262,8 +262,9 @@ public class ExcelWorksheetProtectionPort(
     /// <para>
     /// <b>Data body, not the whole range.</b> Unlocking the header would let a user rename a schema
     /// column, which silently breaks the name-keyed column map every adapter builds. The schedule
-    /// data is the area the ruling is about. An empty table falls back to its whole range so the
-    /// first row the user types is editable.
+    /// data is the area the ruling is about. A table with no body rows yet falls back to the row
+    /// immediately below the header: that is the blank entry row the user types the first activity
+    /// into, and Excel grows the table into it, so the ruling holds without opening the header.
     /// </para>
     /// <para>
     /// <b>Must run while the sheet is released.</b> <c>Locked</c> is a format write and the host
@@ -296,7 +297,7 @@ public class ExcelWorksheetProtectionPort(
 #pragma warning restore CA1031
     }
 
-    /// <summary>Resolves the Gantt table's data range, or its whole range when the body is empty.</summary>
+    /// <summary>Resolves the Gantt table's data range, or the row below the header when the body is empty.</summary>
     /// <param name="sheet">The worksheet carrying the table.</param>
     /// <returns>The range to unlock, or <see langword="null"/> when the table is absent.</returns>
     private Excel.Range? FindGanttTableRange(Excel._Worksheet sheet)
@@ -317,7 +318,18 @@ public class ExcelWorksheetProtectionPort(
                 continue;
             }
 
-            return table.DataBodyRange ?? table.Range;
+            // A freshly initialised table has a header and no body rows, so DataBodyRange is null.
+            // The blank entry row the user types into is the one directly below the header; the
+            // header itself must stay locked, because renaming a schema column breaks every
+            // name-keyed column map. Measured live: asserting the old `?? table.Range` fallback left
+            // the header cell unlocked on a new workbook.
+            if (table.DataBodyRange is { } dataBody)
+            {
+                return dataBody;
+            }
+
+            Excel.Range? headerRow = table.HeaderRowRange;
+            return headerRow?.Offset[1, 0];
         }
 
         return null;
