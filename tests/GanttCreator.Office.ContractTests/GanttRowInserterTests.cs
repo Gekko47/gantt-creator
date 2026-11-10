@@ -27,11 +27,21 @@ public class GanttRowInserterTests
             _ => Graph.HostRefusal.None,
         };
 
-    private sealed class StubTypeOptionsMaterialiser : ITypeOptionsMaterialiser
+    /// <summary>
+    /// The Type-options port, telling the truth by default and refusing through a
+    /// thrown exception when asked.
+    /// </summary>
+    /// <remarks>
+    /// The throwing mode is what pins the live defect: the host refused
+    /// <c>Validation.Add</c> with 0x800A03EC, and the exception escaped
+    /// <c>Insert</c> after the row had been written.
+    /// </remarks>
+    private sealed class StubTypeOptionsMaterialiser(bool throws = false) : ITypeOptionsMaterialiser
     {
         public TypeOptionsMaterialiseOutcome Materialise() => TypeOptionsMaterialiseOutcome.Ok();
 
-        public TypeOptionsMaterialiseOutcome EnsureCurrent() => TypeOptionsMaterialiseOutcome.Ok();
+        public TypeOptionsMaterialiseOutcome EnsureCurrent() =>
+            throws ? throw RefusedComException() : TypeOptionsMaterialiseOutcome.Ok();
     }
 
     /// <summary>
@@ -564,6 +574,35 @@ public class GanttRowInserterTests
         // writer coalesces a null cell value to string.Empty, so "blank" is an
         // empty string here, not null.
         Assert.Equal(string.Empty, matrix[0, Of("SiblingOrder")]);
+    }
+
+    /// <summary>
+    /// A host refusal while re-materialising the Type options is a typed refusal, not
+    /// an escape.
+    /// </summary>
+    /// <remarks>
+    /// The live report behind this test: operation <c>GC-20261110-175027-358-01</c>,
+    /// <c>btnAddActivity</c> on 2026-11-10, with
+    /// <c>ExcelTypeOptionsMaterialiser.ApplyColumnValidation</c> throwing 0x800A03EC out
+    /// of <c>Validation.Add</c>. The exception left <c>Insert</c> AFTER the row was
+    /// written, so the Ribbon showed the generic "Excel could not complete the
+    /// operation" dialog while a dateless scaffold row stayed on the sheet and the next
+    /// refresh reported two validation errors against it. Every other COM call in that
+    /// method is guarded; this one was missed.
+    /// </remarks>
+    [Fact]
+    public void A_host_refusal_while_materialising_the_type_options_returns_a_typed_refusal()
+    {
+        var graph = new Graph();
+        var guard = NotProtected();
+        var id = GanttRowId.Parse("G-0123456789abcdef0123456789abcdef");
+
+        GanttRowInsertOutcome outcome = graph
+            .Build(guard.Object, new StubTypeOptionsMaterialiser(throws: true))
+            .Insert(GanttEntityType.AsPlannedActivity, () => id);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.TypeOptionsUnavailable, outcome.Refusal);
     }
 
     /// <summary>

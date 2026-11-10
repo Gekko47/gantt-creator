@@ -278,8 +278,28 @@ public class ExcelGanttRowInserter(
         // the outline -- rather than failing work that already landed.
         RegroupOutline(table, columnMap, insertedBodyRow);
 
-        TypeOptionsMaterialiseOutcome typeOptions = _typeOptionsMaterialiser.EnsureCurrent();
-        if (!typeOptions.Succeeded)
+        // The materialiser is COM work too: it re-applies the Type column's list
+        // validation when the name or the rule has gone stale, and the host refuses
+        // `Validation.Add` on some workbooks with 0x800A03EC. This call was the last
+        // unguarded COM entry in this method, and a live workbook proved what that
+        // costs: the exception escaped into the Ribbon callback AFTER the row was
+        // written, so the user got the generic "Excel could not complete the
+        // operation" dialog, a scaffold row with no dates, and a refresh that
+        // reported two validation errors against it. A host refusal here is now the
+        // typed `TypeOptionsUnavailable`, and it takes the rollback below -- which is
+        // what this block always intended to do.
+        bool typeOptionsSucceeded;
+        try
+        {
+            typeOptionsSucceeded = _typeOptionsMaterialiser.EnsureCurrent().Succeeded;
+        }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            _ = ex;
+            typeOptionsSucceeded = false;
+        }
+
+        if (!typeOptionsSucceeded)
         {
             if (newRow is not null)
             {
