@@ -443,6 +443,17 @@ The Microsoft idMSO list at `https://learn.microsoft.com/office/vba/office-mac/i
 
 Each remaining candidate must appear in `Office2010IconsGallery.docx`, name an Excel idMso in the `[MS-CUSTOMUI]-250218.docx` table, and render in the live host before it is pinned in [`Ribbon_buttons_use_gallery_verified_imageMsoIds`](../tests/GanttCreator.AddIn.Tests/GanttRibbonTests.cs:406). Until a candidate passes, the already-verified `TableInsertExcel` is reused rather than inventing a glyph.
 
+**Outcome (2026-11-10).** The two verification conditions this session could
+satisfy were satisfied; the third could not. Steps 1 and 2 (gallery membership,
+idMso name) are met for `DataValidation` and `DataValidationCircleInvalid`, but
+the render check needs the live host, so **no candidate was pinned**. Every
+control shipped with an already-verified id — `TableInsertExcel` for the five
+Data-group controls, `Spelling` for Validate, and the pre-existing
+`Refresh`/`Help`/`FileOpen`/`Lock`/`LockCell`/`Outline*`/`PageOrientation*` set
+— which is the fallback the table above approves. Pinning a candidate later is
+a one-line `imageMso` change plus the gallery-verified pin test; it is
+deliberately not part of R5.16's code.
+
 ---
 
 ## 13. Implementation sequence
