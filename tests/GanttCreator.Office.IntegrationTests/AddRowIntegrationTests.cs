@@ -139,6 +139,63 @@ public class AddRowIntegrationTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// A second workbook opened in the SAME Excel session initialises and accepts its
+    /// first activity, with the first workbook's table and names still in the instance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Live reproduction attempt for operation <c>GC-20261110-175027-358-01</c>
+    /// (2026-11-10), where <c>Validation.Add</c> threw <c>0x800A03EC</c> while the Type
+    /// column's list rule was re-applied after "a new table and a new activity".
+    /// </para>
+    /// <para>
+    /// The hypothesis this pins: every other insert test owns ONE workbook, and a
+    /// re-created table inside one workbook turned out not to be reachable — see the
+    /// R5.16 work item, where deleting <c>_GanttCreatorConfig</c> to make a second
+    /// Initialise legal is itself refused by the host with the same <c>0x800A03EC</c>.
+    /// The owner's session had a 90-shape chart at 16:45 and a one-row table at 17:50
+    /// with no second XLL open line, which is exactly what a second workbook in the same
+    /// Excel instance looks like.
+    /// </para>
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task A_second_workbook_in_the_same_session_accepts_its_first_activity()
+    {
+        var fixture = new OfficeFixture();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook first = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(first);
+
+            Excel.Workbook second = fixture.CreateWorkbook();
+            Assert.True(new ExcelWorkbookInitialiser(fixture.Excel).Initialise().Succeeded);
+            OfficeFixture.DisableChartProtection(second);
+
+            using var scope = new OfficeFixture.ComScope();
+            var sheet = (Excel.Worksheet)scope.Track(second.Sheets[GanttWorkbookContract.GanttSheetLabel]);
+            Excel.ListObject table = scope.Track(sheet.ListObjects[GanttTableSchema.TableName]);
+
+            GanttRowInsertOutcome outcome = new ExcelGanttRowInserter(fixture.Excel).Insert(
+                GanttEntityType.AsPlannedActivity,
+                () => FixedId('5'));
+
+            Assert.True(outcome.Succeeded, $"Insert refused: {outcome.Refusal}");
+            Assert.Equal(1, table.ListRows.Count);
+            AssertRow(table.ListRows[1], "As-Planned Activity", "AsPlannedActivity", FixedId('5').Value);
+        }
+        finally
+        {
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
     /// ADR-0035 D3: an active cell INSIDE the table inserts immediately BELOW it, and
     /// the reserved bottom padding row still moves down.
     /// </summary>
