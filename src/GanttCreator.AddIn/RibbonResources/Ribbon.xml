@@ -15,19 +15,60 @@
           <button id="btnInitialiseSheet" label="Initialise sheet" size="large" imageMso="TableInsertExcel" keytip="I" screentip="Initialise the Gantt sheet" supertip="Creates the Gantt table, the chart area, and the workbook configuration. Run it once per workbook before adding activities." getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
         </group>
         <group id="grpData" label="Data" getVisible="GetVisible">
-          <button id="btnValidateSheet" label="Validate" imageMso="Spelling" keytip="V" screentip="Validate the schedule table" supertip="Checks every row and reports errors and warnings as cell notes. Validation never changes your schedule data." getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
-          <button id="btnRepairConfig" label="Repair configuration" imageMso="TableInsertExcel" keytip="R" screentip="Repair the configuration" supertip="Checks the hidden configuration sheet and repairs safe damage. A repair that could touch visible schedule rows asks for confirmation first." getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
-          <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" keytip="AA" screentip="Add an activity row" supertip="Appends a new activity row below the table and places the cursor in it." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
-          <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" keytip="AM" screentip="Add a milestone row" supertip="Appends a new milestone row. A milestone plots from its Start date only." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
-          <button id="btnAddDelineator" label="Add delineator" imageMso="TableInsertExcel" keytip="AD" screentip="Add a delineator row" supertip="Appends a new delineator row. A delineator draws a full-height line at its Start date." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+          <!-- R5.16: five large controls. getEnabled is declared on the
+               splitButton (which disables the arrow too) and again on the
+               primary button, so the state truth table and the pinned
+               gated-control contract keep naming the control the user clicks. -->
+          <splitButton id="spbFix" size="large" getEnabled="GetEnabled">
+            <button id="btnRepairConfig" label="Fix" imageMso="TableInsertExcel" keytip="R" screentip="Repair the configuration" supertip="Checks the hidden configuration sheet and repairs safe damage. A repair that could touch visible schedule rows asks for confirmation first." getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
+            <menu id="mnuFix">
+              <button id="btnValidateSheet" label="Validate" imageMso="Spelling" keytip="QV" screentip="Validate the schedule table" supertip="Checks every row and reports errors and warnings as cell notes. Validation never changes your schedule data." getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
+            </menu>
+          </splitButton>
+
+          <splitButton id="spbAddActivity" size="large" getEnabled="GetEnabled">
+            <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" keytip="AA" screentip="Add an activity row" supertip="Adds the default As-Planned Activity. Open the list for every activity type." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
+            <menu id="mnuAddActivity">
+              <button id="entAsPlannedActivity" getLabel="GetEntityMenuLabel" keytip="AP" screentip="Add an As-Planned Activity" supertip="Adds an as-planned activity row." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltActivity" getLabel="GetEntityMenuLabel" keytip="AB" screentip="Add an As-Built Activity" supertip="Adds an as-built activity row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineActivity" getLabel="GetEntityMenuLabel" keytip="AL" screentip="Add a Baseline Activity" supertip="Adds a baseline activity row." onAction="OnAddEntityClick"/>
+              <button id="entCustomActivity" getLabel="GetEntityMenuLabel" keytip="AU" screentip="Add a Custom Activity" supertip="Adds a custom activity row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
+              <button id="entDelayEvent" getLabel="GetEntityMenuLabel" keytip="AV" screentip="Add a Delay Event" supertip="Adds a delay event row under an activity." onAction="OnAddEntityClick"/>
+              <button id="entCriticalInterval" getLabel="GetEntityMenuLabel" keytip="AI" screentip="Add a Critical Interval" supertip="Adds a critical interval under the nearest activity that can own it." onAction="OnAddEntityClick"/>
+              <button id="entAsPlannedProcurement" getLabel="GetEntityMenuLabel" keytip="AQ" screentip="Add an As-Planned Procurement row" supertip="Adds an as-planned procurement row." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltProcurement" getLabel="GetEntityMenuLabel" keytip="AR" screentip="Add an As-Built Procurement row" supertip="Adds an as-built procurement row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineProcurement" getLabel="GetEntityMenuLabel" keytip="AS" screentip="Add a Baseline Procurement row" supertip="Adds a baseline procurement row." onAction="OnAddEntityClick"/>
+            </menu>
+          </splitButton>
+
+          <splitButton id="spbAddMilestone" size="large" getEnabled="GetEnabled">
+            <button id="btnAddMilestone" label="Add milestone" imageMso="TableInsertExcel" keytip="AM" screentip="Add a milestone row" supertip="Adds the default As-Planned Milestone. Open the list for every milestone type." getEnabled="GetEnabled" onAction="OnAddMilestoneClick"/>
+            <menu id="mnuAddMilestone">
+              <button id="entAsPlannedMilestone" getLabel="GetEntityMenuLabel" keytip="BP" screentip="Add an As-Planned Milestone" supertip="Adds an as-planned milestone row. A milestone plots from its Start date only." onAction="OnAddEntityClick"/>
+              <button id="entAsBuiltMilestone" getLabel="GetEntityMenuLabel" keytip="BB" screentip="Add an As-Built Milestone" supertip="Adds an as-built milestone row." onAction="OnAddEntityClick"/>
+              <button id="entBaselineMilestone" getLabel="GetEntityMenuLabel" keytip="BL" screentip="Add a Baseline Milestone" supertip="Adds a baseline milestone row." onAction="OnAddEntityClick"/>
+              <button id="entCriticalMilestone" getLabel="GetEntityMenuLabel" keytip="BI" screentip="Add a Critical Milestone" supertip="Adds a critical milestone row." onAction="OnAddEntityClick"/>
+              <button id="entCustomMilestone" getLabel="GetEntityMenuLabel" keytip="BU" screentip="Add a Custom Milestone" supertip="Adds a custom milestone row; its style key is chosen in the Labels group." onAction="OnAddEntityClick"/>
+            </menu>
+          </splitButton>
+
+          <splitButton id="spbAddElements" size="large" getEnabled="GetEnabled">
+            <button id="btnAddDelineator" label="Additional elements" imageMso="TableInsertExcel" keytip="AD" screentip="Add a delineator or a structural row" supertip="Adds the default Delineator. Open the list for a spacer or a splitter." getEnabled="GetEnabled" onAction="OnAddDelineatorClick"/>
+            <menu id="mnuAddElements">
+              <button id="entDelineator" getLabel="GetEntityMenuLabel" keytip="JD" screentip="Add a Delineator" supertip="Adds a delineator row. A delineator draws a full-height line at its Start date." onAction="OnAddEntityClick"/>
+              <button id="entSpacer" getLabel="GetEntityMenuLabel" keytip="JS" screentip="Add a Spacer" supertip="Adds a spacer row that separates sections of the table." onAction="OnAddEntityClick"/>
+              <button id="entSplitter" getLabel="GetEntityMenuLabel" keytip="JP" screentip="Add a Splitter" supertip="Adds a splitter band that separates sections of the table." onAction="OnAddEntityClick"/>
+            </menu>
+          </splitButton>
+
           <!-- R5.3 WI-E: add a CHILD under the selected parent. The dropdown is
                populated from the hierarchy catalogue, so it offers exactly the
                child types the selected parent may take, and the planner accepts
                every one of them. It is a dropDown rather than a menu because
                Excel-DNA 1.9 exposes no IRibbonMenu type, so a getMenu callback
-               cannot be bound. -->
+               cannot be bound. R5.16 removes it in favour of Demote. -->
           <dropDown id="ddnAddChild" label="Add child" keytip="AC" screentip="Add a child row" supertip="Adds a row beneath the selected parent, using a type the parent may own. The list offers only permitted child types." getEnabled="GetEnabled" getItemCount="GetAddChildCount" getItemID="GetAddChildItemID" getItemLabel="GetAddChildItemLabel" onAction="OnAddChildChange"/>
-          <button id="btnRemove" label="Remove" imageMso="TableInsertExcel" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
+          <button id="btnRemove" label="Remove" size="large" imageMso="TableInsertExcel" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
         <group id="grpOrdering" label="Ordering" getVisible="GetVisible">
           <box id="boxOrdering" boxStyle="vertical">

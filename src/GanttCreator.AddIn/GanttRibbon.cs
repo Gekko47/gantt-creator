@@ -356,6 +356,92 @@ public class GanttRibbon : ExcelRibbon
     public void OnAddDelineatorClick(IRibbonControl control)
         => OnAddDelineatorClick(control, CommandBoundary.Instance, () => AddRowCommand.RunForExcel(GanttEntityType.Delineator), NotifyRibbonStateChanged);
 
+    /// <summary>
+    /// Called when the user picks an entity from one of the Data-group menus
+    /// (R5.16). The menu item id names the <see cref="GanttEntityType"/>, so one
+    /// callback serves all three menus and no type list is authored twice.
+    /// </summary>
+    /// <param name="control">The ribbon control that raised the event.</param>
+    public void OnAddEntityClick(IRibbonControl control)
+    {
+        if (!TryParseEntityMenuId(TryReadControlId(control), out GanttEntityType type))
+        {
+            RibbonStateService.WriteStatusBar(
+                "That add action is not recognised. Use the ribbon list to choose an entity.");
+            return;
+        }
+
+        OnAddRowClick(
+            control,
+            CommandBoundary.Instance,
+            () => AddRowCommand.RunForExcel(type),
+            nameof(OnAddEntityClick),
+            NotifyRibbonStateChanged);
+    }
+
+    /// <summary>
+    /// The visible label for an entity menu item, projected from the catalogue
+    /// so no display name is authored in the Ribbon XML (R5.16).
+    /// </summary>
+    /// <param name="control">The menu item Excel is asking about.</param>
+    /// <returns>The catalogue display name, or an empty string for an unknown id.</returns>
+    public string GetEntityMenuLabel(IRibbonControl control) =>
+        GetEntityMenuLabel(TryReadControlId(control));
+
+    /// <summary>
+    /// Projects a menu item id to its catalogue display name. Never throws.
+    /// </summary>
+    /// <param name="itemId">The menu item id, or null.</param>
+    /// <returns>The display name, or an empty string when the id names no catalogue type.</returns>
+    internal static string GetEntityMenuLabel(string? itemId) =>
+        TryParseEntityMenuId(itemId, out GanttEntityType type)
+            ? EntityTypeCatalog.Format(type)
+            : string.Empty;
+
+    /// <summary>
+    /// Parses an entity menu item id (<c>ent</c> + the
+    /// <see cref="GanttEntityType"/> name) back to its type. The name must match
+    /// the enum exactly, so a numeric or combined value cannot smuggle in a type
+    /// the catalogue does not define.
+    /// </summary>
+    /// <param name="itemId">The menu item id, or null.</param>
+    /// <param name="type">The parsed type when the method returns <see langword="true"/>.</param>
+    /// <returns><see langword="true"/> when the id names a catalogue type.</returns>
+    internal static bool TryParseEntityMenuId(string? itemId, out GanttEntityType type)
+    {
+        type = default;
+        if (string.IsNullOrWhiteSpace(itemId)
+            || !itemId.StartsWith(RibbonControlIds.EntityMenuItemPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string name = itemId[RibbonControlIds.EntityMenuItemPrefix.Length..];
+        return Enum.TryParse(name, ignoreCase: false, out type)
+            && string.Equals(Enum.GetName(type), name, StringComparison.Ordinal)
+            && EntityTypeCatalog.GetDefinition(type) is not null;
+    }
+
+    /// <summary>
+    /// Reads a control's id, treating a COM probe failure as an absent id. The
+    /// callbacks that parse an id must never throw into Excel's dispatch.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null.</param>
+    /// <returns>The id, or null when it cannot be read.</returns>
+    private static string? TryReadControlId(IRibbonControl? control)
+    {
+#pragma warning disable CA1031
+        try
+        {
+            return control?.Id;
+        }
+        catch
+        {
+            return null;
+        }
+#pragma warning restore CA1031
+    }
+
     /// <summary>Runs the Add activity callback across an injected boundary.</summary>
     /// <param name="control">The ribbon control.</param>
     /// <param name="boundary">The command boundary.</param>

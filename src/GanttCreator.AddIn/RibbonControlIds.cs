@@ -53,6 +53,41 @@ internal static class RibbonControlIds
     /// <summary>The Add delineator button (<c>getEnabled</c> driven by workbook presence).</summary>
     internal const string AddDelineator = "btnAddDelineator";
 
+    // R5.16: the four Data-group split buttons and their menus. The primary
+    // button of each pair keeps its own id above, so the state truth table and
+    // the pinned gated-control contract keep naming the control the user clicks.
+
+    /// <summary>The Fix split button (primary Repair configuration, menu Validate).</summary>
+    internal const string FixSplit = "spbFix";
+
+    /// <summary>The Fix menu.</summary>
+    internal const string FixMenu = "mnuFix";
+
+    /// <summary>The Add activity split button.</summary>
+    internal const string AddActivitySplit = "spbAddActivity";
+
+    /// <summary>The Add activity menu.</summary>
+    internal const string AddActivityMenu = "mnuAddActivity";
+
+    /// <summary>The Add milestone split button.</summary>
+    internal const string AddMilestoneSplit = "spbAddMilestone";
+
+    /// <summary>The Add milestone menu.</summary>
+    internal const string AddMilestoneMenu = "mnuAddMilestone";
+
+    /// <summary>The Additional elements split button.</summary>
+    internal const string AddElementsSplit = "spbAddElements";
+
+    /// <summary>The Additional elements menu.</summary>
+    internal const string AddElementsMenu = "mnuAddElements";
+
+    /// <summary>
+    /// Prefix for every entity menu item id: <c>ent</c> + the
+    /// <see cref="Core.GanttEntityType"/> name. The suffix is the durable enum
+    /// name, so the id needs no second table.
+    /// </summary>
+    internal const string EntityMenuItemPrefix = "ent";
+
     /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): one control whose label and pressed state
     /// reflect whether chart elements can be dragged, and whose action flips it.

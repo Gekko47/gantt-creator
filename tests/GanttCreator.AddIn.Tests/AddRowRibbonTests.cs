@@ -13,38 +13,44 @@ public class AddRowRibbonTests
     private const string CustomUiNamespace = "http://schemas.microsoft.com/office/2009/07/customui";
 
     [Fact]
-    public void Ribbon_declares_the_data_group_buttons()
+    public void Ribbon_declares_the_data_group_controls()
     {
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
         XElement group = Assert.Single(
             doc.Descendants(ns + "group"),
-            g => g.Attribute("id")?.Value == "grpData");
-        XElement[] buttons = group.Elements(ns + "button").ToArray();
+            g => g.Attribute("id")?.Value == RibbonControlIds.DataGroup);
 
-        // R5.16: Initialise moved to the first-run Get started group, so the
-        // Data group no longer offers it.
+        // R5.16: four large split buttons plus the large Remove. Initialise
+        // moved to the first-run Get started group.
+        XElement[] splits = [.. group.Elements(ns + "splitButton")];
         Assert.Equal(
             [
-                RibbonControlIds.ValidateSheet,
-                RibbonControlIds.RepairConfig,
-                RibbonControlIds.AddActivity,
-                RibbonControlIds.AddMilestone,
-                RibbonControlIds.AddDelineator,
-                RibbonControlIds.Remove,
+                RibbonControlIds.FixSplit,
+                RibbonControlIds.AddActivitySplit,
+                RibbonControlIds.AddMilestoneSplit,
+                RibbonControlIds.AddElementsSplit,
             ],
-            buttons.Select(button => button.Attribute("id")?.Value));
+            splits.Select(element => element.Attribute("id")?.Value));
+        Assert.All(splits, element => Assert.Equal("large", element.Attribute("size")?.Value));
+        Assert.All(splits, element => Assert.Single(element.Elements(ns + "button")));
+        Assert.All(splits, element => Assert.Single(element.Elements(ns + "menu")));
+
+        // The primary button carries the default action; the menu holds the rest.
         Assert.Equal(
             [
-                "OnValidateSheetClick",
                 "OnRepairConfigClick",
                 "OnAddActivityClick",
                 "OnAddMilestoneClick",
                 "OnAddDelineatorClick",
-                "OnRemoveClick",
             ],
-            buttons.Select(button => button.Attribute("onAction")?.Value));
-        Assert.All(buttons, button => Assert.Equal("GetEnabled", button.Attribute("getEnabled")?.Value));
+            splits.Select(element => element.Elements(ns + "button").First().Attribute("onAction")?.Value));
+
+        XElement remove = Assert.Single(
+            group.Elements(ns + "button"),
+            button => button.Attribute("id")?.Value == RibbonControlIds.Remove);
+        Assert.Equal("large", remove.Attribute("size")?.Value);
+
         Assert.DoesNotContain(
             group.Descendants(ns + "button"),
             button => button.Attribute("id")?.Value == RibbonControlIds.InitialiseSheet);

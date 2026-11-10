@@ -510,8 +510,10 @@ public class GanttRibbonTests
         Assert.Equal(
             [
                 RibbonControlIds.InitialiseSheet,
-                RibbonControlIds.ValidateSheet,
+                // R5.16: Validate now sits inside the Fix menu, after the
+                // primary Repair button in document order.
                 RibbonControlIds.RepairConfig,
+                RibbonControlIds.ValidateSheet,
                 RibbonControlIds.AddActivity,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
@@ -778,12 +780,9 @@ public class GanttRibbonTests
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        foreach (XElement button in doc.Descendants(ns + "button"))
-        {
-            Assert.False(
-                string.IsNullOrWhiteSpace(button.Attribute("label")?.Value),
-                $"Button {button.Attribute("id")?.Value} declares no label.");
-        }
+        // R5.16: a menu item's visible label may be projected through getLabel
+        // from the catalogue, so a static label is no longer the only source.
+        Assert.Empty(ButtonsMissingVisibleLabel(xml));
 
         foreach (XElement dropdown in doc.Descendants(ns + "dropDown"))
         {
@@ -796,6 +795,106 @@ public class GanttRibbonTests
                 !string.IsNullOrWhiteSpace(dropdown.Attribute("label")?.Value) || hasCompanionLabel,
                 $"Dropdown {id} has neither a label nor a companion labelControl.");
         }
+    }
+
+    /// <summary>
+    /// Buttons that carry neither a static label nor a projected one (R5.16).
+    /// </summary>
+    private static IReadOnlyList<string> ButtonsMissingVisibleLabel(string xml)
+    {
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+        return
+        [
+            .. doc.Descendants(ns + "button")
+                .Where(button => string.IsNullOrWhiteSpace(button.Attribute("label")?.Value)
+                    && string.IsNullOrWhiteSpace(button.Attribute("getLabel")?.Value))
+                .Select(button => (string?)button.Attribute("id") ?? string.Empty),
+        ];
+    }
+
+    [Fact]
+    public void The_visible_label_validator_flags_a_button_with_neither_label_nor_getLabel()
+    {
+        const string xml = """
+            <customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
+              <ribbon><tabs><tab id="tab"><group id="grp">
+                <button id="btnLabelled" label="Labelled" keytip="L"/>
+                <button id="btnProjected" getLabel="GetEntityMenuLabel" keytip="P"/>
+                <button id="btnBare" keytip="B"/>
+              </group></tab></tabs></ribbon>
+            </customUI>
+            """;
+
+        Assert.Equal(["btnBare"], ButtonsMissingVisibleLabel(xml));
+    }
+
+    [Fact]
+    public void Entity_menu_labels_are_projected_from_the_catalogue()
+    {
+        Assert.Equal("As-Planned Activity", GanttRibbon.GetEntityMenuLabel("entAsPlannedActivity"));
+        Assert.Equal("Critical Interval", GanttRibbon.GetEntityMenuLabel("entCriticalInterval"));
+        Assert.Equal("Delineator", GanttRibbon.GetEntityMenuLabel("entDelineator"));
+
+        // Unknown, non-prefixed, and absent ids project to empty, never a throw.
+        Assert.Equal(string.Empty, GanttRibbon.GetEntityMenuLabel("entNotAType"));
+        Assert.Equal(string.Empty, GanttRibbon.GetEntityMenuLabel(RibbonControlIds.Remove));
+        Assert.Equal(string.Empty, GanttRibbon.GetEntityMenuLabel(null));
+    }
+
+    [Fact]
+    public void Entity_menu_ids_require_an_exact_catalogue_name()
+    {
+        // A numeric or combined enum value must not smuggle in a type.
+        Assert.False(GanttRibbon.TryParseEntityMenuId("ent1", out _));
+        Assert.False(GanttRibbon.TryParseEntityMenuId("ent", out _));
+        Assert.False(GanttRibbon.TryParseEntityMenuId("entAsPlannedActivityX", out _));
+        Assert.False(GanttRibbon.TryParseEntityMenuId(null, out _));
+
+        Assert.True(GanttRibbon.TryParseEntityMenuId("entAsPlannedActivity", out GanttEntityType type));
+        Assert.Equal(GanttEntityType.AsPlannedActivity, type);
+    }
+
+    [Fact]
+    public void The_three_entity_menus_partition_the_catalogue()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        List<GanttEntityType> Types(string menuId) =>
+        [
+            .. doc.Descendants(ns + "menu")
+                .Single(menu => (string?)menu.Attribute("id") == menuId)
+                .Elements(ns + "button")
+                .Select(button =>
+                {
+                    Assert.True(GanttRibbon.TryParseEntityMenuId(
+                        (string?)button.Attribute("id"), out GanttEntityType type));
+                    return type;
+                }),
+        ];
+
+        List<GanttEntityType> activities = Types(RibbonControlIds.AddActivityMenu);
+        List<GanttEntityType> milestones = Types(RibbonControlIds.AddMilestoneMenu);
+        List<GanttEntityType> elements = Types(RibbonControlIds.AddElementsMenu);
+
+        Assert.Equal(
+            Enum.GetValues<GanttEntityType>()
+                .Where(type => EntityTypeCatalog.GetDefinition(type)?.Kind == EntityKind.Span)
+                .Order(),
+            activities.Order());
+        Assert.Equal(
+            Enum.GetValues<GanttEntityType>()
+                .Where(type => EntityTypeCatalog.GetDefinition(type)?.Kind == EntityKind.Milestone)
+                .Order(),
+            milestones.Order());
+        Assert.Equal(
+            new[] { GanttEntityType.Delineator, GanttEntityType.Spacer, GanttEntityType.Splitter }.Order(),
+            elements.Order());
+
+        List<GanttEntityType> union = [.. activities, .. milestones, .. elements];
+        Assert.Equal(EntityTypeCatalog.TypeCount, union.Distinct().Count());
+        Assert.Equal(EntityTypeCatalog.TypeCount, union.Count);
     }
 
     [Fact]
