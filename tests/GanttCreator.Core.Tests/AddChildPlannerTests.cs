@@ -269,8 +269,7 @@ public sealed class AddChildPlannerTests
     public void A_critical_interval_is_never_a_parent()
     {
         // The R5.3 owner ruling: Critical Interval is child-only and never
-        // owns. It is therefore refused as a PARENT, not given a narrower
-        // list of child types.
+        // owns, so it is refused as a PARENT.
         GanttRowId parentId = NewId();
         List<GanttEvent> rows = [Row(1, parentId, GanttEntityType.CriticalInterval)];
 
@@ -282,40 +281,22 @@ public sealed class AddChildPlannerTests
 
         Assert.False(plan.Succeeded);
         Assert.Equal(AddChildRefusalReason.ParentCannotOwnChildren, plan.Refusal);
-        Assert.Empty(AddChildPlanner.PermittedChildTypes(GanttEntityType.CriticalInterval));
     }
 
     [Fact]
-    public void A_parent_that_may_not_own_children_permits_no_child_types()
+    public void Every_child_capable_catalogue_type_is_accepted_by_the_planner()
     {
-        Assert.Empty(AddChildPlanner.PermittedChildTypes(GanttEntityType.AsPlannedMilestone));
-        Assert.Empty(AddChildPlanner.PermittedChildTypes(GanttEntityType.Splitter));
-    }
-
-    [Fact]
-    public void Every_permitted_type_is_accepted_by_the_planner()
-    {
-        // The Ribbon's list and the planner's acceptance are the SAME
-        // projection, so a type the UI offers can never be refused by the
-        // planner. This is the test that keeps them agreeing.
+        // R5.16 removed the Ribbon's child-type list, so the catalogue is now the
+        // only projection left: every type the hierarchy says may be a child must
+        // still be accepted by the planner under an eligible parent.
         GanttRowId parentId = NewId();
         List<GanttEvent> rows = [Row(1, parentId, GanttEntityType.AsPlannedActivity)];
 
-        foreach (GanttEntityType childType in AddChildPlanner.PermittedChildTypes(GanttEntityType.AsPlannedActivity))
+        foreach (GanttEntityType childType in EntityHierarchyCatalog.TypesThatMayBeChild())
         {
             AddChildPlan plan = AddChildPlanner.Plan(rows, parentId, childType, NewId());
 
-            Assert.True(plan.Succeeded, $"The planner refused a permitted type: {childType}.");
+            Assert.True(plan.Succeeded, $"The planner refused a child-capable type: {childType}.");
         }
-    }
-
-    [Fact]
-    public void The_permitted_list_is_the_catalogue_s_child_capable_types()
-    {
-        // The list is PROJECTED from the catalogue, never authored beside it,
-        // so a change to the hierarchy rules reaches the Ribbon.
-        Assert.Equal(
-            EntityHierarchyCatalog.TypesThatMayBeChild().Order(),
-            AddChildPlanner.PermittedChildTypes(GanttEntityType.AsPlannedActivity).Order());
     }
 }

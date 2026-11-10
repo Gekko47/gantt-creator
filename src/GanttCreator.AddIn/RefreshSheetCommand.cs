@@ -185,7 +185,7 @@ internal static class RefreshSheetCommand
     /// interrupts the user with a dialog. Follows the same sequencing as the
     /// manual refresh: orchestrator pipeline, warning capture, then targeted
     /// ribbon control invalidation so selection-gated controls
-    /// (MoveUp/MoveDown/PromoteToParent/DemoteToChild/AddChild) re-evaluate
+    /// (MoveUp/MoveDown/PromoteToParent/DemoteToChild) re-evaluate
     /// against the live selection after the auto-refresh rewrites the sheet.
     /// Does <b>not</b> call <see cref="RibbonStateService.Refresh"/> or
     /// RibbonStateService.Invalidate — those re-read every table row and
@@ -213,9 +213,8 @@ internal static class RefreshSheetCommand
             // Invalidate only the selection-dependent controls so their enabled
             // state re-evaluates against the post-refresh sheet state. Mirrors
             // NotifyRibbonStateChanged() on the manual refresh path, but scoped
-            // to the controls that read SelectionBoundaryContext / AddChildContext
-            // instead of re-reading every table row and re-querying every ribbon
-            // getter.
+            // to the controls that read SelectionBoundaryContext instead of
+            // re-reading every table row and re-querying every ribbon getter.
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DescriptionLabel);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DateLabel);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.CustomStyle);
@@ -223,7 +222,6 @@ internal static class RefreshSheetCommand
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
-            RibbonStateService.Instance.InvalidateControl(RibbonControlIds.AddChild);
             TracePostPass(refreshCompleted);
             return;
         }

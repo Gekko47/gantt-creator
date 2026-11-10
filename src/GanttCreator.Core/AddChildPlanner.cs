@@ -185,25 +185,6 @@ public static class AddChildPlanner
         && parentId is null
         && existingChildCount < EntityHierarchyCatalog.MaxChildrenPerParent;
 
-    /// <summary>
-    /// The child types that may be added to a parent of the given type.
-    /// </summary>
-    /// <param name="parentType">The parent's type.</param>
-    /// <returns>
-    /// The permitted child types in ascending enum order, or an empty list
-    /// when the parent may never own a child.
-    /// </returns>
-    /// <remarks>
-    /// This is the projection the Ribbon's type list is built from, so the
-    /// list and <see cref="Plan"/>'s acceptance cannot disagree. The parent
-    /// type's own rules are applied: a <c>CriticalInterval</c> parent takes
-    /// only a span child.
-    /// </remarks>
-    public static IReadOnlyList<GanttEntityType> PermittedChildTypes(GanttEntityType parentType) =>
-        EntityHierarchyCatalog.MayOwnChildren(parentType)
-            ? [.. EntityHierarchyCatalog.TypesThatMayBeChild().Order()]
-            : [];
-
     /// <summary>Builds a refused plan.</summary>
     /// <param name="reason">The refusal reason.</param>
     /// <returns>The refused plan.</returns>

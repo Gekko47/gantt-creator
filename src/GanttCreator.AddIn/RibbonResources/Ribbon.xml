@@ -61,13 +61,6 @@
             </menu>
           </splitButton>
 
-          <!-- R5.3 WI-E: add a CHILD under the selected parent. The dropdown is
-               populated from the hierarchy catalogue, so it offers exactly the
-               child types the selected parent may take, and the planner accepts
-               every one of them. It is a dropDown rather than a menu because
-               Excel-DNA 1.9 exposes no IRibbonMenu type, so a getMenu callback
-               cannot be bound. R5.16 removes it in favour of Demote. -->
-          <dropDown id="ddnAddChild" label="Add child" keytip="AC" screentip="Add a child row" supertip="Adds a row beneath the selected parent, using a type the parent may own. The list offers only permitted child types." getEnabled="GetEnabled" getItemCount="GetAddChildCount" getItemID="GetAddChildItemID" getItemLabel="GetAddChildItemLabel" onAction="OnAddChildChange"/>
           <button id="btnRemove" label="Remove" size="large" imageMso="TableInsertExcel" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
         <group id="grpOrdering" label="Ordering" getVisible="GetVisible">

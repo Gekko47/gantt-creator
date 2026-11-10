@@ -106,12 +106,6 @@ internal static class RibbonControlIds
     /// </summary>
     internal const string ToggleCellLock = "btnToggleCellLock";
 
-    /// <summary>
-    /// The Add child dropdown (R5.3 WI-E). It offers the child types the
-    /// selected parent may take, projected from the hierarchy catalogue.
-    /// </summary>
-    internal const string AddChild = "ddnAddChild";
-
     /// <summary>The Promote to parent button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string PromoteToParent = "btnPromoteToParent";
 

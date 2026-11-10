@@ -121,12 +121,6 @@ internal enum RibbonMode
 /// preset keys are never listed: the dropdown assigns custom styles,
 /// and the catalogue remains the authority for what counts as built-in.
 /// </param>
-/// <param name="PermittedChildTypes">
-/// The child types the selected parent may take (R5.3 WI-E), or null
-/// when the selection names no row that may own children. The list is
-/// PROJECTED from the hierarchy catalogue, so the Add child dropdown and
-/// the Core planner's acceptance cannot disagree.
-/// </param>
 /// <param name="ConfigurationPresent">
 /// True when the active workbook carries a <c>_GanttCreatorConfig</c>
 /// worksheet. Only meaningful when the table is not initialised: it separates
@@ -170,7 +164,6 @@ internal sealed record RibbonState(
     bool CustomStyleSelectionAvailable = false,
     string? SelectedCustomStyleKey = null,
     IReadOnlyList<string>? CustomStyleOptions = null,
-    IReadOnlyList<GanttEntityType>? PermittedChildTypes = null,
     bool ConfigurationPresent = false,
     RibbonMode Mode = RibbonMode.FirstRun,
     bool CriticalIntervalParentAvailable = false)
@@ -261,12 +254,6 @@ internal sealed record RibbonState(
             && CustomStyleSelectionAvailable
             && CustomStyleOptions is { Count: > 0 },
         RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
-        // R5.3 WI-E: the Add child dropdown is gated on the selection naming
-        // a row that may own children. A dropdown with zero items reads as
-        // broken, so a selection that permits no child type leaves it greyed
-        // rather than offering an empty list.
-        RibbonControlIds.AddChild =>
-            HasActiveWorkbook && SheetInitialised && PermittedChildTypes is { Count: > 0 },
         // R5.4: the collapse-all and expand-all buttons are the Ribbon surface
         // over the native Excel outline. They are gated on workbook +
         // initialised like every other Data-group button: a sheet with no group
