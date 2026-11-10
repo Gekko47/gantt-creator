@@ -85,23 +85,6 @@ public static class AddChildPlanner
             return Refused(AddChildRefusalReason.SelectionUnknown);
         }
 
-        if (!EntityHierarchyCatalog.MayOwnChildren(parent.Type))
-        {
-            return Refused(AddChildRefusalReason.ParentCannotOwnChildren);
-        }
-
-        if (!EntityHierarchyCatalog.MayBeChild(childType))
-        {
-            return Refused(AddChildRefusalReason.TypeCannotBeChild);
-        }
-
-        // A parent that is itself a child would make the new row depth 3,
-        // which the catalogue refuses rather than supports.
-        if (parent.ParentId is not null)
-        {
-            return Refused(AddChildRefusalReason.TooDeep);
-        }
-
         List<GanttEvent> siblings =
         [
             .. rows
@@ -109,9 +92,15 @@ public static class AddChildPlanner
                 .OrderBy(static row => row.RowNumber),
         ];
 
-        if (siblings.Count >= EntityHierarchyCatalog.MaxChildrenPerParent)
+        AddChildRefusalReason? refusal = Evaluate(
+            parent.Type,
+            parent.Id,
+            parent.ParentId,
+            siblings.Count,
+            childType);
+        if (refusal is not null)
         {
-            return Refused(AddChildRefusalReason.ParentAtCapacity);
+            return Refused(refusal.Value);
         }
 
         // The new row joins the end of the parent's existing child run, so the
@@ -119,6 +108,56 @@ public static class AddChildPlanner
         return new AddChildPlan(
             [new AddChildWrite(newRowId, selectedId, siblings.Count)],
             null);
+    }
+
+    /// <summary>
+    /// The hierarchy rule body for one candidate parent (R5.16). Returns null
+    /// when the child would be accepted, otherwise the typed refusal.
+    /// </summary>
+    /// <remarks>
+    /// This is the single rule implementation: <see cref="Plan"/> delegates to
+    /// it, the Ribbon's data gate asks <see cref="IsEligibleParent"/>, and the
+    /// row inserter calls it before writing a <c>ParentId</c> (so a positional
+    /// insert cannot create a parent the model forbids). The order of the
+    /// checks is deliberate: an unknown parent is reported first, then the
+    /// parent's right to own children, the child's right to be one, the depth
+    /// limit, and finally the capacity limit.
+    /// </remarks>
+    /// <param name="parentType">The candidate parent's type, or null when no row was resolved.</param>
+    /// <param name="parentId">The candidate parent's id, or null when no row was resolved.</param>
+    /// <param name="parentOfParentId">The candidate parent's own parent id, or null when it is top-level.</param>
+    /// <param name="existingChildCount">How many children the candidate already owns.</param>
+    /// <param name="childType">The type the new row will have.</param>
+    /// <returns>The typed refusal, or <see langword="null"/> when the child is accepted.</returns>
+    public static AddChildRefusalReason? Evaluate(
+        GanttEntityType? parentType,
+        GanttRowId? parentId,
+        GanttRowId? parentOfParentId,
+        int existingChildCount,
+        GanttEntityType childType)
+    {
+        if (parentType is not GanttEntityType type || parentId is null)
+        {
+            return AddChildRefusalReason.SelectionUnknown;
+        }
+
+        if (!EntityHierarchyCatalog.MayOwnChildren(type))
+        {
+            return AddChildRefusalReason.ParentCannotOwnChildren;
+        }
+
+        if (!EntityHierarchyCatalog.MayBeChild(childType))
+        {
+            return AddChildRefusalReason.TypeCannotBeChild;
+        }
+
+        // A parent that is itself a child would make the new row depth 3,
+        // which the catalogue refuses rather than supports.
+        return parentOfParentId is not null
+            ? AddChildRefusalReason.TooDeep
+            : existingChildCount >= EntityHierarchyCatalog.MaxChildrenPerParent
+                ? AddChildRefusalReason.ParentAtCapacity
+                : null;
     }
 
     /// <summary>

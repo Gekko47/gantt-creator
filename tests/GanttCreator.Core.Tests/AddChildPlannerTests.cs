@@ -10,6 +10,72 @@ namespace GanttCreator.Core.Tests;
 public sealed class AddChildPlannerTests
 {
     [Fact]
+    public void Evaluate_accepts_a_child_capable_type_under_a_top_level_activity()
+    {
+        Assert.Null(AddChildPlanner.Evaluate(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.Parse("G-0000000000000000000000000000000a"),
+            parentOfParentId: null,
+            existingChildCount: 0,
+            GanttEntityType.AsPlannedMilestone));
+    }
+
+    [Fact]
+    public void Evaluate_refuses_a_leaf_parent() =>
+        Assert.Equal(
+            AddChildRefusalReason.ParentCannotOwnChildren,
+            AddChildPlanner.Evaluate(
+                GanttEntityType.AsPlannedMilestone,
+                GanttRowId.Parse("G-0000000000000000000000000000000a"),
+                parentOfParentId: null,
+                existingChildCount: 0,
+                GanttEntityType.AsPlannedMilestone));
+
+    [Fact]
+    public void Evaluate_refuses_a_child_type_that_cannot_be_a_child() =>
+        Assert.Equal(
+            AddChildRefusalReason.TypeCannotBeChild,
+            AddChildPlanner.Evaluate(
+                GanttEntityType.AsPlannedActivity,
+                GanttRowId.Parse("G-0000000000000000000000000000000a"),
+                parentOfParentId: null,
+                existingChildCount: 0,
+                GanttEntityType.Splitter));
+
+    [Fact]
+    public void Evaluate_refuses_a_parent_that_is_itself_a_child() =>
+        Assert.Equal(
+            AddChildRefusalReason.TooDeep,
+            AddChildPlanner.Evaluate(
+                GanttEntityType.AsPlannedActivity,
+                GanttRowId.Parse("G-0000000000000000000000000000000a"),
+                GanttRowId.Parse("G-0000000000000000000000000000000b"),
+                existingChildCount: 0,
+                GanttEntityType.AsPlannedMilestone));
+
+    [Fact]
+    public void Evaluate_refuses_a_parent_at_capacity() =>
+        Assert.Equal(
+            AddChildRefusalReason.ParentAtCapacity,
+            AddChildPlanner.Evaluate(
+                GanttEntityType.AsPlannedActivity,
+                GanttRowId.Parse("G-0000000000000000000000000000000a"),
+                parentOfParentId: null,
+                existingChildCount: EntityHierarchyCatalog.MaxChildrenPerParent,
+                GanttEntityType.AsPlannedMilestone));
+
+    [Fact]
+    public void Evaluate_refuses_an_unresolved_parent() =>
+        Assert.Equal(
+            AddChildRefusalReason.SelectionUnknown,
+            AddChildPlanner.Evaluate(
+                parentType: null,
+                parentId: null,
+                parentOfParentId: null,
+                existingChildCount: 0,
+                GanttEntityType.AsPlannedMilestone));
+
+    [Fact]
     public void An_activity_with_room_is_an_eligible_parent()
     {
         Assert.True(AddChildPlanner.IsEligibleParent(
