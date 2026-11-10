@@ -220,7 +220,7 @@ public interface IShapeWritePort
     /// <see cref="ListOwned"/> does, because <see cref="ListOwned"/> runs on every refresh and
     /// ADR-0055 forbids adding a step there: reading <c>Locked</c> once per shape per pass would
     /// cost more than the write it avoids. This runs when protection is armed — once per
-    /// workbook — and from the Lock command.
+    /// workbook — and when the CHART toggle is switched back on.
     /// </para>
     /// <para>
     /// Ownership is proved by the tag, exactly as <see cref="Delete"/> and <see cref="Update"/>
@@ -243,9 +243,9 @@ public interface IShapeWritePort
     /// </para>
     /// <para>
     /// Clearing <c>Locked</c> is inert while the sheet is protected, so the caller must release the
-    /// protection as well; the two together are what makes a shape draggable. The unlock is recorded in
-    /// <see cref="ShapeUnlockState"/> by the caller, which is what suspends the automatic refresh until
-    /// a Lock or an explicit Refresh re-arms everything.
+    /// protection as well; the two together are what makes a shape draggable. The CHART toggle records
+    /// the release in <see cref="ProtectionPreferences"/>, which is what keeps the automatic refresh
+    /// out of the way until the toggle is switched back on or the user asks for an explicit Refresh.
     /// </para>
     /// </remarks>
     ShapeWriteOutcome UnlockShape(string primitiveId);

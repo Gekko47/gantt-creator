@@ -91,13 +91,21 @@ reference establishes four facts that the design has to obey:
    The window costs **two host calls per write phase**, which the owner accepted in place of the
    original "no extra step" wording. The sheet is unlocked for the few hundred milliseconds a refresh
    takes and locked the rest of the time, which is the state the ruling asked for.
-6. **Unlock is transient and suspends the scheduler, never the reconciler.** "Unlock shape" acts
-   only on a selected, provably-owned shape: it unprotects the sheet and clears that shape's
-   `Locked`. Automatic refresh is **suspended** for as long as anything is unlocked, so a manual
-   edit is not lost to an unrelated cell edit; an explicit Refresh, or a "Lock shapes" command,
-   re-protects, re-locks and re-asserts the shape's geometry — reverting the manual edit, exactly
-   as ruled. The two controls are answered from the unlock set and from one `Selection` read rather
-   than from the ribbon snapshot, so enabling the button costs no host call during a refresh.
+6. **The two toggles replaced the per-shape unlock (owner ruling 2026-11-09).** The original form of
+   this clause released exactly one selected, provably-owned shape and remembered which, as a
+   transient exemption, behind "Unlock shape" and "Lock shapes" buttons. The ruling replaced that
+   pair with **one toggle for the CHART** and **one for the SHEET CELLS** (clause 7), each visibly
+   reflecting the state it is in. The one-shot commands, the selection reader that authorised them
+   and the per-shape unlock set that suspended the scheduler were retired with it, so there is
+   exactly one statement of "what is locked" rather than two that could disagree.
+
+   The properties the original clause existed for are kept. Automatic refresh is **suspended** for
+   as long as the chart is unlocked, so a manual drag is not lost to an unrelated cell edit, and an
+   explicit Refresh re-protects, re-locks and re-asserts the shape's geometry — reverting the manual
+   edit, exactly as ruled. Suspension is **chart-only**: unlocking the sheet's cells is the user
+   choosing to type, and the automatic refresh is what consumes that edit, so the cell toggle never
+   suppresses it. The decision is one read of `ProtectionPreferences.ChartLocked`, and enabling the
+   two buttons costs no host call — the state comes from the same object the protect path reads.
 7. **The visible table stays editable while the chart is locked (owner ruling, 2026-11-09).** The
    requirement, in the owner's words: "the visible table area should be fully unlocked at all times
    for the user to copy paste change formatting etc". Three facts make that two changes rather than
@@ -179,11 +187,14 @@ Contract tests: the guard authorises ours and refuses the user's; `ProtectDrawin
 refuses; a refresh locks before it protects and arms once per session, not once per pass; an
 already-protected sheet is released before it is protected again; a refused protection write keeps
 the chart and leaves the arming unmarked; an opt-out workbook is never protected and an opt-out after
-arming releases it; `Locked` is set on create; the back-fill touches only tagged shapes; unlock
-refuses a user shape and clears only the selected owned one; the scheduler does not schedule while
-unlocked. Live: a protect leaves `EnableOutlining` true (and it is false before the add-in sets
-it), so the +/- group buttons survive the lock.
+arming releases it; `Locked` is set on create; the back-fill touches only tagged shapes; each toggle
+**sets** the state it is given instead of flipping it, re-applies protection, records the arming and
+leaves the other toggle alone; the scheduler queues while only the cells are unlocked and stops while
+the chart is unlocked. Live: a protect leaves `EnableOutlining` true (and it is false before the
+add-in sets it), so the +/- group buttons survive the lock.
 
 Live gate (required — the feature is almost entirely host behaviour): shapes cannot be selected,
 dragged or deleted while protected; the add-in can still create, move, resize, delete, z-order and
-write cells; reopen then refresh recovers writing; the ribbon button enables only on an owned shape.
+write cells; reopen then refresh recovers writing; the chart toggle decides whether a shape drag
+lands; the cell toggle decides whether a cell outside the table is writable; the table's own cells
+stay editable in both states.

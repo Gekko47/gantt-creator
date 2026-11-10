@@ -80,7 +80,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     private volatile bool _commandRefreshPending;
 
     internal GanttRefreshScheduler(IExcelApplicationAdapter adapter, ISheetChangeAnalyzer analyzer)
-        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel, ShapeUnlockState.Shared)
+        : this(adapter, analyzer, QueueMacro, RefreshSheetCommand.RunSilentForExcel, ProtectionPreferences.Shared)
     {
     }
 
@@ -89,28 +89,30 @@ internal sealed class GanttRefreshScheduler : IDisposable
         ISheetChangeAnalyzer analyzer,
         Action<ExcelDna.Integration.ExcelAction> queueAsMacro,
         Action refresh,
-        ShapeUnlockState? unlockState = null)
+        IProtectionPreferenceSource? preferences = null)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _analyzer = analyzer ?? throw new ArgumentNullException(nameof(analyzer));
         _queueAsMacro = queueAsMacro ?? throw new ArgumentNullException(nameof(queueAsMacro));
         _refresh = refresh ?? throw new ArgumentNullException(nameof(refresh));
-        _unlockState = unlockState;
+        _preferences = preferences;
     }
 
     /// <summary>
-    /// The shapes the user has deliberately unlocked, or <see langword="null"/> when nothing tracks
-    /// them (ADR-0055 clause 6).
+    /// The CHART toggle, or <see langword="null"/> when nothing tracks it (ADR-0055 clause 7).
     /// </summary>
     /// <remarks>
-    /// While anything is unlocked an automatic refresh would rebuild the chart underneath a manual
-    /// edit, so both the cell-change path and the command path stay quiet. An explicit Refresh and the
-    /// Lock shapes command are unaffected: they are the user asking for the rebuild.
+    /// While the chart is unlocked an automatic refresh would rebuild the chart underneath a manual
+    /// drag, so both the cell-change path and the command path stay quiet. An explicit Refresh is
+    /// unaffected: that is the user asking for the rebuild. Unlocking the sheet's CELLS is
+    /// deliberately not a suspension — a cell edit is the input an automatic refresh exists to
+    /// consume, and suppressing it would leave the chart stale for as long as the user keeps cells
+    /// unlocked.
     /// </remarks>
-    private readonly ShapeUnlockState? _unlockState;
+    private readonly IProtectionPreferenceSource? _preferences;
 
-    /// <summary>Gets whether automatic refresh is suspended by an unlocked shape.</summary>
-    private bool IsSuspendedByUnlock => _unlockState?.IsAnyUnlocked == true;
+    /// <summary>Gets whether automatic refresh is suspended by an unlocked chart.</summary>
+    private bool IsSuspendedByUnlock => _preferences?.ChartLocked == false;
 
     private static void QueueMacro(ExcelDna.Integration.ExcelAction macro) =>
         ExcelDna.Integration.ExcelAsyncUtil.QueueAsMacro(macro);
@@ -176,7 +178,7 @@ internal sealed class GanttRefreshScheduler : IDisposable
     {
         if (IsSuspendedByUnlock)
         {
-            // A shape is unlocked for manual editing; any rebuild now would undo the edit.
+            // The chart is unlocked for manual editing; any rebuild now would undo the edit.
             return;
         }
 
@@ -226,7 +228,8 @@ internal sealed class GanttRefreshScheduler : IDisposable
             return;
         }
 
-        // Re-check at the last moment: an unlock can happen between the debounce and this callback.
+        // Re-check at the last moment: the chart can be unlocked between the debounce and this
+        // callback.
         if (IsSuspendedByUnlock)
         {
             return;

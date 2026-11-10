@@ -168,14 +168,15 @@ public sealed class GanttRefreshSchedulerTests
     }
 
     /// <summary>
-    /// ADR-0055 clause 6: while a shape is unlocked for manual editing, neither a cell edit nor a
-    /// command may schedule a refresh, because either would rebuild the chart over the edit. Locking
-    /// the shapes again re-enables both.
+    /// ADR-0055 clause 7: while the CHART toggle is off, neither a cell edit nor a command may
+    /// schedule a refresh, because either would rebuild the chart over a manual drag. Locking the
+    /// chart again re-enables both. Unlocking the sheet's CELLS is deliberately not a suspension:
+    /// a cell edit is the input an automatic refresh exists to consume.
     /// </summary>
     [Fact]
-    public void An_unlocked_shape_suspends_both_scheduling_paths()
+    public void An_unlocked_chart_suspends_both_scheduling_paths()
     {
-        var unlockState = new ShapeUnlockState();
+        var preferences = new ProtectionPreferences();
         int queued = 0;
         Mock<IExcelApplicationAdapter> adapter = new();
         Action<string?>? onChanged = null;
@@ -190,17 +191,17 @@ public sealed class GanttRefreshSchedulerTests
             analyzer.Object,
             _ => Interlocked.Increment(ref queued),
             () => { },
-            unlockState);
+            preferences);
         scheduler.Activate();
 
-        // Positive control first: with nothing unlocked both paths queue, so the negative assertion
+        // Positive control first: with the chart locked both paths queue, so the negative assertion
         // below cannot pass on a harness that simply never queues anything.
         scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) == 1, TimeSpan.FromSeconds(5)),
-            "With nothing unlocked, a command did not schedule a refresh.");
+            "With the chart locked, a command did not schedule a refresh.");
 
-        _ = unlockState.Add("G-0123456789abcdef0123456789abcdef:bar");
+        preferences.ChartLocked = false;
         int before = Volatile.Read(ref queued);
         scheduler.ScheduleCommandRefresh();
         onChanged!("\"book|Sheet\"!D5");
@@ -211,13 +212,22 @@ public sealed class GanttRefreshSchedulerTests
             SpinWait.SpinUntil(
                 () => Volatile.Read(ref queued) > before,
                 TimeSpan.FromMilliseconds(400)),
-            "A suspended scheduler queued a refresh while a shape was unlocked.");
+            "A suspended scheduler queued a refresh while the chart was unlocked.");
 
-        _ = unlockState.Clear();
+        preferences.ChartLocked = true;
         scheduler.ScheduleCommandRefresh();
         Assert.True(
             SpinWait.SpinUntil(() => Volatile.Read(ref queued) > before, TimeSpan.FromSeconds(5)),
-            "Locking the shapes again did not re-enable scheduling.");
+            "Locking the chart again did not re-enable scheduling.");
+
+        // The cell toggle is not a suspension: the user unlocking cells is choosing to type, and the
+        // automatic refresh is exactly what should consume that edit.
+        int beforeCells = Volatile.Read(ref queued);
+        preferences.CellsUnlocked = true;
+        scheduler.ScheduleCommandRefresh();
+        Assert.True(
+            SpinWait.SpinUntil(() => Volatile.Read(ref queued) > beforeCells, TimeSpan.FromSeconds(5)),
+            "Unlocking the cells suspended the automatic refresh; it must not.");
     }
 
     private static GanttRefreshScheduler CreateScheduler(Action<ExcelAction> queue, Action refresh) =>

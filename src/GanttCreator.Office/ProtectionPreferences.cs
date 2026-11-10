@@ -43,15 +43,15 @@ public interface IProtectionPreferenceSource
 /// time. Cells outside the table are locked unless the cell toggle is switched on.
 /// </para>
 /// <para>
-/// <b>Why this is separate from <see cref="ShapeUnlockState"/>.</b> That type recorded which single
-/// shapes the user had unlocked out of the reconciler's reach — a per-shape, transient exemption. This
-/// type is the durable, sheet-wide pair of switches the ribbon presents: it outlives a refresh, and a
-/// refresh re-applies protection FROM it rather than overwriting it.
+/// <b>This replaced the per-shape unlock.</b> ADR-0055's first form released exactly one selected
+/// shape and remembered which, as a transient exemption; the owner's ruling replaced that with two
+/// durable, sheet-wide switches the ribbon presents. The pair outlives a refresh, and a refresh
+/// re-applies protection FROM it rather than overwriting it.
 /// </para>
 /// <para>
-/// Mutable and explicitly shared, like <see cref="ProtectionArmingState"/> and
-/// <see cref="ShapeUnlockState"/>: it lives as long as the Excel session, is touched only on the main
-/// thread, and is reset when the active workbook changes because it describes one sheet's protection.
+/// Mutable and explicitly shared, like <see cref="ProtectionArmingState"/>: it lives as long as the
+/// Excel session, is touched only on the main thread, and is reset when the active workbook changes
+/// because it describes one sheet's protection.
 /// </para>
 /// </remarks>
 public sealed class ProtectionPreferences : IProtectionPreferenceSource
@@ -71,17 +71,6 @@ public sealed class ProtectionPreferences : IProtectionPreferenceSource
     /// the layout around the chart.
     /// </summary>
     public bool CellsUnlocked { get; set; }
-
-    /// <summary>
-    /// Gets a value indicating whether the user has released anything, so the automatic refresh must
-    /// keep its hands off.
-    /// </summary>
-    /// <remarks>
-    /// The scheduler reads this before queueing an automatic refresh. A manual shape drag is in
-    /// flight whenever the chart is unlocked, and rebuilding the chart underneath it would discard the
-    /// edit the user is making — the same reason <see cref="ShapeUnlockState.IsAnyUnlocked"/> exists.
-    /// </remarks>
-    public bool IsAnyUnlocked => !ChartLocked || CellsUnlocked;
 
     /// <summary>Restores both toggles to their defaults.</summary>
     /// <remarks>

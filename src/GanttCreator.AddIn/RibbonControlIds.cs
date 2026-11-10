@@ -54,21 +54,6 @@ internal static class RibbonControlIds
     internal const string AddDelineator = "btnAddDelineator";
 
     /// <summary>
-    /// The Unlock shape button (ADR-0055): enabled only when exactly one owned shape is selected.
-    /// </summary>
-    internal const string UnlockShape = "btnUnlockShape";
-
-    /// <summary>
-    /// The Lock shapes button (ADR-0055): enabled when at least one owned shape is unlocked.
-    /// </summary>
-    /// <remarks>
-    /// Superseded by <see cref="ToggleChartLock"/> (owner ruling 2026-11-09): the ribbon no longer
-    /// shows two shape buttons. The constant and the command behind it remain for the transition so
-    /// their tested behaviour is not deleted in the same change that introduces a replacement.
-    /// </remarks>
-    internal const string LockShapes = "btnLockShapes";
-
-    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): one control whose label and pressed state
     /// reflect whether chart elements can be dragged, and whose action flips it.
     /// </summary>

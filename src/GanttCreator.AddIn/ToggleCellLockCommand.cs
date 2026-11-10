@@ -33,6 +33,7 @@ internal static class ToggleCellLockCommand
 
         Run(
             new ExcelWorksheetProtectionPort(application),
+            ProtectionArmingState.Shared,
             ProtectionPreferences.Shared,
             locked,
             CommandErrorDialog.Show);
@@ -43,16 +44,22 @@ internal static class ToggleCellLockCommand
 
     /// <summary>Runs an injected toggle, for tests and for the R4.9 wiring.</summary>
     /// <param name="protection">Re-applies the sheet protection with the new flags.</param>
+    /// <param name="arming">
+    /// Records that the protection this command applies is the add-in's own, which is what authorises
+    /// the next shape write (ADR-0055 clause 3).
+    /// </param>
     /// <param name="preferences">The session's toggles; the cell one is set from <paramref name="locked"/>.</param>
     /// <param name="locked">The requested state of the cells outside the visible table.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     internal static void Run(
         IWorksheetProtectionPort protection,
+        ProtectionArmingState arming,
         ProtectionPreferences preferences,
         bool locked,
         Action<string> presenter)
     {
         ArgumentNullException.ThrowIfNull(protection);
+        ArgumentNullException.ThrowIfNull(arming);
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(presenter);
 
@@ -68,6 +75,11 @@ internal static class ToggleCellLockCommand
                 unlockNow
                     ? "The cells outside the table could not be released: " + refusal + "."
                     : "The cells outside the table could not be locked again: " + refusal + ".");
+            return;
         }
+
+        // The protection this command just applied is the add-in's own, exactly as the chart toggle
+        // records it, so a protect that came from this button authorises the next shape write.
+        arming.MarkArmed();
     }
 }

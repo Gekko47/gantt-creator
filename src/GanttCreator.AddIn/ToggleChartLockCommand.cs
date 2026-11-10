@@ -16,14 +16,12 @@ namespace GanttCreator.AddIn;
 /// </para>
 /// <para>
 /// <b>The toggle is session state, not a one-shot.</b> <see cref="ProtectionPreferences.ChartLocked"/>
-/// is what <see cref="ExcelWorksheetProtectionPort"/> reads when it applies protection, and what
-/// <see cref="WorksheetProtectionArming"/> reads before it re-locks anything. A refresh therefore
-/// re-applies the user's choice instead of overwriting it.
-/// </para>
-/// <para>
-/// <b>Suspension.</b> While the chart is unlocked <see cref="ProtectionPreferences.IsAnyUnlocked"/> is
-/// true, so the automatic refresh stays out of the way of a manual drag. An explicit Refresh still
-/// reconciles, which is how a discarded manual edit comes back.
+/// is what <see cref="ExcelWorksheetProtectionPort"/> reads when it applies protection, what
+/// <see cref="WorksheetProtectionArming"/> reads before it re-locks anything, and what
+/// <see cref="GanttRefreshScheduler"/> reads before it queues an automatic pass. A refresh therefore
+/// re-applies the user's choice instead of overwriting it, and an unlocked chart keeps the automatic
+/// refresh out of the way of a manual drag. An explicit Refresh still reconciles, which is how a
+/// discarded manual edit comes back.
 /// </para>
 /// </remarks>
 internal static class ToggleChartLockCommand
@@ -40,6 +38,7 @@ internal static class ToggleChartLockCommand
         Run(
             new ExcelShapeWriter(application, new ExcelWorksheetProtectionGuard(application)),
             new ExcelWorksheetProtectionPort(application),
+            ProtectionArmingState.Shared,
             ProtectionPreferences.Shared,
             locked,
             CommandErrorDialog.Show);
@@ -51,18 +50,24 @@ internal static class ToggleChartLockCommand
     /// <summary>Runs an injected toggle, for tests and for the R4.9 wiring.</summary>
     /// <param name="shapes">Applies or clears <c>Shape.Locked</c> on the owned shapes.</param>
     /// <param name="protection">Re-applies the sheet protection with the new flags.</param>
+    /// <param name="arming">
+    /// Records that the protection this command applies is the add-in's own, which is what authorises
+    /// the next shape write (ADR-0055 clause 3).
+    /// </param>
     /// <param name="preferences">The session's toggles; the chart one is set to <paramref name="locked"/>.</param>
     /// <param name="locked">The requested chart lock state.</param>
     /// <param name="presenter">The user-safe refusal presenter.</param>
     internal static void Run(
         IShapeWritePort shapes,
         IWorksheetProtectionPort protection,
+        ProtectionArmingState arming,
         ProtectionPreferences preferences,
         bool locked,
         Action<string> presenter)
     {
         ArgumentNullException.ThrowIfNull(shapes);
         ArgumentNullException.ThrowIfNull(protection);
+        ArgumentNullException.ThrowIfNull(arming);
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(presenter);
 
@@ -91,6 +96,12 @@ internal static class ToggleChartLockCommand
                 lockNow
                     ? "The chart was locked but the sheet protection could not be re-applied: " + refusal + "."
                     : "The chart shapes were released but the sheet protection could not be updated: " + refusal + ".");
+            return;
         }
+
+        // The protection this command just applied is the add-in's own. Recording that is what makes
+        // ExcelWorksheetProtectionGuard authorise the next shape write, including on a sheet whose
+        // only protect came from this button rather than from a refresh's arming pass.
+        arming.MarkArmed();
     }
 }
