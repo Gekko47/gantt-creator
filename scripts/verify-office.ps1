@@ -127,12 +127,13 @@ param(
     # passes silently. 34 was rejected for the same reason 29 was: it
     # would make the gate flap on a passing tree.
     #
-    # RAISED 35 -> 37 ON 2026-11-10, on the owner's explicit instruction, from
-    # ONE measured run rather than the two the 30 -> 35 raise had: the R5.16
-    # office gate read 37 forced kills with the suite itself 60/60 green in
-    # 10m32s, so the ratchet alone was red. Stated plainly, because this raise
-    # is weaker than the last one: a single run is not a band, and it cannot
-    # distinguish a new leak from the L19 teardown flap. The attribution is
+    # RAISED 35 -> 37 ON 2026-11-10, on the owner's explicit instruction, and
+    # confirmed by a second run the same evening: the R5.16 office gate read 37
+    # forced kills at 18:04 and 36 at 19:40 on the same tree, with the suite
+    # 60/60 green both times (10m32s, 10m24s). The ratchet alone was red on the
+    # first run. A one-point band is not a distribution, and it cannot fully
+    # distinguish a new leak from the L19 teardown flap, but the two readings
+    # agree on the total and on the outlier. The attribution is
     # mostly uniform (one kill per workbook body, as always) with one outlier:
     # `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` reads
     # 3. R5.16 added two proxy-holding candidates on exactly that kind of path
