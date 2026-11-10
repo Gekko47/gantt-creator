@@ -136,6 +136,11 @@ internal enum RibbonMode
 /// The Ribbon mode derived from workbook presence, table readability, and
 /// configuration presence (R5.16). Drives group visibility only.
 /// </param>
+/// <param name="CriticalIntervalParentAvailable">
+/// True when the current table contains at least one row that can own a
+/// Critical Interval (R5.16). The menu item is disabled only when this is
+/// false, because the owner's rule is "refuse only when no parent exists".
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -167,7 +172,8 @@ internal sealed record RibbonState(
     IReadOnlyList<string>? CustomStyleOptions = null,
     IReadOnlyList<GanttEntityType>? PermittedChildTypes = null,
     bool ConfigurationPresent = false,
-    RibbonMode Mode = RibbonMode.FirstRun)
+    RibbonMode Mode = RibbonMode.FirstRun,
+    bool CriticalIntervalParentAvailable = false)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -219,6 +225,11 @@ internal sealed record RibbonState(
         RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.AddDelineator => HasActiveWorkbook && SheetInitialised,
+        // R5.16: a Critical Interval must be attached to a parent, so the item is
+        // disabled when no row can own one. It stays VISIBLE: the owner asked for
+        // a constraint that is explained in place, not a hidden action.
+        RibbonControlIds.CriticalIntervalMenuItem =>
+            HasActiveWorkbook && SheetInitialised && CriticalIntervalParentAvailable,
         RibbonControlIds.PromoteToParent => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.DemoteToChild => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.MoveUp => HasActiveWorkbook && SheetInitialised,

@@ -515,6 +515,9 @@ public class GanttRibbonTests
                 RibbonControlIds.RepairConfig,
                 RibbonControlIds.ValidateSheet,
                 RibbonControlIds.AddActivity,
+                // R5.16: the Critical Interval item is the only entity menu item
+                // with its own gate, so it appears next in document order.
+                RibbonControlIds.CriticalIntervalMenuItem,
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
                 RibbonControlIds.Remove,

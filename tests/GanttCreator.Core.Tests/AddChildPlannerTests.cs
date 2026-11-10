@@ -9,6 +9,42 @@ namespace GanttCreator.Core.Tests;
 /// </summary>
 public sealed class AddChildPlannerTests
 {
+    [Fact]
+    public void An_activity_with_room_is_an_eligible_parent()
+    {
+        Assert.True(AddChildPlanner.IsEligibleParent(
+            GanttEntityType.AsPlannedActivity, parentId: null, existingChildCount: 6));
+    }
+
+    [Fact]
+    public void A_leaf_type_is_not_an_eligible_parent()
+    {
+        // Positive test for the leaf branch: a milestone may be a child but
+        // never owns one.
+        Assert.False(AddChildPlanner.IsEligibleParent(
+            GanttEntityType.AsPlannedMilestone, parentId: null, existingChildCount: 0));
+    }
+
+    [Fact]
+    public void A_parent_that_is_itself_a_child_is_not_eligible()
+    {
+        // Positive test for the depth branch: a child activity would make the
+        // new row depth 3.
+        Assert.False(AddChildPlanner.IsEligibleParent(
+            GanttEntityType.AsPlannedActivity,
+            GanttRowId.Parse("G-0000000000000000000000000000000a"),
+            existingChildCount: 0));
+    }
+
+    [Fact]
+    public void A_parent_at_seven_children_is_not_eligible()
+    {
+        // Positive test for the capacity branch.
+        Assert.False(AddChildPlanner.IsEligibleParent(
+            GanttEntityType.AsPlannedActivity,
+            parentId: null,
+            existingChildCount: EntityHierarchyCatalog.MaxChildrenPerParent));
+    }
     private static GanttRowId NewId() => GanttRowId.New();
 
     private static GanttEvent Row(

@@ -260,6 +260,62 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.False(service.GetVisible(null));
     }
 
+    private static GanttRowDto Row(int rowNumber, string type, string? parentId = null) =>
+        new(
+            rowNumber,
+            NewRowId((char)('a' + rowNumber)),
+            null,
+            0,
+            type,
+            null,
+            null,
+            null,
+            parentId,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null);
+
+    [Fact]
+    public void Critical_interval_is_enabled_when_the_table_has_an_eligible_parent()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
+
+    [Fact]
+    public void Critical_interval_is_disabled_when_no_row_can_own_it()
+    {
+        // Positive test for the gate: a table of leaves and structural rows has
+        // no parent, so the item is disabled rather than raising an error after
+        // the click. This is the "refuse only when none exists" rule.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Milestone"),
+                Row(2, "Spacer"),
+                Row(3, "Splitter"),
+            ]));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
+
+    [Fact]
+    public void Critical_interval_is_disabled_when_the_table_is_empty()
+    {
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([]));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.CriticalIntervalMenuItem));
+    }
+
     [Fact]
     public void GetEnabled_is_deterministic_and_never_probes_the_state_source()
     {

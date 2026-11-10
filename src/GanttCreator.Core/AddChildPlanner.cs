@@ -122,6 +122,31 @@ public static class AddChildPlanner
     }
 
     /// <summary>
+    /// Whether a row can accept a new child right now (R5.16): its type may own
+    /// children, it is not itself a child (so the new row stays depth 2), and it
+    /// owns fewer than <see cref="EntityHierarchyCatalog.MaxChildrenPerParent"/>
+    /// children.
+    /// </summary>
+    /// <remarks>
+    /// This is the single eligibility predicate. The Ribbon's Critical Interval
+    /// gate asks it of every row in the table; the inserter asks it while
+    /// scanning the body for the nearest parent; <see cref="Plan"/> applies it
+    /// through the same rule body. One predicate, three callers, so the surface
+    /// and the command cannot disagree about who may own a child.
+    /// </remarks>
+    /// <param name="type">The candidate parent's type.</param>
+    /// <param name="parentId">The candidate parent's own parent id, or null when it is top-level.</param>
+    /// <param name="existingChildCount">How many children the candidate already owns.</param>
+    /// <returns><see langword="true"/> when the candidate can accept one more child.</returns>
+    public static bool IsEligibleParent(
+        GanttEntityType type,
+        GanttRowId? parentId,
+        int existingChildCount) =>
+        EntityHierarchyCatalog.MayOwnChildren(type)
+        && parentId is null
+        && existingChildCount < EntityHierarchyCatalog.MaxChildrenPerParent;
+
+    /// <summary>
     /// The child types that may be added to a parent of the given type.
     /// </summary>
     /// <param name="parentType">The parent's type.</param>

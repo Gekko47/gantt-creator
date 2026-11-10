@@ -89,6 +89,12 @@ internal static class RibbonControlIds
     internal const string EntityMenuItemPrefix = "ent";
 
     /// <summary>
+    /// The Critical Interval menu item (R5.16). It is the only entity item with
+    /// its own gate: the table must hold a row that can own the interval.
+    /// </summary>
+    internal const string CriticalIntervalMenuItem = "entCriticalInterval";
+
+    /// <summary>
     /// The CHART lock toggle (owner ruling 2026-11-09): one control whose label and pressed state
     /// reflect whether chart elements can be dragged, and whose action flips it.
     /// </summary>

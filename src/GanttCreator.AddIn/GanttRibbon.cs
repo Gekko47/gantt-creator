@@ -389,6 +389,17 @@ public class GanttRibbon : ExcelRibbon
         GetEntityMenuLabel(TryReadControlId(control));
 
     /// <summary>
+    /// Excel's <c>getEnabled</c> callback for the Critical Interval menu item
+    /// (R5.16). The truth table answers by id; this named callback exists so the
+    /// XML declares the gate explicitly rather than sharing the general enabled
+    /// getter implicitly. It is disabled — never hidden — when no row can own the interval.
+    /// </summary>
+    /// <param name="control">The menu item Excel is asking about.</param>
+    /// <returns><see langword="true"/> when the table holds an eligible parent.</returns>
+    public bool GetCriticalIntervalEnabled(IRibbonControl control) =>
+        GetEnabled(control, RibbonStateService.Instance);
+
+    /// <summary>
     /// Projects a menu item id to its catalogue display name. Never throws.
     /// </summary>
     /// <param name="itemId">The menu item id, or null.</param>

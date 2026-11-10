@@ -1840,6 +1840,7 @@ internal class RibbonStateService
         // values instead of flipping the ribbon to FirstRun.
         bool? sheetInitialised = null;
         bool? configurationPresent = null;
+        bool? criticalIntervalParentAvailable = null;
         if (_tableReader is not null)
         {
 #pragma warning disable CA1031
@@ -1848,6 +1849,8 @@ internal class RibbonStateService
                 GanttTableReadOutcome tableOutcome = _tableReader.Read();
                 sheetInitialised = tableOutcome.Succeeded;
                 configurationPresent = tableOutcome.ConfigurationPresent;
+                criticalIntervalParentAvailable =
+                    tableOutcome.Succeeded && HasEligibleParent(tableOutcome.Rows);
             }
             catch
             {
@@ -1857,7 +1860,11 @@ internal class RibbonStateService
 #pragma warning restore CA1031
         }
 
-        _state = CaptureSnapshot(_state, sheetInitialised, configurationPresent);
+        _state = CaptureSnapshot(
+            _state,
+            sheetInitialised,
+            configurationPresent,
+            criticalIntervalParentAvailable);
         Invalidate();
     }
 
@@ -2378,11 +2385,16 @@ internal class RibbonStateService
     /// Whether the workbook carries the configuration worksheet, or null when
     /// the probe was unavailable and the previous value must stand (R5.16).
     /// </param>
+    /// <param name="criticalIntervalParentAvailable">
+    /// Whether the table holds a row that can own a Critical Interval, or null
+    /// when the probe was unavailable and the previous value must stand (R5.16).
+    /// </param>
     /// <returns>The snapshot to publish.</returns>
     private RibbonState CaptureSnapshot(
         RibbonState previous,
         bool? sheetInitialised,
-        bool? configurationPresent = null)
+        bool? configurationPresent = null,
+        bool? criticalIntervalParentAvailable = null)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
         // source failure keeps the last known snapshot instead of propagating
@@ -2399,6 +2411,8 @@ internal class RibbonStateService
             bool workbookPresent = hasActiveWorkbook ?? previous.HasActiveWorkbook;
             bool initialised = sheetInitialised ?? previous.SheetInitialised;
             bool configPresent = configurationPresent ?? previous.ConfigurationPresent;
+            bool criticalAvailable =
+                criticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
             RibbonMode mode = ResolveMode(workbookPresent, initialised, configPresent);
 
             // R5.5 ruling 6: the description-label dropdown is the first selection-gated
@@ -2443,7 +2457,8 @@ internal class RibbonStateService
                 customStyleContext.Options,
                 addChildContext.Types,
                 ConfigurationPresent: configPresent,
-                Mode: mode));
+                Mode: mode,
+                CriticalIntervalParentAvailable: criticalAvailable));
         }
         catch
         {
@@ -2474,6 +2489,64 @@ internal class RibbonStateService
                 : configurationPresent
                     ? RibbonMode.NeedsRepair
                     : RibbonMode.FirstRun;
+
+    /// <summary>
+    /// Whether any row in the table can own a Critical Interval (R5.16). The
+    /// answer is data, not selection: the item is disabled only when no row can
+    /// accept one, which is the single refusal the command can still produce.
+    /// </summary>
+    /// <param name="rows">The rows the table read returned.</param>
+    /// <returns><see langword="true"/> when at least one row is an eligible parent.</returns>
+    private static bool HasEligibleParent(IReadOnlyList<GanttRowDto> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return false;
+        }
+
+        Dictionary<string, int> childCounts = new(StringComparer.Ordinal);
+        foreach (GanttRowDto row in rows)
+        {
+            string? parent = row.ParentId?.Trim();
+            if (!string.IsNullOrEmpty(parent))
+            {
+                childCounts[parent] = childCounts.TryGetValue(parent, out int count) ? count + 1 : 1;
+            }
+        }
+
+        foreach (GanttRowDto row in rows)
+        {
+            if (!EntityTypeCatalog.TryParse(row.TypeText, out GanttEntityType type))
+            {
+                continue;
+            }
+
+            GanttRowId? parentId = null;
+            string? parentText = row.ParentId?.Trim();
+            if (!string.IsNullOrEmpty(parentText)
+                && (!GanttRowId.TryParse(parentText, out parentId) || parentId is null))
+            {
+                // A parent id that cannot be parsed makes the row's own depth
+                // unknown, so the candidate is skipped rather than assumed
+                // top-level: the insert would refuse it anyway.
+                continue;
+            }
+
+            int childCount = 0;
+            string? idText = row.Id?.Trim();
+            if (!string.IsNullOrEmpty(idText))
+            {
+                _ = childCounts.TryGetValue(idText, out childCount);
+            }
+
+            if (AddChildPlanner.IsEligibleParent(type, parentId, childCount))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Captures the description-label dropdown's context from the selection identifier, the
