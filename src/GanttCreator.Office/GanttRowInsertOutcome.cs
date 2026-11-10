@@ -49,6 +49,19 @@ public enum GanttRowInsertRefusalReason
     /// </para>
     /// </remarks>
     RowInsertRefused = 5,
+
+    /// <summary>
+    /// A Critical Interval was requested but the table holds no row that can own
+    /// it, so no row was added (R5.16, ADR-0056).
+    /// </summary>
+    /// <remarks>
+    /// A Critical Interval is always a child, so it cannot be appended as a
+    /// top-level row. This refusal is raised BEFORE the worksheet insert, which
+    /// is why the table's row count is unchanged: the alternative — insert,
+    /// discover there is no parent, and delete — would mutates the sheet for an
+    /// action the ribbon already knew could not succeed.
+    /// </remarks>
+    CriticalIntervalRequiresParent = 6,
 }
 
 /// <summary>The typed result of a row insertion.</summary>

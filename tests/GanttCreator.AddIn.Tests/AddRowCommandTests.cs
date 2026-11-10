@@ -239,6 +239,7 @@ public class AddRowCommandTests
     [InlineData(GanttRowInsertRefusalReason.NoActiveWorkbook, "open workbook")]
     [InlineData(GanttRowInsertRefusalReason.TableMissing, "tblGanttData")]
     [InlineData(GanttRowInsertRefusalReason.TargetProtected, "protected")]
+    [InlineData(GanttRowInsertRefusalReason.CriticalIntervalRequiresParent, "activity")]
     [InlineData(GanttRowInsertRefusalReason.TypeOptionsUnavailable, "Type dropdown")]
     public void Refusal_surfaces_exactly_one_actionable_message(
         GanttRowInsertRefusalReason refusal,

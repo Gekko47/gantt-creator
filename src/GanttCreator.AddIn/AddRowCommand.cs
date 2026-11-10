@@ -168,6 +168,9 @@ internal static class AddRowCommand
         GanttRowInsertRefusalReason.RowInsertRefused =>
             "Gantt Creator could not add the row because Excel refused the insert, so no row was added. "
             + "Try again; if it keeps failing, see the Diagnostics dialog.",
+        GanttRowInsertRefusalReason.CriticalIntervalRequiresParent =>
+            "A critical interval must belong to an activity. Select an activity row (or one of its "
+            + "children) and add the critical interval again.",
         _ => "Gantt Creator could not add the row. Try again; if it keeps failing, see the Diagnostics dialog.",
     };
 }
