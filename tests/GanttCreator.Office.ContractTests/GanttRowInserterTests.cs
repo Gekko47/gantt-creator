@@ -340,6 +340,16 @@ public class GanttRowInserterTests
         /// <summary>How many times the adapter read the table body.</summary>
         public int DataBodyValueReads { get; private set; }
 
+        /// <summary>
+        /// The PRE-insert body, returned by the first body read when set (R5.16).
+        /// The parent decision reads before the insert; the regroup reads the
+        /// post-insert <see cref="BodyMatrix"/> afterwards.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
+        public object?[,]? PreInsertBodyMatrix { get; set; }
+
+        private bool _preInsertBodyConsumed;
+
         /// <summary>The stub normaliser handed to every built inserter unless a test passes its
         /// own, so the reserved rows can be asserted without driving real COM.
         /// </summary>
@@ -434,6 +444,12 @@ public class GanttRowInserterTests
                 if (range == DataBodyRange.Object)
                 {
                     DataBodyValueReads++;
+                    if (PreInsertBodyMatrix is not null && !_preInsertBodyConsumed)
+                    {
+                        _preInsertBodyConsumed = true;
+                        return PreInsertBodyMatrix;
+                    }
+
                     return BodyMatrix;
                 }
 
@@ -1579,14 +1595,22 @@ public class GanttRowInserterTests
         var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
         var third = GanttRowId.Parse("G-00000000000000000000000000000005");
 
-        // The active cell is a child of `parent`, and the row that ends
-        // up below the new row is another child of `parent`. The new row
-        // already carries its Id so the regroup's projection can parse it.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (childAbove.Value, "As-Planned Activity", parent.Value),
-            (newRow.Value, "As-Planned Activity", null),
-            (childBelow.Value, "As-Planned Activity", parent.Value),
-            (third.Value, "As-Planned Activity", null)));
+        // The active cell is a child of `parent`, and the row below it is
+        // another child. The parent row is present in the PRE-insert body so
+        // the candidate can be validated; the post-insert body is what the
+        // regroup reads. This fixture previously omitted the parent, which the
+        // old positional rule never needed.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (childAbove.Value, "As-Planned Activity", parent.Value),
+                (newRow.Value, "As-Planned Activity", null),
+                (childBelow.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (childAbove.Value, "As-Planned Activity", parent.Value),
+                (childBelow.Value, "As-Planned Activity", parent.Value),
+                (parent.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1616,11 +1640,16 @@ public class GanttRowInserterTests
 
         // The active cell is a top-level parent; the row that ends up below
         // the new row is its first child. The new row lands between them.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (parent.Value, "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            (firstChild.Value, "As-Planned Activity", parent.Value),
-            (third.Value, "As-Planned Activity", null)));
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                (firstChild.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (firstChild.Value, "As-Planned Activity", parent.Value),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1646,11 +1675,16 @@ public class GanttRowInserterTests
 
         // The active cell is a top-level leaf; the row that ends up below the
         // new row is an unrelated top-level row. Neither neighbour groups.
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            (leaf.Value, "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            (unrelated.Value, "As-Planned Activity", null),
-            (third.Value, "As-Planned Activity", null)));
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (leaf.Value, "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                (unrelated.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                (leaf.Value, "As-Planned Activity", null),
+                (unrelated.Value, "As-Planned Activity", null),
+                (third.Value, "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1697,15 +1731,120 @@ public class GanttRowInserterTests
     }
 
     [Fact]
-    public void A_refused_positional_insert_with_an_outline_writer_never_reads_or_regroups()
+    public void A_critical_interval_attaches_to_the_nearest_eligible_parent()
+    {
+        var milestone = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var activity = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var spacer = GanttRowId.Parse("G-00000000000000000000000000000003");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // The active cell is a milestone; the nearest eligible parent is the
+        // activity below it. The interval is placed after that parent's child
+        // run, so it lands after the activity rather than at the click point.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (milestone.Value, "As-Planned Milestone", null),
+                (activity.Value, "As-Planned Activity", null),
+                (newRow.Value, "Critical Interval", null),
+                (spacer.Value, "Spacer", null)),
+            GroupBodyMatrix(
+                (milestone.Value, "As-Planned Milestone", null),
+                (activity.Value, "As-Planned Activity", null),
+                (spacer.Value, "Spacer", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.CriticalInterval,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(activity.Value, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void A_critical_interval_without_an_eligible_parent_refuses_before_mutating()
+    {
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000004");
+
+        // A table of leaves and structural rows has no parent, so the insert is
+        // refused before any row is acquired or written.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000001", "As-Planned Milestone", null),
+                (newRow.Value, "Critical Interval", null),
+                ("G-00000000000000000000000000000002", "Spacer", null),
+                ("G-00000000000000000000000000000003", "Splitter", null)),
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000001", "As-Planned Milestone", null),
+                ("G-00000000000000000000000000000002", "Spacer", null),
+                ("G-00000000000000000000000000000003", "Splitter", null)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.CriticalInterval,
+            () => newRow);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal(GanttRowInsertRefusalReason.CriticalIntervalRequiresParent, outcome.Refusal);
+        Assert.Null(graph.WrittenValue);
+        Assert.Empty(graph.ListRowAtCalls);
+    }
+
+    [Fact]
+    public void A_spacer_inside_a_group_is_appended_at_the_end_instead_of_splitting_the_run()
+    {
+        var parent = GanttRowId.Parse("G-00000000000000000000000000000001");
+        var child = GanttRowId.Parse("G-00000000000000000000000000000002");
+        var newRow = GanttRowId.Parse("G-00000000000000000000000000000003");
+
+        // The active cell is the group's parent and the row below is its child,
+        // so R5.13 would make the new row a child. A spacer may never be one,
+        // so it is appended at the end instead of splitting the child run.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (child.Value, "As-Planned Activity", parent.Value),
+                (newRow.Value, "Spacer", null)),
+            GroupBodyMatrix(
+                (parent.Value, "As-Planned Activity", null),
+                (child.Value, "As-Planned Activity", parent.Value)));
+        var outlineGroups = new StubOutlineGroupPort();
+        Mock<IWorksheetProtectionGuard> guard = new();
+        _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
+
+        GanttRowInsertOutcome outcome = graph.Build(
+            guard.Object, outlineGroups: outlineGroups).Insert(
+            GanttEntityType.Spacer,
+            () => newRow);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(string.Empty, WrittenParentId(graph.WrittenValue));
+    }
+
+    [Fact]
+    public void A_refused_positional_insert_with_an_outline_writer_never_writes_or_regroups()
     {
         var newRow = GanttRowId.Parse("G-00000000000000000000000000000001");
 
-        var graph = GroupAwareGraph(GroupBodyMatrix(
-            ("G-00000000000000000000000000000002", "As-Planned Activity", null),
-            (newRow.Value, "As-Planned Activity", null),
-            ("G-00000000000000000000000000000003", "As-Planned Activity", null),
-            ("G-00000000000000000000000000000004", "As-Planned Activity", null)));
+        // R5.16: the parent decision reads the PRE-insert body once, before the
+        // worksheet mutation. What the refusal must still guarantee is that it
+        // writes nothing, acquires no list row, and regroups nothing.
+        var graph = GroupAwareGraph(
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+                (newRow.Value, "As-Planned Activity", null),
+                ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000004", "As-Planned Activity", null)),
+            GroupBodyMatrix(
+                ("G-00000000000000000000000000000002", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000003", "As-Planned Activity", null),
+                ("G-00000000000000000000000000000004", "As-Planned Activity", null)));
         var outlineGroups = new StubOutlineGroupPort();
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -1716,12 +1855,12 @@ public class GanttRowInserterTests
             GanttEntityType.AsPlannedActivity,
             () => newRow);
 
-        // The worksheet-row insert was refused, so the positional branch
-        // refuses before any read, write, or outline rebuild -- the R5.13
-        // safety invariant holds even when an outline writer is attached.
+        // The worksheet-row insert was refused, so the positional branch writes
+        // nothing, acquires no row, and rebuilds no outline. The single body
+        // read is the parent decision R5.16 added before the insert.
         Assert.False(outcome.Succeeded);
         Assert.Equal(GanttRowInsertRefusalReason.RowInsertRefused, outcome.Refusal);
-        Assert.Equal(0, graph.DataBodyValueReads);
+        Assert.Equal(1, graph.DataBodyValueReads);
         Assert.Empty(graph.ListRowAtCalls);
         Assert.Null(graph.WrittenValue);
         Assert.Empty(outlineGroups.Applied);
@@ -1735,7 +1874,7 @@ public class GanttRowInserterTests
     /// up below it, and the third row -- supplied by the caller.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1814:MultiDimArrays", Justification = "Excel's Value2 is a SAFEARRAY and is shaped as a multidimensional array; a jagged array cannot express it.")]
-    private static Graph GroupAwareGraph(object?[,] body)
+    private static Graph GroupAwareGraph(object?[,] body, object?[,]? preInsertBody = null)
     {
         var graph = new Graph();
         _ = graph.Table.SetupGet(t => t.Active).Returns(true);
@@ -1743,6 +1882,7 @@ public class GanttRowInserterTests
         _ = graph.ListRows.SetupGet(r => r.Count).Returns(3);
         _ = graph.TableRows.SetupGet(r => r.Count).Returns(4);
         graph.BodyMatrix = body;
+        graph.PreInsertBodyMatrix = preInsertBody;
         return graph;
     }
 

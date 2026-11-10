@@ -138,6 +138,28 @@ public class ExcelGanttRowInserter(
         // the insert below the table having succeeded. A positional insert shifts the
         // sheet by itself, so its padding row is displaced by definition.
         bool paddingRowReserved = true;
+
+        // R5.16: resolve the new row's parent BEFORE any worksheet mutation, so a
+        // Critical Interval with no eligible parent refuses without touching the
+        // sheet. The decision reads the body only when there is something to
+        // decide (see DecideParent), which keeps the append and no-outline paths
+        // read-free.
+        int? position = reusableRow is null
+            ? GetInsertionPosition(application!, table, rows)
+            : null;
+        ParentDecision parentDecision = DecideParent(type, table, position, columnMap);
+        if (parentDecision.Refused)
+        {
+            return GanttRowInsertOutcome.Refused(
+                GanttRowInsertRefusalReason.CriticalIntervalRequiresParent);
+        }
+
+        position = parentDecision.Position;
+        if (parentDecision.ParentId is not null)
+        {
+            values = WithParentId(values, parentDecision.ParentId);
+        }
+
         if (reusableRow is not null)
         {
             // An initialised table whose body is empty can still own one blank row
@@ -148,7 +170,6 @@ public class ExcelGanttRowInserter(
         }
         else
         {
-            int? position = GetInsertionPosition(application!, table, rows);
             insertedBodyRow = position;
 
             // BOTH branches insert a genuine WORKSHEET row, because
@@ -226,23 +247,9 @@ public class ExcelGanttRowInserter(
                 return GanttRowInsertOutcome.Refused(GanttRowInsertRefusalReason.RowWriteRefused);
             }
 
-            // R5.13: a positional insert lands BELOW the active cell. When that
-            // puts the new row inside a group's contiguous child run, make it a
-            // child of that group's parent so the run stays contiguous and the
-            // outline planner can still represent the group. The append branch
-            // (position null) and the header row (position 1) stay top-level.
-            //
-            // This runs only with an outline writer -- without one there is no
-            // grouping to preserve, so the row is the plain top-level append the
-            // contract pins. It runs only AFTER the row-creation seams succeeded:
-            // a refused positional insert returned above, so a refusal never
-            // reads the user's existing rows (ADR-0008 D4). The neighbours are
-            // read as one bulk body read, never through GetListRowAt, so the
-            // insert's own row-acquisition seam call count is unchanged.
-            if (_outlineGroups is not null && position.HasValue && position.Value > 1)
-            {
-                values = ApplyGroupAwareParent(values, table, position.Value, columnMap);
-            }
+            // R5.16: the parent (if any) was resolved BEFORE the insert by
+            // DecideParent and is already written into `values`. Nothing here
+            // reads the user's rows after the row-creation seams.
         }
 
         try
@@ -598,93 +605,259 @@ public class ExcelGanttRowInserter(
     }
 
     /// <summary>
-    /// Applies group-aware parenting to a positional insert (R5.13).
-    /// A positional insert lands BELOW the active cell, so once the
-    /// worksheet-row insert has shifted the rows the active cell sits
-    /// at the one-based body position <c>position - 1</c> and the row
-    /// that ends up below the new row at <c>position + 1</c>. When
-    /// the new row lands inside a group's contiguous child run it
-    /// becomes a child of that group's parent; when it lands between
-    /// a top-level parent and its first child it becomes that
-    /// parent's first child; every other position -- including the
-    /// header row (position 1) and the append (position
-    /// <see langword="null"/>) -- stays top-level, matching the host's
-    /// own outline-insert behaviour.
+    /// The parent decision for one insert (R5.16): the parent to write, the
+    /// position to land at (null means append), and whether the insert must be
+    /// refused before it mutates the sheet.
+    /// </summary>
+    private readonly record struct ParentDecision(
+        GanttRowId? ParentId,
+        int? Position,
+        bool Refused);
+
+    /// <summary>
+    /// Resolves the new row's parent BEFORE the worksheet insert (R5.16).
     /// </summary>
     /// <remarks>
-    /// The two neighbours are read as ONE bulk body read
-    /// (<see cref="GetDataBodyRange"/>/<see cref="GetRangeValue2"/>),
-    /// never through <see cref="GetListRowAt"/>: that seam is the
-    /// insert's own row-acquisition step, whose call count and order
-    /// the contract pins. Reusing <see cref="ReadBody"/> also matches
-    /// the projection authority the regroup that follows consumes.
+    /// <para>Four outcomes, in order:</para>
+    /// <list type="number">
+    /// <item><description>
+    /// A Critical Interval attaches to the nearest eligible parent — searched
+    /// upward from the selection first, then downward — and lands after that
+    /// parent's last child. No eligible parent anywhere refuses the insert.
+    /// </description></item>
+    /// <item><description>
+    /// Every other type keeps the R5.13 neighbour rule: inside a contiguous
+    /// child run it joins that group; between a parent and its first child it
+    /// becomes that parent's first child.
+    /// </description></item>
+    /// <item><description>
+    /// The candidate parent is validated through
+    /// <see cref="AddChildPlanner.Evaluate"/>. A rejection — or a type that may
+    /// never be a child, such as a spacer or splitter — appends the row at the
+    /// end of the table instead, so a child run is never split.
+    /// </description></item>
+    /// <item><description>
+    /// Nothing to decide (an append, a header insert, or no outline writer)
+    /// returns without reading the body at all.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// This is the one place the insert reads before mutating. R5.16 records
+    /// that exception, and the R5.13 "never reads" pin is amended to "never
+    /// writes or regroups".
+    /// </para>
     /// </remarks>
-    /// <param name="values">The scaffold row, in schema-column order.</param>
-    /// <param name="table">The Gantt data table, post-insert.</param>
-    /// <param name="position">The one-based body position the new row lands at.</param>
+    /// <param name="type">The type the new row will have.</param>
+    /// <param name="table">The Gantt data table, pre-insert.</param>
+    /// <param name="position">The one-based body position the row would land at, or null for an append.</param>
     /// <param name="columnMap">The schema-column to table-column index map.</param>
-    /// <returns>The scaffold, with its <c>ParentId</c> set when the new row joins a group.</returns>
-    private IReadOnlyList<object?> ApplyGroupAwareParent(
-        IReadOnlyList<object?> values,
+    /// <returns>The decision.</returns>
+    private ParentDecision DecideParent(
+        GanttEntityType type,
         Excel.ListObject table,
-        int position,
+        int? position,
         int[] columnMap)
     {
-        // The active cell is at 0-based body position position - 2 and the
-        // row that ends up below the new row at 0-based position. Both must
-        // be in range; position 1 (header selected) has no active data cell
-        // above the new row, so it stays top-level.
-        List<object?[]> body = ReadBody(table);
-        if (position < 2 || position >= body.Count)
+        bool critical = type == GanttEntityType.CriticalInterval;
+        bool canJoinGroup = _outlineGroups is not null;
+
+        // Nothing to decide: leave the append, header, and no-outline paths
+        // exactly as they were, including their freedom from any body read.
+        if (!critical && (!canJoinGroup || position is null || position.Value < 2))
         {
-            _trace?.Invoke(
-                "gantt.rowinsert parent-decision position=" + position
-                + " rows=" + body.Count
-                + " decided=none (outside a group by position)");
-            return values;
+            return new ParentDecision(null, position, false);
         }
 
-        object?[] activeRow = body[position - 2];
-        object?[] belowRow = body[position];
+        List<object?[]> body = ReadBody(table);
+        if (body.Count == 0)
+        {
+            return new ParentDecision(null, position, critical);
+        }
+
+        Dictionary<string, int> childCounts = CountChildren(body, columnMap);
+
+        if (critical)
+        {
+            int anchor = position is null ? body.Count - 1 : position.Value - 2;
+            if (anchor < 0 || anchor >= body.Count)
+            {
+                return new ParentDecision(null, position, true);
+            }
+
+            int? parentIndex = FindNearestEligibleParent(body, columnMap, anchor, childCounts, out GanttRowId? parentId);
+            return parentIndex is null || parentId is null
+                ? new ParentDecision(null, position, true)
+                : new ParentDecision(
+                    parentId,
+                    PositionAfterChildren(body, columnMap, parentIndex.Value, parentId),
+                    false);
+        }
+
+        int activeIndex = position!.Value - 2;
+        if (activeIndex < 0 || activeIndex >= body.Count)
+        {
+            return new ParentDecision(null, position, false);
+        }
+
+        object?[] activeRow = body[activeIndex];
+        object?[]? belowRow = position.Value < body.Count ? body[position.Value - 1] : null;
 
         GanttRowId? activeId = TryParseId(activeRow, columnMap);
         GanttRowId? activeParentId = TryParseParentId(activeRow, columnMap);
-        GanttRowId? belowParentId = TryParseParentId(belowRow, columnMap);
+        GanttRowId? belowParentId = belowRow is null ? null : TryParseParentId(belowRow, columnMap);
 
-        GanttRowId? decided = null;
-
-        // The active cell is a child of P and the row below is also a
-        // child of P: the new row lands inside P's contiguous child run,
-        // so it joins that run.
+        GanttRowId? candidate = null;
         if (activeParentId is not null && belowParentId == activeParentId)
         {
-            decided = activeParentId;
+            candidate = activeParentId;
         }
-
-        // The active cell is a top-level parent and the row below is
-        // its child: the new row lands between the parent and its first
-        // child, so it becomes that parent's first child.
         else if (activeParentId is null && activeId is not null && belowParentId == activeId)
         {
-            decided = activeId;
+            candidate = activeId;
         }
 
-        // Every other position -- below a top-level leaf, below a group's
-        // last child, or between two different groups -- is top-level,
-        // matching the host's own outline-insert behaviour.
-        _trace?.Invoke(
-            "gantt.rowinsert parent-decision position=" + position
-            + " active=" + Show(activeId)
-            + " activeparent=" + Show(activeParentId)
-            + " belowparent=" + Show(belowParentId)
-            + " decided=" + Show(decided));
-
-        return decided is null ? values : WithParentId(values, decided);
-
-        static string Show(GanttRowId? id)
+        if (candidate is null)
         {
-            return id?.Value ?? "none";
+            return new ParentDecision(null, position, false);
         }
+
+        int candidateIndex = -1;
+        for (int index = 0; index < body.Count; index++)
+        {
+            if (TryParseId(body[index], columnMap) == candidate)
+            {
+                candidateIndex = index;
+                break;
+            }
+        }
+
+        if (candidateIndex < 0
+            || !EntityTypeCatalog.TryParse(
+                ExcelGanttRowProjection.CellText(body[candidateIndex], columnMap, "Type"),
+                out GanttEntityType parentType))
+        {
+            return new ParentDecision(null, position, false);
+        }
+
+        object?[] parentRow = body[candidateIndex];
+        string parentKey = candidate.Value;
+        int existingChildren = childCounts.TryGetValue(parentKey, out int count) ? count : 0;
+        AddChildRefusalReason? refusal = AddChildPlanner.Evaluate(
+            parentType,
+            candidate,
+            TryParseParentId(parentRow, columnMap),
+            existingChildren,
+            type);
+
+        // A rejected candidate, or a type that may never be a child, appends at
+        // the end of the table: always a valid position, never splits a run.
+        return refusal is null
+            ? new ParentDecision(candidate, position, false)
+            : new ParentDecision(null, null, false);
+    }
+
+    /// <summary>Counts each row's children by the parent id text it names.</summary>
+    private static Dictionary<string, int> CountChildren(List<object?[]> body, int[] columnMap)
+    {
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        foreach (object?[] row in body)
+        {
+            GanttRowId? parentId = TryParseParentId(row, columnMap);
+            if (parentId is null)
+            {
+                continue;
+            }
+
+            string key = parentId.Value;
+            counts[key] = counts.TryGetValue(key, out int count) ? count + 1 : 1;
+        }
+
+        return counts;
+    }
+
+    /// <summary>
+    /// Finds the nearest row that can own a Critical Interval: upward from the
+    /// anchor first, then downward (R5.16).
+    /// </summary>
+    private static int? FindNearestEligibleParent(
+        List<object?[]> body,
+        int[] columnMap,
+        int anchor,
+        Dictionary<string, int> childCounts,
+        out GanttRowId? parentId)
+    {
+        parentId = null;
+        for (int index = anchor; index >= 0; index--)
+        {
+            if (TryEligibleParent(body[index], columnMap, childCounts, out parentId))
+            {
+                return index;
+            }
+        }
+
+        for (int index = anchor + 1; index < body.Count; index++)
+        {
+            if (TryEligibleParent(body[index], columnMap, childCounts, out parentId))
+            {
+                return index;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether one row can own a Critical Interval.</summary>
+    private static bool TryEligibleParent(
+        object?[] row,
+        int[] columnMap,
+        Dictionary<string, int> childCounts,
+        out GanttRowId? parentId)
+    {
+        parentId = null;
+        GanttRowId? rowId = TryParseId(row, columnMap);
+        if (rowId is null
+            || !EntityTypeCatalog.TryParse(
+                ExcelGanttRowProjection.CellText(row, columnMap, "Type"),
+                out GanttEntityType rowType))
+        {
+            return false;
+        }
+
+        int childCount = childCounts.TryGetValue(rowId.Value, out int count) ? count : 0;
+        if (AddChildPlanner.Evaluate(
+                rowType,
+                rowId,
+                TryParseParentId(row, columnMap),
+                childCount,
+                GanttEntityType.CriticalInterval) is not null)
+        {
+            return false;
+        }
+
+        parentId = rowId;
+        return true;
+    }
+
+    /// <summary>
+    /// The position immediately after a parent's last existing child, or null
+    /// when that is the end of the table (R5.16).
+    /// </summary>
+    private static int? PositionAfterChildren(
+        List<object?[]> body,
+        int[] columnMap,
+        int parentIndex,
+        GanttRowId parentId)
+    {
+        int lastIndex = parentIndex;
+        for (int index = 0; index < body.Count; index++)
+        {
+            if (TryParseParentId(body[index], columnMap) == parentId)
+            {
+                lastIndex = index;
+            }
+        }
+
+        return lastIndex == body.Count - 1 ? null : lastIndex + 2;
     }
 
     /// <summary>
