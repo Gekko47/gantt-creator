@@ -22,9 +22,10 @@ public class AddRowRibbonTests
             g => g.Attribute("id")?.Value == "grpData");
         XElement[] buttons = group.Elements(ns + "button").ToArray();
 
+        // R5.16: Initialise moved to the first-run Get started group, so the
+        // Data group no longer offers it.
         Assert.Equal(
             [
-                RibbonControlIds.InitialiseSheet,
                 RibbonControlIds.ValidateSheet,
                 RibbonControlIds.RepairConfig,
                 RibbonControlIds.AddActivity,
@@ -35,7 +36,6 @@ public class AddRowRibbonTests
             buttons.Select(button => button.Attribute("id")?.Value));
         Assert.Equal(
             [
-                "OnInitialiseSheetClick",
                 "OnValidateSheetClick",
                 "OnRepairConfigClick",
                 "OnAddActivityClick",
@@ -45,6 +45,9 @@ public class AddRowRibbonTests
             ],
             buttons.Select(button => button.Attribute("onAction")?.Value));
         Assert.All(buttons, button => Assert.Equal("GetEnabled", button.Attribute("getEnabled")?.Value));
+        Assert.DoesNotContain(
+            group.Descendants(ns + "button"),
+            button => button.Attribute("id")?.Value == RibbonControlIds.InitialiseSheet);
     }
 
     [Fact]

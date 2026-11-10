@@ -783,6 +783,41 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
+    /// Excel's <c>getVisible</c> callback: whether the group is shown in the
+    /// current mode (R5.16). Visibility is FAIL-CLOSED, unlike enablement: a
+    /// probe failure hides the group rather than showing one that may not
+    /// belong in the current mode.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns>The group's visibility.</returns>
+    public bool GetVisible(IRibbonControl control) => GetVisible(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetVisible(IRibbonControl)"/> against an injected state
+    /// service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns><see langword="true"/> when the group should be shown.</returns>
+    internal static bool GetVisible(IRibbonControl? control, RibbonStateService stateService)
+    {
+        ArgumentNullException.ThrowIfNull(stateService);
+        // CA1031: the only failure source is the COM control-ID probe; a probe
+        // failure must fail CLOSED so an unknown group is never shown.
+#pragma warning disable CA1031
+        try
+        {
+            return stateService.GetVisible(control?.Id);
+        }
+        catch
+        {
+            return false;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
     /// Excel's getText callback for the start-date edit box. Returns the
     /// effective display date: the explicit date in explicit mode, the
     /// current month-snapped chart bound in automatic mode, or empty when

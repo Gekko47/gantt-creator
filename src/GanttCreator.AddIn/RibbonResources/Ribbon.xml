@@ -8,8 +8,13 @@
              screen reader announces), and every button carries a visible label.
              Supertips are local text only — no network links anywhere, per the
              offline invariant. -->
-        <group id="grpData" label="Data">
-          <button id="btnInitialiseSheet" label="Initialise sheet" imageMso="TableInsertExcel" keytip="I" screentip="Initialise the Gantt sheet" supertip="Creates the Gantt table, the chart area, and the workbook configuration. Run it once per workbook before adding activities." getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
+        <!-- R5.16: the first-run surface. Visible only while the workbook has
+             no add-in configuration; see RibbonState.IsVisible and ADR-0056.
+             Diagnostics stays visible in every mode (owner ruling 2026-11-10). -->
+        <group id="grpGetStarted" label="Get started" getVisible="GetVisible">
+          <button id="btnInitialiseSheet" label="Initialise sheet" size="large" imageMso="TableInsertExcel" keytip="I" screentip="Initialise the Gantt sheet" supertip="Creates the Gantt table, the chart area, and the workbook configuration. Run it once per workbook before adding activities." getEnabled="GetEnabled" onAction="OnInitialiseSheetClick"/>
+        </group>
+        <group id="grpData" label="Data" getVisible="GetVisible">
           <button id="btnValidateSheet" label="Validate" imageMso="Spelling" keytip="V" screentip="Validate the schedule table" supertip="Checks every row and reports errors and warnings as cell notes. Validation never changes your schedule data." getEnabled="GetEnabled" onAction="OnValidateSheetClick"/>
           <button id="btnRepairConfig" label="Repair configuration" imageMso="TableInsertExcel" keytip="R" screentip="Repair the configuration" supertip="Checks the hidden configuration sheet and repairs safe damage. A repair that could touch visible schedule rows asks for confirmation first." getEnabled="GetEnabled" onAction="OnRepairConfigClick"/>
           <button id="btnAddActivity" label="Add activity" imageMso="TableInsertExcel" keytip="AA" screentip="Add an activity row" supertip="Appends a new activity row below the table and places the cursor in it." getEnabled="GetEnabled" onAction="OnAddActivityClick"/>
@@ -24,7 +29,7 @@
           <dropDown id="ddnAddChild" label="Add child" keytip="AC" screentip="Add a child row" supertip="Adds a row beneath the selected parent, using a type the parent may own. The list offers only permitted child types." getEnabled="GetEnabled" getItemCount="GetAddChildCount" getItemID="GetAddChildItemID" getItemLabel="GetAddChildItemLabel" onAction="OnAddChildChange"/>
           <button id="btnRemove" label="Remove" imageMso="TableInsertExcel" keytip="X" screentip="Remove the selected row" supertip="Deletes the selected row and re-homes its children. A confirmation is shown unless you opted out this session." getEnabled="GetEnabled" onAction="OnRemoveClick"/>
         </group>
-        <group id="grpOrdering" label="Ordering">
+        <group id="grpOrdering" label="Ordering" getVisible="GetVisible">
           <box id="boxOrdering" boxStyle="vertical">
             <button id="btnPromoteToParent" label="Promote to parent" imageMso="TableInsertExcel" keytip="P" screentip="Promote the row to top level" supertip="Moves the selected row out of its group and resequences the top-level rows." getEnabled="GetEnabled" onAction="OnPromoteToParentClick"/>
             <button id="btnDemoteToChild" label="Demote to child" imageMso="TableInsertExcel" keytip="E" screentip="Demote the row under the group above" supertip="Moves the selected row into the group above it and re-homes its own children." getEnabled="GetEnabled" onAction="OnDemoteToChildClick"/>
@@ -39,7 +44,7 @@
             </box>
           </box>
         </group>
-        <group id="grpOutline" label="Outline">
+        <group id="grpOutline" label="Outline" getVisible="GetVisible">
           <!-- R5.4: the Ribbon surface over the native Excel outline. These
                buttons collapse and expand EVERY parent/child group at once,
                which is the one thing Excel's per-group -/+ controls cannot do.
@@ -54,7 +59,7 @@
             <button id="btnCollapseAllGroups" label="Collapse all groups" imageMso="OutlineCollapse" keytip="C" screentip="Collapse every outline group" supertip="Hides every grouped child row using the same row state as Excel's own outline controls." getEnabled="GetEnabled" onAction="OnCollapseAllGroupsClick"/>
           </box>
         </group>
-        <group id="grpLabels" label="Labels">
+        <group id="grpLabels" label="Labels" getVisible="GetVisible">
           <!-- R5.5: dynamic item lists — items are projected from the selected
                row's Type (EntityTypeCatalog) at query time, so no option list
                is authored twice. R5.10 adds fill/stroke into this group. -->
@@ -82,11 +87,11 @@
             <dropDown id="ddnCustomStyle" keytip="CS" screentip="Custom style for the row" supertip="Assigns a custom style to the selected Custom Activity or Custom Milestone row." getEnabled="GetEnabled" getItemCount="GetCustomStyleCount" getItemID="GetCustomStyleItemID" getItemLabel="GetCustomStyleItemLabel" getSelectedItemIndex="GetCustomStyleSelectedIndex" onAction="OnCustomStyleChange"/>
           </box>
         </group>
-        <group id="grpStyleTheme" label="Style and Theme">
+        <group id="grpStyleTheme" label="Style and Theme" getVisible="GetVisible">
           <button id="btnThemeSettings" label="Theme settings..." keytip="T" screentip="Open the theme settings" supertip="Edits entity styles, chart chrome, and custom styles. Changes apply to the chart after they are saved." getEnabled="GetEnabled" onAction="OnThemeSettingsClick"/>
           <button id="btnChartTitle" label="Chart title..." keytip="H" screentip="Edit the chart title" supertip="Sets the title shown above the Gantt chart. Clearing the title hides it." getEnabled="GetEnabled" onAction="OnChartTitleClick"/>
         </group>
-        <group id="grpPlotArea" label="Plot Area">
+        <group id="grpPlotArea" label="Plot Area" getVisible="GetVisible">
           <box id="boxPlotStart" boxStyle="vertical">
             <labelControl id="lblPlotStartDate" label="Start Date"/>
             <box id="boxPlotStartAuto" boxStyle="horizontal">
@@ -104,7 +109,7 @@
             <editBox id="edtPlotFinishDate" keytip="FD" screentip="Explicit finish date" supertip="The chart finish date in dd/mm/yyyy form. It is disabled while the automatic finish is checked." getText="GetPlotFinishDate" getEnabled="GetPlotFinishDateEnabled" onChange="OnPlotFinishDateChange" sizeString="dd-mmm-yy"/>
           </box>
         </group>
-        <group id="grpPlotTimeScale" label="Plot Time Scale">
+        <group id="grpPlotTimeScale" label="Plot Time Scale" getVisible="GetVisible">
           <dropDown id="ddnPlotTimeScale" label="Time scale" keytip="K" screentip="Chart time scale" supertip="Chooses the month, quarter, or week scale and the month label form. The chart redraws after the choice is saved." getSelectedItemIndex="GetTimeScale" getEnabled="GetEnabled" onAction="OnTimeScaleChange">
             <item id="Month-MM" label="Month (MM)"/>
             <item id="Month-MMM" label="Month (MMM)"/>
@@ -112,7 +117,7 @@
             <item id="Week" label="Week"/>
           </dropDown>
         </group>
-        <group id="grpPlotSize" label="Plot Size">
+        <group id="grpPlotSize" label="Plot Size" getVisible="GetVisible">
           <box id="boxPresets" boxStyle="vertical">
             <box id="boxPresetsA4" boxStyle="vertical">
               <button id="btnPresetA4Portrait" label="A4 portrait" imageMso="PageOrientationPortrait" keytip="1" screentip="A4 portrait page" supertip="Sizes the chart for an A4 portrait page." getEnabled="GetEnabled" onAction="OnPresetClick"/>
@@ -150,7 +155,7 @@
             </box>
           </box>
         </group>
-        <group id="grpPlaceholder" label="Gantt Creator">
+        <group id="grpPlaceholder" label="Gantt Creator" getVisible="GetVisible">
           <button id="btnRefreshSheet" label="Refresh chart" imageMso="Refresh" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
           <button id="btnWarnings" label="Warnings..." keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
           <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on
@@ -164,7 +169,7 @@
           <toggleButton id="btnToggleChartLock" label="Lock chart" keytip="LK" screentip="Lock or unlock the chart elements" supertip="Pressed means the chart's shapes are locked and cannot be dragged. Unpressed means you can move them; the automatic refresh pauses until you lock the chart again or refresh." imageMso="Lock" getEnabled="GetEnabled" getPressed="GetToggleChartLockPressed" onAction="OnToggleChartLockClick"/>
           <toggleButton id="btnToggleCellLock" label="Lock cells" keytip="CL" screentip="Lock or unlock the cells outside the table" supertip="Pressed means the cells outside the visible table are read-only. Unpressed means the whole sheet is editable. The visible table is always editable either way, so copy, paste and formatting are never blocked there." imageMso="LockCell" getEnabled="GetEnabled" getPressed="GetToggleCellLockPressed" onAction="OnToggleCellLockClick"/>
         </group>
-        <group id="grpDiagnostics" label="Diagnostics">
+        <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">
           <button id="btnDiagnostics" label="Diagnostics" imageMso="Help" keytip="D" screentip="Show diagnostics" supertip="Shows the add-in version, Office version, and bitness, with a link to the log file." getEnabled="GetEnabled" onAction="OnDiagnosticsClick"/>
           <button id="btnOpenLog" label="Open log file" imageMso="FileOpen" keytip="L" screentip="Open the log file" supertip="Opens the add-in log in your default text editor." getEnabled="GetEnabled" onAction="OnOpenLogClick"/>
         </group>

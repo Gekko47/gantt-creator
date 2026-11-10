@@ -94,6 +94,74 @@ public class GanttRibbonTests
         Assert.Contains("customUI", xml, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Groups that do not declare the <c>getVisible</c> callback (R5.16). Kept
+    /// as a validator so a future group cannot be added without visibility.
+    /// </summary>
+    private static IReadOnlyList<string> GroupsMissingVisibleCallback(string xml)
+    {
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = doc.Root!.Name.Namespace;
+        return
+        [
+            .. doc.Descendants(ns + "group")
+                .Where(group => (string?)group.Attribute("getVisible") != "GetVisible")
+                .Select(group => (string?)group.Attribute("id") ?? string.Empty),
+        ];
+    }
+
+    [Fact]
+    public void Every_ribbon_group_declares_the_visible_callback()
+    {
+        Assert.Empty(GroupsMissingVisibleCallback(Ribbon.GetCustomUI(WorkbookRibbonId)!));
+    }
+
+    [Fact]
+    public void The_visible_callback_validator_flags_a_group_that_omits_it()
+    {
+        // Positive test: a group without getVisible must be named, not silently
+        // accepted. Without this, the check above would pass by matching nothing.
+        const string xml = """
+            <customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
+              <ribbon><tabs><tab id="tab">
+                <group id="grpGood" getVisible="GetVisible"/>
+                <group id="grpBad"/>
+              </tab></tabs></ribbon>
+            </customUI>
+            """;
+
+        Assert.Equal(["grpBad"], GroupsMissingVisibleCallback(xml));
+    }
+
+    [Fact]
+    public void Get_started_holds_exactly_the_large_initialise_button()
+    {
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = doc.Root!.Name.Namespace;
+        XElement group = Assert.Single(
+            doc.Descendants(ns + "group"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.GetStartedGroup);
+
+        XElement button = Assert.Single(group.Elements());
+        Assert.Equal(RibbonControlIds.InitialiseSheet, (string?)button.Attribute("id"));
+        Assert.Equal("large", (string?)button.Attribute("size"));
+    }
+
+    private sealed class ThrowingVisibleStateService : RibbonStateService
+    {
+        internal override bool GetVisible(string? groupId) =>
+            throw new InvalidOperationException("probe failed");
+    }
+
+    [Fact]
+    public void Get_visible_fails_closed_when_the_state_service_throws()
+    {
+        var control = new Mock<IRibbonControl>();
+        _ = control.SetupGet(c => c.Id).Returns(RibbonControlIds.DataGroup);
+
+        Assert.False(GanttRibbon.GetVisible(control.Object, new ThrowingVisibleStateService()));
+    }
+
     [Fact]
     public void GetCustomUI_returns_null_for_any_other_ribbon_id()
     {
