@@ -127,6 +127,25 @@ param(
     # passes silently. 34 was rejected for the same reason 29 was: it
     # would make the gate flap on a passing tree.
     #
+    # RAISED 35 -> 37 ON 2026-11-10, on the owner's explicit instruction, from
+    # ONE measured run rather than the two the 30 -> 35 raise had: the R5.16
+    # office gate read 37 forced kills with the suite itself 60/60 green in
+    # 10m32s, so the ratchet alone was red. Stated plainly, because this raise
+    # is weaker than the last one: a single run is not a band, and it cannot
+    # distinguish a new leak from the L19 teardown flap. The attribution is
+    # mostly uniform (one kill per workbook body, as always) with one outlier:
+    # `Initialise_preserves_a_cell_empty_sheet_with_live_non_cell_state` reads
+    # 3. R5.16 added two proxy-holding candidates on exactly that kind of path
+    # -- `ExcelGanttTableReader.HasConfigurationSheet` enumerates sheets through
+    # `GetSheetAt` on the table-missing path without releasing them, and
+    # `ExcelGanttRowInserter.DecideParent` reads the body before the insert --
+    # and either could account for the +2. That is a hypothesis, not a finding;
+    # nothing here proves it, and the honest next step is a second run to see
+    # whether 37 repeats or drifts, plus releasing the sheet proxies in
+    # `HasConfigurationSheet` the way `NormaliseLayoutRow` should be released.
+    # WHAT THIS COSTS: at 37 a regression adding up to two leaked chains passes
+    # silently. 36 was not chosen because it would flap on the observed value.
+    #
     # The end state is still 0. This is a baseline correction, not a licence.
     # `NormaliseLayoutRow` creates a worksheet-row Range per layout row per
     # normalisation and never releases it; releasing that one Range is the
@@ -134,9 +153,9 @@ param(
     # direction.
     #
     # Do not raise it again without a measurement that explains the new figure, and
-    # do not lower it below 35 without a run whose kill count is at or under the
+    # do not lower it below 37 without a run whose kill count is at or under the
     # proposed value.
-    [int]$MaxForcedKills = 35
+    [int]$MaxForcedKills = 37
 )
 
 $ErrorActionPreference = 'Stop'
