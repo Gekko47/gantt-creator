@@ -248,7 +248,8 @@ files only; the local audit verifies every file exists.
 | R5.13 | `R5.13-group-aware-row-insert.md` | Implemented; live group-aware insertion and outline review remains |
 | R5.14 | `R5.14-date-labels.md` | Implemented; live date-label selection and placement review remains |
 | R5.15 | `R5.15-managed-worksheet-protection.md` | Not implemented; proof-first live feasibility and ADR decision required before any protection adoption |
-| R5.16 | `R5.16-ribbon-first-run-and-data-group.md` | Governance recorded 2026-11-10 (ADR-0056); implementation and live ribbon review not started |
+| R5.16 | `R5.16-ribbon-first-run-and-data-group.md` | Implemented 2026-11-10/11 (ADR-0056) across sixteen commits; `verify-quick`, `verify` and `verify-office` green (61/61 live tests); first-run surface observed live by the owner; the state-2 swap and the menu/gate/insertion passes are still owed |
+| R5.17 | `R5.17-repair-rebuilds-a-missing-data-table.md` | Decided 2026-11-11 (ADR-0057) after the live report "when deleting the table, the fix button does nothing"; implementation not started |
 
 **Phase 5 completion snapshot (2026-10-31):** R5.1–R5.14 feature code and
 automated coverage are present in the current source. Their required live
