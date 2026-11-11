@@ -16,7 +16,7 @@
 | ADR-0008 | Destructive-command policy: no undo, warned confirmation | Accepted | 2026-09-22 | [`adr/0008-destructive-command-policy.md`](adr/0008-destructive-command-policy.md) |
 | ADR-0009 | Named-style capability columns | Accepted | 2026-09-23 | [`adr/0009-style-capability-schema.md`](adr/0009-style-capability-schema.md) |
 | ADR-0010 | First-live-slice sequencing exception | Accepted | 2026-09-23 | [`adr/0010-first-live-slice-sequencing.md`](adr/0010-first-live-slice-sequencing.md) |
-| ADR-0011 | Safe configuration and identity repair | Accepted | 2026-09-24 | [`adr/0011-config-safe-repair-policy.md`](adr/0011-config-safe-repair-policy.md) |
+| ADR-0011 | Safe configuration and identity repair | Accepted (amended 2026-11-11) | 2026-09-24 | [`adr/0011-config-safe-repair-policy.md`](adr/0011-config-safe-repair-policy.md) |
 | ADR-0012 | Derive effective stack index in Core | Accepted | 2026-09-25 | [`adr/0012-derived-effective-stack-index.md`](adr/0012-derived-effective-stack-index.md) |
 | ADR-0013 | Chart-level scene ownership | Accepted | 2026-09-25 | [`adr/0013-chart-level-scene-ownership.md`](adr/0013-chart-level-scene-ownership.md) |
 | ADR-0014 | Versioned frame and title settings | Accepted | 2026-09-25 | [`adr/0014-frame-band-settings.md`](adr/0014-frame-band-settings.md) |
@@ -55,8 +55,8 @@
 | ADR-0049 | A delineator carries a user-authored named style whose width overrides the chart-wide metric | Accepted | 2026-10-28 | [`adr/0049-delineator-named-style.md`](adr/0049-delineator-named-style.md) |
 | ADR-0050 | Empty live chart and coalesced automatic refresh | Accepted | 2026-10-31 | [`adr/0050-empty-live-chart-and-coalesced-refresh.md`](adr/0050-empty-live-chart-and-coalesced-refresh.md) |
 | ADR-0051 | Retain the unprotected worksheet; add-in-owned protection is not adopted | Accepted | 2026-11-01 | [`adr/0051-retain-unprotected-worksheet.md`](adr/0051-retain-unprotected-worksheet.md) |
-| ADR-0056 | Ribbon first-run surface, Critical Interval attachment, and the append-to-end insert | Accepted | 2026-11-10 | [`adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md`](adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md) |
-| ADR-0057 | Repair rebuilds a missing data table, and no repair path is silent | Accepted | 2026-11-11 | [`adr/0057-repair-rebuilds-a-missing-data-table.md`](adr/0057-repair-rebuilds-a-missing-data-table.md) |
+| ADR-0056 | Ribbon first-run surface, Critical Interval attachment, and the append-to-end insert | Accepted (amended 2026-11-11) | 2026-11-10 | [`adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md`](adr/0056-ribbon-first-run-critical-interval-and-append-to-end.md) |
+| ADR-0057 | Repair rebuilds a missing data table, and no repair path is silent | Accepted (amended 2026-11-11) | 2026-11-11 | [`adr/0057-repair-rebuilds-a-missing-data-table.md`](adr/0057-repair-rebuilds-a-missing-data-table.md) |
 
 **ADR-0052 through ADR-0055 have files but no index row.** They are implemented
 and cited by other records (verified shape skip, command-scoped shape updates,

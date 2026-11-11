@@ -191,6 +191,16 @@ internal static class RepairConfigCommand
             parts.Add("Recreated _GanttCreatorConfig from code defaults.");
         }
 
+        if (recoveryOutcome?.ConfigurationRenamed == true)
+        {
+            parts.Add("Restored the _GanttCreatorConfig worksheet name.");
+        }
+
+        if (recoveryOutcome?.TableRenamed == true)
+        {
+            parts.Add("Renamed the Gantt table to tblGanttData.");
+        }
+
         if (recoveryOutcome?.TableRebuilt == true)
         {
             string sheet = inspection?.TargetSheetName ?? "the Gantt worksheet";
@@ -247,6 +257,18 @@ internal static class RepairConfigCommand
                 "This workbook uses the 1904 date system, which Gantt Creator does not support.",
             WorkbookRecoveryRefusalReason.ConfirmationDeclined =>
                 CancelledMessage,
+            WorkbookRecoveryRefusalReason.ConfigurationNameCollision =>
+                "A sheet named '_GanttCreatorConfig' already exists but is not Gantt Creator's configuration, so nothing was changed. Rename that sheet and try Fix again.",
+            WorkbookRecoveryRefusalReason.ConfigurationAmbiguous =>
+                "Fix found more than one sheet that could be the Gantt Creator configuration, so it changed nothing. Remove the extra sheet and try Fix again.",
+            WorkbookRecoveryRefusalReason.ConfigurationCandidateAmbiguous =>
+                "A visible sheet carries Gantt Creator configuration tables, so Fix did not create a second configuration. Rename or remove that sheet and try Fix again.",
+            WorkbookRecoveryRefusalReason.ConfigurationUnrecognised =>
+                "A hidden sheet could be a damaged Gantt Creator configuration, so Fix did not create a second one. Restore its name to '_GanttCreatorConfig' in the Visual Basic Editor and try Fix again.",
+            WorkbookRecoveryRefusalReason.ConfigurationRenameFailed =>
+                "Excel refused to rename the configuration worksheet, so nothing was changed. Rename it to '_GanttCreatorConfig' in the Visual Basic Editor and try Fix again.",
+            WorkbookRecoveryRefusalReason.TableRenameFailed =>
+                "Excel refused to rename the Gantt table, so nothing was changed. Rename the table to tblGanttData and try Fix again.",
             WorkbookRecoveryRefusalReason.ConfigurationCreateFailed =>
                 "Excel refused to create the Gantt Creator configuration worksheet, so nothing was changed. Try again; if it keeps failing, see the Diagnostics dialog.",
             WorkbookRecoveryRefusalReason.ConfigurationWriteFailed =>

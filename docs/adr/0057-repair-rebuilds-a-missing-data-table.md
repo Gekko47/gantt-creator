@@ -97,3 +97,41 @@ must never be silent.**
   the defect this ADR exists to remove.
 - The live gate must prove the state end to end: delete the table, press Fix,
   see the table return with the sheet's rows intact and the Type rule applied.
+
+## Amendments — 2026-11-11 (R5.17a–d implementation)
+
+The implementation corrected four statements in the Decision above. These are
+corrections, not a change of direction.
+
+1. **The header row has a fixed origin.** Clause 3 said the rebuild writes the
+   schema header "at the sheet's used-range origin". The contract origin is
+   [`GanttSheetLayout.HeaderRowIndex`](../../src/GanttCreator.Core/GanttSheetLayout.cs) —
+   fixed row 3 — and the positional header check refuses any other origin
+   rather than guessing. A sheet whose rows were inserted above the header is
+   the moved-origin damage state in
+   [R5.17f](../work-items/R5.17f-no-owner-damage-states.md).
+2. **Configuration-sheet deletion is reachable by code.** Clause 3 treated the
+   VeryHidden sheet as undeletable. A direct `Worksheet.Delete()` on it is
+   refused by the host with `0x800A03EC`, but changing `Visible` to
+   `xlSheetHidden` or `xlSheetVisible` and then deleting succeeds, and
+   external editing reaches the same state. Deletion is only possible while
+   the affected cells are unlocked: the configuration sheet is never
+   protected, and ADR-0055 unlocks the table's data cells before protecting,
+   which is why these damaged states are reachable without the add-in forcing
+   them.
+3. **Recovery repairs containers, not only the table.** R5.17b creates exactly
+   one `_GanttCreatorConfig` when the locator reports `Missing`; R5.17c renames
+   one misnamed VeryHidden candidate back; R5.17d creates one Gantt worksheet on
+   explicit confirmation. R5.17a repairs a provable header/column structure.
+   No path creates a second helper sheet or a second Gantt sheet, and no path
+   deletes a pre-existing container except a container the same run created.
+4. **A proven misnamed table is renamed, not refused.** When the standard-labelled
+   sheet carries exactly one table whose header row 3 is positionally aligned to
+   the schema and whose sheet carries the sheet-scoped plot anchor, the recovery
+   renames that table to `tblGanttData`. Any other table shape refuses
+   `TargetHasForeignTable` with zero mutation, and the identity proof is the
+   [D5](../work-items/R5.17-repair-rebuilds-a-missing-data-table.md) ruling.
+
+The recovery pipeline is one path: inspect, confirm when user rows would be
+adopted or a sheet created, recover, then the ordinary configuration check and
+repair, then exactly one coalesced refresh.

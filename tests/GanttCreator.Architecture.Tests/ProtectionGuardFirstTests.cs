@@ -242,6 +242,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/IConfigCatalogueWriter.cs",
         "src/GanttCreator.Office/IWorkbookRecovery.cs",
         "src/GanttCreator.Office/IConfigIntegrityChecker.cs",
+        "src/GanttCreator.Office/ExcelConfigSheetInspector.cs",
         "src/GanttCreator.Office/IConfigRepairer.cs",
         "src/GanttCreator.Office/IConfigSheetVisibilityRepairer.cs",
         "src/GanttCreator.Office/IPlotAnchorRepairer.cs",

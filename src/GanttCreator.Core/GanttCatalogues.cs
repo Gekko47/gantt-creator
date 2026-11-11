@@ -36,6 +36,14 @@ public static class GanttCatalogues
     /// <summary>The Excel Table name for the add-in metadata (schema version, hash, workbook ID).</summary>
     public const string ConfigTableName = "tblGanttConfig";
 
+    /// <summary>
+    /// The five contract tables materialised on the configuration worksheet.
+    /// The recovery locator counts how many of these a candidate sheet carries,
+    /// so a table name is never compared against a literal elsewhere.
+    /// </summary>
+    public static IReadOnlyList<string> ContractTableNames { get; } =
+        [TypesTableName, StylesTableName, MetricsTableName, SettingsTableName, ConfigTableName];
+
     /// <summary>The anchor cell of <see cref="TypesTableName"/> (ADR-0007 D7).</summary>
     public const string TypesAnchor = "A1";
 

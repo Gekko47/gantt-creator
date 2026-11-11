@@ -41,14 +41,32 @@ public enum WorkbookRecoveryRefusalReason
     /// <summary>The user declined the confirm-required recovery.</summary>
     ConfirmationDeclined = 11,
 
+    /// <summary>A visible worksheet carries the configuration name but no contract table.</summary>
+    ConfigurationNameCollision = 12,
+
+    /// <summary>More than one worksheet could be the configuration.</summary>
+    ConfigurationAmbiguous = 13,
+
+    /// <summary>A visible worksheet carries a configuration contract table.</summary>
+    ConfigurationCandidateAmbiguous = 14,
+
+    /// <summary>A non-canonical VeryHidden worksheet carries no contract table.</summary>
+    ConfigurationUnrecognised = 15,
+
+    /// <summary>The host refused the configuration worksheet rename or its visibility write.</summary>
+    ConfigurationRenameFailed = 16,
+
+    /// <summary>The host refused the misnamed table rename.</summary>
+    TableRenameFailed = 17,
+
     /// <summary>The host refused to create the configuration worksheet.</summary>
-    ConfigurationCreateFailed = 12,
+    ConfigurationCreateFailed = 18,
 
     /// <summary>The catalogue writer refused to materialise the configuration.</summary>
-    ConfigurationWriteFailed = 13,
+    ConfigurationWriteFailed = 19,
 
     /// <summary>The host refused to create the Gantt worksheet.</summary>
-    GanttSheetCreateFailed = 14,
+    GanttSheetCreateFailed = 20,
 }
 
 /// <summary>
@@ -85,6 +103,22 @@ public sealed record WorkbookRecoveryInspection(
     public bool NeedsConfigurationRecovery { get; init; }
 
     /// <summary>
+    /// Whether the recovery renames one misnamed VeryHidden worksheet back to the
+    /// contract configuration name. Never combined with
+    /// <see cref="NeedsConfigurationRecovery"/>.
+    /// </summary>
+    public bool NeedsConfigurationRename { get; init; }
+
+    /// <summary>
+    /// Whether the recovery renames one table on the Gantt worksheet to the
+    /// contract table name after proving the sheet carries the chart.
+    /// </summary>
+    public bool NeedsTableRename { get; init; }
+
+    /// <summary>The live table name when <see cref="NeedsTableRename"/> is set.</summary>
+    public string? TargetTableName { get; init; }
+
+    /// <summary>
     /// Whether the recovery creates a missing Gantt worksheet before writing the
     /// table. The confirmation must state that old schedule rows are not restored.
     /// </summary>
@@ -106,6 +140,12 @@ public sealed record WorkbookRecoveryOutcome(
 {
     /// <summary>Whether the configuration worksheet was created.</summary>
     public bool ConfigurationCreated { get; init; }
+
+    /// <summary>Whether a misnamed configuration worksheet was renamed back.</summary>
+    public bool ConfigurationRenamed { get; init; }
+
+    /// <summary>Whether a proven misnamed Gantt table was renamed to the contract name.</summary>
+    public bool TableRenamed { get; init; }
 
     /// <summary>Whether a new Gantt worksheet was created.</summary>
     public bool GanttSheetCreated { get; init; }

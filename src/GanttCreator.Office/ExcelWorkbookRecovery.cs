@@ -37,6 +37,7 @@ public class ExcelWorkbookRecovery(
     private readonly IConfigCatalogueWriter _catalogueWriter =
         catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
     private readonly Action<string>? _trace = trace;
+    private readonly ExcelConfigSheetInspector _configSheets = new();
 
     /// <inheritdoc />
     public WorkbookRecoveryInspection Inspect()
@@ -48,10 +49,22 @@ public class ExcelWorkbookRecovery(
             return Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
         }
 
+        Excel.Sheets sheets = workbook.Sheets;
+        ConfigSheetLocation configSheet = _configSheets.Locate(sheets);
+        if (RefusalForConfigState(configSheet.State) is { } configRefusal)
+        {
+            return Refused(configRefusal);
+        }
+
+        bool configurationNeedsRename = configSheet.NeedsRename;
+        bool configurationMissing = configSheet.State == ConfigSheetState.Missing;
+        bool configurationPresent =
+            configSheet.State is ConfigSheetState.Present or ConfigSheetState.Renamed;
+
         GanttTableReadOutcome read = _tableReader.Read();
         if (read.Succeeded)
         {
-            if (read.ConfigurationPresent)
+            if (read.ConfigurationPresent && !configurationNeedsRename)
             {
                 return new WorkbookRecoveryInspection(
                     TableReadable: true,
@@ -67,14 +80,16 @@ public class ExcelWorkbookRecovery(
                     Refusal: null);
             }
 
-            Excel.Sheets successSheets = workbook.Sheets;
-            string? tableSheet = TryFindTable(successSheets, out Excel.Worksheet? gantt, out _)
-                ? gantt?.Name
-                : null;
+            string? tableSheet = null;
+            if (TryFindTable(sheets, out Excel.Worksheet? gantt, out _) && gantt is not null)
+            {
+                tableSheet = GetSheetName(gantt);
+            }
+
             return new WorkbookRecoveryInspection(
                 TableReadable: true,
                 TablePresent: true,
-                ConfigurationPresent: false,
+                configurationPresent,
                 NeedsRecovery: true,
                 TargetSheetName: tableSheet,
                 BodyRowCount: 0,
@@ -84,35 +99,53 @@ public class ExcelWorkbookRecovery(
                 ConfirmationMessage: null,
                 Refusal: null)
             {
-                NeedsConfigurationRecovery = true,
+                NeedsConfigurationRecovery = configurationMissing,
+                NeedsConfigurationRename = configurationNeedsRename,
             };
         }
 
-        if (read.Refusal == GanttTableReadRefusalReason.NoActiveWorkbook)
+        return read.Refusal switch
         {
-            return Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
-        }
-
-        if (read.Refusal == GanttTableReadRefusalReason.DateSystemUnsupported)
-        {
-            return Refused(WorkbookRecoveryRefusalReason.DateSystemUnsupported);
-        }
-
-        Excel.Sheets sheets = workbook.Sheets;
-        return read.Refusal == GanttTableReadRefusalReason.TableUnreadable
-            ? InspectStructureRepair(sheets, read)
-            : InspectRebuild(sheets, read);
+            GanttTableReadRefusalReason.NoActiveWorkbook =>
+                Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook),
+            GanttTableReadRefusalReason.DateSystemUnsupported =>
+                Refused(WorkbookRecoveryRefusalReason.DateSystemUnsupported),
+            GanttTableReadRefusalReason.TableUnreadable =>
+                InspectStructureRepair(
+                    sheets,
+                    configurationPresent,
+                    configurationMissing,
+                    configurationNeedsRename),
+            GanttTableReadRefusalReason.TableMissing =>
+                InspectRebuild(
+                    sheets,
+                    configurationPresent,
+                    configurationMissing,
+                    configurationNeedsRename),
+            null => InspectRebuild(
+                sheets,
+                configurationPresent,
+                configurationMissing,
+                configurationNeedsRename),
+            _ => InspectRebuild(
+                sheets,
+                configurationPresent,
+                configurationMissing,
+                configurationNeedsRename),
+        };
     }
 
     private WorkbookRecoveryInspection InspectStructureRepair(
         Excel.Sheets sheets,
-        GanttTableReadOutcome read)
+        bool configurationPresent,
+        bool configurationMissing,
+        bool configurationNeedsRename)
     {
         if (!TryFindTable(sheets, out Excel.Worksheet? worksheet, out Excel.ListObject? table)
             || worksheet is null
             || table is null)
         {
-            return Refused(WorkbookRecoveryRefusalReason.TargetMissing, read.ConfigurationPresent);
+            return Refused(WorkbookRecoveryRefusalReason.TargetMissing, configurationPresent);
         }
 
         Excel.ListColumns columns = GetTableColumns(table);
@@ -128,9 +161,9 @@ public class ExcelWorkbookRecovery(
         return new WorkbookRecoveryInspection(
             TableReadable: false,
             TablePresent: true,
-            read.ConfigurationPresent,
+            configurationPresent,
             NeedsRecovery: canRepair,
-            worksheet.Name,
+            GetSheetName(worksheet),
             BodyRowCount: 0,
             HeaderPlan: null,
             plan,
@@ -138,18 +171,21 @@ public class ExcelWorkbookRecovery(
             ConfirmationMessage: null,
             canRepair ? null : WorkbookRecoveryRefusalReason.TableStructureRefused)
         {
-            NeedsConfigurationRecovery = !read.ConfigurationPresent,
+            NeedsConfigurationRecovery = configurationMissing,
+            NeedsConfigurationRename = configurationNeedsRename,
         };
     }
 
     private WorkbookRecoveryInspection InspectRebuild(
         Excel.Sheets sheets,
-        GanttTableReadOutcome read)
+        bool configurationPresent,
+        bool configurationMissing,
+        bool configurationNeedsRename)
     {
         List<Excel.Worksheet> labelled = FindLabelledSheets(sheets);
         if (labelled.Count == 0)
         {
-            return !read.ConfigurationPresent
+            return !configurationPresent
                 ? Refused(WorkbookRecoveryRefusalReason.TargetMissing)
                 : new WorkbookRecoveryInspection(
                     TableReadable: false,
@@ -166,18 +202,48 @@ public class ExcelWorkbookRecovery(
                     Refusal: null)
                 {
                     NeedsGanttSheet = true,
+                    NeedsConfigurationRename = configurationNeedsRename,
                 };
         }
 
         if (labelled.Count > 1)
         {
-            return Refused(WorkbookRecoveryRefusalReason.TargetAmbiguous, read.ConfigurationPresent);
+            return Refused(WorkbookRecoveryRefusalReason.TargetAmbiguous, configurationPresent);
         }
 
         Excel.Worksheet target = labelled[0];
+        Excel.ListObject? foreignTable = GetSingleTable(target);
+        if (foreignTable is not null)
+        {
+            GanttTableHeaderAlignmentPlan? identity = BuildHeaderPlan(target);
+            bool provesGanttChart =
+                identity is { Outcome: GanttTableHeaderAlignmentOutcome.Aligned }
+                && HasPlotAnchor(target);
+            return provesGanttChart
+                ? new WorkbookRecoveryInspection(
+                    TableReadable: false,
+                    TablePresent: true,
+                    configurationPresent,
+                    NeedsRecovery: true,
+                    GetSheetName(target),
+                    BodyRowCount: 0,
+                    HeaderPlan: null,
+                    StructurePlan: null,
+                    RequiresConfirmation: false,
+                    ConfirmationMessage: null,
+                    Refusal: null)
+                {
+                    NeedsConfigurationRecovery = configurationMissing,
+                    NeedsConfigurationRename = configurationNeedsRename,
+                    NeedsTableRename = true,
+                    TargetTableName = GetTableName(foreignTable),
+                }
+                : Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable, configurationPresent);
+        }
+
         if (HasAnyTable(target))
         {
-            return Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable, read.ConfigurationPresent);
+            return Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable, configurationPresent);
         }
 
         ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(target);
@@ -187,7 +253,7 @@ public class ExcelWorkbookRecovery(
                 protection == ProtectionGuardOutcome.NoActiveWorkbook
                     ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
                     : WorkbookRecoveryRefusalReason.TargetProtected,
-                read.ConfigurationPresent);
+                configurationPresent);
         }
 
         GanttTableHeaderAlignmentPlan? headerPlan = BuildHeaderPlan(target);
@@ -196,9 +262,9 @@ public class ExcelWorkbookRecovery(
             return new WorkbookRecoveryInspection(
                 TableReadable: false,
                 TablePresent: false,
-                read.ConfigurationPresent,
+                configurationPresent,
                 NeedsRecovery: false,
-                target.Name,
+                GetSheetName(target),
                 BodyRowCount: 0,
                 headerPlan,
                 StructurePlan: null,
@@ -218,9 +284,9 @@ public class ExcelWorkbookRecovery(
         return new WorkbookRecoveryInspection(
             TableReadable: false,
             TablePresent: false,
-            read.ConfigurationPresent,
+            configurationPresent,
             NeedsRecovery: true,
-            target.Name,
+            GetSheetName(target),
             bodyRowCount,
             headerPlan,
             StructurePlan: null,
@@ -228,7 +294,8 @@ public class ExcelWorkbookRecovery(
             message,
             Refusal: null)
         {
-            NeedsConfigurationRecovery = !read.ConfigurationPresent,
+            NeedsConfigurationRecovery = configurationMissing,
+            NeedsConfigurationRename = configurationNeedsRename,
         };
     }
 
@@ -267,33 +334,52 @@ public class ExcelWorkbookRecovery(
         scope.SuppressAlerts();
         scope.CaptureSelection();
 
-        if (inspection.NeedsGanttSheet)
-        {
-            return ApplyCreateGanttSheet();
-        }
-
         bool configurationCreated = false;
-        if (inspection.NeedsConfigurationRecovery)
+        bool configurationRenamed = false;
+        if (inspection.NeedsConfigurationRename || inspection.NeedsConfigurationRecovery)
         {
-            WorkbookRecoveryRefusalReason? configRefusal = CreateConfigurationSheet(inspection);
+            WorkbookRecoveryRefusalReason? configRefusal = inspection.NeedsConfigurationRename
+                ? RenameConfigurationSheet()
+                : CreateConfigurationSheet(inspection);
             if (configRefusal is not null)
             {
                 return WorkbookRecoveryOutcome.Refused(configRefusal.Value);
             }
 
-            configurationCreated = true;
-            if (inspection.TableReadable && inspection.StructurePlan is null)
+            configurationCreated = inspection.NeedsConfigurationRecovery;
+            configurationRenamed = inspection.NeedsConfigurationRename;
+        }
+
+        if (inspection.NeedsGanttSheet)
+        {
+            return ApplyCreateGanttSheet() with
             {
-                return new WorkbookRecoveryOutcome(
-                    Changed: true,
-                    TableRebuilt: false,
-                    TableStructureRepaired: false,
-                    AdoptedRowCount: 0,
-                    Refusal: null)
-                {
-                    ConfigurationCreated = true,
-                };
-            }
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
+        }
+
+        if (inspection.NeedsTableRename)
+        {
+            return ApplyTableRename(inspection) with
+            {
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
+        }
+
+        if (inspection.TableReadable && inspection.StructurePlan is null)
+        {
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: false,
+                TableStructureRepaired: false,
+                AdoptedRowCount: 0,
+                Refusal: null)
+            {
+                ConfigurationCreated = configurationCreated,
+                ConfigurationRenamed = configurationRenamed,
+            };
         }
 
         WorkbookRecoveryOutcome outcome = inspection.StructurePlan is { } structure
@@ -304,7 +390,11 @@ public class ExcelWorkbookRecovery(
             DeleteCreatedConfigurationSheet();
         }
 
-        return outcome with { ConfigurationCreated = configurationCreated };
+        return outcome with
+        {
+            ConfigurationCreated = configurationCreated,
+            ConfigurationRenamed = configurationRenamed,
+        };
     }
 
     private WorkbookRecoveryOutcome ApplyRebuild(WorkbookRecoveryInspection inspection)
@@ -317,7 +407,7 @@ public class ExcelWorkbookRecovery(
         }
 
         Excel.Sheets sheets = workbook.Sheets;
-        if (!TryFindLabelledSheet(sheets, inspection.TargetSheetName, out Excel.Worksheet? target) || target is null)
+        if (!TryFindSheetByName(sheets, inspection.TargetSheetName, out Excel.Worksheet? target) || target is null)
         {
             return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetMissing);
         }
@@ -460,6 +550,70 @@ public class ExcelWorkbookRecovery(
         }
     }
 
+    private WorkbookRecoveryOutcome ApplyTableRename(WorkbookRecoveryInspection inspection)
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null || string.IsNullOrWhiteSpace(inspection.TargetSheetName))
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.NoActiveWorkbook);
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        if (!TryFindSheetByName(sheets, inspection.TargetSheetName, out Excel.Worksheet? target)
+            || target is null)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetMissing);
+        }
+
+        Excel.ListObjects objects = target.ListObjects;
+        if (GetTableCount(objects) != 1)
+        {
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TargetHasForeignTable);
+        }
+
+        Excel.ListObject table = GetTableAt(objects, 1);
+        string previousName = GetTableName(table);
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(target);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return WorkbookRecoveryOutcome.Refused(
+                protection == ProtectionGuardOutcome.NoActiveWorkbook
+                    ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                    : WorkbookRecoveryRefusalReason.TargetProtected);
+        }
+
+        try
+        {
+            SetTableName(table, GanttTableSchema.TableName);
+            SetShowAutoFilter(table, false);
+            if (!_tableReader.Read().Succeeded)
+            {
+                SetTableName(table, previousName);
+                return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.VerificationFailed);
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery renamed table={previousName} to={GanttTableSchema.TableName} sheet={GetSheetName(target)}"));
+            return new WorkbookRecoveryOutcome(
+                Changed: true,
+                TableRebuilt: false,
+                TableStructureRepaired: false,
+                AdoptedRowCount: 0,
+                Refusal: null)
+            {
+                TableRenamed = true,
+            };
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery table rename refused " + exception.Message);
+            return WorkbookRecoveryOutcome.Refused(WorkbookRecoveryRefusalReason.TableRenameFailed);
+        }
+    }
+
     private WorkbookRecoveryOutcome ApplyCreateGanttSheet()
     {
         Excel.Application? application = _application;
@@ -580,7 +734,7 @@ public class ExcelWorkbookRecovery(
         Excel.Worksheet? anchor = null;
         if (!string.IsNullOrWhiteSpace(inspection.TargetSheetName))
         {
-            _ = TryFindLabelledSheet(sheets, inspection.TargetSheetName, out anchor);
+            _ = TryFindSheetByName(sheets, inspection.TargetSheetName, out anchor);
         }
 
         Excel.Worksheet? created = null;
@@ -614,6 +768,86 @@ public class ExcelWorkbookRecovery(
             return WorkbookRecoveryRefusalReason.ConfigurationCreateFailed;
         }
     }
+
+    private WorkbookRecoveryRefusalReason? RenameConfigurationSheet()
+    {
+        Excel.Application? application = _application;
+        Excel.Workbook? workbook = application?.ActiveWorkbook;
+        if (application is null || workbook is null)
+        {
+            return WorkbookRecoveryRefusalReason.NoActiveWorkbook;
+        }
+
+        Excel.Sheets sheets = workbook.Sheets;
+        ConfigSheetLocation location = _configSheets.Locate(sheets);
+        if (!location.NeedsRename
+            || string.IsNullOrWhiteSpace(location.SheetName)
+            || !TryFindSheetByName(sheets, location.SheetName, out Excel.Worksheet? sheet)
+            || sheet is null)
+        {
+            return WorkbookRecoveryRefusalReason.ConfigurationRenameFailed;
+        }
+
+        ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(sheet);
+        if (protection != ProtectionGuardOutcome.NotProtected)
+        {
+            return protection == ProtectionGuardOutcome.NoActiveWorkbook
+                ? WorkbookRecoveryRefusalReason.NoActiveWorkbook
+                : WorkbookRecoveryRefusalReason.TargetProtected;
+        }
+
+        string previousName = location.SheetName;
+        try
+        {
+            SetSheetName(sheet, GanttWorkbookContract.ConfigSheetName);
+            SetSheetVisibility(sheet, Excel.XlSheetVisibility.xlSheetVeryHidden);
+
+            ConfigWriteOutcome write = _catalogueWriter.Write();
+            if (!write.Succeeded)
+            {
+                RestoreSheetName(sheet, previousName);
+                return WorkbookRecoveryRefusalReason.ConfigurationWriteFailed;
+            }
+
+            _trace?.Invoke(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"gantt.recovery renamed configuration sheet={previousName}"));
+            return null;
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+            _trace?.Invoke("gantt.recovery configuration rename refused " + exception.Message);
+            RestoreSheetName(sheet, previousName);
+            return WorkbookRecoveryRefusalReason.ConfigurationRenameFailed;
+        }
+    }
+
+    private void RestoreSheetName(Excel.Worksheet sheet, string name)
+    {
+        try
+        {
+            SetSheetName(sheet, name);
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Best-effort name restore; the typed refusal is the reported outcome.
+        }
+    }
+
+    private static WorkbookRecoveryRefusalReason? RefusalForConfigState(ConfigSheetState state) =>
+        state switch
+        {
+            ConfigSheetState.Present => null,
+            ConfigSheetState.Missing => null,
+            ConfigSheetState.Renamed => null,
+            ConfigSheetState.NameCollision => WorkbookRecoveryRefusalReason.ConfigurationNameCollision,
+            ConfigSheetState.Ambiguous => WorkbookRecoveryRefusalReason.ConfigurationAmbiguous,
+            ConfigSheetState.AmbiguousCandidate =>
+                WorkbookRecoveryRefusalReason.ConfigurationCandidateAmbiguous,
+            ConfigSheetState.Unrecognised => WorkbookRecoveryRefusalReason.ConfigurationUnrecognised,
+            _ => null,
+        };
 
     private void DeleteCreatedConfigurationSheet()
     {
@@ -659,7 +893,7 @@ public class ExcelWorkbookRecovery(
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
                 && string.Equals(
-                    worksheet.Name,
+                    GetSheetName(worksheet),
                     GanttWorkbookContract.ConfigSheetName,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -805,7 +1039,7 @@ public class ExcelWorkbookRecovery(
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
                 && string.Equals(
-                    worksheet.Name,
+                    GetSheetName(worksheet),
                     GanttWorkbookContract.GanttSheetLabel,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -816,7 +1050,7 @@ public class ExcelWorkbookRecovery(
         return labelled;
     }
 
-    private bool TryFindLabelledSheet(
+    private bool TryFindSheetByName(
         Excel.Sheets sheets,
         string? name,
         out Excel.Worksheet? worksheet)
@@ -831,7 +1065,7 @@ public class ExcelWorkbookRecovery(
         for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet candidate
-                && string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(GetSheetName(candidate), name, StringComparison.OrdinalIgnoreCase))
             {
                 worksheet = candidate;
                 return true;
@@ -882,6 +1116,27 @@ public class ExcelWorkbookRecovery(
         return GetTableCount(objects) > 0;
     }
 
+    private Excel.ListObject? GetSingleTable(Excel.Worksheet worksheet)
+    {
+        Excel.ListObjects objects = worksheet.ListObjects;
+        return GetTableCount(objects) == 1 ? GetTableAt(objects, 1) : null;
+    }
+
+    private bool HasPlotAnchor(Excel.Worksheet target)
+    {
+        Excel.Names names = target.Names;
+        int count = GetNameCount(names);
+        for (int index = 1; index <= count; index++)
+        {
+            if (GanttWorkbookContract.IsPlotAnchorName(GetNameText(GetNameAt(names, index))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void PresentTable(Excel.ListObject table)
     {
         SetTableName(table, GanttTableSchema.TableName);
@@ -922,6 +1177,14 @@ public class ExcelWorkbookRecovery(
     internal virtual int GetSheetCount(Excel.Sheets sheets) => sheets.Count;
 
     internal virtual object GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    internal virtual string GetSheetName(Excel.Worksheet worksheet) => worksheet.Name;
+
+    internal virtual int GetNameCount(Excel.Names names) => names.Count;
+
+    internal virtual Excel.Name GetNameAt(Excel.Names names, int index) => names.Item(index);
+
+    internal virtual string GetNameText(Excel.Name name) => name.Name;
 
     internal virtual int GetTableCount(Excel.ListObjects objects) => objects.Count;
 

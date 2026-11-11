@@ -52,4 +52,20 @@ public static class GanttWorkbookContract
     /// fallback and the catalogue agree today.
     /// </remarks>
     public const string DefaultChartTitle = "Gantt Chart";
+
+    /// <summary>
+    /// Whether a defined-name text identifies the sheet-scoped plot anchor.
+    /// </summary>
+    /// <remarks>
+    /// The host reports a sheet-scoped name either as its local text or with a
+    /// sheet qualifier (<c>'Gantt Data'!GanttCreator.PlotAnchor</c>), depending on
+    /// which collection it is read from. Both forms identify the anchor; any
+    /// other text does not.
+    /// </remarks>
+    /// <param name="nameText">The defined-name text read from the host.</param>
+    /// <returns><see langword="true"/> when the text is the plot anchor name.</returns>
+    public static bool IsPlotAnchorName(string? nameText) =>
+        nameText is not null
+        && (string.Equals(nameText, PlotAnchorDefinedName, StringComparison.OrdinalIgnoreCase)
+            || nameText.EndsWith("!" + PlotAnchorDefinedName, StringComparison.OrdinalIgnoreCase));
 }

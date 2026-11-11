@@ -41,6 +41,23 @@ workbook presence, table readability, and configuration presence:
   disabled;
 - `Ready` — the table is readable: the full surface, Initialise hidden.
 
+**Amendment — 2026-11-11 (R5.17b–d).** `Ready` now also requires the
+configuration sheet. The mode is computed from workbook presence,
+`ConfigurationPresent`, and table readability:
+
+- `Ready` — table readable **and** configuration present;
+- `NeedsRepair` — configuration present with the table missing or unreadable,
+  configuration missing with a readable table, **or** both containers missing
+  when a standard-labelled Gantt worksheet still exists;
+- `FirstRun` — no workbook, or no configuration and no standard-labelled Gantt
+  worksheet.
+
+The exception the original rule missed is the both-missing state: it now keeps
+the user on `Fix`, because sending it to `FirstRun` let **Initialise** create
+`Gantt Data (2)` beside the existing empty Gantt sheet. A present but corrupt
+configuration still reports `Ready`, so Fix and Refresh surface the catalogue
+error instead of the ribbon hiding the surface.
+
 Group visibility is fail-closed; control enablement stays fail-open. Diagnostics
 is visible in every mode, which is a deliberate exception to "only Initialise
 on a first run".

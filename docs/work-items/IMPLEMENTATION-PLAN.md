@@ -249,7 +249,9 @@ files only; the local audit verifies every file exists.
 | R5.14 | `R5.14-date-labels.md` | Implemented; live date-label selection and placement review remains |
 | R5.15 | `R5.15-managed-worksheet-protection.md` | Not implemented; proof-first live feasibility and ADR decision required before any protection adoption |
 | R5.16 | `R5.16-ribbon-first-run-and-data-group.md` | Implemented 2026-11-10/11 (ADR-0056) across sixteen commits; `verify-quick`, `verify` and `verify-office` green (61/61 live tests); first-run surface observed live by the owner; the state-2 swap and the menu/gate/insertion passes are still owed |
-| R5.17 | `R5.17-repair-rebuilds-a-missing-data-table.md` | Decided 2026-11-11 (ADR-0057) after the live report "when deleting the table, the fix button does nothing"; implementation not started |
+| R5.17 | `R5.17-repair-rebuilds-a-missing-data-table.md` | Implemented 2026-11-11 (ADR-0057, amendments 2026-11-11) with R5.17a–d in one recovery pipeline; build `-warnaserror` green and the targeted suites pass; `verify-office` not run, so the worksheet-mutating paths are unproved in the host; the Gantt-sheet-writer extraction is recorded debt |
+| R5.17e | `R5.17e-single-chart-locator-seam.md` | Planned 2026-11-11; not started. Deferred deliberately: the measured adoption surface is 28 comparison sites across 20 adapters and a locator with one implementation has no consumer yet |
+| R5.17f | `R5.17f-no-owner-damage-states.md` | Planned 2026-11-11; not started. Collects the states that survive a refresh and Fix, each needing an integrity finding before a repair |
 
 **Phase 5 completion snapshot (2026-10-31):** R5.1–R5.14 feature code and
 automated coverage are present in the current source. Their required live
