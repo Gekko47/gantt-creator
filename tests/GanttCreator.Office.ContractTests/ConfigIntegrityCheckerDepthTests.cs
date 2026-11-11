@@ -30,7 +30,9 @@ public sealed class ConfigIntegrityCheckerDepthTests
             (Excel.Worksheet)sheetObjects[index - 1]!;
     }
 
-    private const string GanttSheetName = "Gantt";
+    // The contract label, not an abbreviation: "Gantt" would model the very state
+    // finding 5 reports — a data table on a worksheet the add-in never labelled.
+    private const string GanttSheetName = GanttWorkbookContract.GanttSheetLabel;
 
     private static Mock<Excel.Name> DefinedName(string name, string refersTo)
     {
@@ -83,7 +85,9 @@ public sealed class ConfigIntegrityCheckerDepthTests
         return sheet.Object;
     }
 
-    private static Excel.Worksheet GanttSheet(Excel.Names? names = null)
+    private static Excel.Worksheet GanttSheet(
+        Excel.Names? names = null,
+        string sheetName = GanttSheetName)
     {
         Mock<Excel.ListObject> table = new();
         _ = table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
@@ -91,7 +95,7 @@ public sealed class ConfigIntegrityCheckerDepthTests
         _ = tables.SetupGet(t => t.Count).Returns(1);
         _ = tables.Setup(t => t[It.IsAny<int>()]).Returns(table.Object);
         Mock<Excel.Worksheet> sheet = new();
-        _ = sheet.SetupGet(s => s.Name).Returns(GanttSheetName);
+        _ = sheet.SetupGet(s => s.Name).Returns(sheetName);
         _ = sheet.SetupGet(s => s.ListObjects).Returns(tables.Object);
 
         // An empty collection rather than a null one: the checker iterates the
@@ -173,6 +177,66 @@ public sealed class ConfigIntegrityCheckerDepthTests
             candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
 
         Assert.Equal("ScratchPad", finding.TableName);
+    }
+
+    [Fact]
+    public void A_data_table_on_a_worksheet_without_the_gantt_label_is_reported_and_refused()
+    {
+        // Finding 5: the reader follows the table by name, so the chart renders on
+        // a worksheet the add-in never labelled — but recovery and the anchor
+        // repair both target the labelled sheet, so no repair path owns this state.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(sheetName: "Scratch"),
+        ]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet);
+
+        Assert.Equal(GanttTableSchema.TableName, finding.TableName);
+        Assert.Contains("Scratch", finding.Detail, StringComparison.Ordinal);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+        // The sheet-scoped anchor check must not run here: it would report a
+        // missing anchor for a table whose real damage is its location.
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.PlotAnchorDisagreement);
+    }
+
+    [Fact]
+    public void A_data_table_on_the_labelled_gantt_worksheet_is_not_mislocated()
+    {
+        // The negative control: the healthy workbook carries the table on the
+        // worksheet the add-in labelled, so the location finding must not fire.
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet()]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet);
+    }
+
+    [Fact]
+    public void A_data_table_on_the_configuration_sheet_is_not_also_mislocated()
+    {
+        // Schedule data on the configuration worksheet is the stronger statement,
+        // and one table must not produce two findings. The same table also used to
+        // be the one the anchor check ran against, reporting a disagreement for a
+        // chart whose real damage is its location.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(tableNames: GanttTableSchema.TableName),
+            GanttSheet(),
+        ]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet);
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.PlotAnchorDisagreement);
+        _ = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
     }
 
     [Fact]

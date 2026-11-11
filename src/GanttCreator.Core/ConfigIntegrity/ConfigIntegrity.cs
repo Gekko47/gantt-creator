@@ -45,6 +45,9 @@ public enum ConfigIntegrityFindingKind
 
     /// <summary>The damage class is not recognised by the running add-in.</summary>
     Unknown = 13,
+
+    /// <summary>The Gantt data table sits on a worksheet without the standard label.</summary>
+    DataTableOnUnexpectedSheet = 14,
 }
 
 /// <summary>The safe-repair classification for one integrity finding.</summary>
@@ -188,6 +191,7 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
             or ConfigIntegrityFindingKind.ConfigSheetMissing
             or ConfigIntegrityFindingKind.SecondHelperSheet
             or ConfigIntegrityFindingKind.ScheduleDataOnConfig
+            or ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet
             or ConfigIntegrityFindingKind.Unknown => ConfigRepairClassification.Refuse,
             ConfigIntegrityFindingKind.UserStyleQuarantined => ConfigRepairClassification.ConfirmRequired,
             _ => ConfigRepairClassification.Refuse,

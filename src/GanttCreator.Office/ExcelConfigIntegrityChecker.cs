@@ -83,17 +83,45 @@ public class ExcelConfigIntegrityChecker(
             && ganttTable is not null;
         if (ganttFound)
         {
-            string expectedAnchor = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt!.Name);
-            Excel.Names sheetNames = gantt.Names;
-            Excel.Name? anchor = FindName(sheetNames, GanttWorkbookContract.PlotAnchorDefinedName);
-            if (anchor is null || !string.Equals(anchor.RefersTo, expectedAnchor, StringComparison.Ordinal))
+            // The chart is a labelled worksheet plus its table. A table on any
+            // other worksheet is a state the product does not describe: the
+            // reader follows the table by name, but recovery and the plot anchor
+            // repair target the labelled sheet, so no path owns it. The
+            // configuration sheet is excluded because it is already reported by
+            // the stronger ScheduleDataOnConfig finding above — one table, one
+            // statement about what is wrong with it.
+            bool onLabelledSheet = GanttWorkbookContract.IsGanttSheetLabel(gantt!.Name);
+            bool onConfigurationSheet = ReferenceEquals(gantt, config);
+            if (!onLabelledSheet && !onConfigurationSheet)
             {
                 findings.Add(
                     new ConfigIntegrityFinding(
-                        ConfigIntegrityFindingKind.PlotAnchorDisagreement,
-                        "The stored plot anchor does not match the live Gantt table."
+                        ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet,
+                        $"The data table '{ganttTable!.Name}' sits on worksheet '{gantt.Name}', which does not carry the standard Gantt label '{GanttWorkbookContract.GanttSheetLabel}'. Move the table to the labelled worksheet; this state is reported and never repaired automatically.",
+                        TableName: ganttTable.Name
                     )
                 );
+            }
+
+            // A sheet-scoped anchor means something only on the worksheet that is
+            // meant to carry the chart. Checking it elsewhere reports a missing
+            // anchor as if the chart were merely stale, and the anchor repair
+            // writes to whichever sheet holds the table — a name on a sheet no
+            // repair path owns.
+            if (onLabelledSheet)
+            {
+                string expectedAnchor = GanttSheetLayout.BuildPlotAnchorRefersTo(gantt.Name);
+                Excel.Names sheetNames = gantt.Names;
+                Excel.Name? anchor = FindName(sheetNames, GanttWorkbookContract.PlotAnchorDefinedName);
+                if (anchor is null || !string.Equals(anchor.RefersTo, expectedAnchor, StringComparison.Ordinal))
+                {
+                    findings.Add(
+                        new ConfigIntegrityFinding(
+                            ConfigIntegrityFindingKind.PlotAnchorDisagreement,
+                            "The stored plot anchor does not match the live Gantt table."
+                        )
+                    );
+                }
             }
 
             Excel.Names workbookNames = workbook.Names;
