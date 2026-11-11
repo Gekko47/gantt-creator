@@ -18,7 +18,11 @@ public class ExcelConfigSheetInspector
     /// <summary>Locates the configuration worksheet in the active workbook's sheets.</summary>
     /// <param name="sheets">The workbook's sheets collection.</param>
     /// <returns>The location and its identity state.</returns>
-    public ConfigSheetLocation Locate(Excel.Sheets sheets)
+    /// <remarks>
+    /// Virtual so a recovery contract test can supply a decided location and exercise
+    /// the recovery decisions without a live sheet graph.
+    /// </remarks>
+    public virtual ConfigSheetLocation Locate(Excel.Sheets sheets)
     {
         ArgumentNullException.ThrowIfNull(sheets);
 

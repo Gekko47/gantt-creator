@@ -27,7 +27,8 @@ public class ExcelWorkbookRecovery(
     IWorksheetProtectionGuard? protectionGuard = null,
     IApplicationStateScope? stateScope = null,
     IConfigCatalogueWriter? catalogueWriter = null,
-    Action<string>? trace = null) : IWorkbookRecovery
+    Action<string>? trace = null,
+    ExcelConfigSheetInspector? configSheetInspector = null) : IWorkbookRecovery
 {
     private readonly Excel.Application? _application = application as Excel.Application;
     private readonly IGanttTableReader _tableReader = tableReader ?? new ExcelGanttTableReader(application);
@@ -37,7 +38,8 @@ public class ExcelWorkbookRecovery(
     private readonly IConfigCatalogueWriter _catalogueWriter =
         catalogueWriter ?? new ExcelConfigCatalogueWriter(application);
     private readonly Action<string>? _trace = trace;
-    private readonly ExcelConfigSheetInspector _configSheets = new();
+    private readonly ExcelConfigSheetInspector _configSheets =
+        configSheetInspector ?? new ExcelConfigSheetInspector();
 
     /// <inheritdoc />
     public WorkbookRecoveryInspection Inspect()
