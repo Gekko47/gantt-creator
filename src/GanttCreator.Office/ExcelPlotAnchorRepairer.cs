@@ -76,7 +76,7 @@ public class ExcelPlotAnchorRepairer(object? application, IWorksheetProtectionGu
             for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
-                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(candidateTable.Name))
                 {
                     worksheet = candidate;
                     table = candidateTable;

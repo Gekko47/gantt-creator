@@ -592,8 +592,7 @@ public class ExcelRowWarningHighlighter(
                 for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject listObject = GetTableAt(listObjects, tableIndex);
-                    if (string.Equals(listObject.Name, GanttTableSchema.TableName,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (GanttChartContract.IsDataTableName(listObject.Name))
                     {
                         worksheet = ws;
                         table = listObject;

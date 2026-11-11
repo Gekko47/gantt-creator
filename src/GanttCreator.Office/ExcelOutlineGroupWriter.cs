@@ -499,10 +499,7 @@ public class ExcelOutlineGroupWriter(
 
             foreach (Excel.ListObject candidateTable in candidate.ListObjects)
             {
-                if (string.Equals(
-                    candidateTable.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(candidateTable.Name))
                 {
                     worksheet = candidate;
                     table = candidateTable;

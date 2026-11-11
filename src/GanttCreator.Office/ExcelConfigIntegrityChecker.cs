@@ -153,7 +153,7 @@ public class ExcelConfigIntegrityChecker(
             for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject listObject = objects[objectIndex];
-                if (string.Equals(listObject.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(listObject.Name))
                 {
                     worksheet = candidate;
                     table = listObject;

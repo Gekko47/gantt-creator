@@ -1097,10 +1097,7 @@ public class ExcelWorkbookRecovery(
             for (int objectIndex = 1; objectIndex <= objectCount; objectIndex++)
             {
                 Excel.ListObject candidateTable = GetTableAt(objects, objectIndex);
-                if (string.Equals(
-                    GetTableName(candidateTable),
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(GetTableName(candidateTable)))
                 {
                     worksheet = candidate;
                     table = candidateTable;

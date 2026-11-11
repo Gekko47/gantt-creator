@@ -147,8 +147,7 @@ public partial class ExcelSheetChangeAnalyzer(object? application) : ISheetChang
 
                 foreach (ListObject listObject in ws.ListObjects)
                 {
-                    if (string.Equals(listObject.Name, GanttTableSchema.TableName,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (GanttChartContract.IsDataTableName(listObject.Name))
                     {
                         table = listObject;
                         sheetName = ws.Name;

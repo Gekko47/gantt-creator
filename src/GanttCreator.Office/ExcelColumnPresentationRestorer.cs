@@ -287,7 +287,7 @@ public class ExcelColumnPresentationRestorer(object? application, IWorksheetProt
         {
             foreach (Excel.ListObject candidateTable in candidate.ListObjects)
             {
-                if (string.Equals(candidateTable.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+                if (GanttChartContract.IsDataTableNameExact(candidateTable.Name))
                 {
                     table = candidateTable;
                     worksheet = candidate;

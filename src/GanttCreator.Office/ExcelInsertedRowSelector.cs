@@ -171,7 +171,7 @@ public class ExcelInsertedRowSelector(object? application) : IInsertedRowSelecto
             for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 ListObject table = GetTableAt(listObjects, tableIndex);
-                if (!string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.OrdinalIgnoreCase))
+                if (!GanttChartContract.IsDataTableName(table.Name))
                 {
                     continue;
                 }

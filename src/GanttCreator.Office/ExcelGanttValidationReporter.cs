@@ -356,10 +356,7 @@ public class ExcelGanttValidationReporter(
                 for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject candidateTable = GetTableAt(listObjects, tableIndex);
-                    if (string.Equals(
-                        candidateTable.Name,
-                        Core.GanttTableSchema.TableName,
-                        StringComparison.OrdinalIgnoreCase))
+                    if (Core.GanttChartContract.IsDataTableName(candidateTable.Name))
                     {
                         worksheet = candidate;
                         table = candidateTable;

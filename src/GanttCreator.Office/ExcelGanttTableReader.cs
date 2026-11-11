@@ -281,10 +281,7 @@ public class ExcelGanttTableReader(
                 for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     ListObject candidate = GetTableAt(listObjects, tableIndex);
-                    if (string.Equals(
-                        candidate.Name,
-                        GanttTableSchema.TableName,
-                        StringComparison.OrdinalIgnoreCase))
+                    if (GanttChartContract.IsDataTableName(candidate.Name))
                     {
                         table = candidate;
                         return true;

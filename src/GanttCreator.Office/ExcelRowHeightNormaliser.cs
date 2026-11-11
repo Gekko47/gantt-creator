@@ -816,10 +816,7 @@ public class ExcelRowHeightNormaliser(
 
             foreach (Excel.ListObject candidateTable in listObjects)
             {
-                if (string.Equals(
-                    candidateTable.Name,
-                    GanttTableSchema.TableName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttChartContract.IsDataTableName(candidateTable.Name))
                 {
                     worksheet = candidate;
                     table = candidateTable;

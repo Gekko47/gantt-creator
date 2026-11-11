@@ -531,8 +531,7 @@ public class ExcelPanelGridMeasurement(object? application) : IPanelGridMeasurem
             for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
             {
                 Excel.ListObject? table = GetListObjectAt(objects, tableIndex);
-                if (table is not null &&
-                    string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+                if (table is not null && GanttChartContract.IsDataTableNameExact(table.Name))
                 {
                     return table;
                 }

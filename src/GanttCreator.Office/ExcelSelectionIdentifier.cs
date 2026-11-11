@@ -169,10 +169,7 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
                 for (int tableIndex = 1; tableIndex <= tableCount; tableIndex++)
                 {
                     Excel.ListObject located = GetTableAt(listObjects, tableIndex);
-                    if (string.Equals(
-                        located.Name,
-                        GanttTableSchema.TableName,
-                        StringComparison.OrdinalIgnoreCase))
+                    if (GanttChartContract.IsDataTableName(located.Name))
                     {
                         worksheet = candidate;
                         table = located;

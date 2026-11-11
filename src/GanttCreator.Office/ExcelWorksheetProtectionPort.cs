@@ -223,8 +223,7 @@ public class ExcelWorksheetProtectionPort(
         for (int index = 1; index <= count; index++)
         {
             Excel.ListObject? table = GetListObjectAt(objects, index);
-            if (table is not null
-                && string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+            if (table is not null && GanttChartContract.IsDataTableNameExact(table.Name))
             {
                 return true;
             }
@@ -312,8 +311,7 @@ public class ExcelWorksheetProtectionPort(
         for (int index = 1; index <= count; index++)
         {
             Excel.ListObject? table = GetListObjectAt(objects, index);
-            if (table is null
-                || !string.Equals(table.Name, GanttTableSchema.TableName, StringComparison.Ordinal))
+            if (table is null || !GanttChartContract.IsDataTableNameExact(table.Name))
             {
                 continue;
             }
