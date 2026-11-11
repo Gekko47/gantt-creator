@@ -60,6 +60,23 @@ public class ExcelConfigIntegrityChecker(
             }
         }
 
+        // Schedule data on the configuration worksheet is refused, never repaired
+        // (ADR-0011): the five catalogue tables are all that sheet may carry, so any
+        // other table there is either a copied schedule or the user's own data
+        // standing where the add-in expects a catalogue. Detected by TABLE rather
+        // than by cell, because a stray cell is a note and a table is data — and
+        // because a cell-level rule would report every scratch pad as damage.
+        foreach (string foreignTable in FindForeignConfigTables(config))
+        {
+            findings.Add(
+                new ConfigIntegrityFinding(
+                    ConfigIntegrityFindingKind.ScheduleDataOnConfig,
+                    $"The configuration worksheet carries a table named '{foreignTable}', which is not one of the five add-in catalogue tables. Move that data to a visible worksheet and remove the table; this state is reported and never repaired automatically.",
+                    TableName: foreignTable
+                )
+            );
+        }
+
         bool ganttFound =
             TryFindGanttTable(sheets, out Excel.Worksheet? gantt, out Excel.ListObject? ganttTable)
             && gantt is not null
@@ -198,4 +215,34 @@ public class ExcelConfigIntegrityChecker(
     }
 
     internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    /// <summary>
+    /// Names of the tables on the configuration worksheet that are not contract
+    /// catalogue tables.
+    /// </summary>
+    /// <param name="config">The configuration worksheet.</param>
+    /// <returns>The foreign table names in collection order.</returns>
+    private static List<string> FindForeignConfigTables(Excel.Worksheet config)
+    {
+        List<string> foreign = [];
+        Excel.ListObjects tables = config.ListObjects;
+        int count = tables.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.ListObject table = tables[index];
+            string name = table.Name;
+            // Case-insensitive because Excel treats table names that way, so a
+            // catalogue renamed to different case is still the catalogue.
+            if (
+                !GanttCatalogues.ContractTableNames.Any(contract =>
+                    string.Equals(contract, name, StringComparison.OrdinalIgnoreCase)
+                )
+            )
+            {
+                foreign.Add(name);
+            }
+        }
+
+        return foreign;
+    }
 }

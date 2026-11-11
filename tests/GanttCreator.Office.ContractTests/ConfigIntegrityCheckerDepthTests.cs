@@ -53,17 +53,33 @@ public sealed class ConfigIntegrityCheckerDepthTests
         return names;
     }
 
-    private static Excel.Worksheet ConfigSheet(Excel.XlSheetVisibility visibility = Excel.XlSheetVisibility.xlSheetVeryHidden)
+    private static Excel.Worksheet ConfigSheet(
+        Excel.XlSheetVisibility visibility = Excel.XlSheetVisibility.xlSheetVeryHidden,
+        params string[] tableNames)
     {
-        // An empty table collection: the Gantt-table scan walks EVERY sheet, so a
-        // configuration sheet reporting no ListObjects at all makes that scan throw
-        // rather than skip it.
+        // An empty table collection (the default): the Gantt-table scan walks EVERY
+        // sheet, so a configuration sheet reporting no ListObjects at all makes that
+        // scan throw rather than skip it. A caller that supplies names is modelling
+        // a configuration sheet that carries tables, which is the state the
+        // ScheduleDataOnConfig finding exists for.
         Mock<Excel.ListObjects> tables = new();
-        _ = tables.SetupGet(o => o.Count).Returns(0);
+        _ = tables.SetupGet(o => o.Count).Returns(tableNames.Length);
+        for (int index = 1; index <= tableNames.Length; index++)
+        {
+            int captured = index;
+            Mock<Excel.ListObject> table = new();
+            _ = table.SetupGet(t => t.Name).Returns(tableNames[captured - 1]);
+            _ = tables.Setup(t => t[captured]).Returns(table.Object);
+        }
+
         Mock<Excel.Worksheet> sheet = new();
         _ = sheet.SetupGet(s => s.Name).Returns(GanttWorkbookContract.ConfigSheetName);
         _ = sheet.SetupGet(s => s.Visible).Returns(visibility);
         _ = sheet.SetupGet(s => s.ListObjects).Returns(tables.Object);
+        // Every real worksheet has a Names collection, and a configuration sheet
+        // carrying a foreign table is also the sheet the Gantt-table scan finds
+        // first, so leaving this null made the fixture less realistic than the host.
+        _ = sheet.SetupGet(s => s.Names).Returns(NamesCollection().Object);
         return sheet.Object;
     }
 
@@ -107,6 +123,56 @@ public sealed class ConfigIntegrityCheckerDepthTests
             .Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
 
         return new TestableChecker(application.Object, reader.Object, tableReader.Object, sheets).Check();
+    }
+
+    [Fact]
+    public void Schedule_data_on_the_configuration_sheet_is_reported_and_refused()
+    {
+        // The finding kind and its Refuse classification predate this producer, so
+        // this is the test that makes the arm reachable: a table that is not one of
+        // the five catalogues is schedule data (or the user's own) standing on the
+        // sheet the add-in reserves for configuration.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(tableNames: GanttTableSchema.TableName),
+            GanttSheet(),
+        ]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
+
+        Assert.Equal(GanttTableSchema.TableName, finding.TableName);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void The_catalogue_tables_on_the_configuration_sheet_are_not_schedule_data()
+    {
+        // The negative control: a healthy configuration sheet carries exactly the
+        // five contract tables, and reporting those would make the finding useless.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(tableNames: [.. GanttCatalogues.ContractTableNames]),
+            GanttSheet(),
+        ]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
+    }
+
+    [Fact]
+    public void One_foreign_table_among_the_catalogues_is_still_reported()
+    {
+        // A copied schedule lands beside the catalogues, not instead of them, so the
+        // scan must not stop at the first contract name it recognises.
+        string[] names = [.. GanttCatalogues.ContractTableNames, "ScratchPad"];
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(tableNames: names), GanttSheet()]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
+
+        Assert.Equal("ScratchPad", finding.TableName);
     }
 
     [Fact]
