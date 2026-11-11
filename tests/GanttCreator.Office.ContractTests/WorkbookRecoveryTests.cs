@@ -28,9 +28,13 @@ public class WorkbookRecoveryTests
             _ = ListObjects.SetupGet(l => l.Count).Returns(tables.Length);
             _ = Worksheet.SetupGet(w => w.ListObjects).Returns(ListObjects.Object);
             _ = Worksheet.SetupGet(w => w.Names).Returns(new Mock<Excel.Names>().Object);
+            _ = Worksheet.SetupGet(w => w.Visible).Returns(() => Visibility);
         }
 
-        public string Name { get; }
+        public string Name { get; set; }
+
+        public Excel.XlSheetVisibility Visibility { get; set; } =
+            Excel.XlSheetVisibility.xlSheetVisible;
 
         public Mock<Excel.Worksheet> Worksheet { get; } = new();
 
@@ -53,7 +57,8 @@ public class WorkbookRecoveryTests
         params SheetGraph[] sheets)
         : ExcelWorkbookRecovery(application, reader, guard, null, writer, null, inspector)
     {
-        private readonly SheetGraph[] _sheets = sheets;
+        private readonly List<SheetGraph> _sheets = [.. sheets];
+        private readonly Dictionary<Excel.ListObject, string> _tableNames = [];
         private readonly Dictionary<(Excel.Worksheet Sheet, int Column), object?> _headers = [];
         private readonly Dictionary<Excel.Worksheet, int> _lastUsedRows = [];
         private readonly Dictionary<Excel.Worksheet, object?[][]> _bodies = [];
@@ -87,11 +92,76 @@ public class WorkbookRecoveryTests
             return this;
         }
 
-        internal override int GetSheetCount(Excel.Sheets sheets) => _sheets.Length;
+        public SheetGraph? CreatedSheet { get; private set; }
+
+        public List<Excel.ListObject> CreatedTables { get; } = [];
+
+        public int HeaderWrites { get; private set; }
+
+        internal override int GetSheetCount(Excel.Sheets sheets) => _sheets.Count;
 
         internal override object GetSheetAt(Excel.Sheets sheets, int index) => _sheets[index - 1].Worksheet.Object;
 
         internal override string GetSheetName(Excel.Worksheet worksheet) => Graph(worksheet).Name;
+
+        internal override void SetSheetName(Excel.Worksheet sheet, string name) => Graph(sheet).Name = name;
+
+        internal override void SetSheetVisibility(
+            Excel.Worksheet sheet,
+            Excel.XlSheetVisibility visibility) => Graph(sheet).Visibility = visibility;
+
+        internal override Excel.Worksheet AddSheetAfter(Excel.Sheets sheets, Excel.Worksheet? after)
+        {
+            SheetGraph created = new("Sheet" + (_sheets.Count + 1));
+            _sheets.Add(created);
+            CreatedSheet = created;
+            return created.Worksheet.Object;
+        }
+
+        internal override string GetTableName(Excel.ListObject table) =>
+            _tableNames.TryGetValue(table, out string? name) ? name : base.GetTableName(table);
+
+        internal override void SetTableName(Excel.ListObject table, string name) => _tableNames[table] = name;
+
+        public string RecordedTableName(Excel.ListObject table) =>
+            _tableNames.TryGetValue(table, out string? name) ? name : string.Empty;
+
+        internal override Excel.Range GetTableRange(
+            Excel.Worksheet target,
+            int headerRow,
+            int bodyRowCount,
+            int columnCount) => new Mock<Excel.Range>().Object;
+
+        internal override void SetHeaderValue(Excel.Worksheet target, int columnIndex, string? value) =>
+            HeaderWrites++;
+
+        internal override Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
+        {
+            Mock<Excel.ListObject> table = new();
+            Mock<Excel.ListColumns> columns = new();
+            List<Mock<Excel.ListColumn>> columnMocks = [];
+            for (int schemaIndex = 0; schemaIndex < GanttTableSchema.Default.Columns.Count; schemaIndex++)
+            {
+                Mock<Excel.ListColumn> column = new();
+                Mock<Excel.Range> columnRange = new();
+                Mock<Excel.Range> entireColumn = new();
+                _ = column.SetupGet(c => c.Range).Returns(columnRange.Object);
+                _ = columnRange.SetupGet(r => r.EntireColumn).Returns(entireColumn.Object);
+                _ = entireColumn.SetupGet(r => r.Hidden).Returns(false);
+                columnMocks.Add(column);
+            }
+
+            _ = columns.SetupGet(c => c.Count).Returns(columnMocks.Count);
+            for (int index = 1; index <= columnMocks.Count; index++)
+            {
+                int captured = index;
+                _ = columns.Setup(c => c[captured]).Returns(columnMocks[index - 1].Object);
+            }
+
+            _ = table.SetupGet(t => t.ListColumns).Returns(columns.Object);
+            CreatedTables.Add(table.Object);
+            return table.Object;
+        }
 
         internal override int GetTableCount(Excel.ListObjects objects) => Graph(objects).TableMocks.Count;
 
@@ -164,13 +234,22 @@ public class WorkbookRecoveryTests
         Mock<IConfigCatalogueWriter>? writer = null,
         params SheetGraph[] sheets)
     {
-        (Mock<Excel.Workbook> workbook, _) = WorkbookGraph();
-        Mock<Excel.Application> application = new();
-        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
-
         Mock<IGanttTableReader> reader = new();
         _ = reader.Setup(r => r.Read()).Returns(read);
         _ = reader.Setup(r => r.Read(It.IsAny<IReadOnlyList<int>>())).Returns(read);
+        return BuildFrom(reader, config, writer, sheets);
+    }
+
+    private static TestableRecovery BuildFrom(
+        Mock<IGanttTableReader> reader,
+        ConfigSheetLocation config,
+        Mock<IConfigCatalogueWriter>? writer,
+        params SheetGraph[] sheets)
+    {
+        (Mock<Excel.Workbook> workbook, _) = WorkbookGraph();
+        Mock<Excel.Application> application = new();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = application.SetupProperty(a => a.DisplayAlerts);
 
         Mock<IWorksheetProtectionGuard> guard = new();
         _ = guard.Setup(g => g.Query()).Returns(ProtectionGuardOutcome.NotProtected);
@@ -407,6 +486,223 @@ public class WorkbookRecoveryTests
         Assert.Equal(WorkbookRecoveryRefusalReason.ConfirmationDeclined, outcome.Refusal);
         Assert.False(outcome.Changed);
         writer.Verify(w => w.Write(), Times.Never);
+    }
+
+    [Fact]
+    public void Recover_creates_the_configuration_sheet_and_materialises_it()
+    {
+        Mock<IConfigCatalogueWriter> writer = new(MockBehavior.Strict);
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: false));
+        SheetGraph gantt = GanttSheet(tables: GanttTableSchema.TableName);
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Missing, null),
+            writer,
+            gantt);
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.True(outcome.Changed);
+        Assert.True(outcome.ConfigurationCreated);
+        Assert.Null(outcome.Refusal);
+        writer.Verify(w => w.Write(), Times.Once);
+        Assert.NotNull(recovery.CreatedSheet);
+        Assert.Equal(GanttWorkbookContract.ConfigSheetName, recovery.CreatedSheet!.Name);
+        Assert.Equal(Excel.XlSheetVisibility.xlSheetVeryHidden, recovery.CreatedSheet.Visibility);
+    }
+
+    [Fact]
+    public void Recover_rolls_back_a_created_configuration_sheet_when_the_write_fails()
+    {
+        Mock<IConfigCatalogueWriter> writer = new(MockBehavior.Strict);
+        _ = writer.Setup(w => w.Write())
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: false));
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Missing, null),
+            writer,
+            GanttSheet(tables: GanttTableSchema.TableName));
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.Equal(WorkbookRecoveryRefusalReason.ConfigurationWriteFailed, outcome.Refusal);
+        Assert.False(outcome.Changed);
+        recovery.CreatedSheet!.Worksheet.Verify(w => w.Delete(), Times.Once);
+    }
+
+    [Fact]
+    public void Recover_renames_the_configuration_sheet_and_repairs_its_catalogues()
+    {
+        Mock<IConfigCatalogueWriter> writer = new(MockBehavior.Strict);
+        _ = writer.Setup(w => w.Write()).Returns(ConfigWriteOutcome.Ok());
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: false));
+        SheetGraph backup = new("ConfigBackup");
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Renamed, "ConfigBackup"),
+            writer,
+            GanttSheet(tables: GanttTableSchema.TableName),
+            backup);
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.True(outcome.ConfigurationRenamed);
+        Assert.False(outcome.ConfigurationCreated);
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(GanttWorkbookContract.ConfigSheetName, backup.Name);
+        Assert.Equal(Excel.XlSheetVisibility.xlSheetVeryHidden, backup.Visibility);
+        writer.Verify(w => w.Write(), Times.Once);
+    }
+
+    [Fact]
+    public void Recover_restores_the_configuration_name_when_the_write_fails()
+    {
+        Mock<IConfigCatalogueWriter> writer = new(MockBehavior.Strict);
+        _ = writer.Setup(w => w.Write())
+            .Returns(ConfigWriteOutcome.Refused(ConfigWriteRefusalReason.HostRejected));
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: false));
+        SheetGraph backup = new("ConfigBackup");
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Renamed, "ConfigBackup"),
+            writer,
+            GanttSheet(tables: GanttTableSchema.TableName),
+            backup);
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.Equal(WorkbookRecoveryRefusalReason.ConfigurationWriteFailed, outcome.Refusal);
+        Assert.Equal("ConfigBackup", backup.Name);
+    }
+
+    [Fact]
+    public void Recover_renames_a_proven_table_and_verifies_the_read()
+    {
+        SheetGraph gantt = GanttSheet(tables: "Table1");
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.SetupSequence(r => r.Read())
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableMissing,
+                    configurationPresent: true,
+                    ganttSheetPresent: true))
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Present, GanttWorkbookContract.ConfigSheetName),
+            null,
+            gantt);
+        _ = recovery.WithAlignedHeader(gantt).WithPlotAnchor();
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.True(outcome.TableRenamed);
+        Assert.True(outcome.Changed);
+        Assert.Null(outcome.Refusal);
+        Assert.Equal(
+            GanttTableSchema.TableName,
+            recovery.RecordedTableName(gantt.TableMocks[0].Object));
+        reader.Verify(r => r.Read(), Times.Exactly(2));
+    }
+
+    [Fact]
+    public void Recover_restores_the_table_name_when_the_verification_fails()
+    {
+        SheetGraph gantt = GanttSheet(tables: "Table1");
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.SetupSequence(r => r.Read())
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableMissing,
+                    configurationPresent: true,
+                    ganttSheetPresent: true))
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableUnreadable,
+                    configurationPresent: true,
+                    tablePresent: true));
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Present, GanttWorkbookContract.ConfigSheetName),
+            null,
+            gantt);
+        _ = recovery.WithAlignedHeader(gantt).WithPlotAnchor();
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.Equal(WorkbookRecoveryRefusalReason.VerificationFailed, outcome.Refusal);
+        Assert.Equal("Table1", recovery.RecordedTableName(gantt.TableMocks[0].Object));
+    }
+
+    [Fact]
+    public void Recover_creates_the_gantt_sheet_with_the_contract_header_and_table()
+    {
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.SetupSequence(r => r.Read())
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableMissing,
+                    configurationPresent: true,
+                    ganttSheetPresent: false))
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Present, GanttWorkbookContract.ConfigSheetName),
+            null);
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.True(outcome.GanttSheetCreated);
+        Assert.True(outcome.TableRebuilt);
+        Assert.Null(outcome.Refusal);
+        Assert.NotNull(recovery.CreatedSheet);
+        Assert.Equal(GanttWorkbookContract.GanttSheetLabel, recovery.CreatedSheet!.Name);
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.HeaderWrites);
+        Assert.Single(recovery.CreatedTables);
+    }
+
+    [Fact]
+    public void Recover_deletes_the_created_gantt_sheet_when_the_verification_fails()
+    {
+        Mock<IGanttTableReader> reader = new();
+        _ = reader.SetupSequence(r => r.Read())
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableMissing,
+                    configurationPresent: true,
+                    ganttSheetPresent: false))
+            .Returns(
+                GanttTableReadOutcome.Refused(
+                    GanttTableReadRefusalReason.TableUnreadable,
+                    configurationPresent: true,
+                    tablePresent: true));
+        TestableRecovery recovery = BuildFrom(
+            reader,
+            new ConfigSheetLocation(ConfigSheetState.Present, GanttWorkbookContract.ConfigSheetName),
+            null);
+
+        WorkbookRecoveryInspection inspection = recovery.Inspect();
+        WorkbookRecoveryOutcome outcome = recovery.Recover(inspection, confirmed: true);
+
+        Assert.Equal(WorkbookRecoveryRefusalReason.VerificationFailed, outcome.Refusal);
+        recovery.CreatedSheet!.Worksheet.Verify(w => w.Delete(), Times.Once);
     }
 
     private static Mock<Excel.Application> ApplicationFor(Mock<Excel.Workbook> workbook)
