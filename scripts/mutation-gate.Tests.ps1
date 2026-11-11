@@ -577,4 +577,104 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:verifyText | Should -Match 'mutation-gate\.ps1 -Since \$MutationSince'
         }
     }
+
+    Context 'changed-file judging (the silent pass measured 2026-11-11)' {
+        # The report is project-wide even on a changed-code run. On 2026-11-11 the
+        # changed file was GanttChartContract.cs, whose own entry held zero
+        # mutants (two delegations to string.Equals have nothing to mutate),
+        # while the report carried 1,219 CompileError mutants from untouched
+        # files. The old judge read the whole report, found no scored mutants,
+        # and reported PASS - the same branch would also have passed a changed
+        # file whose mutants all failed to compile. These tests pin the
+        # distinction and the refusal that replaces it.
+        BeforeAll {
+            . $script:gatePath
+
+            $script:changedRelative = 'src/GanttCreator.Core/Fixture.cs'
+            $script:changedFull = [System.IO.Path]::GetFullPath(
+                (Join-Path $script:repoRoot $script:changedRelative))
+
+            function New-MutationReportFixture {
+                param([hashtable]$Files)
+
+                $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-scope-' + [guid]::NewGuid().ToString('N') + '.json')
+                Set-Content -LiteralPath $path -Value (@{ Files = $Files } | ConvertTo-Json -Depth 10)
+                return $path
+            }
+
+            function Invoke-ScopedJudge {
+                param([hashtable]$Files)
+
+                $path = New-MutationReportFixture -Files $Files
+                try {
+                    return Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 `
+                        -RepoRoot $script:repoRoot -InScopeFiles @($script:changedRelative)
+                } finally {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        It 'passes when the changed file holds no mutable code, and states that as the reason' {
+            # The measured 2026-11-11 case: our file contributes nothing, and
+            # unrelated CompileError noise must not be read as a failure either.
+            $verdict = Invoke-ScopedJudge -Files @{
+                $script:changedFull = @{ Mutants = @() }
+                'C:\noise\Untouched.cs' = @{ Mutants = @(@{ Status = 'CompileError' }, @{ Status = 'CompileError' }) }
+            }
+
+            $verdict.InScopeTotal | Should -Be 0
+            $verdict.ScorePercent | Should -Be 0
+        }
+
+        It 'POSITIVE: fails when the changed file has mutants that none could score' {
+            # The silent pass this context exists for: mutants present, all
+            # CompileError, zero scored. It must be a failure, not a pass.
+            {
+                Invoke-ScopedJudge -Files @{
+                    $script:changedFull = @{ Mutants = @(@{ Status = 'CompileError' }, @{ Status = 'CompileError' }) }
+                }
+            } | Should -Throw '*could be scored*'
+        }
+
+        It 'POSITIVE: fails when the report names none of the changed files' {
+            {
+                Invoke-ScopedJudge -Files @{
+                    'C:\noise\Untouched.cs' = @{ Mutants = @(@{ Status = 'Killed' }) }
+                }
+            } | Should -Throw '*names none of the changed*'
+        }
+
+        It 'judges the changed file rather than the whole report total' {
+            # 100% inside the changed file while the report holds 40 survivors
+            # elsewhere: a whole-report read would fail this run for code the
+            # change never touched.
+            $verdict = Invoke-ScopedJudge -Files @{
+                $script:changedFull = @{ Mutants = @(
+                    @{ Status = 'Killed' }, @{ Status = 'Killed' }, @{ Status = 'Killed' }
+                ) }
+                'C:\noise\Untouched.cs' = @{ Mutants = @(
+                    @{ Status = 'Survived' }, @{ Status = 'Survived' }, @{ Status = 'Survived' }
+                ) }
+            }
+
+            $verdict.InScopeTotal | Should -Be 3
+            $verdict.ScorePercent | Should -Be 100
+            $verdict.Total | Should -Be 6
+        }
+
+        It 'POSITIVE: still fails a changed file that scores below the threshold' {
+            {
+                Invoke-ScopedJudge -Files @{
+                    $script:changedFull = @{ Mutants = @(
+                        @{ Status = 'Killed' }, @{ Status = 'Survived' }, @{ Status = 'Survived' }
+                    ) }
+                }
+            } | Should -Throw '*below the*'
+        }
+
+        It 'passes the changed files to the judge on a changed-code run' {
+            $script:gateText | Should -Match 'InScopeFiles\s*=\s*@\(\$changed\)'
+        }
+    }
 }

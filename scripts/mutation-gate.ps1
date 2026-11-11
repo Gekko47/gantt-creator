@@ -125,6 +125,11 @@ function Invoke-MutationJudge {
         [int]$Threshold,
         [Parameter(Mandatory=$true)]
         [int]$StrykerExitCode,
+        # The changed Core files this run is judged on, relative to the
+        # repository root. Empty means "judge the whole report", which is what a
+        # baseline run does.
+        [string[]]$InScopeFiles,
+        [string]$RepoRoot = $repoRoot,
         [switch]$Baseline
     )
 
@@ -148,17 +153,47 @@ function Invoke-MutationJudge {
     $compileErrors = 0
     $noCoverage = 0
 
+    # The report is project-wide even on a changed-code run: `--since` marks the
+    # mutants of unchanged files Ignored, but every mutant Stryker created is in
+    # the file, including CompileError entries from Safe Mode in code this run
+    # never selected. Judging the whole report therefore mixed the changed file's
+    # result with unrelated noise - measured on 2026-11-11, the report held 1,219
+    # CompileError mutants from untouched files while the changed file's own entry
+    # was empty, and the gate reported "no scored mutants" as a PASS. So the
+    # changed files are tallied separately and judged on their own.
+    $scopeSet = @{}
+    foreach ($relative in @($InScopeFiles)) {
+        if (-not [string]::IsNullOrWhiteSpace($relative)) {
+            $scopeSet[[System.IO.Path]::GetFullPath((Join-Path $RepoRoot $relative))] = $true
+        }
+    }
+    $judgeScope = $scopeSet.Count -gt 0
+    $scopeFilesSeen = 0
+    $scopeTotal = 0
+    $scopeKilled = 0
+    $scopeSurvived = 0
+    $scopeTimeout = 0
+    $scopeCompileErrors = 0
+    $scopeNoCoverage = 0
+
     foreach ($fileEntry in $report.Files.PSObject.Properties) {
         $fileData = $fileEntry.Value
+        $inScope = $false
+        if ($judgeScope) {
+            $fullPath = try { [System.IO.Path]::GetFullPath($fileEntry.Name) } catch { $fileEntry.Name }
+            $inScope = $scopeSet.ContainsKey($fullPath)
+            if ($inScope) { $scopeFilesSeen++ }
+        }
         if ($null -ne $fileData.Mutants) {
             foreach ($mutant in $fileData.Mutants) {
                 $total++
+                if ($inScope) { $scopeTotal++ }
                 switch ($mutant.Status) {
-                    'Killed' { $killed++ }
-                    'Survived' { $survived++ }
-                    'Timeout' { $timeout++ }
-                    'CompileError' { $compileErrors++ }
-                    'NoCoverage' { $noCoverage++ }
+                    'Killed' { $killed++; if ($inScope) { $scopeKilled++ } }
+                    'Survived' { $survived++; if ($inScope) { $scopeSurvived++ } }
+                    'Timeout' { $timeout++; if ($inScope) { $scopeTimeout++ } }
+                    'CompileError' { $compileErrors++; if ($inScope) { $scopeCompileErrors++ } }
+                    'NoCoverage' { $noCoverage++; if ($inScope) { $scopeNoCoverage++ } }
                     default { } # Ignored, RuntimeError, etc. don't count toward score
                 }
             }
@@ -187,32 +222,61 @@ function Invoke-MutationJudge {
         }
     }
 
+    # The judged set is the changed files when the caller supplied them, and the
+    # whole report otherwise (a baseline run). This is the fix for the silent
+    # pass measured on 2026-11-11: the whole-report read let 1,219 CompileError
+    # mutants from untouched files stand in for the changed file, which itself
+    # had no mutants at all, and the gate reported "no scored mutants" as PASS.
+    if ($judgeScope) {
+        $judgeTotal = $scopeTotal
+        $judgeKilled = $scopeKilled
+        $judgeSurvived = $scopeSurvived
+        $judgeTimeout = $scopeTimeout
+        $judgeNoCoverage = $scopeNoCoverage
+        $judgeCompileErrors = $scopeCompileErrors
+    } else {
+        $judgeTotal = $total
+        $judgeKilled = $killed
+        $judgeSurvived = $survived
+        $judgeTimeout = $timeout
+        $judgeNoCoverage = $noCoverage
+        $judgeCompileErrors = $compileErrors
+    }
+
     # Stryker's mutation score is killed / (killed + survived + timeout + noCoverage) * 100
     # NoCoverage mutants lower the reported score (they are in the denominator).
-    $denominator = $killed + $survived + $timeout + $noCoverage
+    $denominator = $judgeKilled + $judgeSurvived + $judgeTimeout + $judgeNoCoverage
     $score = if ($denominator -gt 0) {
-        $killed / $denominator
+        $judgeKilled / $denominator
     } else {
         0
     }
     $scorePct = [math]::Round($score * 100, 2)
 
     $result = [pscustomobject]@{
-        Mode            = if ($Baseline) { 'baseline' } else { 'changed-code' }
-        ScorePercent    = $scorePct
-        Threshold       = $Threshold
-        Total           = $total
-        Killed          = $killed
-        Survived        = $survived
-        Timeout         = $timeout
-        CompileErrors   = $compileErrors
-        NoCoverage      = $noCoverage
-        ReportPath      = $ReportPath
-        StrykerExitCode = $StrykerExitCode
+        Mode                 = if ($Baseline) { 'baseline' } else { 'changed-code' }
+        ScorePercent         = $scorePct
+        Threshold            = $Threshold
+        Total                = $total
+        Killed               = $killed
+        Survived             = $survived
+        Timeout              = $timeout
+        CompileErrors        = $compileErrors
+        NoCoverage           = $noCoverage
+        InScopeTotal         = $judgeTotal
+        InScopeKilled        = $judgeKilled
+        InScopeCompileErrors = $judgeCompileErrors
+        ReportPath           = $ReportPath
+        StrykerExitCode      = $StrykerExitCode
     }
 
     Write-Host ''
-    Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$denominator scored killed, $survived survived, $timeout timeout, $noCoverage no-coverage, $compileErrors compile-error) against a $Threshold% threshold."
+    if ($judgeScope) {
+        Write-Host ("mutation-gate: {0} changed-file score {1}% ({2}/{3} scored killed, {4} survived, {5} timeout, {6} no-coverage, {7} compile-error) against a {8}% threshold." -f $result.Mode, $scorePct, $judgeKilled, $denominator, $judgeSurvived, $judgeTimeout, $judgeNoCoverage, $judgeCompileErrors, $Threshold)
+        Write-Host ("mutation-gate: whole report held {0} mutants ({1} compile-error); only the changed files are judged." -f $total, $compileErrors)
+    } else {
+        Write-Host "mutation-gate: $($result.Mode) score $($scorePct)% ($killed/$denominator scored killed, $survived survived, $timeout timeout, $noCoverage no-coverage, $compileErrors compile-error) against a $Threshold% threshold."
+    }
 
     if ($Baseline) {
         Write-Host "mutation-gate: BASELINE archived (not judged). Report: $ReportPath"
@@ -228,13 +292,29 @@ function Invoke-MutationJudge {
         return $result
     }
 
-    # Detect when changed-code mode has no scored mutants (zero total or only Ignored/NoCoverage)
-    # In this case, pass the gate but log the reason.
-    $scoredMutants = $killed + $survived + $timeout
-    if ($scoredMutants -eq 0) {
-        Write-Host "mutation-gate: CHANGED-CODE MODE - no scored mutants found ($killed killed, $survived survived, $timeout timeout, $noCoverage no-coverage). Passing gate (no changed code to mutate)."
+    # A changed file the report never names means the run did not evaluate the
+    # code it was asked to judge. That is a failure, never a pass.
+    if ($judgeScope -and $scopeFilesSeen -eq 0) {
+        throw (
+            "Stryker's report names none of the changed Core files ({0}). The run did not evaluate the code it was asked to judge." -f (@($InScopeFiles) -join ', ')
+        )
+    }
+
+    # Zero mutants in the changed files is a real answer: the change contains no
+    # mutable code (a pure delegation to string.Equals produces none). It is a
+    # PASS, but it is stated as that fact rather than as "no changed code".
+    if ($judgeScope -and $judgeTotal -eq 0) {
+        Write-Host 'mutation-gate: the changed Core files contain no mutable code, so there is nothing to score. Passing on that fact, not on a score.'
         Write-Host 'mutation-gate: PASS'
         return $result
+    }
+
+    # Mutants existed in the changed files but none could be scored. This is the
+    # silent pass this gate used to have, so it is now a FAILURE.
+    if ($denominator -eq 0) {
+        throw (
+            "None of the {0} mutants in the changed Core files could be scored ({1} compile-error, {2} ignored). Stryker's Safe Mode removes mutations it cannot compile, and that is not evidence the code is tested. Remove the un-compilable mutation sites or exclude them explicitly." -f $judgeTotal, $judgeCompileErrors, ($judgeTotal - $judgeCompileErrors - $judgeNoCoverage)
+        )
     }
 
     if ($scorePct -lt $Threshold) {
@@ -518,5 +598,16 @@ $output | ForEach-Object { Write-Host $_ }
 # --output, so the judge must read <output>/reports/mutation-report.json,
 # not <output>/mutation-report.json.
 $reportPath = Join-Path $outputDir 'reports' 'mutation-report.json'
-$result = Invoke-MutationJudge -ReportPath $reportPath -Threshold $Threshold -StrykerExitCode $exit -Baseline:$Baseline
+$judgeArguments = @{
+    ReportPath      = $reportPath
+    Threshold       = $Threshold
+    StrykerExitCode = $exit
+    RepoRoot        = $repoRoot
+}
+if (-not $Baseline) {
+    # The changed files are what this run is judged on. Passing them makes the
+    # judge read their own entry, not the whole report's totals.
+    $judgeArguments.InScopeFiles = @($changed)
+}
+$result = Invoke-MutationJudge @judgeArguments -Baseline:$Baseline
 return $result
