@@ -132,10 +132,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         {
             object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet
-                && string.Equals(
-                    worksheet.Name,
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
             {
                 return worksheet;
             }

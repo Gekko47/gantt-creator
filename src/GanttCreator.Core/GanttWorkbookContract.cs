@@ -68,4 +68,36 @@ public static class GanttWorkbookContract
         nameText is not null
         && (string.Equals(nameText, PlotAnchorDefinedName, StringComparison.OrdinalIgnoreCase)
             || nameText.EndsWith("!" + PlotAnchorDefinedName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Whether a worksheet name is the add-in's configuration worksheet.
+    /// </summary>
+    /// <remarks>
+    /// Case-insensitive because Excel preserves whatever case a sheet was created
+    /// or renamed with, and every adapter that resolves the configuration sheet
+    /// already compared it that way. The identity decision itself (present,
+    /// missing, renamed, colliding) belongs to
+    /// <see cref="ConfigSheetLocator"/>; this predicate only answers the name
+    /// question it is built from.
+    /// </remarks>
+    /// <param name="sheetName">The worksheet name read from the host, or null.</param>
+    /// <returns><see langword="true"/> when the name is the configuration sheet.</returns>
+    public static bool IsConfigSheetName(string? sheetName) =>
+        string.Equals(sheetName, ConfigSheetName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a worksheet name is the label Initialise gives the visible Gantt
+    /// worksheet.
+    /// </summary>
+    /// <remarks>
+    /// This is a label, not an identity: a user may rename the sheet and the table
+    /// walk still finds it. Callers ask this only where the label is the whole
+    /// question (the reader's "looks like a Gantt sheet" fact and the recovery's
+    /// standard-labelled target search); whether a sheet is usable as the chart is
+    /// always decided by the table read.
+    /// </remarks>
+    /// <param name="sheetName">The worksheet name read from the host, or null.</param>
+    /// <returns><see langword="true"/> when the name is the standard Gantt label.</returns>
+    public static bool IsGanttSheetLabel(string? sheetName) =>
+        string.Equals(sheetName, GanttSheetLabel, StringComparison.OrdinalIgnoreCase);
 }

@@ -47,7 +47,7 @@ public class ExcelConfigIntegrityChecker(
         {
             if (
                 GetSheetAt(sheets, index) is Excel.Worksheet sheet
-                && string.Equals(sheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase)
+                && GanttWorkbookContract.IsConfigSheetName(sheet.Name)
                 && !ReferenceEquals(sheet, config)
             )
             {
@@ -187,7 +187,7 @@ public class ExcelConfigIntegrityChecker(
         {
             if (
                 GetSheetAt(sheets, index) is Excel.Worksheet worksheet
-                && string.Equals(worksheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase)
+                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name)
             )
             {
                 return worksheet;

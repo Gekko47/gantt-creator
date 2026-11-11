@@ -34,7 +34,7 @@ public class ExcelConfigSheetVisibilityRepairer(object? application, IWorksheetP
         for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet sheet
-                && string.Equals(sheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsConfigSheetName(sheet.Name))
             {
                 ProtectionGuardOutcome protection = _protectionGuard.QueryTarget(sheet);
                 if (protection != ProtectionGuardOutcome.NotProtected)

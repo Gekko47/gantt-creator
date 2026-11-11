@@ -638,10 +638,7 @@ public class ExcelWorkbookInitialiser(
                         null,
                         CultureInfo.InvariantCulture)!,
                 };
-                if (string.Equals(
-                    sheetName,
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.OrdinalIgnoreCase))
+                if (GanttWorkbookContract.IsConfigSheetName(sheetName))
                 {
                     if (sheet is Worksheet configSheet)
                     {

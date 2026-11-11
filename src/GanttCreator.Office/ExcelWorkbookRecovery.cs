@@ -894,10 +894,7 @@ public class ExcelWorkbookRecovery(
         for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
-                && string.Equals(
-                    GetSheetName(worksheet),
-                    GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsConfigSheetName(GetSheetName(worksheet)))
             {
                 return worksheet;
             }
@@ -1040,10 +1037,7 @@ public class ExcelWorkbookRecovery(
         for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Excel.Worksheet worksheet
-                && string.Equals(
-                    GetSheetName(worksheet),
-                    GanttWorkbookContract.GanttSheetLabel,
-                    StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsGanttSheetLabel(GetSheetName(worksheet)))
             {
                 labelled.Add(worksheet);
             }

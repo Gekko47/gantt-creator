@@ -82,7 +82,7 @@ public static class ConfigSheetLocator
         int canonicalCount = 0;
         foreach (ConfigSheetObservation sheet in sheets)
         {
-            if (!IsCanonicalName(sheet.Name))
+            if (!GanttWorkbookContract.IsConfigSheetName(sheet.Name))
             {
                 continue;
             }
@@ -143,6 +143,4 @@ public static class ConfigSheetLocator
         return new ConfigSheetLocation(ConfigSheetState.Missing, null);
     }
 
-    private static bool IsCanonicalName(string? name) =>
-        string.Equals(name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase);
 }

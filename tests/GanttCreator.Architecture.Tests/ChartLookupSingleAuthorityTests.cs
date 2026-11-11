@@ -26,18 +26,28 @@ namespace GanttCreator.Architecture.Tests;
 /// </remarks>
 public sealed class ChartLookupSingleAuthorityTests
 {
-    /// <summary>The one production file allowed to compare the table name.</summary>
-    private const string ContractPath = "src/GanttCreator.Core/GanttChartContract.cs";
+    /// <summary>The production files allowed to compare a contract name.</summary>
+    private static readonly string[] ContractPaths =
+    [
+        "src/GanttCreator.Core/GanttChartContract.cs",
+        "src/GanttCreator.Core/GanttWorkbookContract.cs",
+    ];
 
-    /// <summary>The text that marks a comparison as a table-identity lookup.</summary>
-    private const string SchemaNameText = "GanttTableSchema.TableName";
+    /// <summary>The contract-name references that only those files may compare.</summary>
+    private static readonly string[] ContractNameReferences =
+    [
+        "GanttTableSchema.TableName",
+        "GanttWorkbookContract.ConfigSheetName",
+        "GanttWorkbookContract.GanttSheetLabel",
+        "GanttWorkbookContract.PlotAnchorDefinedName",
+    ];
 
     /// <summary>
-    /// No production file outside <see cref="ContractPath"/> compares a table name
-    /// against the schema's table name.
+    /// No production file outside <see cref="ContractPaths"/> compares a name
+    /// against the schema or workbook contract.
     /// </summary>
     [Fact]
-    public void Only_the_chart_contract_compares_a_table_name_to_the_schema()
+    public void Only_the_contracts_compare_a_contract_name()
     {
         string root = FindRepositoryRoot();
         List<string> offenders = [];
@@ -46,7 +56,7 @@ public sealed class ChartLookupSingleAuthorityTests
                      Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories))
         {
             string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (string.Equals(relative, ContractPath, StringComparison.Ordinal))
+            if (ContractPaths.Contains(relative, StringComparer.Ordinal))
             {
                 continue;
             }
@@ -54,7 +64,7 @@ public sealed class ChartLookupSingleAuthorityTests
             foreach (InvocationExpressionSyntax invocation in Nodes(File.ReadAllText(file))
                          .OfType<InvocationExpressionSyntax>())
             {
-                if (!ComparesSchemaTableName(invocation))
+                if (!ComparesContractName(invocation))
                 {
                     continue;
                 }
@@ -74,7 +84,7 @@ public sealed class ChartLookupSingleAuthorityTests
     [Fact]
     public void The_guard_detects_an_inline_comparison_in_a_stub()
     {
-        const string stub = """
+        const string tableStub = """
             static class Sample
             {
                 internal static bool IsGantt(string? name) =>
@@ -82,7 +92,16 @@ public sealed class ChartLookupSingleAuthorityTests
             }
             """;
 
-        Assert.Contains(Nodes(stub).OfType<InvocationExpressionSyntax>(), ComparesSchemaTableName);
+        const string workbookStub = """
+            static class Sample
+            {
+                internal static bool IsConfig(string? name) =>
+                    string.Equals(name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase);
+            }
+            """;
+
+        Assert.Contains(Nodes(tableStub).OfType<InvocationExpressionSyntax>(), ComparesContractName);
+        Assert.Contains(Nodes(workbookStub).OfType<InvocationExpressionSyntax>(), ComparesContractName);
     }
 
     /// <summary>
@@ -96,21 +115,25 @@ public sealed class ChartLookupSingleAuthorityTests
         const string stub = """
             static class Sample
             {
-                internal static void Name(object table) =>
+                internal static void Name(object table, object sheet)
+                {
                     table.Name = GanttTableSchema.TableName;
+                    sheet.Name = GanttWorkbookContract.ConfigSheetName;
+                }
             }
             """;
 
-        Assert.DoesNotContain(Nodes(stub).OfType<InvocationExpressionSyntax>(), ComparesSchemaTableName);
+        Assert.DoesNotContain(Nodes(stub).OfType<InvocationExpressionSyntax>(), ComparesContractName);
     }
 
-    /// <summary>Whether the invocation is a <c>string.Equals</c> mentioning the table name.</summary>
+    /// <summary>Whether the invocation is a <c>string.Equals</c> mentioning a contract name.</summary>
     /// <param name="invocation">The invocation to inspect.</param>
     /// <returns><see langword="true"/> when both conditions hold.</returns>
-    private static bool ComparesSchemaTableName(InvocationExpressionSyntax invocation) =>
+    private static bool ComparesContractName(InvocationExpressionSyntax invocation) =>
         IsStringEquals(invocation)
         && invocation.ArgumentList.Arguments.Any(argument =>
-            argument.Expression.ToString().Contains(SchemaNameText, StringComparison.Ordinal));
+            ContractNameReferences.Any(reference =>
+                argument.Expression.ToString().Contains(reference, StringComparison.Ordinal)));
 
     /// <summary>Whether the invocation's receiver is the <c>string</c> type.</summary>
     /// <param name="invocation">The invocation to inspect.</param>

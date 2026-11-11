@@ -228,7 +228,7 @@ public class ExcelGanttTableReader(
         {
             object sheet = GetSheetAt(sheets, index);
             if (sheet is Worksheet worksheet
-                && string.Equals(worksheet.Name, GanttWorkbookContract.ConfigSheetName, StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsConfigSheetName(worksheet.Name))
             {
                 return true;
             }
@@ -248,10 +248,7 @@ public class ExcelGanttTableReader(
         for (int index = 1; index <= count; index++)
         {
             if (GetSheetAt(sheets, index) is Worksheet worksheet
-                && string.Equals(
-                    worksheet.Name,
-                    GanttWorkbookContract.GanttSheetLabel,
-                    StringComparison.OrdinalIgnoreCase))
+                && GanttWorkbookContract.IsGanttSheetLabel(worksheet.Name))
             {
                 return true;
             }
