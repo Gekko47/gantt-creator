@@ -187,6 +187,11 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
                 ConfigRepairClassification.ConfirmRequired,
             ConfigIntegrityFindingKind.CatalogueTableCorrupt when finding.TableName == GanttCatalogues.StylesTableName =>
                 ConfigRepairClassification.ConfirmRequired,
+            // IDE0072 requires every remaining enum member to be named here, so
+            // this arm restates the default rather than being the only place the
+            // rule is written. Mutation testing flags the alternatives that turn
+            // these `or`s into `and`s as survivors because both spellings reach the
+            // same `_` arm: they are equivalent mutants, not missing tests.
             ConfigIntegrityFindingKind.SchemaVersionNewer
             or ConfigIntegrityFindingKind.ConfigSheetMissing
             or ConfigIntegrityFindingKind.SecondHelperSheet

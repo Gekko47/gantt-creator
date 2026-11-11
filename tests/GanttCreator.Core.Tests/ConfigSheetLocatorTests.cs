@@ -137,4 +137,22 @@ public class ConfigSheetLocatorTests
     [InlineData("'Gantt Data'!GanttCreator.PlotAnchorExtra")]
     public void Any_other_defined_name_is_not_the_plot_anchor(string? nameText) =>
         Assert.False(GanttWorkbookContract.IsPlotAnchorName(nameText));
+
+    [Fact]
+    public void A_name_that_only_ends_with_the_anchor_text_is_not_the_plot_anchor()
+    {
+        // The host's qualified form is the sheet, then "!", then the name. A string
+        // that merely ends with the anchor text is a different defined name sharing
+        // a tail, and accepting it would recognise a name the add-in never wrote.
+        Assert.False(
+            GanttWorkbookContract.IsPlotAnchorName("Sheet" + GanttWorkbookContract.PlotAnchorDefinedName));
+    }
+
+    [Fact]
+    public void Locate_rejects_a_null_observation_list()
+    {
+        // The guard separates "the workbook has no worksheets" from "the caller
+        // passed nothing"; without it a caller bug reads as an empty workbook.
+        Assert.Throws<ArgumentNullException>(() => ConfigSheetLocator.Locate(null!));
+    }
 }

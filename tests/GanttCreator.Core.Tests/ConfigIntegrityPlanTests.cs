@@ -144,4 +144,45 @@ public sealed class ConfigIntegrityPlanTests
 
         Assert.Equal(expected, ConfigIntegrityPlan.Classify(finding));
     }
+
+    [Fact]
+    public void Build_orders_equal_findings_by_table_then_row_then_detail()
+    {
+        // The tie-breaks are why two runs over the same damage produce the same
+        // Ribbon list. Ascending order and "a null row sorts last" are asserted
+        // together, because reversing either one changes the order without changing
+        // how many findings there are.
+        ConfigIntegrityFinding[] input =
+        [
+            new(ConfigIntegrityFindingKind.IdentityDamage, "z-detail", "tblB"),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "a-detail", "tblA"),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "row-5", "tblA", 5),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "row-2", "tblA", 2),
+            new(ConfigIntegrityFindingKind.IdentityDamage, "no-row-z", "tblA"),
+        ];
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build(input);
+
+        Assert.Equal(
+            ["row-2", "row-5", "a-detail", "no-row-z", "z-detail"],
+            plan.Findings.Select(finding => finding.Detail));
+    }
+
+    [Fact]
+    public void Each_classification_property_returns_only_its_own_findings()
+    {
+        // These three properties are what the repairer and the Ribbon act on, so a
+        // filter returning the wrong subset would repair damage the analyst has not
+        // consented to. An empty plan exercises none of them; see
+        // Empty_is_a_plan_with_no_findings_in_any_classification.
+        ConfigIntegrityFinding auto = new(ConfigIntegrityFindingKind.WrongVisibility, "visibility");
+        ConfigIntegrityFinding confirm = new(ConfigIntegrityFindingKind.IdentityDamage, "identity");
+        ConfigIntegrityFinding refuse = new(ConfigIntegrityFindingKind.SecondHelperSheet, "helper");
+
+        ConfigIntegrityPlan plan = ConfigIntegrityPlan.Build([auto, confirm, refuse]);
+
+        Assert.Same(auto, Assert.Single(plan.AutoRepairFindings));
+        Assert.Same(confirm, Assert.Single(plan.ConfirmRequiredFindings));
+        Assert.Same(refuse, Assert.Single(plan.RefusedFindings));
+    }
 }
