@@ -1840,6 +1840,7 @@ internal class RibbonStateService
         // values instead of flipping the ribbon to FirstRun.
         bool? sheetInitialised = null;
         bool? configurationPresent = null;
+        bool? ganttSheetPresent = null;
         bool? criticalIntervalParentAvailable = null;
         if (_tableReader is not null)
         {
@@ -1849,6 +1850,7 @@ internal class RibbonStateService
                 GanttTableReadOutcome tableOutcome = _tableReader.Read();
                 sheetInitialised = tableOutcome.Succeeded;
                 configurationPresent = tableOutcome.ConfigurationPresent;
+                ganttSheetPresent = tableOutcome.GanttSheetPresent;
                 criticalIntervalParentAvailable =
                     tableOutcome.Succeeded && HasEligibleParent(tableOutcome.Rows);
             }
@@ -1864,6 +1866,7 @@ internal class RibbonStateService
             _state,
             sheetInitialised,
             configurationPresent,
+            ganttSheetPresent,
             criticalIntervalParentAvailable);
         Invalidate();
     }
@@ -2385,6 +2388,10 @@ internal class RibbonStateService
     /// Whether the workbook carries the configuration worksheet, or null when
     /// the probe was unavailable and the previous value must stand (R5.16).
     /// </param>
+    /// <param name="ganttSheetPresent">
+    /// Whether a standard-labelled Gantt worksheet exists, or null when the
+    /// probe was unavailable and the previous value must stand (R5.17b).
+    /// </param>
     /// <param name="criticalIntervalParentAvailable">
     /// Whether the table holds a row that can own a Critical Interval, or null
     /// when the probe was unavailable and the previous value must stand (R5.16).
@@ -2394,6 +2401,7 @@ internal class RibbonStateService
         RibbonState previous,
         bool? sheetInitialised,
         bool? configurationPresent = null,
+        bool? ganttSheetPresent = null,
         bool? criticalIntervalParentAvailable = null)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
@@ -2411,9 +2419,14 @@ internal class RibbonStateService
             bool workbookPresent = hasActiveWorkbook ?? previous.HasActiveWorkbook;
             bool initialised = sheetInitialised ?? previous.SheetInitialised;
             bool configPresent = configurationPresent ?? previous.ConfigurationPresent;
+            bool ganttPresent = ganttSheetPresent ?? previous.GanttSheetPresent;
             bool criticalAvailable =
                 criticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
-            RibbonMode mode = ResolveMode(workbookPresent, initialised, configPresent);
+            RibbonMode mode = ResolveMode(
+                workbookPresent,
+                initialised,
+                configPresent,
+                ganttPresent);
 
             // R5.5 ruling 6: the description-label dropdown is the first selection-gated
             // control, so its context is captured here rather than left at its
@@ -2455,6 +2468,7 @@ internal class RibbonStateService
                 customStyleContext.SelectedKey,
                 customStyleContext.Options,
                 ConfigurationPresent: configPresent,
+                GanttSheetPresent: ganttPresent,
                 Mode: mode,
                 CriticalIntervalParentAvailable: criticalAvailable));
         }
@@ -2475,16 +2489,20 @@ internal class RibbonStateService
     /// <param name="hasActiveWorkbook">Whether Excel has an active workbook.</param>
     /// <param name="sheetInitialised">Whether the Gantt table is readable.</param>
     /// <param name="configurationPresent">Whether <c>_GanttCreatorConfig</c> exists.</param>
+    /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt worksheet exists.</param>
     /// <returns>The resolved mode.</returns>
     private static RibbonMode ResolveMode(
         bool hasActiveWorkbook,
         bool sheetInitialised,
-        bool configurationPresent) =>
+        bool configurationPresent,
+        bool ganttSheetPresent) =>
         !hasActiveWorkbook
             ? RibbonMode.FirstRun
             : sheetInitialised
-                ? RibbonMode.Ready
-                : configurationPresent
+                ? configurationPresent
+                    ? RibbonMode.Ready
+                    : RibbonMode.NeedsRepair
+                : configurationPresent || ganttSheetPresent
                     ? RibbonMode.NeedsRepair
                     : RibbonMode.FirstRun;
 

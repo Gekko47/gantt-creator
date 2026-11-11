@@ -123,8 +123,14 @@ internal enum RibbonMode
 /// </param>
 /// <param name="ConfigurationPresent">
 /// True when the active workbook carries a <c>_GanttCreatorConfig</c>
-/// worksheet. Only meaningful when the table is not initialised: it separates
-/// a first run from a damaged workbook that needs repair (R5.16).
+/// worksheet. It separates a first run from a damaged workbook that needs
+/// repair (R5.16), and a readable table without configuration is still
+/// <c>NeedsRepair</c> (R5.17b).
+/// </param>
+/// <param name="GanttSheetPresent">
+/// True when a worksheet carries the standard Gantt label. A workbook with no
+/// configuration and no table but a labelled sheet is recoverable, not a first
+/// run, so Initialise cannot create a second Gantt worksheet (R5.17b).
 /// </param>
 /// <param name="Mode">
 /// The Ribbon mode derived from workbook presence, table readability, and
@@ -165,6 +171,7 @@ internal sealed record RibbonState(
     string? SelectedCustomStyleKey = null,
     IReadOnlyList<string>? CustomStyleOptions = null,
     bool ConfigurationPresent = false,
+    bool GanttSheetPresent = false,
     RibbonMode Mode = RibbonMode.FirstRun,
     bool CriticalIntervalParentAvailable = false)
 {

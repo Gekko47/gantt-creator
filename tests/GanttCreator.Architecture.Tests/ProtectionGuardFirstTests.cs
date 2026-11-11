@@ -61,6 +61,11 @@ public sealed class ProtectionGuardFirstTests
     private static readonly MutatingAdapter[] MutatingAdapters =
     [
         new("src/GanttCreator.Office/ExcelWorkbookInitialiser.cs", "Initialise"),
+        // R5.17: the recovery adapter writes header cells, creates or deletes the
+        // contract table, repairs table columns, and creates the configuration or
+        // Gantt worksheet. Recover() consults the shared guard before delegating to
+        // any of those mutations; Inspect() remains read-only.
+        new("src/GanttCreator.Office/ExcelWorkbookRecovery.cs", "Recover"),
         new("src/GanttCreator.Office/ExcelConfigCatalogueWriter.cs", "Write"),
         new("src/GanttCreator.Office/ExcelGanttValidationReporter.cs", "Report"),
         new("src/GanttCreator.Office/ExcelGanttRowInserter.cs", "Insert"),
@@ -235,6 +240,7 @@ public sealed class ProtectionGuardFirstTests
         "src/GanttCreator.Office/GanttValidationReportOutcome.cs",
         "src/GanttCreator.Office/IConfigCatalogueReader.cs",
         "src/GanttCreator.Office/IConfigCatalogueWriter.cs",
+        "src/GanttCreator.Office/IWorkbookRecovery.cs",
         "src/GanttCreator.Office/IConfigIntegrityChecker.cs",
         "src/GanttCreator.Office/IConfigRepairer.cs",
         "src/GanttCreator.Office/IConfigSheetVisibilityRepairer.cs",

@@ -331,7 +331,7 @@ public class ExcelTypeOptionsMaterialiser(
         for (int index = 1; index <= count; index++)
         {
             if (sheets[index] is Excel.Worksheet sheet
-                && string.Equals(sheet.Name, name, StringComparison.Ordinal))
+                && string.Equals(sheet.Name, name, StringComparison.OrdinalIgnoreCase))
             {
                 return sheet;
             }
@@ -361,7 +361,7 @@ public class ExcelTypeOptionsMaterialiser(
         for (int index = 1; index <= count; index++)
         {
             Excel.ListObject table = objects[index];
-            if (string.Equals(table.Name, name, StringComparison.Ordinal))
+            if (string.Equals(table.Name, name, StringComparison.OrdinalIgnoreCase))
             {
                 return table;
             }

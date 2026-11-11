@@ -374,7 +374,8 @@ public class GanttTableReaderTests
         GanttTableReadOutcome outcome = reader.Read();
 
         Assert.False(outcome.Succeeded);
-        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.Equal(GanttTableReadRefusalReason.TableUnreadable, outcome.Refusal);
+        Assert.True(outcome.TablePresent);
         Assert.Empty(outcome.Rows);
     }
 
@@ -799,7 +800,7 @@ public class GanttTableReaderTests
 
         GanttTableReadOutcome outcome = reader.Read([5]);
 
-        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.Equal(GanttTableReadRefusalReason.TableUnreadable, outcome.Refusal);
     }
 
     [Fact]

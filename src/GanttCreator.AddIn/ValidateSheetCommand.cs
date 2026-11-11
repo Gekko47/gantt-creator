@@ -142,6 +142,8 @@ internal static class ValidateSheetCommand
             "Gantt Creator needs an open workbook. Open a workbook, then run Validate again.",
         GanttTableReadRefusalReason.TableMissing =>
             "Validate could not find a table named tblGanttData on the active sheet. Run Initialise sheet first.",
+        GanttTableReadRefusalReason.TableUnreadable =>
+            "Validate found tblGanttData but its columns no longer match the Gantt Creator schema. Run Fix to repair the table.",
         GanttTableReadRefusalReason.DateSystemUnsupported =>
             "This workbook uses the 1904 date system, which Gantt Creator does not support. Use a 1900-date workbook and run Validate again.",
         _ => "Validate could not run. Try again; if it keeps failing, see the Diagnostics dialog.",

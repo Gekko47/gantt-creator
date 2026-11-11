@@ -11,7 +11,7 @@ public sealed class RepairConfigCommandTests
         ConfigIntegrityCheckOutcome.Ok(findings);
 
     [Fact]
-    public void Run_is_silent_for_a_valid_workbook()
+    public void Run_reports_nothing_to_repair_for_a_valid_workbook()
     {
         var checker = new Mock<IConfigIntegrityChecker>();
         _ = checker.Setup(c => c.Check()).Returns(Check());
@@ -20,8 +20,104 @@ public sealed class RepairConfigCommandTests
 
         RepairConfigCommand.Run(checker.Object, repairer.Object, _ => true, messages.Add);
 
-        Assert.Empty(messages);
+        Assert.Equal(RepairConfigCommand.NothingToRepairMessage, Assert.Single(messages));
         repairer.Verify(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Run_rebuilds_the_table_before_the_configuration_check_and_schedules_one_refresh()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check());
+        var repairer = new Mock<IConfigRepairer>(MockBehavior.Strict);
+        var recovery = new Mock<IWorkbookRecovery>();
+        var inspection = new WorkbookRecoveryInspection(
+            TableReadable: false,
+            TablePresent: false,
+            ConfigurationPresent: true,
+            NeedsRecovery: true,
+            TargetSheetName: "Gantt Data",
+            BodyRowCount: 2,
+            HeaderPlan: null,
+            StructurePlan: null,
+            RequiresConfirmation: true,
+            ConfirmationMessage: "Adopt 2 rows?",
+            Refusal: null);
+        _ = recovery.Setup(r => r.Inspect()).Returns(inspection);
+        _ = recovery.Setup(r => r.Recover(inspection, true))
+            .Returns(new WorkbookRecoveryOutcome(true, true, false, 2, null));
+        var messages = new List<string>();
+        var refreshes = 0;
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            messages.Add,
+            recovery.Object,
+            () => refreshes++);
+
+        recovery.Verify(r => r.Recover(inspection, true), Times.Once);
+        checker.Verify(c => c.Check(), Times.Once);
+        Assert.Contains("Rebuilt tblGanttData", Assert.Single(messages), StringComparison.Ordinal);
+        Assert.Contains("adopted 2 row", messages[0], StringComparison.Ordinal);
+        Assert.Equal(1, refreshes);
+    }
+
+    [Fact]
+    public void Run_declines_the_rebuild_confirmation_and_mutates_nothing()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>(MockBehavior.Strict);
+        var repairer = new Mock<IConfigRepairer>(MockBehavior.Strict);
+        var recovery = new Mock<IWorkbookRecovery>();
+        var inspection = new WorkbookRecoveryInspection(
+            TableReadable: false,
+            TablePresent: false,
+            ConfigurationPresent: true,
+            NeedsRecovery: true,
+            TargetSheetName: "Gantt Data",
+            BodyRowCount: 1,
+            HeaderPlan: null,
+            StructurePlan: null,
+            RequiresConfirmation: true,
+            ConfirmationMessage: "Adopt 1 row?",
+            Refusal: null);
+        _ = recovery.Setup(r => r.Inspect()).Returns(inspection);
+        var messages = new List<string>();
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => false,
+            messages.Add,
+            recovery.Object);
+
+        recovery.Verify(r => r.Recover(It.IsAny<WorkbookRecoveryInspection>(), It.IsAny<bool>()), Times.Never);
+        checker.Verify(c => c.Check(), Times.Never);
+        Assert.Equal(RepairConfigCommand.CancelledMessage, Assert.Single(messages));
+    }
+
+    [Fact]
+    public void Run_schedules_a_refresh_after_a_configuration_repair()
+    {
+        var checker = new Mock<IConfigIntegrityChecker>();
+        _ = checker.Setup(c => c.Check()).Returns(Check(
+            new ConfigIntegrityFinding(ConfigIntegrityFindingKind.IdentityDamage, "identity")));
+        var repairer = new Mock<IConfigRepairer>();
+        _ = repairer.Setup(r => r.Repair(It.IsAny<ConfigIntegrityPlan>(), true))
+            .Returns(ConfigRepairOutcome.Ok(1, 0, 0));
+        var messages = new List<string>();
+        var refreshes = 0;
+
+        RepairConfigCommand.Run(
+            checker.Object,
+            repairer.Object,
+            _ => true,
+            messages.Add,
+            onChanged: () => refreshes++);
+
+        Assert.Equal(1, refreshes);
+        Assert.Contains("1 repaired", Assert.Single(messages), StringComparison.Ordinal);
     }
 
     [Fact]

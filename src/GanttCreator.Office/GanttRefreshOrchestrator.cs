@@ -1258,6 +1258,8 @@ public sealed class GanttRefreshOrchestrator(
                 "There is no active workbook to refresh.",
             GanttTableReadRefusalReason.TableMissing =>
                 "The Gantt table was not found on the active sheet.",
+            GanttTableReadRefusalReason.TableUnreadable =>
+                "The Gantt table was found but its columns do not match the Gantt Creator schema. Run Fix to repair it.",
             GanttTableReadRefusalReason.DateSystemUnsupported =>
                 "This workbook uses the 1904 date system, which Gantt Creator does not support.",
             _ => "The Gantt table could not be read.",

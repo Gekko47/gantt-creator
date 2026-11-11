@@ -135,7 +135,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
                 && string.Equals(
                     worksheet.Name,
                     GanttWorkbookContract.ConfigSheetName,
-                    StringComparison.Ordinal))
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return worksheet;
             }
@@ -157,7 +157,7 @@ public class ExcelConfigCatalogueReader(object? application) : IConfigCatalogueR
         for (int index = 1; index <= count; index++)
         {
             ListObject table = GetTableAt(listObjects, index);
-            if (string.Equals(table.Name, tableName, StringComparison.Ordinal))
+            if (string.Equals(table.Name, tableName, StringComparison.OrdinalIgnoreCase))
             {
                 return table;
             }
