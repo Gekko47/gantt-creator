@@ -594,7 +594,12 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             $script:changedFull = [System.IO.Path]::GetFullPath(
                 (Join-Path $script:repoRoot $script:changedRelative))
 
-            function New-MutationReportFixture {
+            # A scriptblock, not a function: PSScriptAnalyzer requires a
+            # New-* function to support ShouldProcess because the verb says it
+            # changes state, and a test fixture that writes one temp file does not
+            # need that ceremony - the gate caught the helper and this is the
+            # smallest honest answer to it.
+            $script:newReportFixture = {
                 param([hashtable]$Files)
 
                 $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-scope-' + [guid]::NewGuid().ToString('N') + '.json')
@@ -605,7 +610,7 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
             function Invoke-ScopedJudge {
                 param([hashtable]$Files)
 
-                $path = New-MutationReportFixture -Files $Files
+                $path = & $script:newReportFixture -Files $Files
                 try {
                     return Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 `
                         -RepoRoot $script:repoRoot -InScopeFiles @($script:changedRelative)
