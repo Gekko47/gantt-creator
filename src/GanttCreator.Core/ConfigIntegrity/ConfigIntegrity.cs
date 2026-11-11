@@ -48,6 +48,9 @@ public enum ConfigIntegrityFindingKind
 
     /// <summary>The Gantt data table sits on a worksheet without the standard label.</summary>
     DataTableOnUnexpectedSheet = 14,
+
+    /// <summary>The Gantt data table carries columns the schema does not define.</summary>
+    ExtraTableColumns = 15,
 }
 
 /// <summary>The safe-repair classification for one integrity finding.</summary>
@@ -197,6 +200,7 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
             or ConfigIntegrityFindingKind.SecondHelperSheet
             or ConfigIntegrityFindingKind.ScheduleDataOnConfig
             or ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet
+            or ConfigIntegrityFindingKind.ExtraTableColumns
             or ConfigIntegrityFindingKind.Unknown => ConfigRepairClassification.Refuse,
             ConfigIntegrityFindingKind.UserStyleQuarantined => ConfigRepairClassification.ConfirmRequired,
             _ => ConfigRepairClassification.Refuse,

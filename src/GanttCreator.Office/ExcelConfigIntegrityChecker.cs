@@ -103,6 +103,23 @@ public class ExcelConfigIntegrityChecker(
                 );
             }
 
+            // Extra user columns beside the schema do not stop a render, but the
+            // plot anchor, the title column and the export width are all derived
+            // from the schema width, so a column the schema never defined silently
+            // moves the chart. Reported and never deleted: the column is the
+            // analyst's data, and removing it is their decision.
+            List<string> unexpectedColumns = FindUnexpectedColumns(ganttTable!);
+            if (unexpectedColumns.Count > 0)
+            {
+                findings.Add(
+                    new ConfigIntegrityFinding(
+                        ConfigIntegrityFindingKind.ExtraTableColumns,
+                        $"The data table carries {unexpectedColumns.Count} column(s) the schema does not define: {string.Join(", ", unexpectedColumns)}. Remove or rename them; the add-in never deletes a column.",
+                        TableName: ganttTable!.Name
+                    )
+                );
+            }
+
             // A sheet-scoped anchor means something only on the worksheet that is
             // meant to carry the chart. Checking it elsewhere reports a missing
             // anchor as if the chart were merely stale, and the anchor repair
@@ -243,6 +260,38 @@ public class ExcelConfigIntegrityChecker(
     }
 
     internal virtual Excel.Worksheet GetSheetAt(Excel.Sheets sheets, int index) => sheets[index];
+
+    /// <summary>
+    /// Names of the live table columns the schema does not define.
+    /// </summary>
+    /// <remarks>
+    /// Answered only when every required schema column is present. A renamed or
+    /// deleted column is structure damage with its own repair owner, and calling
+    /// the rename an extra column would report one injury twice. The comparison
+    /// is ordinal because the table reader resolves headers that way; any other
+    /// rule would call a case-shifted header "extra" while the reader calls it
+    /// missing.
+    /// </remarks>
+    /// <param name="table">The Gantt data table.</param>
+    /// <returns>The unexpected column names in table order, or an empty list.</returns>
+    private static List<string> FindUnexpectedColumns(Excel.ListObject table)
+    {
+        List<string> live = [];
+        Excel.ListColumns columns = table.ListColumns;
+        int count = columns.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            live.Add(columns[index].Name);
+        }
+
+        bool schemaComplete = GanttTableSchema
+            .Default.Columns.Where(column => column.IsRequired)
+            .All(column => live.Contains(column.Name, StringComparer.Ordinal));
+
+        return schemaComplete
+            ? [.. live.Where(name => !GanttTableSchema.Default.TryGetColumn(name, out _))]
+            : [];
+    }
 
     /// <summary>
     /// Names of the tables on the configuration worksheet that are not contract

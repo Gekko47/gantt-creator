@@ -55,6 +55,22 @@ public sealed class ConfigIntegrityCheckerDepthTests
         return names;
     }
 
+    /// <summary>A table's column collection, modelling the host's always-present list.</summary>
+    private static Excel.ListColumns ColumnsCollection(params string[] names)
+    {
+        Mock<Excel.ListColumns> columns = new();
+        _ = columns.SetupGet(c => c.Count).Returns(names.Length);
+        for (int index = 1; index <= names.Length; index++)
+        {
+            int captured = index;
+            Mock<Excel.ListColumn> column = new();
+            _ = column.SetupGet(c => c.Name).Returns(names[captured - 1]);
+            _ = columns.Setup(c => c[captured]).Returns(column.Object);
+        }
+
+        return columns.Object;
+    }
+
     private static Excel.Worksheet ConfigSheet(
         Excel.XlSheetVisibility visibility = Excel.XlSheetVisibility.xlSheetVeryHidden,
         params string[] tableNames)
@@ -71,6 +87,10 @@ public sealed class ConfigIntegrityCheckerDepthTests
             int captured = index;
             Mock<Excel.ListObject> table = new();
             _ = table.SetupGet(t => t.Name).Returns(tableNames[captured - 1]);
+            // A real table always carries at least one column, and a table on the
+            // configuration sheet is not the Gantt table: the column scan must never
+            // see the schema in it.
+            _ = table.SetupGet(t => t.ListColumns).Returns(ColumnsCollection("Value"));
             _ = tables.Setup(t => t[captured]).Returns(table.Object);
         }
 
@@ -87,10 +107,18 @@ public sealed class ConfigIntegrityCheckerDepthTests
 
     private static Excel.Worksheet GanttSheet(
         Excel.Names? names = null,
-        string sheetName = GanttSheetName)
+        string sheetName = GanttSheetName,
+        string[]? columnNames = null)
     {
+        // The live table's columns: the full schema by default, so a healthy
+        // workbook has no extra-column finding. A caller supplies names to model a
+        // table carrying a user column or missing a schema one.
+        string[] columns =
+            columnNames ?? [.. GanttTableSchema.Default.Columns.Select(column => column.Name)];
+
         Mock<Excel.ListObject> table = new();
         _ = table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
+        _ = table.SetupGet(t => t.ListColumns).Returns(ColumnsCollection(columns));
         Mock<Excel.ListObjects> tables = new();
         _ = tables.SetupGet(t => t.Count).Returns(1);
         _ = tables.Setup(t => t[It.IsAny<int>()]).Returns(table.Object);
@@ -237,6 +265,59 @@ public sealed class ConfigIntegrityCheckerDepthTests
         _ = Assert.Single(
             outcome.Findings,
             candidate => candidate.Kind == ConfigIntegrityFindingKind.ScheduleDataOnConfig);
+    }
+
+    [Fact]
+    public void An_extra_user_column_beside_the_schema_is_reported_and_refused()
+    {
+        // Finding 3: the extra column does not stop a render, but the plot anchor,
+        // the title column and the export width are derived from the schema width,
+        // so the chart silently moves. The column is the analyst's data: report,
+        // never delete.
+        string[] columns = [.. GanttTableSchema.Default.Columns.Select(column => column.Name), "Notes"];
+
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet(columnNames: columns)]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ExtraTableColumns);
+
+        Assert.Equal(GanttTableSchema.TableName, finding.TableName);
+        Assert.Contains("Notes", finding.Detail, StringComparison.Ordinal);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void The_schema_columns_alone_are_not_extra_columns()
+    {
+        // The healthy negative control: the fixture table carries exactly the
+        // schema, optional columns included.
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet()]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ExtraTableColumns);
+    }
+
+    [Fact]
+    public void A_renamed_schema_column_is_structure_damage_not_an_extra_column()
+    {
+        // A rename looks like one missing column plus one extra column. R5.17a owns
+        // the rename, so this finding stays silent until every required column is
+        // back: one injury, one owner.
+        string[] columns =
+        [
+            .. GanttTableSchema
+                .Default.Columns.Where(column => column.Name != "Type")
+                .Select(column => column.Name),
+            "Kind",
+        ];
+
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet(columnNames: columns)]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.ExtraTableColumns);
     }
 
     [Fact]

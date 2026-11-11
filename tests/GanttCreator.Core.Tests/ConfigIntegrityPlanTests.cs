@@ -15,6 +15,7 @@ public sealed class ConfigIntegrityPlanTests
     [InlineData(ConfigIntegrityFindingKind.SecondHelperSheet, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.ScheduleDataOnConfig, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet, ConfigRepairClassification.Refuse)]
+    [InlineData(ConfigIntegrityFindingKind.ExtraTableColumns, ConfigRepairClassification.Refuse)]
     [InlineData(ConfigIntegrityFindingKind.Unknown, ConfigRepairClassification.Refuse)]
     public void Classify_maps_each_damage_class(
         ConfigIntegrityFindingKind kind,
