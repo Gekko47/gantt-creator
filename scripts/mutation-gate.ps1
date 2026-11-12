@@ -126,8 +126,11 @@ function Invoke-MutationJudge {
         [Parameter(Mandatory=$true)]
         [int]$StrykerExitCode,
         # The changed Core files this run is judged on, relative to the
-        # repository root. Empty means "judge the whole report", which is what a
-        # baseline run does.
+        # repository root. When the parameter is SUPPLIED it defines the judged
+        # set, including the empty set (a change that touches no Core source).
+        # When it is absent the whole report is judged, which is what a baseline
+        # run does. Supplied-but-empty and absent are different answers, and only
+        # $PSBoundParameters can tell them apart (W15 follow-up).
         [string[]]$InScopeFiles,
         [string]$RepoRoot = $repoRoot,
         [switch]$Baseline
@@ -167,7 +170,12 @@ function Invoke-MutationJudge {
             $scopeSet[[System.IO.Path]::GetFullPath((Join-Path $RepoRoot $relative))] = $true
         }
     }
-    $judgeScope = $scopeSet.Count -gt 0
+    # Supplied, not merely non-empty: verify.ps1 forwards an explicitly empty
+    # array when the branch changed no Core file, and that must not be treated as
+    # "no scope supplied" (a baseline-style whole-report judge). Measured
+    # 2026-11-12: an empty set fell through to the whole-project report and
+    # failed on 1,219 pre-existing Safe Mode compile errors from untouched files.
+    $judgeScope = $PSBoundParameters.ContainsKey('InScopeFiles')
     $scopeFilesSeen = 0
     $scopeTotal = 0
     $scopeKilled = 0
@@ -289,6 +297,17 @@ function Invoke-MutationJudge {
     # a zero-mutant run that Stryker failed on is a failure, not a pass.
     if ($StrykerExitCode -ne 0) {
         Write-Error "Stryker exited $StrykerExitCode despite a score of $scorePct%. Failing the gate rather than reporting a pass."
+        return $result
+    }
+
+    # An explicitly empty changed-Core set is a real answer: the change touched no
+    # Core source, so no mutant belongs to it. It is a PASS, and it is stated as
+    # that fact rather than as a score. This branch must precede the
+    # "names none of the changed files" check, because an empty set names none by
+    # construction and is not a blind run.
+    if ($judgeScope -and $scopeSet.Count -eq 0) {
+        Write-Host 'mutation-gate: the changed Core set is empty, so there is nothing to mutate. Passing on that fact, not on a score.'
+        Write-Host 'mutation-gate: PASS'
         return $result
     }
 
@@ -565,6 +584,33 @@ if (-not $Baseline) {
     Assert-ChangedCodeScope -ChangedFiles $changed -MaxChangedFiles $MaxChangedFiles
     Write-Host ("mutation-gate: changed Core files ({0}):" -f $changed.Count)
     $changed | ForEach-Object { Write-Host "  $_" }
+
+    # Nothing changed in Core: do not spend minutes asking Stryker to mutate
+    # nothing. Measured on a docs/scripts-only change, 2026-11-12: the run took
+    # 113 s, created 6,811 mutants, and scored none of them. This is the common
+    # case for a tooling, test, or documentation change, so it is answered
+    # directly and stated as the reason.
+    if ($changed.Count -eq 0) {
+        Write-Host 'mutation-gate: the changed Core set is empty, so there is nothing to mutate. Skipping Stryker and passing on that fact, not on a score.'
+        Write-Host 'mutation-gate: PASS'
+        return [pscustomobject]@{
+            Mode                 = 'changed-code'
+            ScorePercent         = 0
+            Threshold            = $Threshold
+            Total                = 0
+            Killed               = 0
+            Survived             = 0
+            Timeout              = 0
+            CompileErrors        = 0
+            NoCoverage           = 0
+            InScopeTotal         = 0
+            InScopeKilled        = 0
+            InScopeCompileErrors = 0
+            ReportPath           = ''
+            StrykerExitCode      = 0
+        }
+    }
+
     $arguments += @("--since:$Since", '--threshold-low', "$Threshold")
 } else {
     Write-Host 'mutation-gate: BASELINE run over the whole of Core (no --since, no threshold).'

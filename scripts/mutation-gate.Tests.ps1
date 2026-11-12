@@ -383,11 +383,68 @@ Describe 'Mutation gate (scripts/mutation-gate.ps1)' {
                 Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
             }
         }
+
+        It 'passes when the changed Core set is explicitly empty, and states that as the reason' {
+            # W15 follow-up. verify.ps1 forwards an explicitly empty array when the
+            # branch changed no Core file. That used to be indistinguishable from
+            # "no scope supplied", so the judge fell back to the whole report and
+            # failed on pre-existing Safe Mode compile errors from untouched files
+            # (measured 2026-11-12: 1,219 compile-error mutants, 5,592 ignored).
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-empty-' + [guid]::NewGuid().ToString('N') + '.json')
+            Write-MutationReport -Path $path -Mutants @(
+                @{ Status = 'CompileError' }, @{ Status = 'CompileError' }
+            )
+            try {
+                $out = @(Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 -InScopeFiles @() 6>&1)
+                $result = @($out | Where-Object { $_.PSObject.Properties['Mode'] })[0]
+                $result | Should -Not -BeNullOrEmpty
+                $result.Mode | Should -Be 'changed-code'
+                $result.InScopeTotal | Should -Be 0
+                ($out -join "`n") | Should -Match 'changed Core set is empty'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'POSITIVE: an absent scope still judges the whole report' {
+            # Control for the test above: the SAME report judged without
+            # -InScopeFiles is a whole-project judgement, and zero scorable
+            # mutants there is a failure. Without this control, treating "empty"
+            # as "pass" could be achieved by ignoring the scope entirely.
+            $path = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-noscope-' + [guid]::NewGuid().ToString('N') + '.json')
+            Write-MutationReport -Path $path -Mutants @(
+                @{ Status = 'CompileError' }, @{ Status = 'CompileError' }
+            )
+            try {
+                { Invoke-MutationJudge -ReportPath $path -Threshold 80 -StrykerExitCode 0 } |
+                    Should -Throw '*could be scored*'
+            } finally {
+                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     Context 'changed-code scope and run visibility' {
         BeforeAll {
             . $script:gatePath
+        }
+
+        It 'skips Stryker entirely when the changed Core set is empty (W15 follow-up)' {
+            # A base equal to HEAD makes the changed-Core diff empty by
+            # construction, so the gate must answer without invoking Stryker.
+            # Measured before this branch existed: the run took 113 s, created
+            # 6,811 mutants, and scored none of them.
+            $head = (& git -C $script:repoRoot rev-parse HEAD).Trim()
+            $outFile = Join-Path ([System.IO.Path]::GetTempPath()) ('mut-skip-' + [guid]::NewGuid().ToString('N') + '.txt')
+            try {
+                $proc = Start-Process -FilePath pwsh -ArgumentList @(
+                    '-NoProfile', '-File', $script:gatePath, '-Since', $head
+                ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $outFile
+                $proc.ExitCode | Should -Be 0
+                (Get-Content -LiteralPath $outFile -Raw) | Should -Match 'Skipping Stryker'
+            } finally {
+                Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+            }
         }
 
         It 'refuses a changed set so large that --since means the whole project' {

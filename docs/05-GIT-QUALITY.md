@@ -199,7 +199,11 @@ Rules that keep it fast, each with the evidence that produced it:
 - Keep the Pester throttle at 4 unless a fresh measurement says otherwise.
   Same suite, same machine: 129.8 s at 8 workers, 92.8 s at 4, 94.7 s at 2,
   ~142 s sequential. The files are process-spawn bound, so oversubscribing
-  loses. Record the number you measure when changing it.
+  loses. Record the number you measure when changing it. Splitting
+  `check-status.Tests.ps1` into two files was tried for the same reason and
+  reverted: 65.1 s at four workers before, 63.7 s after. The suite is
+  contention-bound now, not bound by one file, so a further split buys nothing
+  and costs a duplicated fixture.
 - `dotnet format` stays `--verify-no-changes --exclude tests` on the solution.
   `--include src` measured 5.68 s but exited 0 on a deliberately mis-formatted
   file under `src/` (positive control, 2026-11-12) — a false pass, rejected.
@@ -208,7 +212,15 @@ Rules that keep it fast, each with the evidence that produced it:
   `--exclude` removes from formatting but not from evaluation.
 - The PSSA gate resolves its own file list (`Get-PssaTargetFile`) and fails when
   that list is empty. Do not restore `-Recurse -Exclude '_artifacts'`: the
-  explicit list is what makes the analysed set testable.
+  explicit list is what makes the analysed set testable. Do not shard it:
+  eight `Start-Job` workers measured 21.5 s against 14.3 s serial, because job
+  host startup dominates a ~11 s cold analysis.
+- The mutation gate must not spend minutes mutating nothing. `Invoke-MutationJudge`
+  treats a supplied-but-empty `-InScopeFiles` as an empty changed set and passes
+  while stating that reason, and the gate skips Stryker entirely when
+  `Get-ChangedCoreFiles` returns nothing. Before that, a docs-or-tooling change
+  ran Stryker for 113 s, created 6,811 mutants, scored none, and failed on
+  pre-existing Safe Mode compile errors from untouched files.
 - `dotnet list package --vulnerable` needs network access, so it runs in CI via
   `scripts/scan-vulnerable-packages.ps1`, not in the offline-capable local
   `verify.ps1`.

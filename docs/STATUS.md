@@ -1898,3 +1898,11 @@ predates the current 12-step gate and is superseded by the measured
   - `verify.ps1` was run on the clean tree and did not reach a verdict: steps 1-13 PASS, then the mutation step halted. Its default base `origin/main` was refused by the 30-file scope guard, 73 changed Core files against a limit of 30. The sanctioned nearer base then produced an unrelated second failure: with an empty changed-Core set the judge falls back to the whole-project report, so the 1,219 pre-existing Safe Mode compile errors were tallied as unscored mutants of the changed files and reported against the 80 threshold. That is a mutation-gate defect, recorded here rather than worked around; W15 touches no Core source. The exact path is `Invoke-MutationJudge`: `judgeScope` is false whenever `InScopeFiles` is empty, and the empty set that `verify.ps1` forwards after `Get-ChangedCoreFiles` returns nothing is indistinguishable from "no changed-code scope supplied".
   - `verify-office.ps1` Not run: no behavioural or COM change was made.
 
+
+- **W15 follow-ups (2026-11-12): an empty changed-Core set is a stated PASS, and two measured changes were rejected.**
+  - `Invoke-MutationJudge` derived its scope from `$scopeSet.Count -gt 0`, so an explicitly empty `-InScopeFiles` was indistinguishable from a baseline-style whole-report judge. It now judges scope from `$PSBoundParameters`, and passes on an explicitly empty set while stating that reason, before the branch that refuses a report naming none of the changed files.
+  - The gate also skips Stryker entirely when `Get-ChangedCoreFiles` returns nothing. Measured before the change: the run took 113 s, created 6,811 mutants, scored none, then failed on the 1,219 pre-existing Safe Mode compile errors from untouched files.
+  - Three new Pester tests pin the empty-scope PASS, the absent-scope control that must still throw, and the end-to-end skip; `mutation-gate.Tests.ps1` is 57/57.
+  - Rejected after measurement, both reverted: sharding PSSA across eight `Start-Job` workers cost 21.5 s against 14.3 s serial, and splitting the check-status tests into two files left the suite at 63.7 s against 65.1 s at four workers. The suite is contention-bound, not bound by a single file.
+  - Observed: full script suite 291/291 PASS.
+
