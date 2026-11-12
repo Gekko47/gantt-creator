@@ -446,6 +446,24 @@ public sealed class GanttSheetLayoutTests
             GanttSheetLayout.FirstBodyRowIndex);
     }
 
+    [Theory]
+    [InlineData(3, 1, true)]
+    [InlineData(4, 1, false)]
+    [InlineData(3, 2, false)]
+    [InlineData(31, 1, false)]
+    public void The_contract_origin_is_the_header_row_in_column_a(int row, int column, bool expected) =>
+        Assert.Equal(expected, GanttSheetLayout.IsAtContractOrigin(row, column));
+
+    [Fact]
+    public void The_table_origin_column_is_column_a()
+    {
+        // Asserted as a literal for the same reason the header row is: the checker
+        // compares a live table against this, so deriving it here would compare the
+        // layout authority with itself.
+        Assert.Equal(1, GanttSheetLayout.TableOriginColumnIndex);
+        Assert.True(GanttSheetLayout.IsAtContractOrigin(GanttSheetLayout.HeaderRowIndex, 1));
+    }
+
     /// <summary>
     /// The anchor is the column one past the table's last column — the same rule the
     /// pre-ADR-0030 code used, unchanged.

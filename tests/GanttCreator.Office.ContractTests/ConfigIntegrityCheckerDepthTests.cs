@@ -55,6 +55,15 @@ public sealed class ConfigIntegrityCheckerDepthTests
         return names;
     }
 
+    /// <summary>A worksheet range address, which the host always supplies.</summary>
+    private static Excel.Range RangeAt(int row, int column)
+    {
+        Mock<Excel.Range> range = new();
+        _ = range.SetupGet(r => r.Row).Returns(row);
+        _ = range.SetupGet(r => r.Column).Returns(column);
+        return range.Object;
+    }
+
     /// <summary>A table's column collection, modelling the host's always-present list.</summary>
     private static Excel.ListColumns ColumnsCollection(params string[] names)
     {
@@ -91,6 +100,9 @@ public sealed class ConfigIntegrityCheckerDepthTests
             // configuration sheet is not the Gantt table: the column scan must never
             // see the schema in it.
             _ = table.SetupGet(t => t.ListColumns).Returns(ColumnsCollection("Value"));
+            // Any address will do here: the sheet itself is what is wrong, and the
+            // checker only asks where the table it found actually starts.
+            _ = table.SetupGet(t => t.Range).Returns(RangeAt(1, 1));
             _ = tables.Setup(t => t[captured]).Returns(table.Object);
         }
 
@@ -108,7 +120,9 @@ public sealed class ConfigIntegrityCheckerDepthTests
     private static Excel.Worksheet GanttSheet(
         Excel.Names? names = null,
         string sheetName = GanttSheetName,
-        string[]? columnNames = null)
+        string[]? columnNames = null,
+        int headerRow = GanttSheetLayout.HeaderRowIndex,
+        int firstColumn = GanttSheetLayout.TableOriginColumnIndex)
     {
         // The live table's columns: the full schema by default, so a healthy
         // workbook has no extra-column finding. A caller supplies names to model a
@@ -119,6 +133,7 @@ public sealed class ConfigIntegrityCheckerDepthTests
         Mock<Excel.ListObject> table = new();
         _ = table.SetupGet(t => t.Name).Returns(GanttTableSchema.TableName);
         _ = table.SetupGet(t => t.ListColumns).Returns(ColumnsCollection(columns));
+        _ = table.SetupGet(t => t.Range).Returns(RangeAt(headerRow, firstColumn));
         Mock<Excel.ListObjects> tables = new();
         _ = tables.SetupGet(t => t.Count).Returns(1);
         _ = tables.Setup(t => t[It.IsAny<int>()]).Returns(table.Object);
@@ -318,6 +333,55 @@ public sealed class ConfigIntegrityCheckerDepthTests
         Assert.DoesNotContain(
             outcome.Findings,
             candidate => candidate.Kind == ConfigIntegrityFindingKind.ExtraTableColumns);
+    }
+
+    [Fact]
+    public void A_table_below_the_contract_header_row_is_reported_and_refused()
+    {
+        // Rows inserted above the table push it down; the title row, the period band
+        // and the plot anchor all stay where the layout states them, so the chart
+        // draws against the wrong rows.
+        int shifted = GanttSheetLayout.HeaderRowIndex + 2;
+
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet(headerRow: shifted)]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.TableOffContractOrigin);
+
+        Assert.Equal(GanttTableSchema.TableName, finding.TableName);
+        Assert.Contains($"row {shifted}", finding.Detail, StringComparison.Ordinal);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void A_table_moved_off_the_contract_column_is_reported()
+    {
+        // A sideways move is the same injury on the other axis, so the one finding
+        // fires rather than a second kind existing for columns.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(firstColumn: GanttSheetLayout.TableOriginColumnIndex + 3),
+        ]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.TableOffContractOrigin);
+
+        Assert.Contains("column 4", finding.Detail, StringComparison.Ordinal);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void A_table_at_the_contract_origin_is_not_reported()
+    {
+        // The healthy negative control: the default fixture table starts exactly where
+        // the layout states.
+        ConfigIntegrityCheckOutcome outcome = Check([ConfigSheet(), GanttSheet()]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.TableOffContractOrigin);
     }
 
     [Fact]

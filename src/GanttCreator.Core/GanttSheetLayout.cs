@@ -87,6 +87,28 @@ public static class GanttSheetLayout
     public const int FirstBodyRowIndex = HeaderRowIndex + 1;
 
     /// <summary>
+    /// The one-based worksheet column the table's first column occupies.
+    /// </summary>
+    /// <remarks>
+    /// Column A: the hidden bookkeeping columns lead the table, and the chart's title
+    /// sits above <c>Description</c> rather than above the first engine column. A
+    /// table moved sideways moves the plot anchor with it while the title and the
+    /// period band stay put, which is why the integrity checker reports the move
+    /// instead of guessing a new origin.
+    /// </remarks>
+    public const int TableOriginColumnIndex = 1;
+
+    /// <summary>
+    /// Whether a live table's top-left corner is the contract origin: the header on
+    /// <see cref="HeaderRowIndex"/> and the first table column in column A.
+    /// </summary>
+    /// <param name="headerRow">The worksheet row of the table's first row.</param>
+    /// <param name="firstColumn">The worksheet column of the table's first column.</param>
+    /// <returns><see langword="true"/> when the table starts where the layout expects.</returns>
+    public static bool IsAtContractOrigin(int headerRow, int firstColumn) =>
+        headerRow == HeaderRowIndex && firstColumn == TableOriginColumnIndex;
+
+    /// <summary>
     /// Gets the one-based worksheet row of the reserved title row.
     /// </summary>
     public static int TitleRowIndex => ReservedRowIndex;

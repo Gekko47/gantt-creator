@@ -120,6 +120,24 @@ public class ExcelConfigIntegrityChecker(
                 );
             }
 
+            // A table that starts anywhere but the contract origin still renders,
+            // because the reader follows it by name, but the title row, the period
+            // band and the plot anchor are all stated against fixed rows and columns.
+            // Reported and never moved: moving the table is a schema decision.
+            Excel.Range tableRange = ganttTable!.Range;
+            int headerRow = tableRange.Row;
+            int firstColumn = tableRange.Column;
+            if (!GanttSheetLayout.IsAtContractOrigin(headerRow, firstColumn))
+            {
+                findings.Add(
+                    new ConfigIntegrityFinding(
+                        ConfigIntegrityFindingKind.TableOffContractOrigin,
+                        $"The data table starts at row {headerRow}, column {firstColumn}; the chart layout expects row {GanttSheetLayout.HeaderRowIndex}, column {GanttSheetLayout.TableOriginColumnIndex}. Rows inserted above the table, or a table moved sideways, shift the chart against its title and period band; this is reported and never moved automatically.",
+                        TableName: ganttTable.Name
+                    )
+                );
+            }
+
             // A sheet-scoped anchor means something only on the worksheet that is
             // meant to carry the chart. Checking it elsewhere reports a missing
             // anchor as if the chart were merely stale, and the anchor repair
