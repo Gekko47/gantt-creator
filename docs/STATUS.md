@@ -1906,3 +1906,5 @@ predates the current 12-step gate and is superseded by the measured
   - Rejected after measurement, both reverted: sharding PSSA across eight `Start-Job` workers cost 21.5 s against 14.3 s serial, and splitting the check-status tests into two files left the suite at 63.7 s against 65.1 s at four workers. The suite is contention-bound, not bound by a single file.
   - Observed: full script suite 291/291 PASS.
 
+  - Branch-final gate after the fix: `verify.ps1 -MutationSince 41e0b6f` PASS in 261.0 s with all 14 steps.
+  - The mutation step answered in 0.8 s with the empty-set reason. The default `origin/main` base is still refused by the 30-file scope guard: that is the documented branch condition with the documented remedy, not a defect.
