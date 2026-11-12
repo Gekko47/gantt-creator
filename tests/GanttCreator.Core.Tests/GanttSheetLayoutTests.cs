@@ -199,6 +199,65 @@ public sealed class GanttSheetLayoutTests
     }
 
     /// <summary>
+    /// The boundary rows are SUCCESS cases, not only refusals: a body starting at
+    /// worksheet row 1 is legal, and so is a body one row tall.
+    /// </summary>
+    /// <remarks>
+    /// <b>These cases exist because mutation testing showed the guards were tested only
+    /// at the refusing side.</b> Turning either <c>< 1</c> into <c><= 1</c>, or the
+    /// inverted-span check into <c><=</c>, still refused every case the suite had, so
+    /// the suite could not tell a correct boundary from an off-by-one. Both reserved rows
+    /// are covered because they carry independent guards.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 1, 3)]
+    [InlineData(1, 5, 7)]
+    [InlineData(6, 6, 8)]
+    public void A_body_at_row_one_or_one_row_tall_resolves_the_padding_row(int first, int last, int observed)
+    {
+        BottomPaddingResolution resolved = GanttSheetLayout.ResolveBottomPaddingRow(
+            first,
+            last,
+            observed,
+            paddingRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(observed, resolved.Row);
+    }
+
+    [Theory]
+    [InlineData(1, 1, 2)]
+    [InlineData(1, 5, 6)]
+    [InlineData(6, 6, 7)]
+    public void A_body_at_row_one_or_one_row_tall_resolves_the_anchor_row(int first, int last, int observed)
+    {
+        AnchorRowResolution resolved = GanttSheetLayout.ResolveAnchorRow(
+            first,
+            last,
+            observed,
+            anchorRowIsEmpty: true);
+
+        Assert.True(resolved.Succeeded);
+        Assert.Equal(observed, resolved.Row);
+    }
+
+    [Theory]
+    [InlineData(0, 10)]
+    [InlineData(4, 0)]
+    public void One_non_positive_body_row_refuses_even_when_the_other_is_positive(int first, int last)
+    {
+        // One bad end is enough to refuse, and the reason must be the bound itself
+        // rather than the span check catching the pair afterwards. A mutant joining the
+        // two bounds with `&&` is what makes this discriminative.
+        Assert.Equal(
+            BottomPaddingRefusalReason.NonPositiveRowIndex,
+            GanttSheetLayout.ResolveBottomPaddingRow(first, last, first, true).Refusal);
+        Assert.Equal(
+            AnchorRowRefusalReason.NonPositiveRowIndex,
+            GanttSheetLayout.ResolveAnchorRow(first, last, first, true).Refusal);
+    }
+
+    /// <summary>
     /// An occupied or unverified ANCHOR row is refused, because it is the user's row
     /// rather than the plot's bottom anchor (ADR-0038 D6).
     /// </summary>
