@@ -83,6 +83,15 @@ Describe 'ci.yml parity tripwires (W8)' {
         $block | Should -Match 'dotnet format'
     }
 
+    It 'has a Package vulnerability scan step that delegates to scripts/scan-vulnerable-packages.ps1' {
+        # W15 moved the scan from verify.ps1 to CI. It must still be one script
+        # entry point rather than an inline `dotnet list`, for the same W8
+        # reason as the build/test/publish steps.
+        $block = Get-CiStepBlock -Text $script:ciText -StepName 'Package vulnerability scan (informational)'
+        $block | Should -Not -BeNullOrEmpty
+        $block | Should -Match 'scan-vulnerable-packages\.ps1'
+    }
+
     It 'workflow does not inline dotnet test/build/publish (must call scripts/*.ps1 or a vetted native command)' {
         # Verify scripts are the script-gate source of truth; the workflow
         # must call them, not re-implement the commands. The build, AddIn

@@ -55,9 +55,16 @@ function Invoke-Step {
     # step that runs only cmdlets (or returns early) cannot inherit a stale
     # exit code from the previous native command and report a false PASS.
     $global:LASTEXITCODE = 0
+    $stepOut = $null
     try {
-        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
+        # Console stays live; the report is written ONCE per step instead of once
+        # per output line. The Pester step alone emits ~600 lines, and every
+        # Add-Content was a file open/append/close (W15).
+        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Write-Host $_ }
         $sw.Stop()
+        if ($stepOut) {
+            Add-Content -LiteralPath $report -Value ($stepOut -join [Environment]::NewLine)
+        }
         $status = if ($LASTEXITCODE -eq 0) { 'PASS' } else { "FAIL (exit $LASTEXITCODE)" }
         $line = "  -> {0} in {1:N1}s" -f $status, $sw.Elapsed.TotalSeconds
         Write-Host $line

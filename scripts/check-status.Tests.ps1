@@ -5,7 +5,31 @@
 #>
 
 Describe 'check-status.ps1' {
-    BeforeAll { $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-status.ps1' }
+    BeforeAll {
+        $script:scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\check-status.ps1'
+
+        # W15: build ONE fixture repository and copy it per test. This file is
+        # the slowest in the Pester suite, and five git invocations per test
+        # (init, two configs, add, commit) cost more than copying a small .git
+        # directory. Measured per test: ~0.3 s of git versus ~0.02 s of copy.
+        $script:templateRepo = Join-Path ([System.IO.Path]::GetTempPath()) ('check-status-template-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:templateRepo -Force | Out-Null
+        git -C $script:templateRepo init -q | Out-Null
+        git -C $script:templateRepo config user.email 'test@example.com' | Out-Null
+        git -C $script:templateRepo config user.name  'test'              | Out-Null
+        'init' | Set-Content -LiteralPath (Join-Path $script:templateRepo 'README.md') -Encoding utf8
+        git -C $script:templateRepo add README.md | Out-Null
+        git -C $script:templateRepo commit -q -m 'init' | Out-Null
+        # The template's first commit is the "real hash" every test cites; it is
+        # the same object after the copy because the copy carries the .git dir.
+        $script:realHash = (& git -C $script:templateRepo rev-parse HEAD).Trim()
+    }
+
+    AfterAll {
+        if ($script:templateRepo -and (Test-Path -LiteralPath $script:templateRepo)) {
+            Remove-Item -LiteralPath $script:templateRepo -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     It 'exists and is readable' {
         (Test-Path -LiteralPath $script:scriptPath) | Should -BeTrue
@@ -15,21 +39,16 @@ Describe 'check-status.ps1' {
         BeforeEach {
             $script:tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
             $script:harness  = Join-Path $script:tempRoot 'scripts'
-            # `New-Item` does not create intermediate parents reliably,
-            # so create $tempRoot explicitly before any child of it.
-            New-Item -ItemType Directory -Path $script:tempRoot -Force | Out-Null
-            New-Item -ItemType Directory -Path $script:harness  -Force | Out-Null
 
-            # The script does `git -C $repoRoot rev-parse --verify <hash>`,
-            # where $repoRoot = Split-Path -Parent $PSScriptRoot, so the
-            # harness must be a real git repo with at least one commit.
-            git -C $script:tempRoot init -q | Out-Null
-            git -C $script:tempRoot config user.email 'test@example.com' | Out-Null
-            git -C $script:tempRoot config user.name  'test'              | Out-Null
-            'init' | Set-Content -LiteralPath (Join-Path $script:tempRoot 'README.md') -Encoding utf8
-            git -C $script:tempRoot add README.md | Out-Null
-            git -C $script:tempRoot commit -q -m 'init' | Out-Null
-            $script:realHash = (& git -C $script:tempRoot rev-parse HEAD).Trim()
+            # The script resolves every hash and path against a git index, where
+            # $repoRoot = Split-Path -Parent $PSScriptRoot, so the harness must be
+            # a real git repository with at least one commit. It is a copy of the
+            # template built in BeforeAll (W15); -Force includes the hidden .git
+            # directory, which is what makes the copied tree a repository.
+            New-Item -ItemType Directory -Path $script:tempRoot -Force | Out-Null
+            Get-ChildItem -LiteralPath $script:templateRepo -Force |
+                Copy-Item -Destination $script:tempRoot -Recurse -Force
+            New-Item -ItemType Directory -Path $script:harness -Force | Out-Null
 
             # Roadmap file with R0.8 and R1.0 so the id-token check passes.
             $roadmap = Join-Path $script:tempRoot 'ROADMAP.md'
@@ -274,6 +293,52 @@ References the bogus commit ``$badHash``.
             $r = Invoke-CheckStatusHarness $body
             $r.Exit   | Should -Not -Be 0
             $r.Output | Should -Match "STATUS references commit '$badHash'"
+        }
+
+        It 'exits 1 when STATUS references a hex token that names a non-commit object (W15 positive test)' {
+            # W15 replaced one `git rev-parse --verify <hash>^{commit}` per token
+            # with one `git cat-file --batch-check` judged on the object TYPE. A
+            # blob hash resolves as an object but is not a commit, and `^{commit}`
+            # made that a failure. The batched judge must keep failing it, or a
+            # STATUS that cites any random object would pass.
+            $blobHash = ('not a commit' | git -C $script:tempRoot hash-object -w --stdin).Trim()
+
+            # Non-vacuity: the object exists, is a blob, and the old per-token
+            # form rejected it. `--batch-check` reads its objects from stdin
+            # only; passing an object as an argument is a usage error.
+            ($blobHash | git -C $script:tempRoot cat-file --batch-check='%(objecttype)').Trim() | Should -Be 'blob'
+            (& git -C $script:tempRoot rev-parse --verify "$blobHash^{commit}" 2>$null) | Should -BeNullOrEmpty
+
+            $body = @"
+# Status
+
+References the object ``$blobHash``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Not -Be 0
+            $r.Output | Should -Match "STATUS references commit '$blobHash'"
+        }
+
+        It 'exits 0 when STATUS references an annotated tag object that resolves to a commit (W15 peeling parity)' {
+            # `rev-parse --verify <tagObject>^{commit}` peels an annotated tag to
+            # its commit, so the per-token gate accepted a tag object hash. The
+            # batched judge keeps that exact semantic by peeling type `tag` with
+            # the same rev-parse call; dropping the peel would reject a hash the
+            # old gate accepted.
+            git -C $script:tempRoot tag -a v-fixture -m 'annotated fixture tag' | Out-Null
+            $tagHash = (& git -C $script:tempRoot rev-parse 'v-fixture').Trim()
+
+            # Non-vacuity: the token really names the tag object, not the commit.
+            ($tagHash | git -C $script:tempRoot cat-file --batch-check='%(objecttype)').Trim() | Should -Be 'tag'
+
+            $body = @"
+# Status
+
+References the annotated tag object ``$tagHash``.
+"@
+            $r = Invoke-CheckStatusHarness $body
+            $r.Exit   | Should -Be 0
+            $r.Output | Should -Match 'OK'
         }
 
         It 'exits 1 when STATUS references a repo path that does not exist' {

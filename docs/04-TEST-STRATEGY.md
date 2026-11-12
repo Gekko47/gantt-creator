@@ -177,6 +177,29 @@ what the gate does. The contract is enforced by
 - The names are non-empty and unique.
 - Both verify-quick.ps1 and verify.ps1 carry this property.
 
+### Script-test runner (W15)
+
+`scripts/test-scripts.ps1` runs every `scripts/*Tests.ps1` file in parallel
+runspaces and judges the aggregate with `Get-ScriptTestGateVerdict`
+(`scripts/verify-helpers.ps1`). Measured 2026-11-12 on 8 logical processors,
+16 files / 288 tests: ~142 s sequential, 129.8 s at 8 workers, 92.8 s at 4, and
+64.4 s inside `verify-quick` at the shipped default.
+
+- The default throttle is 4, or the processor count when lower. Oversubscribing
+  is slower, because the files are process-spawn bound rather than CPU bound.
+- Each file's output is buffered inside its runspace and printed in discovery
+  order after the run, so the report is deterministic even though completion
+  order is not.
+- `-Serial` runs one file at a time with Pester's Detailed output, for
+  diagnosing an order-dependent or contended failure. It reaches the same
+  verdict through the same judge.
+- The judge is tested in-process (`scripts/test-scripts.Tests.ps1`) because a
+  verdict test that spawns Pester per case costs more than the gate it proves.
+  Two end-to-end tests keep the runner wired to that judge.
+- A per-test fixture that spawns a child process is affordable only when the
+  file's own tests are fast; prefer proving a verdict through a helper over
+  running the whole gate again.
+
 ### NoWarn scope
 
 - Test-only suppressions (CA1707, IDE0011) must live in

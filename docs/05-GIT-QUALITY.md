@@ -164,7 +164,9 @@ Rules:
     or `dotnet test`/`dotnet build`/`dotnet publish` invocations: those
     commands live in `scripts/test-non-office.ps1`,
     `scripts/build-release.ps1`, and `scripts/publish-addin.ps1`, the
-    same entry points verify-quick.ps1 and verify.ps1 call.
+    same entry points verify-quick.ps1 and verify.ps1 call. The CI-only
+    package vulnerability scan has its own entry point,
+    `scripts/scan-vulnerable-packages.ps1` (W15).
   - Tool pins (Pester minimum major, PSScriptAnalyzer version, actionlint
     SHA-256, actionlint download URL) live in `scripts/tool-versions.psd1`
     and are consumed by `lint-ci.ps1`, `test-scripts.ps1`, and `ci.yml`.
@@ -174,6 +176,44 @@ Rules:
     files), while a clean result with zero findings on a non-trivial,
     discovered input is a PASS. The no-silent-pass rule extends to every
     future gate.
+
+## Gate runtime (W15)
+
+Measured on the reference machine, 2026-11-12:
+
+| Step | Before | After | Cause of the change |
+|---|---|---|---|
+| status accuracy | 33.8 s | 1.5 s warm, 13.3 s cold | one `git ls-files -z` plus one `git cat-file --batch-check` replace ~440 git processes (239 `rev-parse`, 199 `ls-files`, guide lookups) |
+| script lint (Pester) | 141.6 s | 64.4 s | test files run in four parallel runspaces; each check-status fixture is copied from one template repository instead of re-initialised |
+| script analyzer | 15.8 s | 16.5 s | **no gain**: the recursive walk is only ~3 s of a ~11 s cold analysis. The analysed set is now explicit and tested instead |
+| format | 44.2 s | 44.8 s | **no change**: no equivalent flag set was found (see below) |
+| verify-quick total | 295.4 s | 184.4 s | |
+| verify total | 431.7 s | not yet re-measured | the vulnerability scan left the local gate for CI |
+
+Rules that keep it fast, each with the evidence that produced it:
+
+- Never reintroduce one process per token in `check-status.ps1`. Batch through
+  the index snapshot (`git ls-files -z`) and the hash batch-check
+  (`git cat-file --batch-check`); a tag object is still peeled with
+  `rev-parse --verify <hash>^{commit}` so `^{commit}` semantics are preserved.
+- Keep the Pester throttle at 4 unless a fresh measurement says otherwise.
+  Same suite, same machine: 129.8 s at 8 workers, 92.8 s at 4, 94.7 s at 2,
+  ~142 s sequential. The files are process-spawn bound, so oversubscribing
+  loses. Record the number you measure when changing it.
+- `dotnet format` stays `--verify-no-changes --exclude tests` on the solution.
+  `--include src` measured 5.68 s but exited 0 on a deliberately mis-formatted
+  file under `src/` (positive control, 2026-11-12) — a false pass, rejected.
+  `--no-restore` measured 32.9 s against 31.8 s — no gain. The ~40 s is
+  workspace evaluation of all ten projects, including the test projects that
+  `--exclude` removes from formatting but not from evaluation.
+- The PSSA gate resolves its own file list (`Get-PssaTargetFile`) and fails when
+  that list is empty. Do not restore `-Recurse -Exclude '_artifacts'`: the
+  explicit list is what makes the analysed set testable.
+- `dotnet list package --vulnerable` needs network access, so it runs in CI via
+  `scripts/scan-vulnerable-packages.ps1`, not in the offline-capable local
+  `verify.ps1`.
+- `dotnet-stryker` already selects its own concurrency (`--help`: "By default
+  Stryker tries to make the most..."), so the mutation gate does not pin one.
 
 ## CI jobs
 

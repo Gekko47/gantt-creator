@@ -18,8 +18,11 @@
      11. publish AddIn (packed XLL)
      12. test (OfficeIntegration excluded)
      13. coverage threshold check
-     14. package vulnerability scan
-     15. mutation gate (changed Core code)
+     14. mutation gate (changed Core code)
+
+   The package vulnerability scan is NOT here (W15): it needs network access to
+   read NuGet advisories, and this gate must work offline. CI runs it through
+   scripts/scan-vulnerable-packages.ps1.
 
     Exits non-zero on any failure. Writes a human-readable report to
     scripts/_artifacts/verify.txt.
@@ -71,9 +74,15 @@ function Invoke-Step {
     # step that runs only cmdlets (or returns early) cannot inherit a stale
     # exit code from the previous native command and report a false PASS.
     $global:LASTEXITCODE = 0
+    $stepOut = $null
     try {
-        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Add-Content -LiteralPath $report -Value $_ }
+        # Console stays live; the report is written ONCE per step instead of once
+        # per output line (W15).
+        & $Block 2>&1 | Tee-Object -Variable stepOut | ForEach-Object { Write-Host $_ }
         $sw.Stop()
+        if ($stepOut) {
+            Add-Content -LiteralPath $report -Value ($stepOut -join [Environment]::NewLine)
+        }
         $status = if ($LASTEXITCODE -eq 0) { 'PASS' } else { "FAIL (exit $LASTEXITCODE)" }
         $line = "  -> {0} in {1:N1}s" -f $status, $sw.Elapsed.TotalSeconds
         Write-Host $line
@@ -214,13 +223,6 @@ Invoke-Step 'coverage threshold check' {
         Write-Host "  - $line"
         Add-Content -LiteralPath $report -Value "  $line"
     }
-}
-
-Invoke-Step 'package vulnerability scan' {
-    dotnet list $Solution package --vulnerable --include-transitive
-    # dotnet list does not set a non-zero exit on found vulnerabilities, so
-    # we cannot make this step a hard fail until the team approves an
-    # explicit vulnerability gate. For now this is informational.
 }
 
 # R3.13 (the R0.5 deferral). Changed-Core-code mutation score, judged against

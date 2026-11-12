@@ -143,6 +143,31 @@ foo
         }
     }
 
+    It 'the real gate fails when the root holds nothing analyzable (positive test)' {
+        # W15: the gate now resolves its own file list, so "no targets" became a
+        # reachable state. A gate that analysed nothing cannot certify scripts/,
+        # so it must fail with a reason rather than report PASS.
+        if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Set-ItResult -Skipped -Because 'PSScriptAnalyzer not installed on this host'
+            return
+        }
+        $td = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-empty-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $td -Force | Out-Null
+        try {
+            Set-Content -LiteralPath (Join-Path $td 'notes.txt') -Value 'not a script' -Encoding utf8
+            $result = Invoke-GateOnFixture -FixtureDir $td
+            $result.Proc.ExitCode | Should -Not -Be 0
+            $err = Get-Content -LiteralPath (Join-Path $result.RunnerDir 'gate-err.txt') -Raw
+            $err | Should -Match 'Analysing nothing is not a pass'
+        }
+        finally {
+            Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+            if ($result.RunnerDir -and (Test-Path -LiteralPath $result.RunnerDir)) {
+                Remove-Item -LiteralPath $result.RunnerDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'the real gate reports FAIL through the Invoke-Step/Tee pipeline (W13 shape)' {
         # The original -EnableExit defect only surfaced as a false PASS inside
         # the Tee/ForEach pipeline; a bare child-process exit code is not
@@ -167,6 +192,62 @@ foo
             Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
             if ($result.RunnerDir -and (Test-Path -LiteralPath $result.RunnerDir)) {
                 Remove-Item -LiteralPath $result.RunnerDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Describe 'Get-PssaTargetFile (W15 explicit file list)' {
+        BeforeAll {
+            . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\verify-helpers.ps1')
+        }
+
+        It 'includes nested scripts and .psd1 files, and excludes the ignored _artifacts tree' {
+            # The explicit list replaced `-Recurse -Exclude '_artifacts'`, so the
+            # two properties that made the old call correct must be pinned:
+            # recursion still reaches nested scripts, and the ignored artifact
+            # tree is still skipped (it holds scratch scripts that are not gate
+            # targets).
+            $td = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-target-' + [guid]::NewGuid().ToString('N'))
+            $deep = Join-Path $td 'sub\deeper'
+            $ignored = Join-Path $td '_artifacts'
+            New-Item -ItemType Directory -Path $deep -Force | Out-Null
+            New-Item -ItemType Directory -Path $ignored -Force | Out-Null
+            try {
+                Set-Content -LiteralPath (Join-Path $td 'top.ps1') -Value '# top' -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $deep 'nested.psm1') -Value '# nested' -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $td 'settings.psd1') -Value '@{ A = 1 }' -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $ignored 'scratch.ps1') -Value '# scratch' -Encoding utf8
+                Set-Content -LiteralPath (Join-Path $td 'notes.txt') -Value 'not a script' -Encoding utf8
+
+                $names = @(Get-PssaTargetFile -Path @($td) | ForEach-Object { $_.Name })
+
+                # Positive controls: recursion and the analyzer's own extension set.
+                $names | Should -Contain 'top.ps1'
+                $names | Should -Contain 'nested.psm1'
+                $names | Should -Contain 'settings.psd1'
+                # Exclusions: the ignored tree and non-script files.
+                $names | Should -Not -Contain 'scratch.ps1'
+                $names | Should -Not -Contain 'notes.txt'
+            }
+            finally {
+                Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'returns the file itself when the root is a file path' {
+            # Invoke-PssaGate accepts a file or a directory; a file must not be
+            # silently dropped by the enumeration.
+            $td = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-file-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $td -Force | Out-Null
+            try {
+                $file = Join-Path $td 'only.ps1'
+                Set-Content -LiteralPath $file -Value '# only' -Encoding utf8
+                $targets = @(Get-PssaTargetFile -Path @($file))
+                $targets.Count | Should -Be 1
+                $targets[0].FullName | Should -Be $file
+            }
+            finally {
+                Remove-Item -LiteralPath $td -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }

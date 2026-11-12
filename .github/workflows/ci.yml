@@ -153,6 +153,18 @@ jobs:
           pwsh -NoProfile -File scripts/test-non-office.ps1 -Solution GanttCreator.slnx -Configuration Release
           if ($LASTEXITCODE -ne 0) { throw "test-non-office.ps1 failed with exit $LASTEXITCODE" }
 
+      - name: Package vulnerability scan (informational)
+        # W15: moved out of verify.ps1, because `dotnet list package
+        # --vulnerable` reads advisory data from the configured NuGet sources
+        # and the local branch-final gate must work offline. CI has network.
+        # Delegates to scripts/scan-vulnerable-packages.ps1 (W8: an inline
+        # `dotnet list` here would trip the anti-inline tripwire in
+        # scripts/ci-parity.Tests.ps1). Informational by contract: `dotnet
+        # list` exits 0 whether or not it finds a vulnerability.
+        run: |
+          pwsh -NoProfile -File scripts/scan-vulnerable-packages.ps1
+          if ($LASTEXITCODE -ne 0) { throw "scan-vulnerable-packages.ps1 failed with exit $LASTEXITCODE" }
+
       - name: Mutation gate (changed Core code)
         # R3.13. Invokes scripts/mutation-gate.ps1 directly. The
         # Stryker version and the 80% threshold are pinned in

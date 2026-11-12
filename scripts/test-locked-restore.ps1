@@ -31,8 +31,9 @@
 # and it fails the blocked runs with NU1900 "Warning As Error" under the
 # repo's warnings-as-errors policy even when the lock file alone is
 # sufficient (observed empirically on .NET SDK 10.0.400). The
-# vulnerability check itself is verify.ps1's
-# 'dotnet list package --vulnerable' step.
+# vulnerability check itself moved to CI in W15
+# (scripts/scan-vulnerable-packages.ps1), because it needs network access and
+# this local gate must work offline.
 #
 # Exit 0 only if runs 1, 2, and 4 pass AND run 3 fails as required.
 

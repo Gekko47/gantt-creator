@@ -127,6 +127,131 @@ function Read-VerifyDescriptionStepLabel {
     }
     return $labels.ToArray()
 }
+function Get-ScriptTestGateVerdict {
+    <#
+    .SYNOPSIS
+        Judges per-file Pester results into the script-lint gate's verdict.
+
+    .DESCRIPTION
+        Separated from the runner (scripts/test-scripts.ps1) so the verdict
+        rules can be tested in-process without spawning Pester per case. The
+        runner executes the files; this function decides, and every rule here
+        is a no-silent-pass rule:
+
+          * a file that produced no result object (a crashed worker) is a FAILED
+            file, never a skipped one;
+          * a discovered file that contains zero tests is an error, because a
+            gate that certifies a file it never exercised proves nothing;
+          * any failed test fails the whole run, even when other files pass;
+          * fewer results than discovered files is an error, so a lost worker
+            cannot silently shrink the suite.
+
+        Returns the per-file report lines, the error messages, the aggregate
+        counts, and the exit code the runner must use. It does not print and it
+        does not exit, so the caller owns the streams (W13: `exit` from inside a
+        function called through a Tee/ForEach pipeline is swallowed).
+    #>
+    param(
+        [AllowEmptyCollection()][object[]]$Results = @(),
+        [int]$DiscoveredCount = 0
+    )
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    $lines = New-Object System.Collections.Generic.List[string]
+    $totalTests = 0
+    $passedTests = 0
+    $failedTests = 0
+    $allPassed = $true
+
+    foreach ($result in @($Results)) {
+        if ($result.Error) {
+            $allPassed = $false
+            $lines.Add("  FAILED: $($result.Name) did not produce a result: $($result.Error)")
+            continue
+        }
+
+        if ($result.Total -eq 0) {
+            $allPassed = $false
+            $errors.Add("test-scripts: $($result.Name) contains no Pester tests.")
+            continue
+        }
+
+        $totalTests  += $result.Total
+        $passedTests += $result.Passed
+        $failedTests += $result.Failed
+
+        if ($result.Failed -gt 0) {
+            $allPassed = $false
+            $lines.Add("  FAILED: $($result.Failed) of $($result.Total) tests failed in $($result.Name)")
+            foreach ($failure in @($result.Failures)) { $lines.Add("    [-] $failure") }
+        }
+        else {
+            $lines.Add("  PASSED: $($result.Total) tests")
+        }
+    }
+
+    if (@($Results).Count -ne $DiscoveredCount) {
+        $allPassed = $false
+        $errors.Add(
+            "test-scripts: $DiscoveredCount test file(s) discovered but " +
+            "$(@($Results).Count) returned a result. A worker was lost; refusing to report a verdict.")
+    }
+
+    $exitCode = if ($allPassed -and $errors.Count -eq 0) { 0 } else { 1 }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Lines    = $lines.ToArray()
+        Errors   = $errors.ToArray()
+        Total    = $totalTests
+        Passed   = $passedTests
+        Failed   = $failedTests
+    }
+}
+
+function Get-PssaTargetFile {
+    <#
+    .SYNOPSIS
+        The files the PSScriptAnalyzer gate must examine under a root.
+
+    .DESCRIPTION
+        Enumerates .ps1/.psm1/.psd1 below each supplied root and skips the
+        ignored `_artifacts` tree, which holds scratch scripts and hundreds of
+        log/report files that are not part of the gate.
+
+        This exists because `Invoke-ScriptAnalyzer -Path <root> -Recurse
+        -Exclude '_artifacts'` costs far more than the analysis itself.
+        Measured cold in separate processes on 2026-11-12:
+
+          -Exclude '_artifacts'        14.26 s
+          without -Exclude             13.59 s
+          explicit file list            11.1 s
+
+        The analyzer's own recursive enumeration with an exclusion pattern is
+        therefore ~3 s, and resolving the list here also makes the analysed set
+        explicit, so a test can assert exactly which files the gate examines
+        (a script moved into a subdirectory must not silently stop being
+        linted).
+
+        Extensions are the analyzer's own set: a `.psd1` such as
+        scripts/tool-versions.psd1 is in scope and must stay in the list.
+    #>
+    param([Parameter(Mandatory)][string[]]$Path)
+
+    $files = foreach ($root in $Path) {
+        if (Test-Path -LiteralPath $root -PathType Leaf) {
+            Get-Item -LiteralPath $root
+            continue
+        }
+        Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/]_artifacts([\\/]|$)' }
+    }
+
+    @($files |
+            Where-Object { $_.Extension -in '.ps1', '.psm1', '.psd1' } |
+            Sort-Object FullName)
+}
+
 function Invoke-PssaGate {
     <#
     .SYNOPSIS
@@ -154,7 +279,23 @@ function Invoke-PssaGate {
         exit 1
     }
 
-    $findings = @(Invoke-ScriptAnalyzer -Path $Path -Recurse -Exclude '_artifacts' -Settings $Settings)
+    # Explicit file list instead of `-Recurse -Exclude` (see Get-PssaTargetFile).
+    # An empty list is a failure, not a pass: a gate that analysed nothing
+    # cannot certify the scripts directory.
+    $targets = @(Get-PssaTargetFile -Path @($Path))
+    if ($targets.Count -eq 0) {
+        Write-Error "PSScriptAnalyzer gate found no .ps1/.psm1/.psd1 file under '$Path'. Analysing nothing is not a pass."
+        exit 1
+    }
+
+    $findings = @(foreach ($target in $targets) {
+            Invoke-ScriptAnalyzer -Path $target.FullName -Settings $Settings
+        })
+
+    # Deterministic order regardless of enumeration or analyzer order, so the
+    # report is comparable between runs.
+    $findings = @($findings | Sort-Object ScriptName, Line, RuleName)
+
     if ($findings.Count -gt 0) {
         foreach ($f in $findings) {
             $msg = "  [{0}] {1}:{2} {3}" -f $f.Severity, $f.ScriptName, $f.Line, $f.Message
