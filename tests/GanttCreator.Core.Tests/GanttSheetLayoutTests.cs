@@ -438,6 +438,16 @@ public sealed class GanttSheetLayoutTests
             GanttSheetLayout.TitleColumnIndex);
     }
 
+    [Fact]
+    public void An_A1_cell_rejects_a_non_positive_row()
+    {
+        // The guard stops a caller building a "$A0"-shaped reference that Excel
+        // refuses at write time. It had no test of its own until the mutation gate
+        // named the removed call as a survivor.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => GanttSheetLayout.ToA1Cell(GanttSheetLayout.TitleColumnIndex, 0));
+    }
+
     /// <summary>
     /// The bottom padding row is the row directly below the last activity row, and
     /// it is derived from the body length rather than fixed.
