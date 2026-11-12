@@ -226,6 +226,16 @@ exit /b 0
         $codeOnly | Should -Match 'exit 4'
     }
 
+    It 'pins the owner-approved leak ceiling at 38' {
+        # Raised 37 -> 38 by owner decision on 2026-11-12 to keep the R5.16b live
+        # reader/adapter body. Pinning the number turns the file's "do not raise it
+        # again without a measurement" instruction into a gate: a careless edit to
+        # the ceiling fails here instead of passing silently.
+        $raw = Get-Content -LiteralPath $script:scriptPath -Raw
+        $codeOnly = $raw -replace '(?m)^\s*#.*$', ''
+        $codeOnly | Should -Match '\$MaxForcedKills = 38'
+    }
+
     It 'excludes a deliberate escalation from the leak signal' {
         # A test that forces a kill to prove the escalation path works must not
         # count against the ratchet, or the ceiling can never be reached.

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Excel = Microsoft.Office.Interop.Excel;
 using GanttCreator.Core;
@@ -539,6 +540,118 @@ public class GanttTableReaderIntegrationTests(ITestOutputHelper output)
             scope.Dispose();
             await fixture.DisposeAsync().ConfigureAwait(true);
         }
+    }
+
+    /// <summary>
+    /// R5.16b live gate (ADR-0058): the reader reports whether the active sheet
+    /// carries <c>tblGanttData</c>, and the adapter's one
+    /// <c>AppEvents_SheetActivate</c> connection fires on a real activation.
+    /// The contract tests substitute both seams with Moq; this proves the COM
+    /// property and the event really behave the way the substitution assumes.
+    /// </summary>
+    /// <remarks>
+    /// This body carries one forced kill in the leak signal, like every other
+    /// body that calls <see cref="ExcelGanttTableReader.Read()"/>: the reader
+    /// takes no ownership of Excel's shared roots by design. The ratchet
+    /// ceiling was raised 37 -> 38 by owner decision on 2026-11-12 to keep this
+    /// proof; see the measurement in <c>verify-office.ps1</c>.
+    /// </remarks>
+    [Trait("Category", "OfficeIntegration")]
+    [Fact]
+    public async Task The_reader_and_the_adapter_follow_the_active_sheet()
+    {
+        var fixture = new OfficeFixture();
+        var scope = new OfficeFixture.ComScope();
+        try
+        {
+            await fixture.InitializeAsync().ConfigureAwait(true);
+            Assert.True(fixture.RegisterXll(XllPath),
+                $"Application.RegisterXLL returned false for '{XllPath}'.");
+
+            Excel.Workbook workbook = fixture.CreateWorkbook();
+            var initialiser = new ExcelWorkbookInitialiser(fixture.Excel);
+            WorkbookInitialiseOutcome outcome = initialiser.Initialise();
+            Assert.True(outcome.Succeeded, $"Initialise refused: {outcome.Refusal}");
+
+            // Resolving the table is what makes the sheet the Gantt sheet; the
+            // table proxy itself is tracked and released by the shared helper.
+            Excel.Worksheet ganttSheet = ResolveGanttTable(workbook, scope).Sheet;
+
+            var reader = new ExcelGanttTableReader(fixture.Excel);
+            GanttTableReadOutcome onGantt = reader.Read();
+            Assert.True(onGantt.Succeeded, "the reader refused the sheet it had just initialised");
+            Assert.True(
+                onGantt.ActiveSheetIsGanttSheet,
+                "the reader did not report the Gantt sheet while it was the active sheet");
+
+            // A second visible sheet, so the active sheet is provably not the
+            // Gantt sheet. The table is still readable from it, which is exactly
+            // the case the ribbon gate exists for.
+            Excel.Sheets sheets = scope.Track(workbook.Sheets);
+            Excel.Worksheet notes = scope.Track((Excel.Worksheet)sheets.Add());
+            notes.Name = "Notes";
+            notes.Activate();
+
+            GanttTableReadOutcome onNotes = reader.Read();
+            Assert.True(onNotes.Succeeded, "the reader must still read the table from another active sheet");
+            Assert.False(
+                onNotes.ActiveSheetIsGanttSheet,
+                "the reader reported the Gantt sheet while another sheet was active");
+
+            var adapter = new ExcelApplicationAdapter(fixture.Excel);
+            int activations = 0;
+            IDisposable subscription = adapter.SubscribeSheetActivated(
+                () => Interlocked.Increment(ref activations));
+            try
+            {
+                ganttSheet.Activate();
+
+                bool fired = await WaitUntilAsync(
+                    () => Volatile.Read(ref activations) > 0,
+                    TimeSpan.FromSeconds(10)).ConfigureAwait(true);
+                Assert.True(fired, "the adapter reported no sheet activation within 10 s");
+            }
+            finally
+            {
+                subscription.Dispose();
+            }
+
+            Assert.True(
+                reader.Read().ActiveSheetIsGanttSheet,
+                "the reader did not follow the Gantt sheet back after the round trip");
+
+            _output.WriteLine(
+                $"Excel build {fixture.Excel.Version}; activations observed={activations}; " +
+                $"active sheet on return='{((Excel.Worksheet)scope.Track(workbook.ActiveSheet)).Name}'");
+        }
+        finally
+        {
+            // Release the COM proxies the test body took BEFORE the fixture quits
+            // Excel: a chain still referenced here keeps the process alive past Quit().
+            scope.Dispose();
+            await fixture.DisposeAsync().ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// Polls a named observable condition with a deadline. A sleep would be a
+    /// guess about how long Excel takes; this fails loudly with the deadline
+    /// named instead.
+    /// </summary>
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan deadline)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < deadline)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(100).ConfigureAwait(true);
+        }
+
+        return condition();
     }
 
     /// <summary>

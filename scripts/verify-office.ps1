@@ -153,10 +153,24 @@ param(
     # highest-value single retirement available and would move this in the right
     # direction.
     #
-    # Do not raise it again without a measurement that explains the new figure, and
-    # do not lower it below 37 without a run whose kill count is at or under the
-    # proposed value.
-    [int]$MaxForcedKills = 37
+    # RAISED 37 -> 38 ON 2026-11-12, ON THE OWNER'S EXPLICIT INSTRUCTION, to keep a new
+    # live proof rather than to accommodate a regression. The new
+    # GanttTableReaderIntegrationTests.The_reader_and_the_adapter_follow_the_active_sheet
+    # body proves the R5.16b reader fact and the adapter's single AppEvents_SheetActivate
+    # connection against real COM.
+    # MEASURED BAND, NOT A POINT: the 61/61 tree without that body read 37 (10m32s). The
+    # 62/62 tree with it read 38 (10m45s) and then 37 (10m31s, the run this ceiling ships
+    # with). The body may or may not add a forced kill: the per-test attribution names it at
+    # 1, like every other body that calls Read(), because the reader deliberately releases
+    # no shared COM root. The honest statement is that this tree's band is 37-38, and 38 is
+    # the highest observation -- the rule every earlier raise used.
+    # WHAT THIS COSTS: the ratchet can no longer notice one single new leaked chain,
+    # because the ceiling again equals the highest observation, as it did at 30 and 37
+    # before it. The mitigation is the per-test attribution in the run log: a new leak
+    # appears as a new named body, not as anonymous headroom.
+    # Do not raise it again without a measurement that explains the new figure, and do not
+    # lower it below 38 without a run whose kill count is at or under the proposed value.
+    [int]$MaxForcedKills = 38
 )
 
 $ErrorActionPreference = 'Stop'
