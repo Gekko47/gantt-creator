@@ -1926,20 +1926,55 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// The enabled getter for the read-only plot-dimension displays (work
-    /// item R5.2 D4). Always false: the width/height boxes are outputs, never
-    /// inputs, so Excel renders them permanently greyed. A dedicated getter —
-    /// not GetEnabled — because the truth table fail-opens unknown IDs, and a
-    /// read-only display must never be editable for any workbook state.
-    /// Never throws.
+    /// The plot width readout (R5.16a). The control is a
+    /// <c>labelControl</c>, so this is a <c>getLabel</c> callback rather than a
+    /// permanently disabled edit box. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    /// <returns>Always false.</returns>
-    public bool GetPlotDimensionsEnabled(IRibbonControl control)
-    {
-        _ = control;
-        return false;
-    }
+    /// <returns><c>W 1024.00 pt</c>, or <c>W</c> while the width is unknown.</returns>
+    public string GetPlotWidthLabel(IRibbonControl control) =>
+        GetPlotWidthLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotWidthLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The formatted width readout.</returns>
+    internal static string GetPlotWidthLabel(IRibbonControl? control, RibbonStateService stateService) =>
+        FormatDimension("W", GetPlotWidth(control, stateService));
+
+    /// <summary>
+    /// The plot height readout (R5.16a), the parallel of
+    /// <see cref="GetPlotWidthLabel(IRibbonControl)"/>. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control Excel is asking about.</param>
+    /// <returns><c>H 768.00 pt</c>, or <c>H</c> while the height is unknown.</returns>
+    public string GetPlotHeightLabel(IRibbonControl control) =>
+        GetPlotHeightLabel(control, RibbonStateService.Instance);
+
+    /// <summary>
+    /// Runs <see cref="GetPlotHeightLabel(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
+    /// </summary>
+    /// <param name="control">The ribbon control, or null when unavailable.</param>
+    /// <param name="stateService">The state service answering from its snapshot.</param>
+    /// <returns>The formatted height readout.</returns>
+    internal static string GetPlotHeightLabel(IRibbonControl? control, RibbonStateService stateService) =>
+        FormatDimension("H", GetPlotHeight(control, stateService));
+
+    /// <summary>
+    /// Formats one plot dimension readout. An unknown dimension renders the bare
+    /// prefix rather than a misleading zero.
+    /// </summary>
+    /// <param name="prefix">The dimension letter.</param>
+    /// <param name="value">The formatted points value, or empty when unknown.</param>
+    /// <returns>The readout text.</returns>
+    private static string FormatDimension(string prefix, string value) =>
+        string.IsNullOrWhiteSpace(value) ? prefix : prefix + " " + value + " pt";
 
     /// <summary>
     /// Returns the current plot width in points. The ribbon edit box
@@ -2007,37 +2042,29 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Called when the user clicks a plot-size preset button. All four
-    /// buttons share this handler; Excel's button onAction contract
-    /// passes the control, and the control id selects the preset. The
-    /// preset is set, then persisted. Never throws.
+    /// Called when the user picks an output size from the Size dropdown
+    /// (R5.16a). The item id is the durable <see cref="SizePreset"/> key, so
+    /// the four former preset buttons all route through this one handler. The
+    /// preset is set, then persisted, exactly as the buttons did. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control that raised the event.</param>
-    public void OnPresetClick(IRibbonControl control)
-        => OnPresetClick(control, RibbonStateService.Instance);
+    public void OnSizeChange(IRibbonControl control)
+        => OnSizeChange(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="OnPresetClick(IRibbonControl)"/> against an
-    /// injected state service. Internal so contract tests can verify the
-    /// routing without the session singleton. Never throws.
+    /// Runs <see cref="OnSizeChange(IRibbonControl)"/> against an injected
+    /// state service. Internal so contract tests can verify the routing without
+    /// the session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service receiving the setting.</param>
-    internal static void OnPresetClick(IRibbonControl? control, RibbonStateService stateService)
+    internal static void OnSizeChange(IRibbonControl? control, RibbonStateService stateService)
     {
-        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        // An unknown control id is refused — never defaulted to a preset —
-        // so a mistyped or renamed button cannot silently render the chart on
-        // the wrong paper.
-        SizePreset? preset = control?.Id switch
-        {
-            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
-            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
-            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
-            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
-            _ => null,
-        };
+        // An unknown item id is refused — never defaulted to a preset — so a
+        // mistyped or renamed item cannot silently render the chart on the
+        // wrong paper.
+        SizePreset? preset = SizePresets.ByKey(control?.Id);
         if (preset is not null)
         {
             stateService.SetPreset(preset);
@@ -2126,46 +2153,50 @@ public class GanttRibbon : ExcelRibbon
     }
 
     /// <summary>
-    /// Returns whether a plot-size preset button is pressed. Excel's
-    /// button getPressed contract asks for this when a button carries
-    /// getPressed; the answer compares the control id against the
-    /// current preset so the active preset is visually marked. Never
-    /// throws.
+    /// The selected index of the Size dropdown (R5.16a). The item list mirrors
+    /// <see cref="SizePresets.All"/>, so the index is a projection of the stored
+    /// preset rather than a second list. Returns -1 when the workbook names no
+    /// preset: Excel renders that as "nothing selected", never a phantom item.
+    /// Never throws.
     /// </summary>
     /// <param name="control">The ribbon control Excel is asking about.</param>
-    public bool GetPreset(IRibbonControl control) => GetPreset(control, RibbonStateService.Instance);
+    /// <returns>The zero-based index of the current preset, or -1.</returns>
+    public int GetSize(IRibbonControl control) => GetSize(control, RibbonStateService.Instance);
 
     /// <summary>
-    /// Runs <see cref="GetPreset(IRibbonControl)"/> against an
-    /// injected state service. Internal so contract tests can verify the
-    /// routing without the session singleton. Never throws.
+    /// Runs <see cref="GetSize(IRibbonControl)"/> against an injected state
+    /// service. Internal so contract tests can verify the routing without the
+    /// session singleton. Never throws.
     /// </summary>
     /// <param name="control">The ribbon control, or null when unavailable.</param>
     /// <param name="stateService">The state service answering from its snapshot.</param>
-    /// <returns>True when the control's id names the current preset.</returns>
-    internal static bool GetPreset(IRibbonControl? control, RibbonStateService stateService)
+    /// <returns>The zero-based index of the current preset, or -1.</returns>
+    internal static int GetSize(IRibbonControl? control, RibbonStateService stateService)
     {
+        _ = control;
         ArgumentNullException.ThrowIfNull(stateService);
-        SizePreset? expected = control?.Id switch
-        {
-            RibbonControlIds.PresetA4Portrait => SizePresets.A4Portrait,
-            RibbonControlIds.PresetA4Landscape => SizePresets.A4Landscape,
-            RibbonControlIds.PresetPresentation16x9 => SizePresets.Presentation16x9,
-            RibbonControlIds.PresetPresentation4x3 => SizePresets.Presentation4x3,
-            _ => null,
-        };
 #pragma warning disable CA1031
         try
         {
-            // Records do not overload ==, so compare the durable key
-            // rather than relying on the reference identity of the
-            // catalogue singletons.
-            return expected is not null
-                && string.Equals(stateService.GetPreset()?.Key, expected.Key, StringComparison.Ordinal);
+            SizePreset? current = stateService.GetPreset();
+            if (current is null)
+            {
+                return -1;
+            }
+
+            for (int index = 0; index < SizePresets.All.Count; index++)
+            {
+                if (string.Equals(SizePresets.All[index].Key, current.Key, StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
         }
         catch
         {
-            return false;
+            return -1;
         }
 #pragma warning restore CA1031
     }

@@ -322,4 +322,115 @@ public class ExcelApplicationAdapterTests
         var status = Assert.IsAssignableFrom<IWorkbookStateSubscriptionStatus>(subscription);
         Assert.True(status.AllDetached);
     }
+
+    [Fact]
+    public void SubscribeSheetActivated_rejects_a_null_handler()
+    {
+        var adapter = new ExcelApplicationAdapter(null);
+
+        Assert.Throws<ArgumentNullException>(() => adapter.SubscribeSheetActivated(null!));
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_without_an_application_returns_an_inert_subscription()
+    {
+        var subscription = new ExcelApplicationAdapter(null).SubscribeSheetActivated(() => { });
+
+        Assert.Null(Record.Exception(subscription.Dispose));
+        Assert.Null(Record.Exception(subscription.Dispose));
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_invokes_the_handler_when_a_sheet_is_activated()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        var calls = 0;
+        using var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => calls++);
+
+        events.Raise(e => e.SheetActivate += null, new Mock<Excel.Worksheet>().Object);
+
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_swallows_a_failing_handler()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        using var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => throw new InvalidOperationException("handler failed"));
+
+        var exception = Record.Exception(
+            () => events.Raise(e => e.SheetActivate += null, new Mock<Excel.Worksheet>().Object));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_stops_invoking_after_dispose()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        var calls = 0;
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => calls++);
+
+        subscription.Dispose();
+        events.Raise(e => e.SheetActivate += null, new Mock<Excel.Worksheet>().Object);
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_removes_the_handler_exactly_once_across_two_disposals()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => { });
+
+        subscription.Dispose();
+        subscription.Dispose();
+
+        events.VerifyAdd(
+            e => e.SheetActivate += It.IsAny<Excel.AppEvents_SheetActivateEventHandler>(),
+            Times.Once);
+        events.VerifyRemove(
+            e => e.SheetActivate -= It.IsAny<Excel.AppEvents_SheetActivateEventHandler>(),
+            Times.Once);
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_returns_an_inert_subscription_when_attach_fails()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        _ = events
+            .SetupAdd(e => e.SheetActivate += It.IsAny<Excel.AppEvents_SheetActivateEventHandler>())
+            .Throws(new InvalidOperationException("attach refused"));
+
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => { });
+
+        Assert.Null(Record.Exception(subscription.Dispose));
+        events.VerifyRemove(
+            e => e.SheetActivate -= It.IsAny<Excel.AppEvents_SheetActivateEventHandler>(),
+            Times.Never);
+    }
+
+    [Fact]
+    public void SubscribeSheetActivated_never_throws_when_removal_fails()
+    {
+        var application = new Mock<Excel.Application>();
+        var events = application.As<Excel.AppEvents_Event>();
+        _ = events
+            .SetupRemove(e => e.SheetActivate -= It.IsAny<Excel.AppEvents_SheetActivateEventHandler>())
+            .Throws(new InvalidOperationException("removal refused"));
+        var subscription = new ExcelApplicationAdapter(application.Object)
+            .SubscribeSheetActivated(() => { });
+
+        Assert.Null(Record.Exception(subscription.Dispose));
+    }
 }

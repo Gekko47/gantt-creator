@@ -14,14 +14,15 @@
       1. dotnet --version
       2. skill tree in sync
       3. status accuracy
-      4. script analyzer (PSScriptAnalyzer)
-      5. workflow lint (actionlint)
-      6. script lint (Pester)
-      7. restore
-      8. format (production only; tests/ tolerated per tests/Directory.Build.props)
-      9. build Release -warnaserror
-     10. publish AddIn (packed XLL)
-     11. test (OfficeIntegration excluded)
+      4. ribbon icon ids
+      5. script analyzer (PSScriptAnalyzer)
+      6. workflow lint (actionlint)
+      7. script lint (Pester)
+      8. restore
+      9. format (production only; tests/ tolerated per tests/Directory.Build.props)
+     10. build Release -warnaserror
+     11. publish AddIn (packed XLL)
+     12. test (OfficeIntegration excluded)
 #>
 
 [CmdletBinding()]
@@ -99,6 +100,14 @@ Invoke-Step 'status accuracy' {
     # resolve, every backticked repo path claimed must exist, and every
     # roadmap ID mentioned must be defined in docs/03-ROADMAP.md.
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-status.ps1')
+}
+
+Invoke-Step 'ribbon icon ids' {
+    # R5.16a: every imageMso in Ribbon.xml must exist in the Office 2010 Icons
+    # Gallery and in the [MS-CUSTOMUI] idMso table. imageMso fails silently, so
+    # a typo would otherwise ship a blank glyph. The check self-tests first and
+    # reports "Skipped" when the git-ignored references are absent.
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ribbon-icons.ps1')
 }
 
 Invoke-Step 'script analyzer (PSScriptAnalyzer)' {

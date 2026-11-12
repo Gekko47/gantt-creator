@@ -225,23 +225,21 @@ internal static class RibbonControlIds
     /// <summary>The custom-margin edit box (<c>getEnabled</c> driven by the margin preset being Custom).</summary>
     internal const string MarginCm = "edtMarginCm";
 
-    /// <summary>The plot width display (always disabled; read-only output).</summary>
-    internal const string PlotWidth = "edtPlotWidth";
+    /// <summary>
+    /// The plot width readout (R5.16a). A <c>labelControl</c>, never an input:
+    /// the old permanently-disabled edit box read as a broken field.
+    /// </summary>
+    internal const string PlotWidth = "lblPlotWidth";
 
-    /// <summary>The plot height display (always disabled; read-only output).</summary>
-    internal const string PlotHeight = "edtPlotHeight";
+    /// <summary>The plot height readout (R5.16a), the parallel of <see cref="PlotWidth"/>.</summary>
+    internal const string PlotHeight = "lblPlotHeight";
 
-    /// <summary>The A4 portrait preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
-    internal const string PresetA4Portrait = "btnPresetA4Portrait";
-
-    /// <summary>The A4 landscape preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
-    internal const string PresetA4Landscape = "btnPresetA4Landscape";
-
-    /// <summary>The Presentation 16:9 preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
-    internal const string PresetPresentation16x9 = "btnPresetPresentation16x9";
-
-    /// <summary>The Presentation 4:3 preset button (<c>getEnabled</c> driven by workbook + initialised).</summary>
-    internal const string PresetPresentation4x3 = "btnPresetPresentation4x3";
+    /// <summary>
+    /// The output-size dropdown (R5.16a). Replaces the four preset buttons and
+    /// also shows the current preset; its item ids are the durable
+    /// <see cref="Core.SizePreset"/> keys.
+    /// </summary>
+    internal const string SizeDropdown = "ddnSize";
 
     /// <summary>The Theme settings button (<c>getEnabled</c> driven by workbook + initialised).</summary>
     internal const string ThemeSettings = "btnThemeSettings";
@@ -254,35 +252,38 @@ internal static class RibbonControlIds
     // from RibbonState.IsVisible is HIDDEN (fail-closed): showing an unintended
     // group is the failure R5.16 removes.
 
+    /// <summary>
+    /// The add-in tab, targeted by <c>IRibbonUI.ActivateTab</c> so entering the
+    /// Gantt sheet restores this tab (R5.16b, ADR-0058).
+    /// </summary>
+    internal const string Tab = "tabGanttCreator";
+
     /// <summary>The first-run group holding the large Initialise sheet button.</summary>
     internal const string GetStartedGroup = "grpGetStarted";
 
-    /// <summary>The Data group: Fix, Add activity, Add milestone, Additional elements, Remove.</summary>
+    /// <summary>The Data group: Repair, Add activity, Add milestone, Elements, Remove.</summary>
     internal const string DataGroup = "grpData";
 
-    /// <summary>The Ordering group (promote, demote, move up/down).</summary>
-    internal const string OrderingGroup = "grpOrdering";
-
-    /// <summary>The Outline group (expand all, collapse all).</summary>
+    /// <summary>
+    /// The Outline group (R5.16a): promote, demote, up, down, expand all,
+    /// collapse all. The former Ordering group is merged into it.
+    /// </summary>
     internal const string OutlineGroup = "grpOutline";
 
     /// <summary>The Labels group (description, date, custom style).</summary>
     internal const string LabelsGroup = "grpLabels";
 
-    /// <summary>The Style and Theme group.</summary>
+    /// <summary>The Style group (theme settings, chart title).</summary>
     internal const string StyleThemeGroup = "grpStyleTheme";
 
-    /// <summary>The Plot Area group.</summary>
+    /// <summary>The Chart group: plot dates and the time scale (R5.16a merge).</summary>
     internal const string PlotAreaGroup = "grpPlotArea";
 
-    /// <summary>The Plot Time Scale group.</summary>
-    internal const string PlotTimeScaleGroup = "grpPlotTimeScale";
-
-    /// <summary>The Plot Size group.</summary>
+    /// <summary>The Size group: output size, margin, and the dimension readouts.</summary>
     internal const string PlotSizeGroup = "grpPlotSize";
 
-    /// <summary>The refresh / warnings / lock group. The XML id is historical.</summary>
-    internal const string RefreshGroup = "grpPlaceholder";
+    /// <summary>The Sheet group: refresh, warnings, and the two lock toggles.</summary>
+    internal const string SheetGroup = "grpSheet";
 
     /// <summary>The Diagnostics group, visible in every mode.</summary>
     internal const string DiagnosticsGroup = "grpDiagnostics";

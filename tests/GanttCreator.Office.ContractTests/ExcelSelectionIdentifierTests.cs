@@ -139,6 +139,31 @@ public class ExcelSelectionIdentifierTests
     }
 
     [Fact]
+    public void Identify_reports_the_active_cell_row_inside_a_multi_row_selection()
+    {
+        // R5.9b: the structural commands act on the row under the ACTIVE cell,
+        // so a multi-row selection must still name that row; the bespoke-edit
+        // facts stay false, and the two answers do not collide.
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 3, selectionRow: 2, selectionCount: 2);
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.False(facts.IsSingleBodyRow);
+        Assert.Equal(2, facts.ActiveCellBodyIndex);
+    }
+
+    [Fact]
+    public void Identify_reports_no_active_cell_row_when_the_active_cell_is_the_header()
+    {
+        Graph graph = Seeded(bodyRowCount: 3, activeRow: 1, selectionRow: 1, selectionCount: 1);
+
+        SelectionFacts facts = graph.Build().Identify();
+
+        Assert.True(facts.IsHeaderRow);
+        Assert.Null(facts.ActiveCellBodyIndex);
+    }
+
+    [Fact]
     public void Identify_reports_the_header_row_as_header()
     {
         Graph graph = Seeded(bodyRowCount: 3, activeRow: 1, selectionRow: 1, selectionCount: 1);

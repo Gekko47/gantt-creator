@@ -141,6 +141,28 @@ internal enum RibbonMode
 /// Critical Interval (R5.16). The menu item is disabled only when this is
 /// false, because the owner's rule is "refuse only when no parent exists".
 /// </param>
+/// <param name="RowActions">
+/// Which structural actions the row under the active cell supports (R5.9b).
+/// Every flag mirrors a planner refusal, so a disabled button is always a
+/// refusal the command would produce.
+/// </param>
+/// <param name="ActiveCellInBodyRow">
+/// True when the active cell resolves to a table body row (R5.9b). Remove is
+/// disabled otherwise, instead of raising a refusal dialog for a header cell.
+/// </param>
+/// <param name="HasGroups">
+/// True when any table row names a parent (R5.16b). Expand all and Collapse all
+/// are disabled on a flat table, where they are a quiet no-op. The collapsed
+/// state is deliberately not read (plan §5 deferral).
+/// </param>
+/// <param name="ActiveSheetIsGanttSheet">
+/// True when the workbook's active sheet is the worksheet that carries
+/// <c>tblGanttData</c> (R5.16b, ADR-0058). Every control outside the recovery
+/// surface is disabled otherwise, so a chart command cannot be run while a
+/// different visible sheet is active. Defaults to <see langword="true"/> — the
+/// fail-open direction, matching <see cref="IsEnabled(string?)"/> — and the
+/// state service always supplies the measured fact.
+/// </param>
 internal sealed record RibbonState(
     bool HasActiveWorkbook,
     bool LogAvailable,
@@ -173,7 +195,11 @@ internal sealed record RibbonState(
     bool ConfigurationPresent = false,
     bool GanttSheetPresent = false,
     RibbonMode Mode = RibbonMode.FirstRun,
-    bool CriticalIntervalParentAvailable = false)
+    bool CriticalIntervalParentAvailable = false,
+    RowActionAvailability RowActions = default,
+    bool ActiveCellInBodyRow = false,
+    bool HasGroups = false,
+    bool ActiveSheetIsGanttSheet = true)
 {
     /// <summary>
     /// The snapshot before any successful capture. No fact is known, so every
@@ -215,31 +241,54 @@ internal sealed record RibbonState(
     /// </returns>
     internal bool IsEnabled(string? controlId) => controlId switch
     {
+        // R5.16b (ADR-0058): Initialise, Repair, Validate, Diagnostics and Open log
+        // are the recovery surface and stay available on any sheet. Everything
+        // else also requires the Gantt sheet to be the active sheet, so a chart
+        // command is never offered against a different visible sheet.
         RibbonControlIds.Diagnostics => HasActiveWorkbook,
         RibbonControlIds.OpenLog => LogAvailable,
         RibbonControlIds.InitialiseSheet => HasActiveWorkbook,
         RibbonControlIds.ValidateSheet => HasActiveWorkbook,
-        RibbonControlIds.RefreshSheet => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.Warnings => HasActiveWorkbook && SheetInitialised,
         RibbonControlIds.RepairConfig => HasActiveWorkbook,
-        RibbonControlIds.AddActivity => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.AddMilestone => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.AddDelineator => HasActiveWorkbook && SheetInitialised,
+        RibbonControlIds.RefreshSheet =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.Warnings =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.AddActivity =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.AddMilestone =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.AddDelineator =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         // R5.16: a Critical Interval must be attached to a parent, so the item is
         // disabled when no row can own one. It stays VISIBLE: the owner asked for
         // a constraint that is explained in place, not a hidden action.
         RibbonControlIds.CriticalIntervalMenuItem =>
-            HasActiveWorkbook && SheetInitialised && CriticalIntervalParentAvailable,
-        RibbonControlIds.PromoteToParent => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.DemoteToChild => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.MoveUp => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.MoveDown => HasActiveWorkbook && SheetInitialised,
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && CriticalIntervalParentAvailable,
+        // R5.9b: the structural buttons follow the row under the active cell.
+        // The flags come from RowActionAvailability, whose rules mirror the
+        // planner refusals, so a grey button is always a refusal the command
+        // would produce and never a condition it can satisfy.
+        RibbonControlIds.PromoteToParent =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && RowActions.CanPromote,
+        RibbonControlIds.DemoteToChild =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && RowActions.CanDemote,
+        RibbonControlIds.MoveUp =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && RowActions.CanMoveUp,
+        RibbonControlIds.MoveDown =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && RowActions.CanMoveDown,
         // R5.5 ruling 6: the description-label dropdown is the first
         // selection-gated control — it enables only for exactly one
         // resolved body row, so a header/multi/no selection disables it
         // and the command still re-checks at execution time (ruling 1).
         RibbonControlIds.DescriptionLabel =>
-            HasActiveWorkbook && SheetInitialised && DescriptionLabelSelectionAvailable,
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && DescriptionLabelSelectionAvailable,
         // R5.14: the date-label dropdown is gated on the same single-body-row
         // selection facts as the description-label dropdown (the capability is
         // type-only, so the options projection needs no style registry).
@@ -248,7 +297,7 @@ internal sealed record RibbonState(
         // for the delineator — so it enables when either context
         // resolved.
         RibbonControlIds.DateLabel =>
-            HasActiveWorkbook && SheetInitialised
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
             && (DateLabelSelectionAvailable || DateLabelPlacementSelectionAvailable),
         // R5.6a: the custom-style dropdown is gated on the same single-body-row
         // selection facts as the description-label dropdown, narrowed to
@@ -257,35 +306,44 @@ internal sealed record RibbonState(
         // items reads as broken, so a workbook with no custom styles leaves
         // it greyed until Theme settings creates one.
         RibbonControlIds.CustomStyle =>
-            HasActiveWorkbook && SheetInitialised
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
             && CustomStyleSelectionAvailable
             && CustomStyleOptions is { Count: > 0 },
-        RibbonControlIds.Remove => HasActiveWorkbook && SheetInitialised,
+        // R5.9b: Remove needs a body row under the active cell; a header or an
+        // off-table cell leaves it grey instead of raising a refusal dialog.
+        RibbonControlIds.Remove =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet
+            && ActiveCellInBodyRow,
         // R5.4: the collapse-all and expand-all buttons are the Ribbon surface
-        // over the native Excel outline. They are gated on workbook +
-        // initialised like every other Data-group button: a sheet with no group
-        // is a quiet no-op by design, and the command refuses with an
-        // actionable message when the table is missing. Gating them on
-        // "a group exists" would need the sheet's outline state on every
-        // ribbon refresh, which is a COM read per control for a condition the
-        // command already handles.
-        RibbonControlIds.ExpandAllGroups => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.CollapseAllGroups => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PlotStartAuto => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PlotFinishAuto => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PlotStartDate => HasActiveWorkbook && SheetInitialised && !PlotStartAuto,
-        RibbonControlIds.PlotFinishDate => HasActiveWorkbook && SheetInitialised && !PlotFinishAuto,
-        RibbonControlIds.PlotTimeScale => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.Margin => HasActiveWorkbook && SheetInitialised,
-        // The width/height displays are outputs, never inputs: they are
-        // permanently disabled through the dedicated GetPlotDimensionsEnabled
-        // getter, so they never appear in this table (work item R5.2 D4).
-        RibbonControlIds.PresetA4Portrait => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PresetA4Landscape => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PresetPresentation16x9 => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.PresetPresentation4x3 => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.ThemeSettings => HasActiveWorkbook && SheetInitialised,
-        RibbonControlIds.ChartTitle => HasActiveWorkbook && SheetInitialised,
+        // over the native Excel outline. R5.16b adds the HasGroups fact: with no
+        // row naming a parent they are a quiet no-op, so they are greyed instead.
+        // The collapsed state is still not read — it would be a COM outline
+        // query per refresh for a condition the command already handles.
+        RibbonControlIds.ExpandAllGroups =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && HasGroups,
+        RibbonControlIds.CollapseAllGroups =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && HasGroups,
+        RibbonControlIds.PlotStartAuto =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.PlotFinishAuto =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.PlotStartDate =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotStartAuto,
+        RibbonControlIds.PlotFinishDate =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet && !PlotFinishAuto,
+        RibbonControlIds.PlotTimeScale =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.Margin =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        // R5.16a: the four preset buttons are one dropdown. The width/height
+        // readouts are outputs, never inputs, so they are labelControls and
+        // never appear in this table.
+        RibbonControlIds.SizeDropdown =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.ThemeSettings =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
+        RibbonControlIds.ChartTitle =>
+            HasActiveWorkbook && SheetInitialised && ActiveSheetIsGanttSheet,
         _ => true,
     };
 
@@ -306,14 +364,12 @@ internal sealed record RibbonState(
         RibbonControlIds.DiagnosticsGroup => true,
         RibbonControlIds.GetStartedGroup => Mode == RibbonMode.FirstRun,
         RibbonControlIds.DataGroup
-            or RibbonControlIds.OrderingGroup
             or RibbonControlIds.OutlineGroup
             or RibbonControlIds.LabelsGroup
             or RibbonControlIds.StyleThemeGroup
             or RibbonControlIds.PlotAreaGroup
-            or RibbonControlIds.PlotTimeScaleGroup
             or RibbonControlIds.PlotSizeGroup
-            or RibbonControlIds.RefreshGroup => Mode != RibbonMode.FirstRun,
+            or RibbonControlIds.SheetGroup => Mode != RibbonMode.FirstRun,
         _ => false,
     };
 }

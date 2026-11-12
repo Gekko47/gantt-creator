@@ -153,6 +153,93 @@ public sealed class ExcelApplicationAdapter : IExcelApplicationAdapter
             : new SheetChangeSubscription(events, handler);
     }
 
+    /// <inheritdoc />
+    public IDisposable SubscribeSheetActivated(Action handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        Excel.AppEvents_Event? events = _events;
+        return events is null
+            ? InertSheetChangeSubscription.Instance
+            : new SheetActivateSubscription(events, handler);
+    }
+
+    /// <summary>
+    /// Owns one application-level <c>SheetActivate</c> connection. The activated
+    /// sheet argument is deliberately ignored: the subscriber re-reads the
+    /// workbook, which is the only authority on what the active sheet contains
+    /// (R5.16b, ADR-0058).
+    /// </summary>
+    private sealed class SheetActivateSubscription : IDisposable
+    {
+        private readonly Excel.AppEvents_Event _events;
+        private Action? _handler;
+        private Excel.AppEvents_SheetActivateEventHandler? _onSheetActivate;
+        private bool _disposed;
+
+        internal SheetActivateSubscription(Excel.AppEvents_Event events, Action handler)
+        {
+            _events = events;
+            _handler = handler;
+            _onSheetActivate = OnSheetActivate;
+
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetActivate += _onSheetActivate;
+            }
+            catch
+            {
+                _disposed = true;
+                _handler = null;
+                _onSheetActivate = null;
+            }
+#pragma warning restore CA1031
+        }
+
+        private void OnSheetActivate(object sheetObject)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+#pragma warning disable CA1031
+            try
+            {
+                _handler?.Invoke();
+            }
+            catch
+            {
+                // A failed activation notification is skipped; it must not
+                // escape the Excel event dispatcher.
+            }
+#pragma warning restore CA1031
+        }
+
+        public void Dispose()
+        {
+            if (_onSheetActivate is null)
+            {
+                return;
+            }
+
+            _disposed = true;
+#pragma warning disable CA1031
+            try
+            {
+                _events.SheetActivate -= _onSheetActivate;
+                _onSheetActivate = null;
+                _handler = null;
+            }
+            catch
+            {
+                // Teardown must never throw into Excel.
+            }
+#pragma warning restore CA1031
+        }
+    }
+
     /// <summary>
     /// Owns one application-level SheetChange connection and reports the event
     /// target using a workbook/sheet-qualified A1 address. The target and sheet

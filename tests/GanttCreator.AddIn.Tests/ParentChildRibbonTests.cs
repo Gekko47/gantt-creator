@@ -13,19 +13,21 @@ public class ParentChildRibbonTests
     private const string CustomUiNamespace = "http://schemas.microsoft.com/office/2009/07/customui";
 
     [Fact]
-    public void Ribbon_declares_both_parent_child_buttons_in_a_dedicated_ordering_group()
+    public void Ribbon_declares_both_parent_child_buttons_in_the_outline_group()
     {
+        // R5.16a: the former Ordering group is merged into Outline. Promote
+        // and Demote are that group's first row, exactly as they were the
+        // Ordering group's whole content.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
         XElement group = Assert.Single(
             doc.Descendants(ns + "group"),
-            g => g.Attribute("id")?.Value == "grpOrdering");
+            g => g.Attribute("id")?.Value == RibbonControlIds.OutlineGroup);
 
-        // R5.4 restructured the group into a vertical box so the move pair
-        // can sit as its third row; the promote/demote pair is still exactly
-        // this group's content, now the first two rows of that box.
-        XElement ordering = Assert.Single(group.Elements(ns + "box"));
-        XElement[] buttons = ordering.Elements(ns + "button").ToArray();
+        XElement row = Assert.Single(
+            group.Elements(ns + "box"),
+            box => box.Attribute("id")?.Value == "boxOutlineRow1");
+        XElement[] buttons = row.Elements(ns + "button").ToArray();
 
         Assert.Equal(
             [
@@ -43,25 +45,24 @@ public class ParentChildRibbonTests
     }
 
     [Fact]
-    public void Ordering_buttons_use_the_verified_table_insert_image()
+    public void Outline_buttons_use_excel_outline_and_sort_images()
     {
-        // R5.9 owns final icon selection; until then the buttons reuse the
-        // imageMso the add-row buttons already verified against the Office
-        // 2010 Icons Gallery and the Excel idMso table (R2.2 D8 protocol) —
-        // never an unverified guess (R5.3 stop condition).
+        // R5.16a: the pair no longer borrows the table glyph. Each id is in
+        // the Office 2010 Icons Gallery and in the Excel block of the
+        // [MS-CUSTOMUI] idMso table: OutlineGroup = "Group...",
+        // OutlineUngroup = "Ungroup...", SortAscendingExcel =
+        // "Sort Ascending", SortDescendingExcel = "Sort Descending".
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
-        foreach (string id in new[]
-        {
-            RibbonControlIds.PromoteToParent,
-            RibbonControlIds.DemoteToChild,
-        })
-        {
-            XElement button = doc.Descendants(ns + "button")
-                .Single(element => element.Attribute("id")?.Value == id);
-            Assert.Equal("TableInsertExcel", button.Attribute("imageMso")?.Value);
-        }
+        string? ImageMso(string id) => doc.Descendants(ns + "button")
+            .Single(element => element.Attribute("id")?.Value == id)
+            .Attribute("imageMso")?.Value;
+
+        Assert.Equal("OutlineUngroup", ImageMso(RibbonControlIds.PromoteToParent));
+        Assert.Equal("OutlineGroup", ImageMso(RibbonControlIds.DemoteToChild));
+        Assert.Equal("SortAscendingExcel", ImageMso(RibbonControlIds.MoveUp));
+        Assert.Equal("SortDescendingExcel", ImageMso(RibbonControlIds.MoveDown));
     }
 
     [Theory]
@@ -136,11 +137,10 @@ public class ParentChildRibbonTests
     }
 
     [Fact]
-    public void Parent_child_controls_follow_the_cached_workbook_and_initialised_state()
+    public void Parent_child_controls_stay_disabled_without_a_resolved_selection()
     {
-        // D5: the buttons gate on HasActiveWorkbook && SheetInitialised —
-        // exactly like the add-row buttons. A wrong-kind selection never
-        // greys; it refuses at execution time with a message.
+        // R5.9b: the buttons now also require a row under the active cell, so an
+        // unresolved selection greys them instead of raising a refusal dialog.
         var adapter = new Mock<IExcelApplicationAdapter>();
         _ = adapter.Setup(a => a.HasActiveWorkbook()).Returns(true);
         var tableReader = new Mock<IGanttTableReader>();
@@ -149,10 +149,13 @@ public class ParentChildRibbonTests
         service.SetApplicationAdapter(adapter.Object);
         service.SetLogAvailabilitySource(() => false);
         service.SetTableReader(tableReader.Object);
+        var identifier = new Mock<ISelectionIdentifier>();
+        _ = identifier.Setup(i => i.Identify()).Returns(SelectionFacts.None);
+        service.SetSelectionIdentifier(identifier.Object);
         service.Refresh();
 
-        Assert.True(service.GetEnabled(RibbonControlIds.PromoteToParent));
-        Assert.True(service.GetEnabled(RibbonControlIds.DemoteToChild));
+        Assert.False(service.GetEnabled(RibbonControlIds.PromoteToParent));
+        Assert.False(service.GetEnabled(RibbonControlIds.DemoteToChild));
 
         // Workbook present but the table missing: not initialised, so both grey.
         _ = tableReader.Setup(t => t.Read())
@@ -172,19 +175,16 @@ public class ParentChildRibbonTests
     }
 
     [Fact]
-    public void Move_buttons_sit_in_a_two_column_box_inside_the_ordering_group()
+    public void Move_buttons_sit_in_a_two_column_row_of_the_outline_group()
     {
-        // R5.4 ribbon restructure (owner direction): the Ordering group is a
-        // vertical box whose third row is a horizontal box of exactly two
-        // columns — column 1 Up, column 2 Down. The move buttons are NOT
-        // direct children of the ordering box; they live in boxMoveRows, so
-        // the vertical stack renders promote/demote above the up/down pair.
+        // R5.16a: the Outline group is a two-wide, three-storey grid. Row 2
+        // is a horizontal box of exactly two columns — Up then Down.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
         XElement box = Assert.Single(
             doc.Descendants(ns + "box"),
-            b => b.Attribute("id")?.Value == "boxMoveRows");
+            b => b.Attribute("id")?.Value == "boxOutlineRow2");
         Assert.Equal("horizontal", box.Attribute("boxStyle")?.Value);
         Assert.Equal(
             [
@@ -193,38 +193,32 @@ public class ParentChildRibbonTests
             ],
             box.Elements(ns + "button").Select(button => button.Attribute("id")?.Value));
 
-        // The move box is the third element of the vertical ordering box,
-        // after promote and demote.
-        XElement ordering = Assert.Single(
-            doc.Descendants(ns + "box"),
-            b => b.Attribute("id")?.Value == "boxOrdering");
-        Assert.Equal("vertical", ordering.Attribute("boxStyle")?.Value);
+        XElement outline = Assert.Single(
+            doc.Descendants(ns + "group"),
+            g => g.Attribute("id")?.Value == RibbonControlIds.OutlineGroup);
         Assert.Equal(
-            [RibbonControlIds.PromoteToParent, RibbonControlIds.DemoteToChild, "boxMoveRows"],
-            ordering.Elements()
-                .Where(element => element.Name == ns + "button" || element.Name == ns + "box")
-                .Select(element => element.Attribute("id")?.Value));
+            ["boxOutlineRow1", "boxOutlineRow2", "boxOutlineRow3"],
+            outline.Elements(ns + "box").Select(element => element.Attribute("id")?.Value));
     }
 
     /// <summary>
-    /// The Outline group's Expand/Collapse pair stacks vertically, one icon-column wide.
+    /// The Outline group's Expand/Collapse pair shares the grid's third row.
     /// </summary>
     /// <remarks>
-    /// Owner direction (2026-11-09): the two buttons were laid out side by side in a
-    /// horizontal box, which cost two icon columns of ribbon width for a pair that is
-    /// only ever used together. A vertical box halves that width without removing either
-    /// control, so no callback, keytip or enablement changes.
+    /// R5.16a replaced the previous one-column vertical stack with the 2 x 3
+    /// grid the whole merged group uses. No callback, keytip or enablement
+    /// changes: only the layout.
     /// </remarks>
     [Fact]
-    public void Outline_group_buttons_stack_vertically_to_save_horizontal_space()
+    public void Outline_expand_and_collapse_share_the_third_row()
     {
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
         XElement box = Assert.Single(
             doc.Descendants(ns + "box"),
-            b => b.Attribute("id")?.Value == "boxOutlineGroups");
-        Assert.Equal("vertical", box.Attribute("boxStyle")?.Value);
+            b => b.Attribute("id")?.Value == "boxOutlineRow3");
+        Assert.Equal("horizontal", box.Attribute("boxStyle")?.Value);
         Assert.Equal(
             [RibbonControlIds.ExpandAllGroups, RibbonControlIds.CollapseAllGroups],
             box.Elements(ns + "button").Select(button => button.Attribute("id")?.Value));
@@ -332,11 +326,10 @@ public class ParentChildRibbonTests
     }
 
     [Fact]
-    public void Move_controls_follow_the_cached_workbook_and_initialised_state()
+    public void Move_controls_stay_disabled_without_a_resolved_selection()
     {
-        // The move buttons gate on HasActiveWorkbook && SheetInitialised, exactly
-        // like promote and demote: the top/bottom of the selection's set is a
-        // quiet no-op by design (R5.4 D4), not a greyed button.
+        // R5.9b: the move pair now also requires a row under the active cell, so
+        // the boundary no-ops the commands tolerate are no longer offered.
         var adapter = new Mock<IExcelApplicationAdapter>();
         _ = adapter.Setup(a => a.HasActiveWorkbook()).Returns(true);
         var tableReader = new Mock<IGanttTableReader>();
@@ -345,10 +338,13 @@ public class ParentChildRibbonTests
         service.SetApplicationAdapter(adapter.Object);
         service.SetLogAvailabilitySource(() => false);
         service.SetTableReader(tableReader.Object);
+        var identifier = new Mock<ISelectionIdentifier>();
+        _ = identifier.Setup(i => i.Identify()).Returns(SelectionFacts.None);
+        service.SetSelectionIdentifier(identifier.Object);
         service.Refresh();
 
-        Assert.True(service.GetEnabled(RibbonControlIds.MoveUp));
-        Assert.True(service.GetEnabled(RibbonControlIds.MoveDown));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveUp));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveDown));
 
         // Workbook present but the table missing: not initialised, so both grey.
         _ = tableReader.Setup(t => t.Read())

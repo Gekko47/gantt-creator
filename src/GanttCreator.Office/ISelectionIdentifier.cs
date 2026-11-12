@@ -9,12 +9,19 @@ namespace GanttCreator.Office;
 /// <param name="BodyIndex">The one-based body index when a single row is selected.</param>
 /// <param name="IsHeaderRow">Whether the selection is on the table header row.</param>
 /// <param name="SelectedRowCount">How many table body rows the selection spans.</param>
+/// <param name="ActiveCellBodyIndex">
+/// The one-based body index of the ACTIVE CELL, even when the selection spans
+/// several rows (R5.9b). The structural commands act on the row under the
+/// active cell, so their ribbon gates must answer for that row rather than
+/// disabling on a multi-row selection the commands still support.
+/// </param>
 public sealed record SelectionFacts(
     bool HasSelection,
     bool IsSingleBodyRow,
     int? BodyIndex,
     bool IsHeaderRow,
-    int SelectedRowCount)
+    int SelectedRowCount,
+    int? ActiveCellBodyIndex = null)
 {
     /// <summary>Gets facts for "no resolvable selection".</summary>
     public static SelectionFacts None { get; } = new(false, false, null, false, 0);

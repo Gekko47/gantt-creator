@@ -50,6 +50,9 @@ internal class RibbonStateService
     private IDisposable? _workbookStateSubscription;
     private GanttRefreshScheduler? _refreshScheduler;
 
+    /// <summary>The sheet-activation subscription (R5.16b), detached exactly once.</summary>
+    private IDisposable? _sheetActivationSubscription;
+
     /// <summary>The standalone selection identifier (R5.5 ruling 6), or null when not wired.</summary>
     private ISelectionIdentifier? _selectionIdentifier;
 
@@ -235,6 +238,14 @@ internal class RibbonStateService
     /// <param name="identifier">The selection identifier, or null when unavailable.</param>
     internal void SetSelectionIdentifier(ISelectionIdentifier? identifier) =>
         _selectionIdentifier = identifier;
+
+    /// <summary>
+    /// The rows the last successful table read returned (R5.9b). The selection
+    /// change handler re-evaluates the structural gates against this snapshot
+    /// instead of re-reading the sheet on every cursor move; a failed read
+    /// leaves the previous rows in place.
+    /// </summary>
+    private IReadOnlyList<GanttRowDto> _lastTableRows = [];
 
     /// <summary>
     /// Returns the injected catalogue writer, or <see langword="null"/> when
@@ -1842,6 +1853,8 @@ internal class RibbonStateService
         bool? configurationPresent = null;
         bool? ganttSheetPresent = null;
         bool? criticalIntervalParentAvailable = null;
+        bool? activeSheetIsGanttSheet = null;
+        bool? hasGroups = null;
         if (_tableReader is not null)
         {
 #pragma warning disable CA1031
@@ -1851,8 +1864,14 @@ internal class RibbonStateService
                 sheetInitialised = tableOutcome.Succeeded;
                 configurationPresent = tableOutcome.ConfigurationPresent;
                 ganttSheetPresent = tableOutcome.GanttSheetPresent;
+                activeSheetIsGanttSheet = tableOutcome.ActiveSheetIsGanttSheet;
                 criticalIntervalParentAvailable =
                     tableOutcome.Succeeded && HasEligibleParent(tableOutcome.Rows);
+                if (tableOutcome.Succeeded)
+                {
+                    _lastTableRows = tableOutcome.Rows;
+                    hasGroups = tableOutcome.Rows.Any(row => !string.IsNullOrEmpty(row.ParentId));
+                }
             }
             catch
             {
@@ -1867,8 +1886,14 @@ internal class RibbonStateService
             sheetInitialised,
             configurationPresent,
             ganttSheetPresent,
-            criticalIntervalParentAvailable);
+            criticalIntervalParentAvailable,
+            activeSheetIsGanttSheet,
+            hasGroups);
         Invalidate();
+
+        // Owner ruling D-4: every chart refresh restores the add-in tab, so a
+        // refresh cannot leave the user looking at the Table Design tab.
+        ActivateGanttTab();
     }
 
     /// <summary>
@@ -1911,9 +1936,9 @@ internal class RibbonStateService
     {
         // Owner ruling 2026-11-09: the two toggles replace the shape pair. A toggle is always
         // available on an initialised sheet — what varies is the state it reports, not whether it
-        // can be pressed.
+        // can be pressed. R5.16b adds the active-sheet gate like every other chart command.
         RibbonControlIds.ToggleChartLock or RibbonControlIds.ToggleCellLock =>
-            _state.HasActiveWorkbook && _state.SheetInitialised,
+            _state.HasActiveWorkbook && _state.SheetInitialised && _state.ActiveSheetIsGanttSheet,
         _ => _state.IsEnabled(controlId),
     };
 
@@ -2392,6 +2417,14 @@ internal class RibbonStateService
     /// Whether a standard-labelled Gantt worksheet exists, or null when the
     /// probe was unavailable and the previous value must stand (R5.17b).
     /// </param>
+    /// <param name="activeSheetIsGanttSheet">
+    /// Whether the active sheet carries the Gantt table, or null when the probe
+    /// was unavailable and the previous value must stand (R5.16b, ADR-0058).
+    /// </param>
+    /// <param name="hasGroups">
+    /// Whether any table row names a parent, or null when no read succeeded and
+    /// the previous value must stand (R5.16b).
+    /// </param>
     /// <param name="criticalIntervalParentAvailable">
     /// Whether the table holds a row that can own a Critical Interval, or null
     /// when the probe was unavailable and the previous value must stand (R5.16).
@@ -2402,7 +2435,9 @@ internal class RibbonStateService
         bool? sheetInitialised,
         bool? configurationPresent = null,
         bool? ganttSheetPresent = null,
-        bool? criticalIntervalParentAvailable = null)
+        bool? criticalIntervalParentAvailable = null,
+        bool? activeSheetIsGanttSheet = null,
+        bool? hasGroups = null)
     {
         // CA1031: the capture runs inside Ribbon callbacks and Excel events; a
         // source failure keeps the last known snapshot instead of propagating
@@ -2422,6 +2457,13 @@ internal class RibbonStateService
             bool ganttPresent = ganttSheetPresent ?? previous.GanttSheetPresent;
             bool criticalAvailable =
                 criticalIntervalParentAvailable ?? previous.CriticalIntervalParentAvailable;
+
+            // R5.16b: both new facts are sticky like every other captured fact —
+            // an unreadable table keeps the published value instead of greying
+            // or un-greying the whole surface mid-session.
+            bool activeSheetIsGantt =
+                activeSheetIsGanttSheet ?? previous.ActiveSheetIsGanttSheet;
+            bool groupsPresent = hasGroups ?? previous.HasGroups;
             RibbonMode mode = ResolveMode(
                 workbookPresent,
                 initialised,
@@ -2437,6 +2479,7 @@ internal class RibbonStateService
             DateLabelContext dateLabelContext = CaptureDateLabelContext(previous);
             DateLabelPlacementContext dateLabelPlacementContext = CaptureDateLabelPlacementContext(previous);
             CustomStyleContext customStyleContext = CaptureCustomStyleContext(previous);
+            RowActionContext rowActionContext = CaptureRowActionContext(previous);
 
             return DebugForceRibbonState.Apply(new RibbonState(
                 workbookPresent,
@@ -2470,7 +2513,11 @@ internal class RibbonStateService
                 ConfigurationPresent: configPresent,
                 GanttSheetPresent: ganttPresent,
                 Mode: mode,
-                CriticalIntervalParentAvailable: criticalAvailable));
+                CriticalIntervalParentAvailable: criticalAvailable,
+                RowActions: rowActionContext.Actions,
+                ActiveCellInBodyRow: rowActionContext.ActiveCellInBodyRow,
+                HasGroups: groupsPresent,
+                ActiveSheetIsGanttSheet: activeSheetIsGantt));
         }
         catch
         {
@@ -2478,6 +2525,56 @@ internal class RibbonStateService
         }
 #pragma warning restore CA1031
     }
+
+    /// <summary>
+    /// Captures the structural row-action facts for the row under the active
+    /// cell (R5.9b). The rules live in <see cref="RowActionAvailability"/>; this
+    /// method supplies the selection facts and the rows the last successful read
+    /// returned. Never throws: an unavailable selection or rule failure keeps the
+    /// previous context, the same stickiness every other capture uses.
+    /// </summary>
+    /// <param name="previous">The snapshot currently published.</param>
+    /// <returns>The captured context, or the previous one when unavailable.</returns>
+    private RowActionContext CaptureRowActionContext(RibbonState previous)
+    {
+        RowActionContext unchanged = new(previous.RowActions, previous.ActiveCellInBodyRow);
+        ISelectionIdentifier? identifier = _selectionIdentifier;
+        if (identifier is null)
+        {
+            return unchanged;
+        }
+
+        // CA1031: the capture runs inside Ribbon callbacks and Excel events;
+        // a failure keeps the last known context instead of propagating.
+#pragma warning disable CA1031
+        try
+        {
+            SelectionFacts facts = identifier.Identify();
+            if (!facts.HasSelection)
+            {
+                return unchanged;
+            }
+
+            int? activeCellBodyIndex = facts.ActiveCellBodyIndex;
+            return new RowActionContext(
+                RowActionAvailability.Evaluate(_lastTableRows, activeCellBodyIndex),
+                activeCellBodyIndex.HasValue);
+        }
+        catch
+        {
+            return unchanged;
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// The structural row-action context published on the snapshot (R5.9b).
+    /// </summary>
+    /// <param name="Actions">The four availability flags for the active row.</param>
+    /// <param name="ActiveCellInBodyRow">Whether the active cell resolves to a table body row.</param>
+    private readonly record struct RowActionContext(
+        RowActionAvailability Actions,
+        bool ActiveCellInBodyRow);
 
     /// <summary>
     /// Resolves the Ribbon mode from the three workbook facts (R5.16). A
@@ -2984,6 +3081,15 @@ internal class RibbonStateService
             InvalidateControl(RibbonControlIds.DateLabel);
             InvalidateControl(RibbonControlIds.CustomStyle);
 
+            // R5.9b: the structural gates follow the active row, so moving the
+            // cursor must re-ask them; without these five lines Excel keeps the
+            // state each button had when the ribbon was built.
+            InvalidateControl(RibbonControlIds.PromoteToParent);
+            InvalidateControl(RibbonControlIds.DemoteToChild);
+            InvalidateControl(RibbonControlIds.MoveUp);
+            InvalidateControl(RibbonControlIds.MoveDown);
+            InvalidateControl(RibbonControlIds.Remove);
+
             // The two toggles report state rather than selection, but a command can change
             // either from anywhere, and Excel only re-asks getPressed on an invalidation.
             InvalidateControl(RibbonControlIds.ToggleChartLock);
@@ -3054,6 +3160,7 @@ internal class RibbonStateService
     private void SubscribeToSheetChanges()
     {
         DisposeRefreshScheduler();
+        DisposeSheetActivationSubscription();
         IExcelApplicationAdapter? adapter = _applicationAdapter;
         if (adapter is null)
         {
@@ -3071,6 +3178,18 @@ internal class RibbonStateService
         catch
         {
             _refreshScheduler = null;
+        }
+
+        // R5.16b (ADR-0058): entering the Gantt sheet re-reads the workbook so
+        // the active-sheet gate is current, then restores the add-in tab. A
+        // failure to subscribe degrades to command-driven refresh only.
+        try
+        {
+            _sheetActivationSubscription = adapter.SubscribeSheetActivated(OnSheetActivated);
+        }
+        catch
+        {
+            _sheetActivationSubscription = null;
         }
 #pragma warning restore CA1031
     }
@@ -3094,6 +3213,65 @@ internal class RibbonStateService
             // AutoClose must not surface a teardown failure into Excel.
         }
 #pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Handles one sheet activation (R5.16b, ADR-0058). A sheet change is not a
+    /// chart-affecting edit, so nothing is rendered here; the workbook is
+    /// re-read so the active-sheet gate reflects the sheet the user just
+    /// entered, and <see cref="Refresh"/> then restores the add-in tab when the
+    /// Gantt sheet is the active one. Never throws.
+    /// </summary>
+    private void OnSheetActivated()
+    {
+        _refreshScheduler?.CancelPendingRefresh();
+        Refresh();
+    }
+
+    /// <summary>
+    /// Detaches the sheet-activation subscription exactly once. Never throws.
+    /// </summary>
+    private void DisposeSheetActivationSubscription()
+    {
+        IDisposable? subscription = _sheetActivationSubscription;
+        _sheetActivationSubscription = null;
+        if (subscription is null)
+        {
+            return;
+        }
+
+        // CA1031: teardown must never throw into Excel; a failed detach
+        // degrades to a retained event connection.
+#pragma warning disable CA1031
+        try
+        {
+            subscription.Dispose();
+        }
+        catch
+        {
+            // Intentionally empty: see the teardown rationale above.
+        }
+#pragma warning restore CA1031
+    }
+
+    /// <summary>
+    /// Makes the add-in tab the active tab when the Gantt sheet is the active
+    /// sheet and the surface is <see cref="RibbonMode.Ready"/> (owner ruling
+    /// D-4, ADR-0058). Called at the end of every refresh and on every sheet
+    /// activation — never from a selection change, so the user is not pulled
+    /// away from the tab they chose. <c>ActivateTab</c> signals S_FALSE and
+    /// changes nothing while the ribbon is collapsed, so there is no error to
+    /// surface. Never throws.
+    /// </summary>
+    internal void ActivateGanttTab()
+    {
+        RibbonState state = _state;
+        if (state.Mode != RibbonMode.Ready || !state.ActiveSheetIsGanttSheet)
+        {
+            return;
+        }
+
+        InvokeRibbon(ribbon => ribbon.ActivateTab(RibbonControlIds.Tab));
     }
 
     /// <summary>
@@ -3183,6 +3361,7 @@ internal class RibbonStateService
     private void Teardown()
     {
         DisposeRefreshScheduler();
+        DisposeSheetActivationSubscription();
         DisposeSelectionSubscription();
         DisposeWorkbookStateSubscription();
         _ribbon = null;

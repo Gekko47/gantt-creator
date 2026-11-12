@@ -169,6 +169,11 @@ internal static class RefreshSheetCommand
         {
             RibbonStateService.Instance.UpdateWarnings(outcome.Warnings);
             RibbonStateService.ClearStatusBar();
+
+            // Owner ruling D-4 (ADR-0058): a refresh must not leave the user on
+            // the Table Design tab. The call is guarded by Ready + the Gantt
+            // sheet being active, so it is a no-op everywhere else.
+            RibbonStateService.Instance.ActivateGanttTab();
         }
 
         if (!outcome.Succeeded)
@@ -222,6 +227,9 @@ internal static class RefreshSheetCommand
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.MoveDown);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.PromoteToParent);
             RibbonStateService.Instance.InvalidateControl(RibbonControlIds.DemoteToChild);
+
+            // Owner ruling D-4 (ADR-0058): same tab restore as the manual path.
+            RibbonStateService.Instance.ActivateGanttTab();
             TracePostPass(refreshCompleted);
             return;
         }

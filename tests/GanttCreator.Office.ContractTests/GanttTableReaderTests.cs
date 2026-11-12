@@ -69,7 +69,8 @@ public class GanttTableReaderTests
             IExcelDateSystemConverter? dateSystemConverter = null,
             Func<Excel.Range, int>? bodyFirstRow = null,
             Func<Excel.Range, int>? bodyRowCount = null,
-            Func<Excel.Range, int, Excel.Range>? bodyRow = null
+            Func<Excel.Range, int, Excel.Range>? bodyRow = null,
+            Func<Excel.Application, object?>? activeSheet = null
         )
             : base(application, dateSystemConverter)
         {
@@ -81,6 +82,7 @@ public class GanttTableReaderTests
             BodyFirstRow = bodyFirstRow ?? (_ => throw new InvalidOperationException("should not be called"));
             BodyRowCount = bodyRowCount ?? (_ => throw new InvalidOperationException("should not be called"));
             BodyRow = bodyRow ?? ((_, _) => throw new InvalidOperationException("should not be called"));
+            ActiveSheet = activeSheet;
         }
 
         public Func<Excel.Sheets, int, object> SheetAt { get; }
@@ -91,6 +93,8 @@ public class GanttTableReaderTests
         public Func<Excel.Range, int> BodyFirstRow { get; }
         public Func<Excel.Range, int> BodyRowCount { get; }
         public Func<Excel.Range, int, Excel.Range> BodyRow { get; }
+
+        public Func<Excel.Application, object?>? ActiveSheet { get; }
 
         internal override bool GetDate1904(Excel.Workbook workbook) => Date1904(workbook);
 
@@ -107,6 +111,9 @@ public class GanttTableReaderTests
         internal override Excel.ListColumn GetColumnAt(Excel.ListColumns columns, int index) => ColumnAt(columns, index);
 
         internal override object? GetBodyValues(Excel.Range body) => BodyValue(body);
+
+        internal override object? GetActiveSheet(Excel.Application application) =>
+            ActiveSheet is null ? null : ActiveSheet(application);
     }
 
     private static List<string> SchemaHeaders() => GanttTableSchema.Default.Columns.Select(c => c.Name).ToList();
@@ -221,6 +228,116 @@ public class GanttTableReaderTests
 
         Assert.Equal(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.NoActiveWorkbook), outcome);
         Assert.Empty(outcome.Rows);
+    }
+
+    [Fact]
+    public void Read_reports_the_active_sheet_as_the_gantt_sheet_when_it_carries_the_table()
+    {
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()),
+            activeSheet: _ => ganttSheet);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.True(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_reports_the_active_sheet_as_not_the_gantt_sheet_when_another_sheet_is_active()
+    {
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        var otherSheet = new Mock<Excel.Worksheet>();
+        _ = otherSheet.SetupGet(w => w.Name).Returns("Notes");
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()),
+            activeSheet: _ => otherSheet.Object);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_reports_a_non_worksheet_active_sheet_as_not_the_gantt_sheet()
+    {
+        var table = new TableGraph(GanttTableSchema.TableName, SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            _ => BodyMatrix(FullRow()),
+            activeSheet: _ => new object());
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.True(outcome.Succeeded);
+        Assert.False(outcome.ActiveSheetIsGanttSheet);
+    }
+
+    [Fact]
+    public void Read_falls_back_to_the_gantt_label_when_the_table_is_missing()
+    {
+        var table = new TableGraph("SomeOtherTable", SchemaHeaders());
+        var graph = new SheetGraph(table);
+        Excel.Worksheet ganttSheet = graph.Worksheet.Object;
+        _ = graph.Worksheet.SetupGet(w => w.Name).Returns(GanttWorkbookContract.GanttSheetLabel);
+        var application = new Mock<Excel.Application>();
+        var workbook = new Mock<Excel.Workbook>();
+        _ = application.SetupGet(a => a.ActiveWorkbook).Returns(workbook.Object);
+        _ = workbook.SetupGet(w => w.Sheets).Returns(CreateSheetsMock([graph]).Object);
+
+        var reader = new TestableReader(
+            application.Object,
+            (_, _) => ganttSheet,
+            (_, _) => table.Table.Object,
+            (_, index) => table.ColumnAt(index),
+            _ => false,
+            bodyValues: _ => throw new InvalidOperationException("body must not be read"),
+            activeSheet: _ => ganttSheet);
+
+        GanttTableReadOutcome outcome = reader.Read();
+
+        Assert.Equal(GanttTableReadRefusalReason.TableMissing, outcome.Refusal);
+        Assert.True(outcome.ActiveSheetIsGanttSheet);
     }
 
     [Fact]

@@ -149,6 +149,39 @@ public sealed class RibbonStateServiceTests : IDisposable
 
         internal void RaiseWorkbookStateChanged() => _handler?.Invoke();
 
+        private Action? _sheetActivatedHandler;
+
+        public int SheetActivateSubscribeCount { get; private set; }
+
+        public int SheetActivateDisposeCount { get; private set; }
+
+        public IDisposable SubscribeSheetActivated(Action handler)
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            SheetActivateSubscribeCount++;
+            _sheetActivatedHandler = handler;
+            return new SheetActivationSubscription(this);
+        }
+
+        internal void RaiseSheetActivated() => _sheetActivatedHandler?.Invoke();
+
+        private sealed class SheetActivationSubscription(FakeApplicationAdapter owner) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                owner.SheetActivateDisposeCount++;
+                owner._sheetActivatedHandler = null;
+            }
+        }
+
         private sealed class Subscription(FakeApplicationAdapter owner) : IDisposable
         {
             private bool _disposed;
@@ -218,7 +251,7 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.True(service.GetVisible(RibbonControlIds.GetStartedGroup));
         Assert.True(service.GetVisible(RibbonControlIds.DiagnosticsGroup));
         Assert.False(service.GetVisible(RibbonControlIds.DataGroup));
-        Assert.False(service.GetVisible(RibbonControlIds.OrderingGroup));
+        Assert.False(service.GetVisible(RibbonControlIds.OutlineGroup));
     }
 
     [Fact]
@@ -249,6 +282,167 @@ public sealed class RibbonStateServiceTests : IDisposable
         Assert.False(service.GetVisible(RibbonControlIds.GetStartedGroup));
         Assert.True(service.GetVisible(RibbonControlIds.DataGroup));
         Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));
+    }
+
+    [Fact]
+    public void Structural_buttons_follow_the_row_under_the_active_cell()
+    {
+        // R5.9b: a child at the bottom of its run offers Promote and Remove,
+        // not Demote, Up or Down. The flags come from RowActionAvailability.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Activity"),
+                Row(2, "As-Planned Activity", parentId: NewRowId('a')),
+            ]));
+
+        var identifier = new Mock<ISelectionIdentifier>();
+        _ = identifier.Setup(i => i.Identify()).Returns(new SelectionFacts(true, true, 2, false, 1, 2));
+        service.SetSelectionIdentifier(identifier.Object);
+        service.Refresh();
+
+        Assert.True(service.GetEnabled(RibbonControlIds.PromoteToParent));
+        Assert.False(service.GetEnabled(RibbonControlIds.DemoteToChild));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveUp));
+        Assert.False(service.GetEnabled(RibbonControlIds.MoveDown));
+        Assert.True(service.GetEnabled(RibbonControlIds.Remove));
+
+        // A header selection resolves no body row, so Remove greys too.
+        _ = identifier.Setup(i => i.Identify()).Returns(new SelectionFacts(true, false, null, true, 0));
+        service.Refresh();
+
+        Assert.False(service.GetEnabled(RibbonControlIds.Remove));
+        Assert.False(service.GetEnabled(RibbonControlIds.PromoteToParent));
+    }
+
+    [Fact]
+    public void Chart_commands_are_disabled_when_another_sheet_is_active()
+    {
+        // R5.16b (ADR-0058): the reader reports that the active sheet is not the
+        // sheet that carries tblGanttData, so every chart command greys while the
+        // recovery surface stays available from any sheet.
+        var service = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([], activeSheetIsGanttSheet: false));
+
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+        Assert.False(service.GetEnabled(RibbonControlIds.RefreshSheet));
+        Assert.False(service.GetEnabled(RibbonControlIds.Warnings));
+        Assert.False(service.GetEnabled(RibbonControlIds.ToggleChartLock));
+        Assert.False(service.GetEnabled(RibbonControlIds.ToggleCellLock));
+        Assert.False(service.GetEnabled(RibbonControlIds.ThemeSettings));
+        Assert.False(service.GetEnabled(RibbonControlIds.ChartTitle));
+        Assert.False(service.GetEnabled(RibbonControlIds.PlotTimeScale));
+        Assert.False(service.GetEnabled(RibbonControlIds.SizeDropdown));
+        Assert.False(service.GetEnabled(RibbonControlIds.Margin));
+
+        Assert.True(service.GetEnabled(RibbonControlIds.InitialiseSheet));
+        Assert.True(service.GetEnabled(RibbonControlIds.RepairConfig));
+        Assert.True(service.GetEnabled(RibbonControlIds.ValidateSheet));
+        Assert.True(service.GetEnabled(RibbonControlIds.Diagnostics));
+    }
+
+    [Fact]
+    public void Expand_and_collapse_are_disabled_on_a_flat_table_and_enabled_with_a_group()
+    {
+        var flat = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok([Row(1, "As-Planned Activity")]));
+
+        Assert.False(flat.GetEnabled(RibbonControlIds.ExpandAllGroups));
+        Assert.False(flat.GetEnabled(RibbonControlIds.CollapseAllGroups));
+
+        var grouped = ArmedWithTableRead(
+            new FakeApplicationAdapter { WorkbookFact = true },
+            GanttTableReadOutcome.Ok(
+            [
+                Row(1, "As-Planned Activity"),
+                Row(2, "As-Planned Activity", parentId: NewRowId('a')),
+            ]));
+
+        Assert.True(grouped.GetEnabled(RibbonControlIds.ExpandAllGroups));
+        Assert.True(grouped.GetEnabled(RibbonControlIds.CollapseAllGroups));
+    }
+
+    [Fact]
+    public void Refresh_activates_the_add_in_tab_when_the_gantt_sheet_is_active()
+    {
+        // Owner ruling D-4: every refresh restores the tab, so a chart refresh
+        // cannot leave the user looking at the Table Design tab.
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+
+        // The configuration must be present for the surface to be Ready; a
+        // successful read without it is NeedsRepair (R5.17b).
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
+    }
+
+    [Fact]
+    public void Refresh_does_not_activate_the_tab_when_another_sheet_is_active()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: true,
+                activeSheetIsGanttSheet: false));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void Refresh_does_not_activate_the_tab_before_the_surface_is_ready()
+    {
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(new FakeApplicationAdapter { WorkbookFact = true }, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
+        service.SetTableReader(reader.Object);
+
+        service.Refresh();
+
+        ribbon.Verify(r => r.ActivateTab(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_sheet_activation_refreshes_the_gate_and_restores_the_tab()
+    {
+        var adapter = new FakeApplicationAdapter { WorkbookFact = true };
+        var ribbon = new Mock<IRibbonUI>();
+        var service = Arm(adapter, ribbon: ribbon.Object);
+        var reader = new Mock<IGanttTableReader>(MockBehavior.Strict);
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok(
+                [],
+                configurationPresent: true,
+                activeSheetIsGanttSheet: false));
+        service.SetTableReader(reader.Object);
+        service.Refresh();
+
+        Assert.Equal(1, adapter.SheetActivateSubscribeCount);
+        Assert.False(service.GetEnabled(RibbonControlIds.AddActivity));
+
+        // Entering the Gantt sheet: the next read reports it as the active sheet.
+        _ = reader.Setup(r => r.Read())
+            .Returns(GanttTableReadOutcome.Ok([], configurationPresent: true));
+        adapter.RaiseSheetActivated();
+
+        Assert.True(service.GetEnabled(RibbonControlIds.AddActivity));
+        ribbon.Verify(r => r.ActivateTab(RibbonControlIds.Tab), Times.Once);
     }
 
     [Fact]

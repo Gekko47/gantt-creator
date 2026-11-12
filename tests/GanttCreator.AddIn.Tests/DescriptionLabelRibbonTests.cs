@@ -405,6 +405,13 @@ public sealed class DescriptionLabelRibbonTests : IDisposable
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,
+                // R5.9b: the structural gates follow the active row, so the
+                // five row-action controls re-evaluate with the dropdowns.
+                RibbonControlIds.PromoteToParent,
+                RibbonControlIds.DemoteToChild,
+                RibbonControlIds.MoveUp,
+                RibbonControlIds.MoveDown,
+                RibbonControlIds.Remove,
                 RibbonControlIds.ToggleChartLock,
                 RibbonControlIds.ToggleCellLock,
             ],

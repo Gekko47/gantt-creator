@@ -57,21 +57,27 @@ public class AddRowRibbonTests
     }
 
     [Fact]
-    public void Add_row_buttons_use_the_verified_table_insert_image()
+    public void Add_row_buttons_carry_their_own_verified_icons()
     {
+        // R5.16a: the three add buttons no longer share one glyph. Each id
+        // below is in the Office 2010 Icons Gallery and in the Excel block of
+        // the [MS-CUSTOMUI] idMso table; the live host render check is the
+        // remaining gate, recorded in the R5.16a work item.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
-        foreach (string id in new[]
+        Dictionary<string, string> expected = new(StringComparer.Ordinal)
         {
-            RibbonControlIds.AddActivity,
-            RibbonControlIds.AddMilestone,
-            RibbonControlIds.AddDelineator,
-        })
+            [RibbonControlIds.AddActivity] = "TableRowsInsertAboveExcel",
+            [RibbonControlIds.AddMilestone] = "CalendarInsert",
+            [RibbonControlIds.AddDelineator] = "ShapesInsertGallery",
+        };
+
+        foreach ((string id, string imageMso) in expected)
         {
             XElement button = doc.Descendants(ns + "button")
                 .Single(element => element.Attribute("id")?.Value == id);
-            Assert.Equal("TableInsertExcel", button.Attribute("imageMso")?.Value);
+            Assert.Equal(imageMso, button.Attribute("imageMso")?.Value);
         }
     }
 

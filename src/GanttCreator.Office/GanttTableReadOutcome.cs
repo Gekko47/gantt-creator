@@ -61,21 +61,39 @@ public sealed record GanttTableReadOutcome(
     public bool GanttSheetPresent { get; init; }
 
     /// <summary>
+    /// Whether the workbook's active sheet is the worksheet that carries
+    /// <c>tblGanttData</c>. The Ribbon greys every non-exempt control when this
+    /// is <see langword="false"/>, so a chart command cannot be run against a
+    /// different visible sheet (R5.16b, ADR-0058). On a
+    /// <see cref="GanttTableReadRefusalReason.TableMissing"/> refusal it reports
+    /// whether the active sheet carries the Gantt label instead.
+    /// </summary>
+    public bool ActiveSheetIsGanttSheet { get; init; }
+
+    /// <summary>
     /// Creates a success outcome.
     /// </summary>
     /// <param name="rows">The rows in body order.</param>
     /// <param name="configurationPresent">Whether the workbook carries a <c>_GanttCreatorConfig</c> worksheet.</param>
     /// <param name="tablePresent">Whether the contract table exists. True on every success.</param>
     /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt worksheet exists.</param>
+    /// <param name="activeSheetIsGanttSheet">
+    /// Whether the active sheet carries the Gantt table. It defaults to
+    /// <see langword="true"/> — the fail-open direction for a snapshot built from
+    /// a successful read — because a hand-built outcome in a test must not grey
+    /// every control by omission. Every live read supplies the measured value.
+    /// </param>
     /// <returns>The success outcome.</returns>
     public static GanttTableReadOutcome Ok(
         IReadOnlyList<Core.GanttRowDto> rows,
         bool configurationPresent = false,
         bool tablePresent = true,
-        bool ganttSheetPresent = false) =>
+        bool ganttSheetPresent = false,
+        bool activeSheetIsGanttSheet = true) =>
         new(true, rows, null, configurationPresent, tablePresent)
         {
             GanttSheetPresent = ganttSheetPresent,
+            ActiveSheetIsGanttSheet = activeSheetIsGanttSheet,
         };
 
     /// <summary>
@@ -89,14 +107,17 @@ public sealed record GanttTableReadOutcome(
     /// Whether a contract table exists. True for <see cref="GanttTableReadRefusalReason.TableUnreadable"/>.
     /// </param>
     /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt worksheet exists.</param>
+    /// <param name="activeSheetIsGanttSheet">Whether the active sheet carries the Gantt table.</param>
     /// <returns>The refusal outcome.</returns>
     public static GanttTableReadOutcome Refused(
         GanttTableReadRefusalReason refusal,
         bool configurationPresent = false,
         bool tablePresent = false,
-        bool ganttSheetPresent = false) =>
+        bool ganttSheetPresent = false,
+        bool activeSheetIsGanttSheet = false) =>
         new(false, [], refusal, configurationPresent, tablePresent)
         {
             GanttSheetPresent = ganttSheetPresent,
+            ActiveSheetIsGanttSheet = activeSheetIsGanttSheet,
         };
 }

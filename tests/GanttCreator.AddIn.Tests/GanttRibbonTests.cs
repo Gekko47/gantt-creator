@@ -521,22 +521,16 @@ public class GanttRibbonTests
                 RibbonControlIds.AddMilestone,
                 RibbonControlIds.AddDelineator,
                 RibbonControlIds.Remove,
+                // R5.16a: the merged Outline group. Promote/Demote then Up/Down
+                // then Expand/Collapse, in document order.
                 RibbonControlIds.PromoteToParent,
                 RibbonControlIds.DemoteToChild,
                 RibbonControlIds.MoveUp,
                 RibbonControlIds.MoveDown,
-                // R5.4: the collapse-all and expand-all buttons in the new
-                // Outline group, which sits after the Ordering group in
-                // document order. They are gated on workbook + initialised
-                // like every other Data-group button.
                 RibbonControlIds.ExpandAllGroups,
                 RibbonControlIds.CollapseAllGroups,
                 RibbonControlIds.ThemeSettings,
                 RibbonControlIds.ChartTitle,
-                RibbonControlIds.PresetA4Portrait,
-                RibbonControlIds.PresetA4Landscape,
-                RibbonControlIds.PresetPresentation16x9,
-                RibbonControlIds.PresetPresentation4x3,
                 RibbonControlIds.RefreshSheet,
                 RibbonControlIds.Warnings,
                 RibbonControlIds.Diagnostics,
@@ -557,7 +551,12 @@ public class GanttRibbonTests
                 RibbonControlIds.DescriptionLabel,
                 RibbonControlIds.DateLabel,
                 RibbonControlIds.CustomStyle,
+                // R5.16a: the merged Chart group holds the dates and the scale;
+                // the Size group holds the size dropdown and the margin pair.
+                // Dropdowns are listed before edit boxes because the query
+                // groups by element type, not by document order.
                 RibbonControlIds.PlotTimeScale,
+                RibbonControlIds.SizeDropdown,
                 RibbonControlIds.Margin,
                 RibbonControlIds.PlotStartDate,
                 RibbonControlIds.PlotFinishDate,
@@ -567,37 +566,28 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void Plot_dimension_displays_are_permanently_disabled()
+    public void Plot_dimension_displays_are_read_only_labels()
     {
-        // Work item R5.2 D4: the width/height boxes are outputs, never
-        // inputs. They bypass the shared GetEnabled truth table entirely and
-        // carry the dedicated GetPlotDimensionsEnabled getter, which is
-        // always false — so they render greyed for every workbook state and
-        // can never be edited. Excel's editBox has no readOnly attribute, so
-        // a dedicated always-false getter is the only read-only mechanism.
+        // R5.16a: the width/height readouts are labelControls, not disabled
+        // edit boxes. A label has no input affordance at all, which is what
+        // "read-only output" actually means on a ribbon; the old disabled
+        // boxes read as broken fields.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
-        foreach (string id in new[]
-        {
-            RibbonControlIds.PlotWidth,
-            RibbonControlIds.PlotHeight,
-        })
-        {
-            XElement box = doc.Descendants(ns + "editBox")
-                .Single(element => element.Attribute("id")?.Value == id);
-            Assert.Equal(
-                "GetPlotDimensionsEnabled",
-                box.Attribute("getEnabled")?.Value);
-            // The display carries text but no commit path: getText only, no
-            // onChange, so typing (if it were enabled) could never persist.
-            Assert.Null(box.Attribute("onChange"));
-        }
+        Assert.Equal(
+            ["GetPlotWidthLabel", "GetPlotHeightLabel"],
+            doc.Descendants(ns + "labelControl")
+                .Select(element => element.Attribute("getLabel")?.Value)
+                .Where(value => value is "GetPlotWidthLabel" or "GetPlotHeightLabel"));
+        Assert.DoesNotContain(
+            doc.Descendants(ns + "editBox"),
+            element => element.Attribute("id")?.Value is "edtPlotWidth" or "edtPlotHeight");
 
-        var control = new Mock<IRibbonControl>();
-        var ribbon = new GanttRibbon();
-        Assert.False(ribbon.GetPlotDimensionsEnabled(control.Object));
+        var service = new RibbonStateService();
+        Assert.Equal("W", GanttRibbon.GetPlotWidthLabel(null, service));
+        Assert.Equal("H", GanttRibbon.GetPlotHeightLabel(null, service));
     }
 
     [Fact]
@@ -632,12 +622,7 @@ public class GanttRibbonTests
             RibbonControlIds.PlotTimeScale,
             RibbonControlIds.Margin,
             RibbonControlIds.MarginCm,
-            RibbonControlIds.PlotWidth,
-            RibbonControlIds.PlotHeight,
-            RibbonControlIds.PresetA4Portrait,
-            RibbonControlIds.PresetA4Landscape,
-            RibbonControlIds.PresetPresentation16x9,
-            RibbonControlIds.PresetPresentation4x3,
+            RibbonControlIds.SizeDropdown,
         })
         {
             var matches = doc.Descendants(ns + "button")
@@ -711,11 +696,24 @@ public class GanttRibbonTests
         Assert.Equal("Help", ImageMso(RibbonControlIds.Diagnostics));
         Assert.Equal("FileOpen", ImageMso(RibbonControlIds.OpenLog));
         Assert.Equal("TableInsertExcel", ImageMso(RibbonControlIds.InitialiseSheet));
-        Assert.Equal("Spelling", ImageMso(RibbonControlIds.ValidateSheet));
-        Assert.Equal("PageOrientationPortrait", ImageMso(RibbonControlIds.PresetA4Portrait));
-        Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetA4Landscape));
-        Assert.Equal("PageOrientationLandscape", ImageMso(RibbonControlIds.PresetPresentation16x9));
-        Assert.Equal("PageOrientationPortrait", ImageMso(RibbonControlIds.PresetPresentation4x3));
+
+        // R5.16a: one glyph per control. The Data group no longer repeats
+        // TableInsertExcel five times, and the outline actions use Excel's
+        // own group/ungroup and sort glyphs instead of the table glyph.
+        Assert.Equal("DataValidation", ImageMso(RibbonControlIds.RepairConfig));
+        Assert.Equal("DataValidationCircleInvalid", ImageMso(RibbonControlIds.ValidateSheet));
+        Assert.Equal("TableRowsInsertAboveExcel", ImageMso(RibbonControlIds.AddActivity));
+        Assert.Equal("CalendarInsert", ImageMso(RibbonControlIds.AddMilestone));
+        Assert.Equal("ShapesInsertGallery", ImageMso(RibbonControlIds.AddDelineator));
+        Assert.Equal("TableRowsDeleteExcel", ImageMso(RibbonControlIds.Remove));
+        Assert.Equal("OutlineUngroup", ImageMso(RibbonControlIds.PromoteToParent));
+        Assert.Equal("OutlineGroup", ImageMso(RibbonControlIds.DemoteToChild));
+        Assert.Equal("SortAscendingExcel", ImageMso(RibbonControlIds.MoveUp));
+        Assert.Equal("SortDescendingExcel", ImageMso(RibbonControlIds.MoveDown));
+        Assert.Equal("ThemesGallery", ImageMso(RibbonControlIds.ThemeSettings));
+        Assert.Equal("ChartTitle", ImageMso(RibbonControlIds.ChartTitle));
+        Assert.Equal("RefreshAll", ImageMso(RibbonControlIds.RefreshSheet));
+        Assert.Equal("ErrorChecking", ImageMso(RibbonControlIds.Warnings));
 
         // R5.4: the Outline group's two buttons. Both IDs satisfy the two
         // bases. The gallery (customUI14.xml, 7344 unique IDs) lists
@@ -732,6 +730,37 @@ public class GanttRibbonTests
         // itself, which is what these buttons drive.
         Assert.Equal("OutlineExpand", ImageMso(RibbonControlIds.ExpandAllGroups));
         Assert.Equal("OutlineCollapse", ImageMso(RibbonControlIds.CollapseAllGroups));
+    }
+
+    [Fact]
+    public void Ribbon_icons_are_unique_per_control()
+    {
+        // R5.16a: a duplicated glyph makes two different actions look the same.
+        // Nine controls shared TableInsertExcel before this row. Menu items are
+        // excluded because a dropdown legitimately repeats a glyph (the two
+        // landscape size presets share the landscape orientation icon).
+        string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
+        XDocument doc = XDocument.Parse(xml);
+        XNamespace ns = NamespaceCustomUI2010;
+
+        string[] images =
+        [
+            .. doc.Descendants()
+                .Where(element => element.Name.LocalName is "button" or "toggleButton" or "dropDown")
+                .Select(element => element.Attribute("imageMso")?.Value)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!),
+        ];
+
+        string[] duplicates =
+        [
+            .. images
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key),
+        ];
+
+        Assert.Empty(duplicates);
     }
 
     [Fact]
@@ -1187,35 +1216,35 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void PlotArea_group_declares_start_and_finish_rows_with_checkboxes_and_editboxes()
+    public void Chart_group_declares_start_finish_and_scale_rows()
     {
-        // Fix plan ruling 3: the flat label stack is restructured into proper
-        // start/finish rows — one AUTO box row and one date box row per end,
-        // each label sitting beside its control. The edit boxes carry getText
-        // for the effective display value, getEnabled for the auto toggle, and
-        // onChange for the commit path.
+        // R5.16a: Plot Area and Plot Time Scale are one "Chart" group. Each
+        // date is a single row — caption, box, then the Auto checkbox that
+        // carries its own label — and the scale is the third row.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
         XElement group = doc.Descendants(ns + "group")
-            .Single(element => element.Attribute("id")?.Value == "grpPlotArea");
-        Assert.Equal("Plot Area", group.Attribute("label")?.Value);
+            .Single(element => element.Attribute("id")?.Value == RibbonControlIds.PlotAreaGroup);
+        Assert.Equal("Chart", group.Attribute("label")?.Value);
 
         var labelIds = group.Descendants(ns + "labelControl")
             .Select(element => element.Attribute("id")?.Value)
             .ToList();
         Assert.Equal(
-            ["lblPlotStartDate", "lblPlotStartAuto", "lblPlotFinishDate", "lblPlotFinishAuto"],
+            ["lblPlotStartDate", "lblPlotFinishDate", "lblPlotTimeScale"],
             labelIds);
 
         XElement startCheck = group.Descendants(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotStartAuto");
+        Assert.Equal("Auto", startCheck.Attribute("label")?.Value);
         Assert.Equal("GetPlotStartAuto", startCheck.Attribute("getPressed")?.Value);
         Assert.Equal("OnPlotStartAutoClick", startCheck.Attribute("onAction")?.Value);
 
         XElement finishCheck = group.Descendants(ns + "checkBox")
             .Single(element => element.Attribute("id")?.Value == "chkPlotFinishAuto");
+        Assert.Equal("Auto", finishCheck.Attribute("label")?.Value);
         Assert.Equal("GetPlotFinishAuto", finishCheck.Attribute("getPressed")?.Value);
         Assert.Equal("OnPlotFinishAutoClick", finishCheck.Attribute("onAction")?.Value);
 
@@ -1237,7 +1266,7 @@ public class GanttRibbonTests
     }
 
     [Fact]
-    public void PlotTimeScale_group_declares_the_scale_and_label_form_rows()
+    public void Chart_group_declares_the_time_scale_dropdown()
     {
         // R5.2: the lower band's calendar unit is a closed set
         // (month/quarter/week — the year is the fixed upper band,
@@ -1246,13 +1275,14 @@ public class GanttRibbonTests
         // Month rows, so one control selects the scale AND the form
         // and there is nothing to grey out: every row the dropdown
         // offers is a pair the catalogue reader accepts.
+        // R5.16a: the dropdown lives in the merged Chart group.
         string xml = Ribbon.GetCustomUI(WorkbookRibbonId)!;
         XDocument doc = XDocument.Parse(xml);
         XNamespace ns = NamespaceCustomUI2010;
 
         XElement group = doc.Descendants(ns + "group")
-            .Single(element => element.Attribute("id")?.Value == "grpPlotTimeScale");
-        Assert.Equal("Plot Time Scale", group.Attribute("label")?.Value);
+            .Single(element => element.Attribute("id")?.Value == RibbonControlIds.PlotAreaGroup);
+        Assert.Equal("Chart", group.Attribute("label")?.Value);
 
         // One dropdown, not two: the label form is a row of the scale
         // dropdown, so there is no second control to keep in step.
@@ -1294,32 +1324,33 @@ public class GanttRibbonTests
 
         XElement group = doc.Descendants(ns + "group")
             .Single(element => element.Attribute("id")?.Value == "grpPlotSize");
-        Assert.Equal("Plot Size", group.Attribute("label")?.Value);
+        Assert.Equal("Size", group.Attribute("label")?.Value);
 
-        XElement widthBox = group.Descendants(ns + "editBox")
-            .Single(element => element.Attribute("id")?.Value == "edtPlotWidth");
-        Assert.Equal("GetPlotWidth", widthBox.Attribute("getText")?.Value);
-        Assert.Equal("GetPlotDimensionsEnabled", widthBox.Attribute("getEnabled")?.Value);
-        Assert.Null(widthBox.Attribute("onChange"));
+        // R5.16a: the width/height readouts are labels, not disabled edit boxes.
+        XElement widthLabel = group.Descendants(ns + "labelControl")
+            .Single(element => element.Attribute("id")?.Value == "lblPlotWidth");
+        Assert.Equal("GetPlotWidthLabel", widthLabel.Attribute("getLabel")?.Value);
 
-        XElement heightBox = group.Descendants(ns + "editBox")
-            .Single(element => element.Attribute("id")?.Value == "edtPlotHeight");
-        Assert.Equal("GetPlotHeight", heightBox.Attribute("getText")?.Value);
-        Assert.Equal("GetPlotDimensionsEnabled", heightBox.Attribute("getEnabled")?.Value);
-        Assert.Null(heightBox.Attribute("onChange"));
+        XElement heightLabel = group.Descendants(ns + "labelControl")
+            .Single(element => element.Attribute("id")?.Value == "lblPlotHeight");
+        Assert.Equal("GetPlotHeightLabel", heightLabel.Attribute("getLabel")?.Value);
 
-        var presetIds = group.Descendants(ns + "button")
-            .Where(element => element.Attribute("onAction")?.Value == "OnPresetClick")
-            .Select(element => element.Attribute("id")?.Value)
-            .ToList();
+        Assert.DoesNotContain(
+            group.Descendants(ns + "editBox"),
+            element => element.Attribute("id")?.Value is "edtPlotWidth" or "edtPlotHeight");
+
+        // The four preset buttons are one dropdown whose item ids are the
+        // durable SizePreset keys.
+        XElement sizeDropdown = group.Descendants(ns + "dropDown")
+            .Single(element => element.Attribute("id")?.Value == RibbonControlIds.SizeDropdown);
+        Assert.Equal("GetSize", sizeDropdown.Attribute("getSelectedItemIndex")?.Value);
+        Assert.Equal("OnSizeChange", sizeDropdown.Attribute("onAction")?.Value);
         Assert.Equal(
-            [
-                RibbonControlIds.PresetA4Portrait,
-                RibbonControlIds.PresetA4Landscape,
-                RibbonControlIds.PresetPresentation16x9,
-                RibbonControlIds.PresetPresentation4x3,
-            ],
-            presetIds);
+            ["A4Portrait", "A4Landscape", "Presentation16x9", "Presentation4x3"],
+            sizeDropdown.Descendants(ns + "item").Select(element => element.Attribute("id")?.Value));
+        Assert.DoesNotContain(
+            group.Descendants(ns + "button"),
+            element => element.Attribute("onAction")?.Value == "OnPresetClick");
 
         XElement marginDropdown = group.Descendants(ns + "dropDown")
             .Single(element => element.Attribute("id")?.Value == "ddnMargin");
@@ -1521,14 +1552,14 @@ public class GanttRibbonTests
     /// displays and the next Refresh agree.
     /// </summary>
     [Fact]
-    public void OnPresetClick_routes_the_control_id_to_the_service()
+    public void OnSizeChange_routes_the_item_id_to_the_service()
     {
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
         var control = new Mock<IRibbonControl>();
-        control.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetA4Landscape);
+        control.SetupGet(c => c.Id).Returns("A4Landscape");
 
-        GanttRibbon.OnPresetClick(control.Object, service);
+        GanttRibbon.OnSizeChange(control.Object, service);
 
         Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
     }
@@ -1539,15 +1570,15 @@ public class GanttRibbonTests
     /// the wrong paper: the stored preset is untouched.
     /// </summary>
     [Fact]
-    public void OnPresetClick_refuses_an_unknown_control_id()
+    public void OnSizeChange_refuses_an_unknown_item_id()
     {
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
         service.SetPreset(SizePresets.A4Landscape);
         var control = new Mock<IRibbonControl>();
-        control.SetupGet(c => c.Id).Returns("btnPresetA3");
+        control.SetupGet(c => c.Id).Returns("A3");
 
-        GanttRibbon.OnPresetClick(control.Object, service);
+        GanttRibbon.OnSizeChange(control.Object, service);
 
         Assert.Equal(SizePresets.A4Landscape, service.GetPreset());
     }
@@ -1561,19 +1592,20 @@ public class GanttRibbonTests
     /// record compared by reference would misreport.
     /// </summary>
     [Fact]
-    public void GetPreset_marks_only_the_active_preset()
+    public void GetSize_projects_the_stored_preset_onto_the_item_list()
     {
+        // The item list mirrors SizePresets.All, so the selected index is a
+        // projection of the stored preset rather than a second list.
         var service = new RibbonStateService();
         service.SetCatalogueWriter(null);
+
         service.SetPreset(SizePresets.Presentation16x9);
+        Assert.Equal(2, GanttRibbon.GetSize(null, service));
 
-        var active = new Mock<IRibbonControl>();
-        active.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetPresentation16x9);
-        var inactive = new Mock<IRibbonControl>();
-        inactive.SetupGet(c => c.Id).Returns(RibbonControlIds.PresetA4Portrait);
-
-        Assert.True(GanttRibbon.GetPreset(active.Object, service));
-        Assert.False(GanttRibbon.GetPreset(inactive.Object, service));
+        // A workbook that names no preset reads as "nothing selected".
+        var empty = new RibbonStateService();
+        empty.SetCatalogueWriter(null);
+        Assert.Equal(-1, GanttRibbon.GetSize(null, empty));
     }
 
     /// <summary>

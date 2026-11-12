@@ -65,10 +65,15 @@ public class ExcelGanttTableReader(
         Sheets sheets = workbook.Sheets;
         bool configurationPresent = HasConfigurationSheet(sheets);
         bool ganttSheetPresent = HasGanttSheet(sheets);
-        if (!TryFindTable(sheets, out ListObject? table) || table is null)
+        if (!TryFindTable(sheets, out ListObject? table, out Worksheet? tableSheet) || table is null)
         {
-            return RefuseTableMissing(configurationPresent, ganttSheetPresent);
+            return RefuseTableMissing(
+                configurationPresent,
+                ganttSheetPresent,
+                ActiveSheetIsGanttSheet(application, tableSheet));
         }
+
+        bool activeSheetIsGanttSheet = ActiveSheetIsGanttSheet(application, tableSheet);
 
         if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
@@ -76,7 +81,8 @@ public class ExcelGanttTableReader(
                 GanttTableReadRefusalReason.TableUnreadable,
                 configurationPresent,
                 tablePresent: true,
-                ganttSheetPresent);
+                ganttSheetPresent,
+                activeSheetIsGanttSheet);
         }
 
         Excel.Range? body = table.DataBodyRange;
@@ -85,7 +91,8 @@ public class ExcelGanttTableReader(
             return GanttTableReadOutcome.Ok(
                 [],
                 configurationPresent,
-                ganttSheetPresent: ganttSheetPresent);
+                ganttSheetPresent: ganttSheetPresent,
+                activeSheetIsGanttSheet: activeSheetIsGanttSheet);
         }
 
         object? raw = GetBodyValues(body);
@@ -93,7 +100,8 @@ public class ExcelGanttTableReader(
         return GanttTableReadOutcome.Ok(
             rows,
             configurationPresent,
-            ganttSheetPresent: ganttSheetPresent);
+            ganttSheetPresent: ganttSheetPresent,
+            activeSheetIsGanttSheet: activeSheetIsGanttSheet);
     }
 
     /// <inheritdoc />
@@ -127,13 +135,16 @@ public class ExcelGanttTableReader(
         Sheets sheets = workbook.Sheets;
         bool configurationPresent = HasConfigurationSheet(sheets);
         bool ganttSheetPresent = HasGanttSheet(sheets);
-        if (!TryFindTable(sheets, out ListObject? table) || table is null)
+        if (!TryFindTable(sheets, out ListObject? table, out Worksheet? tableSheet) || table is null)
         {
             return GanttTableReadOutcome.Refused(
                 GanttTableReadRefusalReason.TableMissing,
                 configurationPresent,
-                ganttSheetPresent: ganttSheetPresent);
+                ganttSheetPresent: ganttSheetPresent,
+                activeSheetIsGanttSheet: ActiveSheetIsGanttSheet(application, tableSheet));
         }
+
+        bool activeSheetIsGanttSheet = ActiveSheetIsGanttSheet(application, tableSheet);
 
         if (!TryBuildColumnMap(table, out int[]? columnMap) || columnMap is null)
         {
@@ -141,7 +152,8 @@ public class ExcelGanttTableReader(
                 GanttTableReadRefusalReason.TableUnreadable,
                 configurationPresent,
                 tablePresent: true,
-                ganttSheetPresent);
+                ganttSheetPresent,
+                activeSheetIsGanttSheet);
         }
 
         Excel.Range? body = table.DataBodyRange;
@@ -150,14 +162,17 @@ public class ExcelGanttTableReader(
             return GanttTableReadOutcome.Ok(
                 [],
                 configurationPresent,
-                ganttSheetPresent: ganttSheetPresent);
+                ganttSheetPresent: ganttSheetPresent,
+                activeSheetIsGanttSheet: activeSheetIsGanttSheet);
         }
 
         ArgumentNullException.ThrowIfNull(rowNumbers);
 
         if (rowNumbers.Count == 0)
         {
-            return GanttTableReadOutcome.Ok([]);
+            return GanttTableReadOutcome.Ok(
+                [],
+                activeSheetIsGanttSheet: activeSheetIsGanttSheet);
         }
 
         // rowNumbers are worksheet row numbers. Convert to body-row indexes
@@ -193,7 +208,10 @@ public class ExcelGanttTableReader(
             rows.Add(ConvertRow(bodyRowIndex, cells, dateSystem));
         }
 
-        return GanttTableReadOutcome.Ok(rows, configurationPresent);
+        return GanttTableReadOutcome.Ok(
+            rows,
+            configurationPresent,
+            activeSheetIsGanttSheet: activeSheetIsGanttSheet);
     }
 
     /// <summary>
@@ -205,14 +223,17 @@ public class ExcelGanttTableReader(
     /// </summary>
     /// <param name="configurationPresent">Whether the configuration worksheet exists.</param>
     /// <param name="ganttSheetPresent">Whether a standard-labelled Gantt worksheet exists.</param>
+    /// <param name="activeSheetIsGanttSheet">Whether the active sheet carries the Gantt table or label.</param>
     /// <returns>The typed refusal with the configuration and sheet facts.</returns>
     private static GanttTableReadOutcome RefuseTableMissing(
         bool configurationPresent,
-        bool ganttSheetPresent) =>
+        bool ganttSheetPresent,
+        bool activeSheetIsGanttSheet) =>
         GanttTableReadOutcome.Refused(
             GanttTableReadRefusalReason.TableMissing,
             configurationPresent,
-            ganttSheetPresent: ganttSheetPresent);
+            ganttSheetPresent: ganttSheetPresent,
+            activeSheetIsGanttSheet: activeSheetIsGanttSheet);
 
     /// <summary>
     /// Whether a worksheet named <c>_GanttCreatorConfig</c> exists. Reads names
@@ -263,10 +284,12 @@ public class ExcelGanttTableReader(
     /// </summary>
     /// <param name="sheets">The workbook's sheets.</param>
     /// <param name="table">The table when found.</param>
+    /// <param name="owner">The worksheet that carries the table, when found.</param>
     /// <returns><see langword="true"/> when the table was found.</returns>
-    private bool TryFindTable(Sheets sheets, out ListObject? table)
+    private bool TryFindTable(Sheets sheets, out ListObject? table, out Worksheet? owner)
     {
         table = null;
+        owner = null;
         int count = sheets.Count;
         for (int index = 1; index <= count; index++)
         {
@@ -281,6 +304,7 @@ public class ExcelGanttTableReader(
                     if (GanttChartContract.IsDataTableName(candidate.Name))
                     {
                         table = candidate;
+                        owner = worksheet;
                         return true;
                     }
                 }
@@ -478,6 +502,39 @@ public class ExcelGanttTableReader(
     /// <param name="workbook">The active workbook.</param>
     /// <returns><see langword="true"/> when the workbook uses the 1904 date system.</returns>
     internal virtual bool GetDate1904(Workbook workbook) => workbook.Date1904;
+
+    /// <summary>
+    /// Reads the workbook's active sheet. Test seam over the COM
+    /// <c>Application.ActiveSheet</c> property, which returns a
+    /// <c>Worksheet</c> or a <c>Chart</c>.
+    /// </summary>
+    /// <param name="application">The Excel application object.</param>
+    /// <returns>The active sheet, or <see langword="null"/> when none is resolvable.</returns>
+    internal virtual object? GetActiveSheet(Application application) => application.ActiveSheet;
+
+    /// <summary>
+    /// Whether the active sheet is the worksheet that carries the Gantt table
+    /// (R5.16b, ADR-0058). When the table is missing, the Gantt label on the
+    /// active sheet stands in for ownership so the repair commands keep their
+    /// context. A chart sheet or any other visible worksheet reports
+    /// <see langword="false"/>, which the Ribbon turns into disabled controls.
+    /// </summary>
+    /// <param name="application">The Excel application object.</param>
+    /// <param name="tableSheet">The worksheet that owns <c>tblGanttData</c>, when found.</param>
+    /// <returns><see langword="true"/> when the active sheet is the Gantt sheet.</returns>
+    private bool ActiveSheetIsGanttSheet(Application application, Worksheet? tableSheet)
+    {
+        object? active = GetActiveSheet(application);
+        if (active is not Worksheet activeSheet)
+        {
+            return false;
+        }
+
+        string activeName = activeSheet.Name;
+        return tableSheet is null
+            ? GanttWorkbookContract.IsGanttSheetLabel(activeName)
+            : string.Equals(activeName, tableSheet.Name, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Returns the sheet at the one-based index. Test seam over the COM

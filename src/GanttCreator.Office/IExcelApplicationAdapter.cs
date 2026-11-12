@@ -118,9 +118,33 @@ public interface IExcelApplicationAdapter
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
     IDisposable SubscribeWorkbookStateChanged(Action handler);
+
+    /// <summary>
+    /// Subscribes <paramref name="handler"/> to the application-level
+    /// sheet-activation event, so entering the Gantt sheet can refresh the chart
+    /// and restore the add-in tab (R5.16b, ADR-0058).
+    /// </summary>
+    /// <param name="handler">
+    /// Invoked on Excel's main thread after a sheet becomes active, with no
+    /// arguments: the subscriber re-reads the workbook, because only the read
+    /// knows which worksheet is the Gantt sheet. The handler must not throw; the
+    /// adapter guards the invocation so a throw cannot escape into Excel's
+    /// dispatch.
+    /// </param>
+    /// <returns>
+    /// A subscription that detaches exactly once when disposed; disposing it
+    /// again is a no-op. Implementations without application events return an
+    /// inert subscription, so callers never special-case them.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
+    IDisposable SubscribeSheetActivated(Action handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return InertSheetChangeSubscription.Instance;
+    }
 }
 
-/// <summary>An inert worksheet-change subscription for non-Excel adapters.</summary>
+/// <summary>An inert sheet subscription for adapters without Excel events.</summary>
 internal sealed class InertSheetChangeSubscription : IDisposable
 {
     private InertSheetChangeSubscription()

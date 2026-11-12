@@ -15,19 +15,20 @@ public class CollapseGroupsRibbonTests
     private const string CustomUiNamespace = "http://schemas.microsoft.com/office/2009/07/customui";
 
     [Fact]
-    public void Ribbon_declares_both_outline_buttons_in_a_dedicated_outline_group()
+    public void Ribbon_declares_both_outline_buttons_in_the_outline_group()
     {
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
         XElement group = Assert.Single(
             doc.Descendants(ns + "group"),
-            g => g.Attribute("id")?.Value == "grpOutline");
+            g => g.Attribute("id")?.Value == RibbonControlIds.OutlineGroup);
 
-        // The two buttons sit side by side in one horizontal box, so the pair
-        // reads as the two halves of a single action rather than as two
-        // unrelated commands.
-        XElement box = Assert.Single(group.Elements(ns + "box"));
+        // R5.16a: the group is a 2 x 3 grid; Expand/Collapse are the third
+        // row, side by side, so the pair reads as the two halves of one action.
+        XElement box = Assert.Single(
+            group.Elements(ns + "box"),
+            element => element.Attribute("id")?.Value == "boxOutlineRow3");
         XElement[] buttons = box.Elements(ns + "button").ToArray();
 
         Assert.Equal(
@@ -46,10 +47,10 @@ public class CollapseGroupsRibbonTests
     }
 
     [Fact]
-    public void The_outline_group_sits_beside_the_ordering_group()
+    public void The_outline_group_sits_between_data_and_labels()
     {
-        // The Outline group is a hierarchy peer of the Ordering group, so it
-        // follows it rather than being buried at the far end of the tab.
+        // R5.16a merged Ordering into Outline. The group still sits directly
+        // after Data, where the structural row actions belong.
         XDocument doc = XDocument.Parse(new GanttRibbon().GetCustomUI(WorkbookRibbonId)!);
         XNamespace ns = CustomUiNamespace;
 
@@ -57,14 +58,16 @@ public class CollapseGroupsRibbonTests
             .Select(group => group.Attribute("id")?.Value ?? string.Empty)
             .ToArray();
 
-        int ordering = Array.IndexOf(groupIds, "grpOrdering");
-        int outline = Array.IndexOf(groupIds, "grpOutline");
+        int data = Array.IndexOf(groupIds, RibbonControlIds.DataGroup);
+        int outline = Array.IndexOf(groupIds, RibbonControlIds.OutlineGroup);
+        int labels = Array.IndexOf(groupIds, RibbonControlIds.LabelsGroup);
 
-        Assert.True(ordering >= 0, "The Ordering group must exist.");
+        Assert.True(data >= 0, "The Data group must exist.");
         Assert.True(outline >= 0, "The Outline group must exist.");
+        Assert.True(labels >= 0, "The Labels group must exist.");
         Assert.True(
-            outline > ordering,
-            $"The Outline group must follow the Ordering group, but the order was {string.Join(", ", groupIds)}.");
+            data < outline && outline < labels,
+            $"The Outline group must sit between Data and Labels, but the order was {string.Join(", ", groupIds)}.");
     }
 
     [Fact]

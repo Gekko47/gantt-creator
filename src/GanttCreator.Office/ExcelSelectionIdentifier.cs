@@ -81,6 +81,18 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
 
             Excel.Range? selection = GetSelection(application) as Excel.Range;
             Excel.Range? active = GetActiveCell(application);
+
+            // The active cell's row is resolved separately from the selection's
+            // extent: the structural commands act on the row under the active
+            // cell, so a multi-row selection must still name it (R5.9b).
+            int? activeCellBodyIndex = null;
+            if (active is not null
+                && TryResolveToBody(table, active, out int? activeIndex, out _, out bool activeIsHeader)
+                && !activeIsHeader)
+            {
+                activeCellBodyIndex = activeIndex;
+            }
+
             Excel.Range? range = selection ?? active;
             return range is null || !TryResolveToBody(table, range, out int? bodyIndex, out int rowCount, out bool isHeader)
                 ? SelectionFacts.None
@@ -89,7 +101,8 @@ public class ExcelSelectionIdentifier : ISelectionIdentifier
                     !isHeader && rowCount == 1 && bodyIndex.HasValue,
                     bodyIndex,
                     isHeader,
-                    rowCount);
+                    rowCount,
+                    activeCellBodyIndex);
         }
         catch
         {
