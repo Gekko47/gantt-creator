@@ -157,6 +157,25 @@ public class ExcelConfigIntegrityChecker(
                         )
                     );
                 }
+
+                // A shape whose name is one this writer creates, but whose ownership
+                // tag is absent or no longer matches that name, is the orphaned half
+                // of the ownership contract: ListOwned cannot see it, so no refresh
+                // reconciles or deletes it and every reconciliation scan treats it as
+                // unowned. Reported and never deleted — a shape without a matching tag
+                // cannot be proved owned, so deleting it because its name looks like
+                // ours would breach the unowned-content invariant. The repair matrix
+                // for ownership damage is R9.4's, and it consumes this finding rather
+                // than re-detecting the same state.
+                foreach (string orphanedShape in FindShapesThatCannotBeProvedOwned(gantt))
+                {
+                    findings.Add(
+                        new ConfigIntegrityFinding(
+                            ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag,
+                            $"The shape named '{orphanedShape}' on worksheet '{gantt.Name}' is named like one the add-in creates, but its ownership tag is missing or does not match that name. A shape without a matching tag cannot be proved owned, so the add-in never deletes it; this state is reported and never repaired automatically."
+                        )
+                    );
+                }
             }
 
             Excel.Names workbookNames = workbook.Names;
@@ -309,6 +328,67 @@ public class ExcelConfigIntegrityChecker(
         return schemaComplete
             ? [.. live.Where(name => !GanttTableSchema.Default.TryGetColumn(name, out _))]
             : [];
+    }
+
+    /// <summary>
+    /// Names of the shapes on a worksheet that are named like add-in shapes but whose
+    /// ownership tag cannot prove it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two tests, and both are needed. The name test is
+    /// <see cref="ExcelShapeWriter.CouldBeOwnedName"/>, reused rather than restated so
+    /// this scan and the ownership scan cannot disagree about which names this writer
+    /// can create; it is a name test, not an ownership proof.
+    /// </para>
+    /// <para>
+    /// The tag test reports only evidence of a <em>damaged</em> tag: no alternative
+    /// text at all, or text that still carries the ownership prefix but is not the tag
+    /// this name would produce (the "renamed" half, including a valid tag for some
+    /// other identifier). A shape whose alternative text is a user's own description is
+    /// left alone. "Could not be proved owned" is true of every drawing a user ever
+    /// made, and a colon in a shape name must not turn one into a finding: this is a
+    /// finding that refuses the repair plan, so a false positive is not free.
+    /// </para>
+    /// </remarks>
+    /// <param name="worksheet">The worksheet that carries the chart.</param>
+    /// <returns>The shape names in collection order, or an empty list.</returns>
+    private static List<string> FindShapesThatCannotBeProvedOwned(Excel.Worksheet worksheet)
+    {
+        List<string> damaged = [];
+        Excel.Shapes shapes = worksheet.Shapes;
+        int count = shapes.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.Shape shape = shapes.Item(index);
+            string name = shape.Name;
+            if (string.IsNullOrWhiteSpace(name) || !ExcelShapeWriter.CouldBeOwnedName(name))
+            {
+                continue;
+            }
+
+            string? alternativeText = shape.AlternativeText;
+            if (
+                string.Equals(
+                    alternativeText,
+                    ShapeOwnershipTag.ForPrimitiveId(name),
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                continue;
+            }
+
+            if (
+                string.IsNullOrWhiteSpace(alternativeText)
+                || ShapeOwnershipTag.HasOwnershipPrefix(alternativeText)
+            )
+            {
+                damaged.Add(name);
+            }
+        }
+
+        return damaged;
     }
 
     /// <summary>

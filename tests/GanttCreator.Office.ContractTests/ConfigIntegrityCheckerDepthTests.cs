@@ -64,6 +64,23 @@ public sealed class ConfigIntegrityCheckerDepthTests
         return range.Object;
     }
 
+    /// <summary>A worksheet's shape collection, modelling the host's always-present list.</summary>
+    private static Excel.Shapes ShapesCollection(params (string Name, string AlternativeText)[] entries)
+    {
+        Mock<Excel.Shapes> shapes = new();
+        _ = shapes.SetupGet(s => s.Count).Returns(entries.Length);
+        for (int index = 1; index <= entries.Length; index++)
+        {
+            int captured = index;
+            Mock<Excel.Shape> shape = new();
+            _ = shape.SetupGet(s => s.Name).Returns(entries[captured - 1].Name);
+            _ = shape.SetupGet(s => s.AlternativeText).Returns(entries[captured - 1].AlternativeText);
+            _ = shapes.Setup(s => s.Item(captured)).Returns(shape.Object);
+        }
+
+        return shapes.Object;
+    }
+
     /// <summary>A table's column collection, modelling the host's always-present list.</summary>
     private static Excel.ListColumns ColumnsCollection(params string[] names)
     {
@@ -122,7 +139,8 @@ public sealed class ConfigIntegrityCheckerDepthTests
         string sheetName = GanttSheetName,
         string[]? columnNames = null,
         int headerRow = GanttSheetLayout.HeaderRowIndex,
-        int firstColumn = GanttSheetLayout.TableOriginColumnIndex)
+        int firstColumn = GanttSheetLayout.TableOriginColumnIndex,
+        Excel.Shapes? shapes = null)
     {
         // The live table's columns: the full schema by default, so a healthy
         // workbook has no extra-column finding. A caller supplies names to model a
@@ -145,6 +163,9 @@ public sealed class ConfigIntegrityCheckerDepthTests
         // sheet's defined names, and a null collection makes that read throw
         // instead of reporting "the anchor is missing".
         _ = sheet.SetupGet(s => s.Names).Returns(names ?? NamesCollection().Object);
+        // The same for shapes: a healthy chart worksheet may carry none, and the
+        // ownership scan walks the collection rather than testing it for null.
+        _ = sheet.SetupGet(s => s.Shapes).Returns(shapes ?? ShapesCollection());
         return sheet.Object;
     }
 
@@ -170,6 +191,88 @@ public sealed class ConfigIntegrityCheckerDepthTests
             .Returns(GanttTableReadOutcome.Refused(GanttTableReadRefusalReason.TableMissing));
 
         return new TestableChecker(application.Object, reader.Object, tableReader.Object, sheets).Check();
+    }
+
+    [Fact]
+    public void A_shape_named_like_an_add_in_shape_without_its_tag_is_reported_and_refused()
+    {
+        // Finding 1 of R5.17f. ListOwned returns only shapes it can prove owned, so a
+        // shape whose tag was stripped is invisible to every reconciliation path and
+        // survives every refresh and Fix. The report is the whole of this slice: a
+        // shape without a matching tag cannot be proved owned, so the add-in must not
+        // delete it, and R9.4 owns the repair matrix.
+        const string PrimitiveId = "1:ActivityBar";
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(shapes: ShapesCollection((PrimitiveId, string.Empty))),
+        ]);
+
+        ConfigIntegrityFinding finding = Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
+        );
+
+        Assert.Contains(PrimitiveId, finding.Detail, StringComparison.Ordinal);
+        Assert.Equal(ConfigRepairClassification.Refuse, ConfigIntegrityPlan.Classify(finding));
+    }
+
+    [Fact]
+    public void A_shape_carrying_its_own_ownership_tag_is_not_reported()
+    {
+        // The healthy negative control: every shape a refresh writes carries the tag
+        // recomputed from its own name, and reporting those would report a chart.
+        const string PrimitiveId = "1:ActivityBar";
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(
+                shapes: ShapesCollection((
+                    PrimitiveId,
+                    ShapeOwnershipTag.ForPrimitiveId(PrimitiveId)))),
+        ]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
+        );
+    }
+
+    [Fact]
+    public void A_shape_carrying_another_shapes_tag_is_reported_as_renamed()
+    {
+        // The "renamed" half of finding 1, and the case a format check alone cannot
+        // see: the tag is well formed but belongs to a different identifier, so
+        // ownership is unproved for this name even though the prefix is right.
+        const string PrimitiveId = "1:ActivityBar";
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(
+                shapes: ShapesCollection((
+                    PrimitiveId,
+                    ShapeOwnershipTag.ForPrimitiveId("1:ActivityLabel")))),
+        ]);
+
+        Assert.Single(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
+        );
+    }
+
+    [Fact]
+    public void A_user_shape_whose_name_contains_a_colon_is_not_reported()
+    {
+        // CouldBeOwnedName is a name test, not an ownership proof: a user drawing may
+        // legitimately be called "Plan: Q3" and carry its own description. Reporting it
+        // would refuse the whole repair plan for ordinary user content, so the scan
+        // also requires the tag side to look damaged.
+        ConfigIntegrityCheckOutcome outcome = Check([
+            ConfigSheet(),
+            GanttSheet(shapes: ShapesCollection(("Plan: Q3", "Draft outline"))),
+        ]);
+
+        Assert.DoesNotContain(
+            outcome.Findings,
+            candidate => candidate.Kind == ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
+        );
     }
 
     [Fact]

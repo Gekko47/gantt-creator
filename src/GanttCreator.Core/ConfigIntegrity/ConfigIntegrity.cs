@@ -54,6 +54,11 @@ public enum ConfigIntegrityFindingKind
 
     /// <summary>The Gantt data table starts somewhere other than the contract origin.</summary>
     TableOffContractOrigin = 16,
+
+    /// <summary>
+    /// A shape named like one the add-in creates cannot be proved owned by its tag.
+    /// </summary>
+    OwnedShapeWithoutValidTag = 17,
 }
 
 /// <summary>The safe-repair classification for one integrity finding.</summary>
@@ -205,6 +210,7 @@ public sealed record ConfigIntegrityPlan(IReadOnlyList<ConfigIntegrityFinding> F
             or ConfigIntegrityFindingKind.DataTableOnUnexpectedSheet
             or ConfigIntegrityFindingKind.ExtraTableColumns
             or ConfigIntegrityFindingKind.TableOffContractOrigin
+            or ConfigIntegrityFindingKind.OwnedShapeWithoutValidTag
             or ConfigIntegrityFindingKind.Unknown => ConfigRepairClassification.Refuse,
             ConfigIntegrityFindingKind.UserStyleQuarantined => ConfigRepairClassification.ConfirmRequired,
             _ => ConfigRepairClassification.Refuse,
