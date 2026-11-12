@@ -105,7 +105,15 @@ public sealed class ConfigIntegrityPlanTests
     [Fact]
     public void Build_rejects_null_findings()
     {
-        Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Build(null!));
+        // The parameter name is asserted, not just the exception type. With the
+        // guard removed, `findings.OrderBy(...)` throws ArgumentNullException for
+        // "source" from the LINQ library, so a type-only assertion passes and the
+        // guard can be deleted without any test going red (measured: the
+        // `ThrowIfNull` statement mutant survived until this assertion existed).
+        ArgumentNullException thrown =
+            Assert.Throws<ArgumentNullException>(() => ConfigIntegrityPlan.Build(null!));
+
+        Assert.Equal("findings", thrown.ParamName);
     }
 
     [Fact]
