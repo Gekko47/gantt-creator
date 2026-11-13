@@ -343,6 +343,39 @@ public class EntityTypeCatalogTests
     }
 
     [Fact]
+    public void Format_names_the_catalogue_when_the_type_is_absent()
+    {
+        // The message is the only thing that tells a caller WHICH authority refused the
+        // value; a mutated empty message would leave the throw indistinguishable from a
+        // framework argument error.
+        ArgumentOutOfRangeException thrown = Assert.Throws<ArgumentOutOfRangeException>(
+            () => EntityTypeCatalog.Format((GanttEntityType)999));
+
+        Assert.Contains("catalogue", thrown.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_custom_delineator_style_cannot_widen_the_corner_set_with_a_span_position()
+    {
+        // The delineator's corner set is a FLOOR, so the style's set is intersected with
+        // it rather than unioned: a style that permits Left must not gain a span position
+        // the corner builder cannot draw.
+        var registry = new GanttStyleRegistry(
+        [
+            new GanttStyleDefinition(
+                "WideDelineator",
+                new HashSet<GanttLabelPosition>([GanttLabelPosition.Left, GanttLabelPosition.TopLeft]),
+                EntityColourCapability.Stroke),
+        ]);
+
+        IReadOnlyList<GanttLabelPosition> positions = EntityTypeCatalog.GetAllowedLabelPositions(
+            GanttEntityType.Delineator, "WideDelineator", registry);
+
+        Assert.DoesNotContain(GanttLabelPosition.Left, positions);
+        Assert.Contains(GanttLabelPosition.TopLeft, positions);
+    }
+
+    [Fact]
     public void GetAllowedLabelPositions_custom_activity_resolves_from_its_style()
     {
         var registry = new GanttStyleRegistry(

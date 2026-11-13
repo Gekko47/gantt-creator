@@ -620,6 +620,37 @@ public sealed class LabelPlannerTests
         Assert.Equal(LabelRefusal.InvalidMetrics, outcome.Refusal);
     }
 
+    [Fact]
+    public void A_right_hand_label_is_bounded_by_the_nearest_obstruction()
+    {
+        // Two occupants sit to the right of the candidate, at 180 and 250, and the
+        // candidate's left edge is 153. The NEARER edge is the rule (`Math.Min`), so the
+        // free space is 27pt and 40pt of text has nowhere to go: the label is suppressed.
+        // A `Math.Max` mutation would measure to the plot edge, find 163pt, and silently
+        // emit a label over the obstruction.
+        LabelPlanResult result = PlanOutcome(
+            Request(Shape(100, 20, 50), new string('x', 10), GanttLabelPosition.Right),
+            [new RectD(180, 20, 10, 10), new RectD(250, 20, 10, 10)]).Result!;
+
+        Assert.Null(result.Position);
+        Assert.Null(result.Primitive);
+    }
+
+    [Fact]
+    public void A_left_hand_label_stops_at_the_nearest_obstruction_on_its_side()
+    {
+        // The candidate's right edge is at 197 and two occupants end to its left, at 70
+        // and 120. The NEARER edge bounds the free space to 77pt, so 80pt of text is
+        // suppressed. A `Math.Max` to `Math.Min` mutation would take the plot edge, find
+        // 197pt, and place the label across the obstruction.
+        LabelPlanResult result = PlanOutcome(
+            Request(Shape(200, 20, 50), new string('x', 20), GanttLabelPosition.Left),
+            [new RectD(60, 20, 10, 10), new RectD(110, 20, 10, 10)]).Result!;
+
+        Assert.Null(result.Position);
+        Assert.Null(result.Primitive);
+    }
+
     private static RectD Shape(double x, double y, double width) => new(x, y, width, 8);
 
     /// <summary>
