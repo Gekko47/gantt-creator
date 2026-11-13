@@ -134,6 +134,57 @@ public sealed class HostOwnedGeometryTests
     }
 
     [Fact]
+    public void A_line_exactly_on_the_geometry_tolerance_still_counts_as_covering_the_plot()
+    {
+        // The coverage comparisons are inclusive AT the tolerance, not strictly inside it: a
+        // builder that lands a frame one tolerance short of the plot edge has still covered it,
+        // and a strict comparison would drop that rule back to translation with nothing visible
+        // changing in the scene.
+        const double tolerancePt = HostOwnedGeometry.GeometryMatchTolerancePt;
+
+        SceneLine horizontal = new(
+            "chart:frame:top",
+            _owner,
+            ZLayer.Grid,
+            new PointD(_plot.Left + tolerancePt, 100),
+            new PointD(_plot.Right - tolerancePt, 100),
+            _style);
+
+        SceneLine vertical = new(
+            "G-1:delineator",
+            _owner,
+            ZLayer.Delineator,
+            new PointD(150, _plot.Top + tolerancePt),
+            new PointD(150, _plot.Bottom - tolerancePt),
+            _style);
+
+        Assert.True(HostOwnedGeometry.IsHostOwned(horizontal, _plot));
+        Assert.True(HostOwnedGeometry.IsHostOwned(vertical, _plot));
+    }
+
+    [Fact]
+    public void A_rule_sloped_exactly_by_the_geometry_tolerance_is_still_horizontal()
+    {
+        // "Horizontal" is decided within the geometry tolerance, so a rule drawn with a
+        // sub-display-precision slope is still a horizontal rule and still host-sized. A strict
+        // comparison would silently leave it on xlMove.
+        const double tolerancePt = HostOwnedGeometry.GeometryMatchTolerancePt;
+
+        // Anchored at y=0 so the difference the predicate takes is exactly the tolerance
+        // rather than `100.01 - 100`, which is not representable and would make this a test
+        // of binary floating point instead of the comparison under test.
+        SceneLine line = new(
+            "chart:frame:top",
+            _owner,
+            ZLayer.Grid,
+            new PointD(_plot.Left, 0),
+            new PointD(_plot.Right, tolerancePt),
+            _style);
+
+        Assert.True(HostOwnedGeometry.IsHostOwned(line, _plot));
+    }
+
+    [Fact]
     public void A_full_height_line_within_the_geometry_tolerance_is_host_owned()
     {
         SceneLine line = new(

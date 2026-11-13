@@ -315,3 +315,25 @@ as untested behaviour.
 | Unreachable by any caller | the `or` chains in `LabelPlanner.TextAlignmentFor` and `DateLabelBuilder.Box` | `LabelRefusal.InvalidPosition` rejects every position that would reach those arms, and `None`/`Auto` are handled before geometry |
 | Equivalent under the current constants | `2d * BoxVerticalInsetPt` versus `2d / BoxVerticalInsetPt`; `best = -1.0`; the `continue` in `TryWidestGap`; the right-anchor ternary | The inset is 1, a gap narrower than the marker is already refused, and the widest-gap box always spans the whole measured gap |
 | Inherited, not created | the pre-existing `SceneBuilder`, `EntityTypeCatalog` and style-resolution survivors | Existing debt in code this branch did not change; it enters the judged set only because the file is in the diff |
+
+### Measured survivors at the end of the batch
+
+`verify.ps1 -MutationSince HEAD~8` judged the batch's ten Core files and returned
+**83.87 % (624/744 scored killed, 105 survived, 15 no-coverage)**. The survivors divide as
+follows, and the difference between the two halves matters:
+
+| File | Survivors | Status of the argument |
+|---|---|---|
+| `SceneBuilder` | 32 | **Inherited and unexamined individually.** Pre-existing debt in a file this batch changed; the categories above are plausible for it but were not checked line by line |
+| `LabelPlanner` | 38 | Partly argued: the 7 unreachable `TextAlignmentFor` arms, the 3 `IsFinite` mutants, the `RectD`-clamped `WithinBounds` pairs, and the inset arithmetic are each argued above or in the code's own remarks. The remainder (ellipsis/ordering/`Inside` branches) were not re-examined after part 2 closed the reachable ones |
+| `DateLabelBuilder` | 15 | The `Contains` and `IsPositive` families are argued above; the `Unclipped` arithmetic and alignment ternaries are covered by the two fallback tests, so the residual set is the message strings and the unreached `or` arms |
+| `PlotRangeResolver` | 6 | **One looks like a genuine gap.** `ValidateSettings` line 250 mutates `Max()` to `Min()` and survives, which means no test pins that setting's bound direction. The other five (a coalesce-assignment, a logical chain in `ParseExplicitDate`, an equality on the start-after-finish comparison, and two statement removals) are unexamined |
+| `HostOwnedGeometry` | 6 | The four inclusive-tolerance boundary pairs, `NearlyEqual`'s strict comparison, and the `ThrowIfNull` guard. Each differs only at a value exactly on the tolerance boundary, which a test could pin but nothing yet does |
+| `GanttTableColumns` | 4 | Three exception-message strings and the constructor's `ThrowIfNull`. Message-only mutants are unobservable through the public surface unless a test asserts the text |
+| `EntityTypeCatalog` | 2 | A conditional that collapses to `null` on an empty display name (no entry has one, so it is equivalent in practice) and a `??` whose left side is never null |
+| `GanttDateDisplayFormat` | 2 | The two exception messages of the format guards |
+
+**Do not read this table as "all equivalent".** Two entries deserve a test rather than an
+argument — the `ValidateSettings` bound direction in `PlotRangeResolver` and the tolerance
+boundaries in `HostOwnedGeometry` — and the `SceneBuilder` set has not been examined at all.
+They are recorded here so the next mutation pass starts from a list, not from a re-measure.

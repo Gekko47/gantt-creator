@@ -65,6 +65,29 @@ public sealed class PlotRangeResolverTests
     }
 
     [Fact]
+    public void A_late_milestone_start_extends_the_automatic_range_past_every_finish()
+    {
+        // A span finishing on 20 January and a milestone starting on 10 March. The range's end
+        // is the milestone's start, so the "latest start" must be the MAXIMUM of the starts:
+        // taking the minimum would hide the milestone behind the earlier finish and plot a
+        // chart that does not contain an activity the user can see.
+        PlotRangeOutcome outcome = PlotRangeResolver.TryResolve(
+            [
+                Event(1),
+                Event(2, GanttEntityType.AsPlannedMilestone, new DateOnly(2024, 3, 10), finish: null),
+            ],
+            "DataRange",
+            "DataRange",
+            null,
+            null,
+            paddingDays: 0);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(new DateOnly(2024, 1, 10), outcome.Start);
+        Assert.Equal(new DateOnly(2024, 3, 10), outcome.Finish);
+    }
+
+    [Fact]
     public void An_empty_table_plots_the_current_calendar_year_when_today_is_known()
     {
         // Owner ruling: a freshly initialised workbook must plot something rather than
