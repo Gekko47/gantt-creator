@@ -135,6 +135,34 @@ public class WorkbookRecoveryTests
         internal override void SetHeaderValue(Excel.Worksheet target, int columnIndex, string? value) =>
             HeaderWrites++;
 
+        /// <summary>The body font written to each column, in column order.</summary>
+        public List<(string Family, double Size)> FontWrites { get; } = [];
+
+        /// <summary>The vertical alignment written to each column, in column order.</summary>
+        public List<Excel.XlVAlign> VerticalAlignments { get; } = [];
+
+        /// <summary>The horizontal alignment written to each column, in column order.</summary>
+        public List<Excel.XlHAlign> HorizontalAlignments { get; } = [];
+
+        // The presentation seams are recorded rather than driven through the proxies: the
+        // recovery writes the same theme the initialiser does, and a recorder proves the
+        // parity without a second mock graph of Font and alignment properties.
+
+        /// <summary>The number formats written, in write order.</summary>
+        public List<string> NumberFormatWrites { get; } = [];
+
+        internal override void SetNumberFormat(Excel.Range range, string pattern) =>
+            NumberFormatWrites.Add(pattern);
+
+        internal override void SetFont(Excel.Range range, string family, double sizePt) =>
+            FontWrites.Add((family, sizePt));
+
+        internal override void SetVerticalAlignment(Excel.Range range, Excel.XlVAlign alignment) =>
+            VerticalAlignments.Add(alignment);
+
+        internal override void SetHorizontalAlignment(Excel.Range range, Excel.XlHAlign alignment) =>
+            HorizontalAlignments.Add(alignment);
+
         internal override Excel.ListObject AddTable(Excel.Worksheet target, Excel.Range range)
         {
             Mock<Excel.ListObject> table = new();
@@ -676,6 +704,32 @@ public class WorkbookRecoveryTests
         Assert.Equal(GanttWorkbookContract.GanttSheetLabel, recovery.CreatedSheet!.Name);
         Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.HeaderWrites);
         Assert.Single(recovery.CreatedTables);
+
+        // R5.18d: a created table carries the same theme presentation Initialise applies,
+        // so a rebuilt workbook and a freshly initialised one cannot look different.
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.FontWrites.Count);
+        Assert.All(
+            recovery.FontWrites,
+            write =>
+            {
+                Assert.Equal(GanttTableAppearance.FontFamily, write.Family);
+                Assert.Equal(GanttTableAppearance.BodyFontSizePt, write.Size);
+            });
+        // R5.18c's repair half, asserted at last: each date column carries the workbook
+        // format, so a rebuilt Start shows a date rather than its serial number.
+        Assert.Equal(GanttTableSchema.DateColumnNames.Count, recovery.NumberFormatWrites.Count);
+        Assert.All(
+            recovery.NumberFormatWrites,
+            pattern => Assert.Equal(
+                GanttDateFormatting.WorksheetPatternFor(GanttDateDisplayFormat.DdMMyyyy),
+                pattern));
+
+        Assert.Equal(GanttTableSchema.Default.Columns.Count, recovery.VerticalAlignments.Count);
+        Assert.All(recovery.VerticalAlignments, alignment => Assert.Equal(Excel.XlVAlign.xlVAlignCenter, alignment));
+        Assert.Equal(
+            GanttTableSchema.Default.Columns.Select(column => GanttTableAppearance.AlignmentFor(column.Name)),
+            recovery.HorizontalAlignments.Select(alignment =>
+                alignment == Excel.XlHAlign.xlHAlignCenter ? GanttCellAlignment.Centre : GanttCellAlignment.Left));
     }
 
     [Fact]

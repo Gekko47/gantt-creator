@@ -1161,8 +1161,41 @@ public class ExcelWorkbookRecovery(
             {
                 ApplyDateColumnFormat(entireColumn);
             }
+
+            // The theme presentation is mirrored here for the same reason: a repair that
+            // produced a table without the theme would leave the user with a chart whose
+            // panel no longer matches its own export.
+            ApplyBodyFont(entireColumn);
+            ApplyVerticalCentre(entireColumn);
+            ApplyHorizontalAlignment(entireColumn, GanttTableAppearance.AlignmentFor(schema[index - 1].Name));
         }
     }
+
+    /// <summary>Applies the theme's body font family and size to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <remarks>
+    /// One proxy held locally rather than chained through <c>range.Font.Name</c>, per the COM
+    /// rule; a chained set would also leak an un-released <c>Font</c> proxy per column.
+    /// </remarks>
+    private void ApplyBodyFont(Excel.Range entireColumn) => SetFont(
+        entireColumn,
+        GanttTableAppearance.FontFamily,
+        GanttTableAppearance.BodyFontSizePt);
+
+    /// <summary>Middle-aligns a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    private void ApplyVerticalCentre(Excel.Range entireColumn) =>
+        SetVerticalAlignment(entireColumn, Excel.XlVAlign.xlVAlignCenter);
+
+    /// <summary>Applies the column's horizontal alignment to a whole worksheet column.</summary>
+    /// <param name="entireColumn">The worksheet column behind the table column.</param>
+    /// <param name="alignment">The column's alignment, from the Core appearance authority.</param>
+    private void ApplyHorizontalAlignment(Excel.Range entireColumn, GanttCellAlignment alignment) =>
+        SetHorizontalAlignment(
+            entireColumn,
+            alignment == GanttCellAlignment.Centre
+                ? Excel.XlHAlign.xlHAlignCenter
+                : Excel.XlHAlign.xlHAlignLeft);
 
     /// <summary>
     /// Writes the date format onto a date column's whole worksheet column, unless it
@@ -1241,6 +1274,29 @@ public class ExcelWorkbookRecovery(
     internal virtual Excel.Range GetColumnRange(Excel.ListColumn column) => column.Range;
 
     internal virtual Excel.Range GetEntireColumn(Excel.Range range) => range.EntireColumn;
+
+    /// <summary>Writes the body font onto a range, holding the <c>Font</c> proxy locally.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="family">The font family.</param>
+    /// <param name="sizePt">The size in points.</param>
+    internal virtual void SetFont(Excel.Range range, string family, double sizePt)
+    {
+        Excel.Font font = range.Font;
+        font.Name = family;
+        font.Size = sizePt;
+    }
+
+    /// <summary>Writes vertical alignment onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="alignment">The alignment.</param>
+    internal virtual void SetVerticalAlignment(Excel.Range range, Excel.XlVAlign alignment) =>
+        range.VerticalAlignment = alignment;
+
+    /// <summary>Writes horizontal alignment onto a range.</summary>
+    /// <param name="range">The range to format.</param>
+    /// <param name="alignment">The alignment.</param>
+    internal virtual void SetHorizontalAlignment(Excel.Range range, Excel.XlHAlign alignment) =>
+        range.HorizontalAlignment = alignment;
 
     internal virtual string? ReadNumberFormat(Excel.Range range) =>
         range.NumberFormat is string format ? format : null;
