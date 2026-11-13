@@ -393,3 +393,17 @@ follows, and the difference between the two halves matters:
 argument — the `ValidateSettings` bound direction in `PlotRangeResolver` and the tolerance
 boundaries in `HostOwnedGeometry` — and the `SceneBuilder` set has not been examined at all.
 They are recorded here so the next mutation pass starts from a list, not from a re-measure.
+
+### R5.18h slice 1 (`mutation-gate.ps1 -Since HEAD~1`, commit `4eea0c0`)
+
+**93.99 % (391/416 scored killed, 17 survived, 8 no-coverage)** against the 80 % threshold. Two
+survivors were in the new `GanttColumnVisibility`, and they were not the same kind:
+
+| Mutant | Outcome |
+|---|---|
+| `ColumnVisibilityOutcome.Succeeded`: `&&` mutated to `\|\|` | **A real gap — closed by a test.** No test asserted that a refusal is not a success, so `Hidden is not null \|\| Refusal is null` returned `true` for every refusal. `An_unknown_name_is_refused_rather_than_ignored` now asserts `Succeeded` is false alongside the refusal reason |
+| `Toggle`'s `ArgumentNullException.ThrowIfNull(hidden)` removed | **Equivalent in practice.** The next statement is `new HashSet<string>(hidden, …)`, which throws the same exception type for the same input, so the guard's own test cannot distinguish them. Recorded rather than chased |
+
+The remaining fifteen are the pre-existing whole-file survivors in `GanttCatalogues` (message
+strings, `First()` versus `FirstOrDefault()`, and the metric/typography validation arms this change
+did not touch) — that file enters the judged set only because the settings catalogue is in the diff.

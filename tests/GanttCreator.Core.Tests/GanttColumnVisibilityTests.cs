@@ -46,9 +46,15 @@ public sealed class GanttColumnVisibilityTests
     [Fact]
     public void An_unknown_name_is_refused_rather_than_ignored()
     {
-        Assert.Equal(
-            ColumnVisibilityRefusal.UnknownColumn,
-            GanttColumnVisibility.Parse("Type,Id").Refusal);
+        ColumnVisibilityOutcome outcome = GanttColumnVisibility.Parse("Type,Id");
+
+        Assert.Equal(ColumnVisibilityRefusal.UnknownColumn, outcome.Refusal);
+        Assert.Null(outcome.Hidden);
+
+        // The refusal must not carry a usable state: `Succeeded` is the conjunction of
+        // "a set came back" and "nothing was refused", and a caller that trusted a
+        // disjunction would apply a set the parser had already rejected.
+        Assert.False(outcome.Succeeded);
     }
 
     [Fact]
