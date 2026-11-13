@@ -163,16 +163,17 @@
              grpPlaceholder) is the sheet/chart maintenance group. It is now
              "Sheet" and laid out as a 2 x 2 grid. -->
         <group id="grpSheet" label="Sheet" getVisible="GetVisible">
-          <box id="boxSheetRow1" boxStyle="horizontal">
-            <button id="btnRefreshSheet" label="Refresh chart" imageMso="RefreshAll" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+          <!-- R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so
+               it is large and the three secondary controls stack beside it in one
+               vertical box, in the order the owner asked for: warnings, cells, chart. -->
+          <button id="btnRefreshSheet" label="Refresh chart" size="large" imageMso="RefreshAll" keytip="F" screentip="Refresh the Gantt chart" supertip="Rebuilds the chart from the whole table. Edits also refresh automatically after a short pause." getEnabled="GetEnabled" onAction="OnRefreshSheetClick"/>
+          <box id="boxSheetStack" boxStyle="vertical">
             <button id="btnWarnings" label="Warnings..." imageMso="ErrorChecking" keytip="WN" screentip="Open the warnings list" supertip="Lists warnings from the last chart render and the current validation findings. The list is read-only." getEnabled="GetEnabled" onAction="OnWarningsClick"/>
-          </box>
-          <box id="boxSheetRow2" boxStyle="horizontal">
             <!-- ADR-0055: the chart's shapes are locked while the sheet is protected. Unlock acts on
                  ONE selected shape the add-in drew, releases the protection so it can be dragged, and
                  suspends the automatic refresh until Lock shapes or an explicit Refresh puts it back. -->
-            <toggleButton id="btnToggleChartLock" label="Lock chart" keytip="LK" screentip="Lock or unlock the chart elements" supertip="Pressed means the chart's shapes are locked and cannot be dragged. Unpressed means you can move them; the automatic refresh pauses until you lock the chart again or refresh." imageMso="Lock" getEnabled="GetEnabled" getPressed="GetToggleChartLockPressed" onAction="OnToggleChartLockClick"/>
             <toggleButton id="btnToggleCellLock" label="Lock cells" keytip="CL" screentip="Lock or unlock the cells outside the table" supertip="Pressed means the cells outside the visible table are read-only. Unpressed means the whole sheet is editable. The visible table is always editable either way, so copy, paste and formatting are never blocked there." imageMso="LockCell" getEnabled="GetEnabled" getPressed="GetToggleCellLockPressed" onAction="OnToggleCellLockClick"/>
+            <toggleButton id="btnToggleChartLock" label="Lock chart" keytip="LK" screentip="Lock or unlock the chart elements" supertip="Pressed means the chart's shapes are locked and cannot be dragged. Unpressed means you can move them; the automatic refresh pauses until you lock the chart again or refresh." imageMso="Lock" getEnabled="GetEnabled" getPressed="GetToggleChartLockPressed" onAction="OnToggleChartLockClick"/>
           </box>
         </group>
         <group id="grpDiagnostics" label="Diagnostics" getVisible="GetVisible">

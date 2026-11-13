@@ -147,6 +147,34 @@ public class GanttRibbonTests
         Assert.Equal("large", (string?)button.Attribute("size"));
     }
 
+    [Fact]
+    public void The_sheet_group_puts_a_large_refresh_beside_one_stacked_column()
+    {
+        // R5.18e (owner ruling 2026-11-13): Refresh is the group's primary action, so it
+        // is large and the three secondary controls stack beside it in one vertical box,
+        // in the owner's order: warnings, cells, chart.
+        XDocument doc = XDocument.Parse(Ribbon.GetCustomUI(WorkbookRibbonId)!);
+        XNamespace ns = doc.Root!.Name.Namespace;
+        XElement group = Assert.Single(
+            doc.Descendants(ns + "group"),
+            element => (string?)element.Attribute("id") == RibbonControlIds.SheetGroup);
+
+        XElement[] children = [.. group.Elements()];
+        Assert.Equal(2, children.Length);
+
+        XElement refresh = children[0];
+        Assert.Equal(RibbonControlIds.RefreshSheet, (string?)refresh.Attribute("id"));
+        Assert.Equal("large", (string?)refresh.Attribute("size"));
+
+        XElement stack = children[1];
+        Assert.Equal("box", stack.Name.LocalName);
+        Assert.Equal("vertical", (string?)stack.Attribute("boxStyle"));
+        string?[] stacked = [.. stack.Elements().Select(element => (string?)element.Attribute("id"))];
+        Assert.Equal(
+            new string?[] { RibbonControlIds.Warnings, RibbonControlIds.ToggleCellLock, RibbonControlIds.ToggleChartLock },
+            stacked);
+    }
+
     private sealed class ThrowingVisibleStateService : RibbonStateService
     {
         internal override bool GetVisible(string? groupId) =>
@@ -537,9 +565,11 @@ public class GanttRibbonTests
                 RibbonControlIds.OpenLog,
                 // Owner ruling 2026-11-09: the CHART and CELL lock toggles replace the shape pair.
                 // They are gated on workbook + initialised alone — a toggle must always be reachable,
-                // because its state is what the user came to change.
-                RibbonControlIds.ToggleChartLock,
+                // because its state is what the user came to change. R5.18e stacks them with the
+                // Warnings button in the Sheet group's vertical box, cells before chart, so the
+                // document order follows the owner's requested stack.
                 RibbonControlIds.ToggleCellLock,
+                RibbonControlIds.ToggleChartLock,
                 // R5.5: the description-label dropdown is the first
                 // selection-gated control — it shares the workbook+initialised
                 // part of the truth table and adds the single-row condition
